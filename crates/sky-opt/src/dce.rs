@@ -119,7 +119,8 @@ fn removable(f: &Function, id: OpId, facts: &Analysis) -> bool {
         OpKind::While => false,
         // A `fused` fails, or not, as its body does.
         OpKind::Fused => {
-            op.operands.iter().all(known) && op.regions.iter().all(|r| region_is_removable(f, *r))
+            op.operands.iter().all(known)
+                && op.regions.iter().all(|r| region_is_removable(f, *r, facts))
         }
         OpKind::If => {
             matches!(op.operands.first().map(|v| f.ty(*v)), Some(Type::Bool))

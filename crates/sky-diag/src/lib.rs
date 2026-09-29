@@ -75,9 +75,11 @@
 
 mod diagnostic;
 mod render;
+mod safe;
 mod source;
 mod span;
 
 pub use diagnostic::{Diagnostic, Label, Severity};
+pub use safe::display_safe;
 pub use source::SourceFile;
 pub use span::Span;

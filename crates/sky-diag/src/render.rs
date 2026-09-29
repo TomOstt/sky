@@ -2,6 +2,7 @@
 
 use std::fmt::{self, Write};
 
+use crate::safe::{display_safe, is_unsafe, ESCAPE_WIDTH};
 use crate::{Diagnostic, Label, SourceFile};
 
 /// A span resolved against a source file, ready to draw.
@@ -10,9 +11,12 @@ struct Mark<'a> {
     line: usize,
     col: usize,
     /// Whitespace before the marker: a tab for each tab in the source before
-    /// the span start, a space for every other char, so the markers line up.
+    /// the span start, [`ESCAPE_WIDTH`] spaces for each escaped char, and a
+    /// space for every other char, so the markers line up under the
+    /// displayed (escaped) line.
     indent: String,
-    /// Number of marker chars: chars of the span on its first line, at least 1.
+    /// Number of marker chars: displayed width of the span on its first line
+    /// (an escaped char counts [`ESCAPE_WIDTH`]), at least 1.
     width: usize,
     marker: char,
     label: Option<&'a str>,
@@ -32,14 +36,27 @@ fn resolve<'a>(file: &SourceFile, label: &'a Label, marker: char) -> Mark<'a> {
     Mark {
         line: idx + 1,
         col: before.chars().count() + 1,
-        indent: before
-            .chars()
-            .map(|c| if c == '\t' { '\t' } else { ' ' })
-            .collect(),
-        width: text[s..e].chars().count().max(1),
+        indent: before.chars().fold(String::new(), |mut acc, c| {
+            match c {
+                '\t' => acc.push('\t'),
+                c if is_unsafe(c) => acc.push_str(&" ".repeat(ESCAPE_WIDTH)),
+                _ => acc.push(' '),
+            }
+            acc
+        }),
+        width: text[s..e].chars().map(display_width).sum::<usize>().max(1),
         marker,
         label: label.message.as_deref(),
         key: (start, end),
+    }
+}
+
+/// Columns `c` takes in the rendered output.
+fn display_width(c: char) -> usize {
+    if is_unsafe(c) {
+        ESCAPE_WIDTH
+    } else {
+        1
     }
 }
 
@@ -65,17 +82,17 @@ impl Diagnostic {
         writeln!(
             out,
             "{}:{}:{}: {}: {}",
-            file.name(),
+            display_safe(file.name()),
             primary.line,
             primary.col,
             self.severity,
-            self.message
+            display_safe(&self.message)
         )?;
         writeln!(out, "{blank} |")?;
         let mut shown_line = None;
         for m in std::iter::once(&primary).chain(&secondary) {
             if shown_line != Some(m.line) {
-                let src = file.line_text(m.line).unwrap_or("");
+                let src = display_safe(file.line_text(m.line).unwrap_or(""));
                 if src.is_empty() {
                     writeln!(out, "{:>w$} |", m.line)?;
                 } else {
@@ -88,15 +105,15 @@ impl Diagnostic {
                 out.write_char(m.marker)?;
             }
             match m.label {
-                Some(l) if !l.is_empty() => writeln!(out, " {l}")?,
+                Some(l) if !l.is_empty() => writeln!(out, " {}", display_safe(l))?,
                 _ => writeln!(out)?,
             }
         }
         for n in &self.notes {
-            writeln!(out, "{blank} = note: {n}")?;
+            writeln!(out, "{blank} = note: {}", display_safe(n))?;
         }
         for h in &self.help {
-            writeln!(out, "{blank} = help: {h}")?;
+            writeln!(out, "{blank} = help: {}", display_safe(h))?;
         }
         Ok(())
     }
@@ -407,5 +424,188 @@ demo.sky:10:1: error: e
         let f = file(src);
         let d = Diagnostic::error("e", Span::new(0, 1)).with_label("l");
         assert_eq!(d.display(&f).to_string(), d.render_to_string(&f));
+    }
+
+    // ---- terminal safety -------------------------------------------------
+
+    #[test]
+    fn bidi_in_source_line_and_message_is_escaped_and_carets_cover_the_escape() {
+        let src = "access = \"user\"\nif access != \"none\":  # \u{202E} check admin\n";
+        let d = Diagnostic::error(
+            "bidirectional control character \u{202E} is not allowed",
+            find(src, "\u{202E}"),
+        )
+        .with_label("bidi control here")
+        .with_secondary(find(src, "check"), "displayed out of order");
+        assert_eq!(
+            d.render_to_string(&file(src)),
+            r#"demo.sky:2:25: error: bidirectional control character \u{202E} is not allowed
+  |
+2 | if access != "none":  # \u{202E} check admin
+  |                         ^^^^^^^^ bidi control here
+  |                                  ----- displayed out of order
+"#
+        );
+    }
+
+    #[test]
+    fn ansi_escape_sequences_are_neutralised_everywhere() {
+        let src = "label = \"\u{1B}[31mred\u{1B}[0m\"\n";
+        let d = Diagnostic::warning("string contains \u{1B}[2J an escape", find(src, "red"))
+            .with_label("\u{1B}[1mbold\u{1B}[0m label")
+            .with_note("note with \u{1B}]0;title\u{7}")
+            .with_help("help with \u{9B}31m (8-bit CSI)");
+        assert_eq!(
+            d.render_to_string(&file(src)),
+            r#"demo.sky:1:15: warning: string contains \u{001B}[2J an escape
+  |
+1 | label = "\u{001B}[31mred\u{001B}[0m"
+  |                      ^^^ \u{001B}[1mbold\u{001B}[0m label
+  = note: note with \u{001B}]0;title\u{0007}
+  = help: help with \u{009B}31m (8-bit CSI)
+"#
+        );
+    }
+
+    #[test]
+    fn zero_width_joiner_is_visible_and_counted_in_the_underline() {
+        let src = "ab\u{200D}c = 1\n";
+        let d = Diagnostic::error(
+            "invisible character in identifier",
+            find(src, "ab\u{200D}c"),
+        )
+        .with_secondary(find(src, "1"), "value");
+        assert_eq!(
+            d.render_to_string(&file(src)),
+            r#"demo.sky:1:1: error: invisible character in identifier
+  |
+1 | ab\u{200D}c = 1
+  | ^^^^^^^^^^^
+  |               - value
+"#
+        );
+    }
+
+    #[test]
+    fn zero_width_span_at_an_escaped_char_gets_one_caret_at_the_escape() {
+        let src = "x\u{FEFF}y\n";
+        let d = Diagnostic::error("e", Span::point(1));
+        assert_eq!(
+            d.render_to_string(&file(src)),
+            "demo.sky:1:2: error: e\n  |\n1 | x\\u{FEFF}y\n  |  ^\n"
+        );
+    }
+
+    #[test]
+    fn control_characters_in_the_file_name_are_escaped() {
+        let src = "x = 1\n";
+        let f = SourceFile::new(
+            "evil\u{1B}]0;pwned\u{7}\nfake.sky:9:9: error: forged.sky",
+            src,
+        );
+        let d = Diagnostic::error("e", find(src, "1"));
+        assert_eq!(
+            d.render_to_string(&f),
+            r#"evil\u{001B}]0;pwned\u{0007}\u{000A}fake.sky:9:9: error: forged.sky:1:5: error: e
+  |
+1 | x = 1
+  |     ^
+"#
+        );
+    }
+
+    #[test]
+    fn lone_carriage_return_and_newlines_in_messages_are_escaped() {
+        let src = "a = 1\rb = 2\n";
+        let d = Diagnostic::error("line one\nfake.sky:1:1: error: forged", find(src, "b"))
+            .with_label("label\r\nsecond");
+        assert_eq!(
+            d.render_to_string(&file(src)),
+            r#"demo.sky:1:7: error: line one\u{000A}fake.sky:1:1: error: forged
+  |
+1 | a = 1\u{000D}b = 2
+  |              ^ label\u{000D}\u{000A}second
+"#
+        );
+    }
+
+    #[test]
+    fn unicode_operators_and_tabs_are_not_escaped() {
+        let src = "\tE = ħ ∂ A⁻¹\n";
+        let d = Diagnostic::error("ok", find(src, "A⁻¹"));
+        assert_eq!(
+            d.render_to_string(&file(src)),
+            "demo.sky:1:10: error: ok\n  |\n1 | \tE = ħ ∂ A⁻¹\n  | \t        ^^^\n"
+        );
+    }
+
+    /// Deterministic xorshift64*, so failures reproduce without a dependency.
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+    }
+
+    fn random_string(rng: &mut Rng, pool: &[char], max: usize) -> String {
+        let len = rng.below(max + 1);
+        (0..len).map(|_| pool[rng.below(pool.len())]).collect()
+    }
+
+    #[test]
+    fn rendered_output_never_contains_an_unsafe_character() {
+        // Every escaped character, plus ordinary ASCII, tab, and multi-byte text.
+        let mut pool: Vec<char> = (0u32..=0x9F).filter_map(char::from_u32).collect();
+        pool.extend(
+            "\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}".chars(),
+        );
+        pool.extend("\u{200E}\u{200F}\u{061C}\u{200B}\u{200C}\u{200D}\u{2060}\u{FEFF}".chars());
+        pool.extend("∂⁻¹ħ€😀 \t\n\n\r".chars());
+        let is_escaped = |c: char| crate::safe::is_unsafe(c) && c != '\n';
+
+        let mut rng = Rng(0x5EED_5EED_5EED_5EED);
+        for case in 0..3000 {
+            let src = random_string(&mut rng, &pool, 60);
+            let len = src.len() as u32 + 4;
+            let mut span = || {
+                let a = rng.below(len as usize + 1) as u32;
+                let b = rng.below(len as usize + 1) as u32;
+                Span { start: a, end: b }
+            };
+            let (p, s1, s2) = (span(), span(), span());
+            let name = random_string(&mut rng, &pool, 12);
+            let mut text = |n| random_string(&mut rng, &pool, n);
+            let d = Diagnostic::error(text(20), p)
+                .with_label(text(10))
+                .with_secondary(s1, text(10))
+                .with_secondary(s2, text(10))
+                .with_note(text(10))
+                .with_help(text(10));
+            let out = d.render_to_string(&SourceFile::new(name, src.clone()));
+
+            if let Some(c) = out.chars().find(|&c| is_escaped(c)) {
+                panic!(
+                    "case {case}: U+{:04X} in output for {src:?}:\n{out}",
+                    c as u32
+                );
+            }
+            // Only the renderer's own newlines remain: after the header, every
+            // line is a gutter row, a numbered source row, or a note/help row.
+            for line in out.lines().skip(1) {
+                let body = line.trim_start_matches(|c: char| c == ' ' || c.is_ascii_digit());
+                assert!(
+                    body.starts_with('|')
+                        || body.starts_with("= note: ")
+                        || body.starts_with("= help: "),
+                    "case {case}: unexpected line {line:?} in:\n{out}"
+                );
+            }
+        }
     }
 }

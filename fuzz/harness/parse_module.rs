@@ -12,7 +12,9 @@
 //!   nowhere. If bit 1 of the first byte is also set, the spans are wild
 //!   (inverted, past the end of the source, near `u32::MAX`).
 //!
-//! Invariants, checked on every input, all inside [`with_deep_stack`]:
+//! Invariants, checked on every input, on a thread with a
+//! [`sky_ast::DEEP_STACK_BYTES`] stack ([`run`] uses [`with_deep_stack`];
+//! the fuzz target uses one persistent worker thread of the same size):
 //! - Lexing, parsing, printing, dropping, and rendering diagnostics never
 //!   panic and never overflow the stack.
 //! - Except with wild spans: every span in the AST (walked iteratively) and
@@ -37,12 +39,17 @@ pub struct Outcome {
     pub errors: Vec<String>,
 }
 
-/// Runs one fuzz input inside [`with_deep_stack`].
+/// Runs one fuzz input inside [`with_deep_stack`]. This is what the stable
+/// test calls; the fuzz target runs [`check`] on its own worker thread with
+/// the same stack size instead, hence `allow(dead_code)`.
+#[allow(dead_code)]
 pub fn run(data: &[u8]) -> Outcome {
     with_deep_stack(|| check(data))
 }
 
-fn check(data: &[u8]) -> Outcome {
+/// Checks one fuzz input on the current thread, which must have a
+/// [`sky_ast::DEEP_STACK_BYTES`] stack.
+pub fn check(data: &[u8]) -> Outcome {
     let Some((&mode, rest)) = data.split_first() else {
         return Outcome::default();
     };

@@ -1,0 +1,3 @@
+# `+ =` with a space is `+` then `=`, never `+=`: the lexer accepts both
+# tokens, and the parser rejects the `=` where an operand should be.
+a+ =b

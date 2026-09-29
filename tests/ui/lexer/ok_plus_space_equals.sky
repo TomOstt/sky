@@ -1,4 +1,0 @@
-# `+ =` with a space is `+` then `=`, never `+=`. The lexer accepts it; the
-# parser rejects it (crates/sky-ast/tests/ui/err_plus_space_assign.sky), so
-# re-bless this file when `sky check` starts parsing.
-a+ =b

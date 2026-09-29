@@ -1087,7 +1087,7 @@ const ENGINE_PROGRAMS: &[(&str, bool, &str)] = &[
     ),
     (
         "eng-input-after-output",
-        false,
+        true,
         "print(\"before\")\nA: Matrix[2, 2]\nprint(\"after\")\n",
     ),
     // The checker leaves `"a" + "b"` to run time; lowering builds an `add`

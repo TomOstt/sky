@@ -174,27 +174,14 @@ pub enum Runnable {
 ///
 /// # Programs SIR does not run
 ///
-/// A [`LowerError`] is one. A program with an input declaration (`A:
-/// Matrix[3, 3]` with no value) is another, though it lowers: the
-/// declaration becomes a parameter of `<main>` that nothing can supply, so
-/// the SIR interpreter refuses the run up front, while the tree-walker
-/// executes every statement before the declaration and fails only there.
-/// Output already printed is part of the behaviour, so such a program stays
-/// on the tree-walker instead of failing earlier and with less output.
+/// A [`LowerError`] is one. (An input declaration, `A: Matrix[3, 3]` with
+/// no value, runs on SIR: it lowers to an `input` operation that fails where
+/// it is reached, after any earlier output, as on the tree-walker.)
 pub fn prepare_run(module: &Ast, src: &str, checked: &Checked) -> Runnable {
     let mut ir = match sky_lower::lower_for_run(module, src, checked) {
         Ok(ir) => ir,
         Err(e) => return Runnable::Unsupported(e),
     };
-    if let Some(main) = ir.function(sky_ir::Module::MAIN) {
-        if !main.param_values().is_empty() {
-            return Runnable::Unsupported(LowerError {
-                message: "an input declaration has no value to run with".to_string(),
-                span: main.span,
-                note: Some("the tree-walking interpreter reports it where it is reached".into()),
-            });
-        }
-    }
     // Verified before the first pass and after each, so the interpreter
     // never sees IR the verifier rejects.
     match sky_opt::default_pipeline().verify_each(true).run(&mut ir) {

@@ -93,8 +93,7 @@ fn is_builtin_name(name: &str) -> bool {
     MathFn::from_name(name).is_some()
         || matches!(
             name,
-            "print" | "inv" | "zeros" | "identity" | "len" | "derivative" | "grad"
-            "print" | "inv" | "transpose" | "zeros" | "identity" | "len" | "derivative"
+            "print" | "inv" | "transpose" | "zeros" | "identity" | "len" | "derivative" | "grad"
         )
 }
 

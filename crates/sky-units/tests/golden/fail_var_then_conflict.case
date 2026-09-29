@@ -1,0 +1,3 @@
+# Once α = T is solved, α = Θ is inconsistent.
+unify ?a*L with L*T
+unify ?a with Θ

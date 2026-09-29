@@ -1,0 +1,5 @@
+# αβ = L·T and α/β = L/T give α = L, β = T.
+unify ?a*?b with L*T
+unify ?a/?b with L/T
+show ?a
+show ?b

@@ -1,0 +1,2 @@
+# α = α·L has no solution (the abelian analogue of an occurs check).
+unify ?a with ?a*L

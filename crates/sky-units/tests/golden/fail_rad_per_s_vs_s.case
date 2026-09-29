@@ -1,0 +1,2 @@
+# rad is dimensionless: rad/s is a frequency, not a time.
+unify [rad]/[s] with [s]

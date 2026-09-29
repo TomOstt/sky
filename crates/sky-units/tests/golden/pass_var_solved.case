@@ -1,0 +1,3 @@
+# α·L = L·T gives α = T.
+unify ?a*L with L*T
+show ?a

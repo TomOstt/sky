@@ -1,0 +1,4 @@
+# α² = L gives α = L^(1/2); half-powers compose back to L.
+unify ?a^2 with L
+show ?a
+unify L^(1/2)*L^(1/2) with [m]

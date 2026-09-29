@@ -1,0 +1,3 @@
+let s = Scalar
+let A = Matrix[2,2]
+show s @ A

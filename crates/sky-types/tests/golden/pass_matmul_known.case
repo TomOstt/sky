@@ -1,0 +1,4 @@
+# Spec v0.1 L17: Matrix[3,4] @ Matrix[4,8] gives Matrix[3,8].
+let A = Matrix[3,4]
+let B = Matrix[4,8]
+show A @ B

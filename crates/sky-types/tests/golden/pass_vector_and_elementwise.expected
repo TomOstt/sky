@@ -1,0 +1,4 @@
+A @ x : Vector[M]
+y @ A : Vector[5]
+A + A : Matrix[2,5]
+x @ x : Scalar

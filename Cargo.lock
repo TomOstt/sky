@@ -17,6 +17,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "sky-diag"
+version = "0.0.1"
+
+[[package]]
 name = "sky-interp"
 version = "0.0.1"
 dependencies = [

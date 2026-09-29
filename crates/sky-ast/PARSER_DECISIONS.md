@@ -66,6 +66,14 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 - **`and`/`or` where an operand should be** (`x = and b`) get "expected an expression, found keyword `and`" (without the "statements and blocks" note other keywords get).
 - **Depth:** a `not` counts one level, like `-`. An `and`/`or` run counts one level in total, however many operands it has.
 
+**Bool literals** (`sky-ast/bool-ops`; the Bool typing rules are in `spec/v0.1.md`, "Booleans and conditions"):
+- `true` and `false` are keywords (`Kw::True`, `Kw::False`, lowercase, to match the team's existing golden `true or (3 m + 2 s)`).
+- **AST:** `Literal::Bool { value: bool, span: Span }`, a new variant of the existing `Literal` enum, not a new `ExprKind`. All literal leaves stay in one place, `Literal::span()` covers it, and the checker types literals in one `match`. Unlike numbers and strings it carries its value, because there's nothing to decode. S-expressions print `true`/`false`.
+- **Downstream:** adding a variant breaks exhaustive `match`es on `Literal`. `sky-types/check-walk` has one (`check.rs`, `Literal::Int(_) | Literal::Float(_)` / `Literal::Str(_)`), which needs a `Literal::Bool { .. }` arm when it merges main.
+- A unit can't follow a Bool: the unit-literal rule only starts after `Int`/`Float`, so `true m` is "unexpected name `m` after an expression; a unit may only follow a numeric literal".
+- They stay attribute names after `.` (`x.true`). `true = 1` is an invalid assignment target.
+- `True`/`False` are ordinary identifiers, and the parser does nothing special with them. The checker should give an undefined `True`/`False` the help "Sky writes booleans as `true`/`false`" (Dinesh's side).
+
 **AST shape:**
 - `Expr` is a struct holding `kind: ExprKind` and `span`; likewise `Stmt`/`StmtKind`.
 - `Literal` and `UnitExpr` are enums that carry spans in each variant.

@@ -511,7 +511,8 @@ impl<'t, 's> Parser<'t, 's> {
         Some(unary(op, tok.span, operand))
     }
 
-    /// A literal, unit literal, or name. Never recurses into `expr_bp`.
+    /// A literal (including `true`/`false`), unit literal, or name. Never
+    /// recurses into `expr_bp`.
     #[inline(never)]
     fn parse_atom(&mut self) -> Option<Expr> {
         let tok = self.current();
@@ -535,6 +536,15 @@ impl<'t, 's> Parser<'t, 's> {
             TokenKind::Str => {
                 self.bump();
                 Some(literal(Literal::Str(tok.span)))
+            }
+            // No unit check here: a unit may only follow a number, so
+            // `true m` is "unexpected name after an expression".
+            TokenKind::Keyword(kw @ (Kw::True | Kw::False)) => {
+                self.bump();
+                Some(literal(Literal::Bool {
+                    value: kw == Kw::True,
+                    span: tok.span,
+                }))
             }
             TokenKind::Ident => {
                 self.bump();

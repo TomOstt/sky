@@ -655,6 +655,25 @@ fn c_style_logical_operators_suggest_keywords() {
 }
 
 #[test]
+fn bool_literals_are_lowercase_keywords() {
+    assert_eq!(
+        line("x = true or false\n"),
+        [
+            Ident,
+            Assign,
+            Keyword(Kw::True),
+            Keyword(Kw::Or),
+            Keyword(Kw::False),
+        ]
+    );
+    // Python's spellings are ordinary identifiers, as are longer words.
+    assert_eq!(
+        line("x = True + False + truth + falsey\n"),
+        [Ident, Assign, Ident, Plus, Ident, Plus, Ident, Plus, Ident]
+    );
+}
+
+#[test]
 fn logical_keywords_are_whole_words_only() {
     assert_eq!(
         line("x = a and not b or c\n"),
@@ -695,7 +714,7 @@ fn unicode_lookalike_operators_get_help() {
 
 #[test]
 fn keywords() {
-    let src = "def return if else for in import equation solve field and or not\n";
+    let src = "def return if else for in import equation solve field and or not true false\n";
     let expected: Vec<_> = [
         Kw::Def,
         Kw::Return,
@@ -710,6 +729,8 @@ fn keywords() {
         Kw::And,
         Kw::Or,
         Kw::Not,
+        Kw::True,
+        Kw::False,
     ]
     .into_iter()
     .map(Keyword)

@@ -1,0 +1,5 @@
+tests/ui/check/err_block_depth_257.sky:257:257: error: blocks are nested too deeply (the limit is 256 levels)
+    |
+257 | 																																																																																																																																																																																																																																																																if true:
+    | 																																																																																																																																																																																																																																																																^^
+    = help: split the inner blocks into a function

@@ -1,0 +1,20 @@
+# if/elif/else, while, break, continue, and a conditional expression.
+speed = 3 m/s
+limit = 10 m/s
+steps = 0
+while speed < limit:
+    speed = speed + 2 m/s
+    steps = steps + 1
+    if steps == 3:
+        continue
+    if steps > 100:
+        break
+
+if speed > limit:
+    label = 1
+elif speed == limit:
+    label = 2
+else:
+    label = 3
+
+capped = limit if speed > limit else speed

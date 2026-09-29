@@ -1,0 +1,32 @@
+tests/ui/check/err_control_flow.sky:4:16: error: cannot add length and time
+  |
+4 |     drop = 1 m + 2 s
+  |                ^ mismatched dimensions
+  |            --- length
+  |                  --- time
+  = note: both operands of `+` must have the same dimension
+  = help: convert one side, or fix the unit
+
+tests/ui/check/err_control_flow.sky:8:4: error: `if` needs a Bool condition, found Scalar [L·T⁻¹]
+  |
+8 | if speed:
+  |    ^^^^^ not a Bool
+  = note: v0.1 has no truthiness
+  = help: compare it instead, e.g. `speed != 0 m/s`
+
+tests/ui/check/err_control_flow.sky:10:5: error: `gap` may be undefined here
+   |
+10 | w = gap
+   |     ^^^ not assigned on every path
+ 9 |     gap = 1 m
+   |     --- `gap` is assigned here
+   = help: assign it before the `if`
+
+tests/ui/check/err_control_flow.sky:11:13: error: cannot add length and time
+   |
+11 | mixed = 1 m + 2 s
+   |             ^ mismatched dimensions
+   |         --- length
+   |               --- time
+   = note: both operands of `+` must have the same dimension
+   = help: convert one side, or fix the unit

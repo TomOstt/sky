@@ -1,0 +1,27 @@
+crates/sky-types/tests/ui/err_condition_not_bool.sky:5:4: error: `if` needs a Bool condition, found Scalar [L]
+  |
+5 | if x:
+  |    ^ not a Bool
+  = note: v0.1 has no truthiness
+  = help: compare it instead, e.g. `x != 0 m`
+
+crates/sky-types/tests/ui/err_condition_not_bool.sky:7:6: error: `elif` needs a Bool condition, found Scalar [1]
+  |
+7 | elif 3:
+  |      ^ not a Bool
+  = note: v0.1 has no truthiness
+  = help: compare it instead, e.g. `3 != 0`
+
+crates/sky-types/tests/ui/err_condition_not_bool.sky:9:7: error: `while` needs a Bool condition, found Vector[3] [L·T⁻¹]
+  |
+9 | while v:
+  |       ^ not a Bool
+  = note: v0.1 has no truthiness
+  = help: a condition must be a single `Bool` (shape `()`)
+
+crates/sky-types/tests/ui/err_condition_not_bool.sky:11:10: error: `if` needs a Bool condition, found Scalar [L]
+   |
+11 | y = 1 if x else 2
+   |          ^ not a Bool
+   = note: v0.1 has no truthiness
+   = help: compare it instead, e.g. `x != 0 m`

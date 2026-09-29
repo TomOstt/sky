@@ -1,0 +1,7 @@
+crates/sky-types/tests/ui/err_loop_changes_type.sky:6:5: error: `size` is `L²` here but a length on another path through the loop
+  |
+6 |     size = size * 2 m
+  |     ^^^^ this binding has a different type
+3 | size = 1 m
+  | ---- `size` is a length here
+  = help: give both bindings the same type, or use different names

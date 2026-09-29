@@ -1,0 +1,17 @@
+crates/sky-types/tests/ui/err_break_continue.sky:2:1: error: `break` outside a loop
+  |
+2 | break
+  | ^^^^^ not inside a `while`
+  = help: `break` only works inside a `while` loop of the same function
+
+crates/sky-types/tests/ui/err_break_continue.sky:3:1: error: `continue` outside a loop
+  |
+3 | continue
+  | ^^^^^^^^ not inside a `while`
+  = help: `continue` only works inside a `while` loop of the same function
+
+crates/sky-types/tests/ui/err_break_continue.sky:6:9: error: `break` outside a loop
+  |
+6 |         break
+  |         ^^^^^ not inside a `while`
+  = help: `break` only works inside a `while` loop of the same function

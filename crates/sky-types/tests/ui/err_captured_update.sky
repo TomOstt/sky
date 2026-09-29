@@ -1,0 +1,9 @@
+# A function can read outer names but `x += 1` would need to change one.
+count = 0
+scale = 2 m
+def bump():
+    count += 1
+    scale *= 2
+    local = 1
+    local += 1
+    return local

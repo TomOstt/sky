@@ -1,0 +1,8 @@
+# Both arms of `a if c else b` have the same type; that is the result type.
+# env: A: Matrix[3,3] Symmetric
+# env: B: Matrix[3,3] PositiveDefinite
+x = 3 m
+near = 1 m if x < 10 m else 2 m
+pick = A if x > 0 m else B
+flag = true if x > 1 m else false
+nested = 1 s if x > 5 m else 2 s if x > 2 m else 3 s

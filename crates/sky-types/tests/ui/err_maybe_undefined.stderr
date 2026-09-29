@@ -1,0 +1,23 @@
+crates/sky-types/tests/ui/err_maybe_undefined.sky:6:5: error: `y` may be undefined here
+  |
+6 | w = y + 1 s
+  |     ^ not assigned on every path
+4 |     y = 1 s
+  |     - `y` is assigned here
+  = help: assign it before the `if`
+
+crates/sky-types/tests/ui/err_maybe_undefined.sky:15:5: error: `a` may be undefined here
+   |
+15 | b = a
+   |     ^ not assigned on every path
+10 |     a = 1
+   |     - `a` is assigned here
+   = help: assign it before the `if`
+
+crates/sky-types/tests/ui/err_maybe_undefined.sky:20:5: error: `inside` may be undefined here
+   |
+20 | c = inside
+   |     ^^^^^^ not assigned on every path
+19 |     inside = 1
+   |     ------ `inside` is assigned here
+   = help: assign it before the loop

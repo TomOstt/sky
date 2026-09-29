@@ -1,0 +1,7 @@
+# A loop that rebinds a name with another dimension conflicts with the
+# state on entry.
+size = 1 m
+n = 0
+while n < 3:
+    size = size * 2 m
+    n = n + 1

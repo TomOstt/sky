@@ -1,4 +1,0 @@
-tests/ui/lexer/ok_crlf.sky:4:5: error: cannot find `f` in this scope
-  |
-4 | y = f(1)
-  |     ^ not defined

@@ -5,9 +5,14 @@
 //! comparison operators, `@`, postfix `⁻¹` (and `inv(x)`), `^`, the Bool
 //! literals `true`/`false`, and `and`/`or`/`not` (strict Bool operands, no
 //! truthiness, per the spec's "Booleans and conditions"). Anything
-//! else (strings, other calls, indexing, attributes, `∂`, `∇`) is typed as
+//! else (strings, indexing, attributes, `∂`, `∇`, calls to names that are not
+//! user functions) is typed as
 //! [`Ty::Unknown`] without a diagnostic, and an operator with an unknown
 //! operand is unknown too, so one error never cascades.
+//!
+//! Blocks, control flow, and functions (`if`/`while`/`def`, scoping, calls to
+//! user functions) live in [`crate::flow`]; the rules are in the spec's
+//! "Blocks and control flow".
 //!
 //! # Types
 //!
@@ -48,12 +53,13 @@ use std::sync::Arc;
 
 use sky_ast::ast::span_text;
 use sky_ast::{
-    AssignTarget, BinaryOp, CompoundOp, Expr, ExprKind, Ident, IndexItem, Literal, Module,
+    AssignTarget, BinaryOp, CompoundOp, Expr, ExprKind, Ident, IndexItem, Literal, Module, Stmt,
     StmtKind, UnaryOp, UnitExpr,
 };
 use sky_diag::{Diagnostic, Severity, Span};
 use sky_units::{lookup, Dimension, Rational};
 
+use crate::flow::{FnCtx, FuncSig, LoopFrame};
 use crate::quote::quote;
 use crate::rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 use crate::rules::{elementwise, inverse, matmul, TensorType};
@@ -92,6 +98,8 @@ pub enum Ty {
     Value(ValueTy),
     /// The result of a comparison.
     Bool,
+    /// A function defined with `def`: its signature, for checking calls.
+    Func(Arc<FuncSig>),
     /// Not typed in this slice, or the result of an error already reported.
     Unknown,
 }
@@ -120,6 +128,7 @@ impl fmt::Display for Ty {
         match self {
             Ty::Value(v) => v.fmt(f),
             Ty::Bool => f.write_str("Bool"),
+            Ty::Func(sig) => write!(f, "function `{}`", sig.name()),
             Ty::Unknown => f.write_str("?"),
         }
     }
@@ -133,8 +142,27 @@ impl fmt::Display for Ty {
 #[derive(Clone, Debug, Default)]
 pub struct Env {
     names: BTreeMap<String, Ty>,
-    shape_vars: BTreeMap<String, ShapeVar>,
-    shapes: ShapeUnifier,
+    pub(crate) shape_vars: BTreeMap<String, ShapeVar>,
+    pub(crate) shapes: ShapeUnifier,
+    /// Where each name was last bound in the source, for labels. Names
+    /// seeded through [`Env::bind`] have none.
+    pub(crate) origins: BTreeMap<String, Span>,
+    /// Names bound on some paths through the code so far but not all
+    /// (after an `if` without `else`, say), mapped to one of the bindings
+    /// and whether the paths were those of a loop. Such a name is not in
+    /// `names`: using it is an error.
+    pub(crate) maybe: BTreeMap<String, (Span, bool)>,
+}
+
+/// The name-binding part of an [`Env`] at one point of the walk: what an
+/// `if` branch or loop body starts from and ends with, and what merges
+/// combine. The shape unifier and shape-variable names are deliberately not
+/// part of it (see [`crate::flow`]).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Scope {
+    pub(crate) names: BTreeMap<String, Ty>,
+    pub(crate) origins: BTreeMap<String, Span>,
+    pub(crate) maybe: BTreeMap<String, (Span, bool)>,
 }
 
 impl Env {
@@ -157,7 +185,31 @@ impl Env {
 
     /// Binds `name` to `ty`, replacing any earlier binding.
     pub fn bind(&mut self, name: impl Into<String>, ty: Ty) {
-        self.names.insert(name.into(), ty);
+        let name = name.into();
+        self.origins.remove(&name);
+        self.maybe.remove(&name);
+        self.names.insert(name, ty);
+    }
+
+    /// The current bindings, to restore later or merge with others.
+    pub(crate) fn snapshot(&self) -> Scope {
+        Scope {
+            names: self.names.clone(),
+            origins: self.origins.clone(),
+            maybe: self.maybe.clone(),
+        }
+    }
+
+    /// Replaces the bindings with `scope`.
+    pub(crate) fn restore(&mut self, scope: Scope) {
+        self.names = scope.names;
+        self.origins = scope.origins;
+        self.maybe = scope.maybe;
+    }
+
+    /// Whether `name` is bound (not merely maybe-bound).
+    pub(crate) fn is_bound(&self, name: &str) -> bool {
+        self.names.contains_key(name)
     }
 
     /// Binds `name` to an array with element dimension `dim`. Fails if
@@ -271,9 +323,12 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         diagnostics: Vec::new(),
         rewrites: Vec::new(),
         rewrites_omitted: 0,
+        fns: Vec::new(),
+        loops: Vec::new(),
+        diverged: false,
     };
     for stmt in &module.stmts {
-        c.stmt(&stmt.kind);
+        c.stmt(stmt);
     }
     Checked {
         diagnostics: c.diagnostics,
@@ -283,20 +338,28 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
     }
 }
 
-struct Checker<'s> {
-    src: &'s str,
+pub(crate) struct Checker<'s> {
+    pub(crate) src: &'s str,
     /// Size-variable names already reported as shadowing a value in the
     /// annotation being read.
     shadow_reported: Vec<String>,
-    env: Env,
+    pub(crate) env: Env,
     diagnostics: Vec<Diagnostic>,
     rewrites: Vec<RewriteSite>,
     rewrites_omitted: usize,
+    /// The `def`s being checked, innermost last.
+    pub(crate) fns: Vec<FnCtx>,
+    /// The `while` loops around the current statement within the current
+    /// function (or the module), innermost last.
+    pub(crate) loops: Vec<LoopFrame>,
+    /// Whether the statement just checked cannot fall through: it ended in
+    /// `return`, `break`, or `continue`, or every branch of an `if` did.
+    pub(crate) diverged: bool,
 }
 
 /// Human wording for a dimension in error text: its name if it has one
 /// (`length`), otherwise its formula (`L·M`).
-fn describe(d: &Dimension) -> String {
+pub(crate) fn describe(d: &Dimension) -> String {
     match d.name() {
         Some(n) => n.to_string(),
         None => d.to_string(),
@@ -312,7 +375,7 @@ fn rank_noun(rank: usize) -> String {
     }
 }
 
-fn strip_parens(mut e: &Expr) -> &Expr {
+pub(crate) fn strip_parens(mut e: &Expr) -> &Expr {
     while let ExprKind::Paren(inner) = &e.kind {
         e = inner;
     }
@@ -320,26 +383,26 @@ fn strip_parens(mut e: &Expr) -> &Expr {
 }
 
 impl<'s> Checker<'s> {
-    fn text(&self, span: Span) -> &'s str {
+    pub(crate) fn text(&self, span: Span) -> &'s str {
         span_text(self.src, span).unwrap_or("…")
     }
 
-    fn ident(&self, id: &Ident) -> &'s str {
+    pub(crate) fn ident(&self, id: &Ident) -> &'s str {
         self.text(id.span)
     }
 
     /// Source text for a diagnostic: [`quote`]d (capped and escaped). Use
     /// this, never [`Self::text`], for any text shown to the user.
-    fn quoted(&self, span: Span) -> Cow<'s, str> {
+    pub(crate) fn quoted(&self, span: Span) -> Cow<'s, str> {
         quote(self.text(span))
     }
 
-    fn error(&mut self, d: Diagnostic) {
+    pub(crate) fn error(&mut self, d: Diagnostic) {
         self.diagnostics.push(d);
     }
 
     /// `this is Matrix[3,3] [1]` for secondary labels.
-    fn this_is(&self, v: &ValueTy) -> String {
+    pub(crate) fn this_is(&self, v: &ValueTy) -> String {
         format!(
             "this is {}",
             ValueTy {
@@ -390,19 +453,44 @@ impl<'s> Checker<'s> {
     /// Bool. Numbers and tensors are errors (no truthiness), on the
     /// operand's span.
     fn bool_operand(&mut self, kw: &str, e: &Expr, t: Ty) {
-        let Ty::Value(v) = t else {
-            return; // Bool, or unknown (already reported).
+        self.bool_needed(kw, "operand", e, t);
+    }
+
+    /// Checks the condition of `if`, `elif`, `while`, or a conditional
+    /// expression (`kw`, without backticks): a Bool of shape `()`, the same
+    /// rule and help as the operands of `and`/`or`/`not`.
+    pub(crate) fn condition(&mut self, kw: &str, e: &Expr, t: Ty) {
+        self.bool_needed(kw, "condition", e, t);
+    }
+
+    /// The shared check behind [`Self::bool_operand`] and
+    /// [`Self::condition`]; `noun` is "operand" or "condition".
+    fn bool_needed(&mut self, kw: &str, noun: &str, e: &Expr, t: Ty) {
+        let v = match t {
+            Ty::Value(v) => v,
+            Ty::Func(sig) => {
+                self.error(
+                    Diagnostic::error(
+                        format!(
+                            "`{kw}` needs a Bool {noun}, found function `{}`",
+                            quote(sig.name())
+                        ),
+                        e.span,
+                    )
+                    .with_label("not a Bool")
+                    .with_help("call it to get a value, then compare that value"),
+                );
+                return;
+            }
+            _ => return, // Bool, or unknown (already reported).
         };
         let found = ValueTy {
             dim: v.dim,
             ty: self.env.shapes.apply_type(&v.ty),
         };
-        let mut d = Diagnostic::error(
-            format!("`{kw}` needs a Bool operand, found {found}"),
-            e.span,
-        )
-        .with_label("not a Bool")
-        .with_note("v0.1 has no truthiness");
+        let mut d = Diagnostic::error(format!("`{kw}` needs a Bool {noun}, found {found}"), e.span)
+            .with_label("not a Bool")
+            .with_note("v0.1 has no truthiness");
         if v.is_scalar() {
             let text = self.operand_text(e);
             d = match zero_of(&v.dim) {
@@ -415,8 +503,18 @@ impl<'s> Checker<'s> {
         self.error(d);
     }
 
-    fn stmt(&mut self, kind: &StmtKind) {
-        match kind {
+    /// Binds `name` at `span` (its origin, for labels), as a local of the
+    /// function being checked if there is one.
+    pub(crate) fn bind_at(&mut self, name: &str, ty: Ty, span: Span) {
+        self.env.bind(name, ty);
+        self.env.origins.insert(name.to_string(), span);
+        if let Some(ctx) = self.fns.last_mut() {
+            ctx.locals.insert(name.to_string());
+        }
+    }
+
+    pub(crate) fn stmt(&mut self, stmt: &Stmt) {
+        match &stmt.kind {
             StmtKind::Expr(e) => {
                 self.expr(e);
             }
@@ -425,7 +523,7 @@ impl<'s> Checker<'s> {
                 match target {
                     AssignTarget::Name(id) => {
                         let name = self.ident(id);
-                        self.env.bind(name, t);
+                        self.bind_at(name, t, id.span);
                     }
                     _ => self.reject_write(target, "="),
                 }
@@ -446,11 +544,24 @@ impl<'s> Checker<'s> {
                 let declared = self.annotation(ty);
                 let found = value.as_ref().map(|v| (v, self.expr(v)));
                 let bound = self.binding_type(ty.span, declared, found);
-                let name = self.ident(name);
-                self.env.bind(name, bound);
+                let name_text = self.ident(name);
+                self.bind_at(name_text, bound, name.span);
             }
-            // Placeholder until the checker walks blocks (next commit).
-            _ => {}
+            StmtKind::If {
+                branches,
+                else_block,
+            } => self.if_stmt(stmt.span, branches, else_block.as_ref()),
+            StmtKind::While { cond, body } => self.while_stmt(stmt.span, cond, body),
+            StmtKind::Def {
+                name,
+                params,
+                ret,
+                body,
+            } => self.def_stmt(name, params, ret.as_ref(), body),
+            StmtKind::Return(value) => self.return_stmt(stmt.span, value.as_ref()),
+            StmtKind::Pass => {}
+            StmtKind::Break => self.break_stmt(stmt.span),
+            StmtKind::Continue => self.continue_stmt(stmt.span),
         }
     }
 
@@ -477,6 +588,17 @@ impl<'s> Checker<'s> {
                         .with_label("this is Bool")
                         .with_secondary(ann_span, "expected because of this annotation")
                         .with_note("v0.1 has no truthiness: a Bool is never a number"),
+                );
+                return Ty::value(Dimension::DIMENSIONLESS, declared);
+            }
+            Ty::Func(sig) => {
+                self.error(
+                    Diagnostic::error(
+                        format!("expected a number, found function `{}`", quote(sig.name())),
+                        value.span,
+                    )
+                    .with_label("this is a function")
+                    .with_secondary(ann_span, "expected because of this annotation"),
                 );
                 return Ty::value(Dimension::DIMENSIONLESS, declared);
             }
@@ -548,6 +670,10 @@ impl<'s> Checker<'s> {
     /// requires the result to keep `x`'s type (dimension, shape, and tags).
     /// `x` keeps its type either way.
     fn compound_assign(&mut self, id: &Ident, op: CompoundOp, op_span: Span, value: &Expr) {
+        if self.reject_captured_update(id, op, op_span) {
+            self.expr(value);
+            return;
+        }
         let name_expr = Expr {
             kind: ExprKind::Name(*id),
             span: id.span,
@@ -632,7 +758,7 @@ impl<'s> Checker<'s> {
     /// Reads a shape annotation: `Vector[n]`, `Matrix[m, n]`, or
     /// `Tensor[d1, d2, ...]`, where each dimension is an integer literal or
     /// a name (a shape variable).
-    fn annotation(&mut self, ty: &Expr) -> Option<TensorType> {
+    pub(crate) fn annotation(&mut self, ty: &Expr) -> Option<TensorType> {
         self.shadow_reported.clear();
         const NOTE: &str =
             "v0.1 annotations are `Vector[n]`, `Matrix[m, n]`, and `Tensor[d1, d2, ...]`";
@@ -762,7 +888,7 @@ impl<'s> Checker<'s> {
         }
     }
 
-    fn expr(&mut self, e: &Expr) -> Ty {
+    pub(crate) fn expr(&mut self, e: &Expr) -> Ty {
         match &e.kind {
             ExprKind::Literal(lit) => match lit {
                 Literal::Int(_) | Literal::Float(_) => Ty::scalar(Dimension::DIMENSIONLESS),
@@ -785,18 +911,7 @@ impl<'s> Checker<'s> {
                 let name = self.ident(id);
                 match self.env.get(name) {
                     Some(t) => t,
-                    None => {
-                        let mut d = Diagnostic::error(
-                            format!("cannot find `{}` in this scope", quote(name)),
-                            id.span,
-                        )
-                        .with_label("not defined");
-                        if matches!(name, "True" | "False") {
-                            d = d.with_help("Sky writes booleans as `true`/`false`");
-                        }
-                        self.error(d);
-                        Ty::Unknown
-                    }
+                    None => self.undefined_name(name, id.span),
                 }
             }
             ExprKind::Paren(inner) => self.expr(inner),
@@ -833,11 +948,8 @@ impl<'s> Checker<'s> {
                     let t = self.expr(arg);
                     return self.invert(t, callee.span, arg.span);
                 }
-                self.expr(callee);
-                for a in args {
-                    self.expr(a);
-                }
-                Ty::Unknown
+                let callee_ty = self.expr(callee);
+                self.call(callee_ty, callee, args, e.span)
             }
             ExprKind::Index { base, items } => {
                 self.expr(base);
@@ -848,7 +960,7 @@ impl<'s> Checker<'s> {
                 self.expr(base);
                 Ty::Unknown
             }
-            ExprKind::IfElse { .. } => Ty::Unknown,
+            ExprKind::IfElse { then, cond, else_ } => self.if_else(then, cond, else_),
             ExprKind::Binary {
                 op,
                 op_span,

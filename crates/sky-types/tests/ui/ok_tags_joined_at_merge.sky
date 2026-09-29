@@ -1,0 +1,8 @@
+# Shapes must agree after a merge; tags are joined (only what both branches
+# guarantee survives).
+# env: S: Matrix[3,3] Symmetric
+# env: P: Matrix[3,3] PositiveDefinite
+if true:
+    M = S
+else:
+    M = P

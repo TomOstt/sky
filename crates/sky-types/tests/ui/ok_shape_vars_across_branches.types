@@ -1,0 +1,4 @@
+A: Matrix[N,N] [1]
+b: Vector[N] [1]
+c: Vector[3] [1]
+r: Vector[N] [1]

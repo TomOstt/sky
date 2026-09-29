@@ -1,0 +1,11 @@
+# The same name bound with different types in different branches: the error
+# is at the later binding, and the earlier one is labelled.
+x = 3 m
+if x > 1 m:
+    t = 1 s
+else:
+    t = 2 m
+if x > 2 m:
+    ok = true
+else:
+    ok = 1

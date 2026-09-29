@@ -1,0 +1,6 @@
+clamp: function `clamp`
+flag: Bool
+t: Scalar [T]
+x: Scalar [L]
+y: Scalar [T]
+z: Scalar [T]

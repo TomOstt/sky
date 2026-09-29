@@ -1,0 +1,7 @@
+# `break` and `continue` belong to a `while` of the same function.
+break
+continue
+while true:
+    def f():
+        break
+    break

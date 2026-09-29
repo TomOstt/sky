@@ -615,6 +615,11 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             let b = expect_bool("not", act.get(a, s)?, s)?;
             act.define(op, vec![Value::Bool(!b)])
         }
+        OpKind::ExpectBool { context } => {
+            let [a] = fixed(op)?;
+            let b = expect_bool(context.keyword(), act.get(a, s)?, s)?;
+            act.define(op, vec![Value::Bool(b)])
+        }
 
         // Handled by `Machine::op` and `Machine::block`, which never send
         // them here; the arm keeps this `match` exhaustive.

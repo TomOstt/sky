@@ -58,7 +58,7 @@ use crate::builder::FunctionBuilder;
 use crate::ir::{
     Edition, Effect, EffectSet, Module, NumberType, OpId, RegionId, Repr, Type, ValueId,
 };
-use crate::op::{CmpOp, MathFn, OpKind, SliceAxis, SolveMethod};
+use crate::op::{BoolContext, CmpOp, MathFn, OpKind, SliceAxis, SolveMethod};
 use crate::verify::MAX_REGION_DEPTH;
 
 /// A syntax error and where it is (byte offsets into the text).
@@ -765,6 +765,22 @@ impl<'a> Parser<'a> {
             "cmp.gt" => OpKind::Cmp(CmpOp::Gt),
             "cmp.ge" => OpKind::Cmp(CmpOp::Ge),
             "not" => OpKind::Not,
+            "expect.bool" => {
+                self.expect('[')?;
+                self.skip_inline();
+                let at = self.pos;
+                let word = self.word();
+                let Some(context) = BoolContext::ALL.into_iter().find(|c| c.keyword() == word)
+                else {
+                    return self.err_at(
+                        at,
+                        self.pos.max(at + 1),
+                        "expected `and`, `or`, `not`, `if` or `while`",
+                    );
+                };
+                self.expect(']')?;
+                OpKind::ExpectBool { context }
+            }
             "if" => OpKind::If,
             "while" => OpKind::While,
             "yield" => OpKind::Yield,

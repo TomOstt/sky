@@ -8,7 +8,7 @@
 use sky_ast::{BinaryOp, BoolOp, Expr, ExprKind, Ident, Literal, UnaryOp};
 use sky_diag::Span;
 use sky_interp::{number_literal, unit_literal_si};
-use sky_ir::{BlockId, CmpOp, OpId, OpKind, Type, ValueId};
+use sky_ir::{BlockId, BoolContext, CmpOp, OpId, OpKind, Type, ValueId};
 use sky_syntax::lexer::unescape_str;
 use sky_types::{const_exponent, FuncSig, Ty};
 use sky_units::lookup_constant;
@@ -141,6 +141,7 @@ impl Lower<'_> {
             UnaryOp::Pos => self.expr(operand),
             UnaryOp::Not => {
                 let a = self.expr(operand)?;
+                let a = self.bool_operand(BoolContext::Not, operand, a);
                 Ok(self.op1(OpKind::Not, vec![a], Type::Bool, e.span))
             }
             UnaryOp::Partial | UnaryOp::Nabla => Err(LowerError::new(
@@ -200,7 +201,13 @@ impl Lower<'_> {
         let Some((first, rest)) = operands.split_first() else {
             return self.err("internal error: an empty `and`/`or`", span);
         };
+        let context = if decisive {
+            BoolContext::Or
+        } else {
+            BoolContext::And
+        };
         let mut t = self.expr(first)?;
+        t = self.bool_operand(context, first, t);
         for operand in rest {
             let outer = self.st.b.at();
             let (ifop, _) = self.st.b.op(OpKind::If, vec![t], Vec::new(), span);
@@ -221,11 +228,36 @@ impl Lower<'_> {
             // Evaluating an operand may open and close regions of its own;
             // the yield belongs to this arm.
             self.st.b.set_at(go);
+            let v = self.bool_operand(context, operand, v);
             self.st.b.op(OpKind::Yield, vec![v], Vec::new(), span);
             self.st.b.set_at(outer);
             t = self.st.b.add_result(ifop, Type::Bool);
         }
         Ok(t)
+    }
+
+    /// `v`, the value of `operand`, as a Bool where the source needs one (an
+    /// operand of `and`, `or`, `not`, or a condition): `v` itself when the
+    /// checker typed it, since a typed Bool needs no check. Where the checker
+    /// could not type it (`Unknown`, from an unannotated parameter) an
+    /// `expect.bool` at the operand's span, so the SIR interpreter fails as
+    /// `sky run` does: same wording, same place, and also for the operand
+    /// that is only yielded (the last one of an `and`/`or`).
+    pub(crate) fn bool_operand(
+        &mut self,
+        context: BoolContext,
+        operand: &Expr,
+        v: ValueId,
+    ) -> ValueId {
+        if !matches!(self.st.b.ty(v), Type::Unknown) {
+            return v;
+        }
+        self.op1(
+            OpKind::ExpectBool { context },
+            vec![v],
+            Type::Bool,
+            operand.span,
+        )
     }
 
     /// A new region with one empty block, for an `if` arm; returns the block.
@@ -239,6 +271,7 @@ impl Lower<'_> {
     #[inline(never)]
     fn if_else(&mut self, e: &Expr, then: &Expr, cond: &Expr, else_: &Expr) -> R<ValueId> {
         let c = self.expr(cond)?;
+        let c = self.bool_operand(BoolContext::If, cond, c);
         let outer = self.st.b.at();
         let (op, _) = self.st.b.op(OpKind::If, vec![c], Vec::new(), e.span);
         let mut tys = Vec::new();

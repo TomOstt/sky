@@ -614,6 +614,7 @@ impl<'a> FnVerifier<'a> {
             | OpKind::Show { .. }
             | OpKind::Identity
             | OpKind::Len
+            | OpKind::ExpectBool { .. }
             | OpKind::Not => (Some(1), Some(1)),
             OpKind::ArrayLiteral { .. } | OpKind::Index | OpKind::Slice { .. } | OpKind::Zeros => {
                 (None, Some(1))
@@ -693,6 +694,21 @@ impl<'a> FnVerifier<'a> {
                 let t = self.f.ty(op.operands[0]);
                 if !matches!(t, Type::Bool | Type::Unknown) {
                     self.err_op(o, format!("`not` needs a Bool operand, found {t}"));
+                }
+                self.expect_bool_result(o, op);
+            }
+            OpKind::ExpectBool { context } => {
+                // Only an operand the checker could not type needs the
+                // check; a typed one that is not a Bool can never pass it.
+                let t = self.f.ty(op.operands[0]);
+                if !matches!(t, Type::Bool | Type::Unknown) {
+                    self.err_op(
+                        o,
+                        format!(
+                            "`expect.bool` needs a Bool or unknown operand, found {t} (`{}`)",
+                            context.keyword()
+                        ),
+                    );
                 }
                 self.expect_bool_result(o, op);
             }

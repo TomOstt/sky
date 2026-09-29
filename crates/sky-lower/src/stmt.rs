@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 use sky_ast::{AssignTarget, Block, CompoundOp, Expr, ExprKind, Ident, Stmt, StmtKind};
 use sky_diag::Span;
-use sky_ir::{BlockId, OpId, OpKind, Type, ValueId};
+use sky_ir::{BlockId, BoolContext, OpId, OpKind, Type, ValueId};
 use sky_types::Ty;
 
 use crate::analysis::{
@@ -423,6 +423,7 @@ impl Lower<'_> {
             return self.err("internal error: an `if` without a condition", span);
         };
         let c = self.expr(cond)?;
+        let c = self.bool_operand(BoolContext::If, cond, c);
         let (op, _) = self.st.b.op(OpKind::If, vec![c], Vec::new(), span);
         let then_b = self.new_arm(op);
         let else_b = self.new_arm(op);
@@ -501,7 +502,8 @@ impl Lower<'_> {
             let base = self.st.scope.clone();
             let outer = self.st.b.at();
             let c = if k == 0 {
-                self.expr(cond)?
+                let c = self.expr(cond)?;
+                self.bool_operand(BoolContext::If, cond, c)
             } else {
                 let Some(&done) = base.get(&flag) else {
                     return self.err("internal error: the `elif` flag is not in scope", span);
@@ -591,6 +593,7 @@ impl Lower<'_> {
         self.st.b.set_at(open);
         let c = self.expr(cond)?;
         self.st.b.set_at(open);
+        let c = self.bool_operand(BoolContext::If, cond, c);
         self.st.b.op(OpKind::Yield, vec![c], Vec::new(), cond.span);
         self.st.b.set_at(outer);
         Ok(self.st.b.add_result(op, Type::Bool))

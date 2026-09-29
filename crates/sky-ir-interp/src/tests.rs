@@ -215,6 +215,26 @@ fn comparisons_and_not() {
     assert_eq!(msg(&e), "`not` needs a Bool operand, found a number");
 }
 
+#[test]
+fn expect_bool_passes_a_bool_and_fails_with_the_constructs_wording() {
+    use sky_ir::BoolContext;
+    for context in BoolContext::ALL {
+        let kind = OpKind::ExpectBool { context };
+        assert_eq!(
+            apply(kind.clone(), vec![Value::Bool(true)]),
+            Ok(Value::Bool(true))
+        );
+        let e = apply(kind, vec![n(1.0)]).expect_err("no truthiness");
+        assert_eq!(
+            msg(&e),
+            format!(
+                "`{}` needs a Bool operand, found a number",
+                context.keyword()
+            )
+        );
+    }
+}
+
 fn vector(xs: &[f64]) -> Value {
     Value::array(vec![xs.len()], xs.to_vec(), Dimension::DIMENSIONLESS)
 }
@@ -1154,6 +1174,9 @@ mod fuzz {
                     CmpOp::Ge,
                 ][x as usize % 6],
             ),
+            17 if x % 2 == 0 => OpKind::ExpectBool {
+                context: sky_ir::BoolContext::ALL[x as usize / 2 % 5],
+            },
             17 => OpKind::Not,
             18 | 19 => OpKind::If,
             20 | 21 => OpKind::While,

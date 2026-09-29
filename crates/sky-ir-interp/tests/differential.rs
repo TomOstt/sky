@@ -717,3 +717,71 @@ fn a_derivative_that_fails_fails_the_same_way() {
     assert_eq!(o.stdout, "1\n");
     assert_eq!(o.error.as_deref(), Some("division by zero"));
 }
+
+/// The error of the tree-walker and of the SIR interpreter on `src`, with
+/// the span: they must be the same, including where they point.
+fn located_errors(src: &str) -> (Option<(String, Span)>, Option<(String, Span)>) {
+    let (module, solves) = parse_checked(src);
+    let walker = sky_ast::with_deep_stack(|| {
+        let mut out = Vec::new();
+        let mut env = RuntimeEnv::with_prelude();
+        let mut derivatives = SirDerivatives::new(&module, src);
+        run_module_with_derivatives(&module, src, &mut env, &mut out, &solves, &mut derivatives)
+            .err()
+            .map(|e| (e.message.clone(), e.span))
+    });
+    let ir = sky_lower::lower_source(src).unwrap_or_else(|e| panic!("lowering failed: {e}"));
+    let sir = sky_ast::with_deep_stack(|| {
+        sky_ir_interp::run(&ir, &mut Vec::new())
+            .err()
+            .map(|e| (e.message.clone(), e.span))
+    });
+    (walker, sir)
+}
+
+/// An operand the checker cannot type (an unannotated parameter's result)
+/// that is not a Bool: both interpreters stop with the same message on the
+/// same span, whichever construct wanted the Bool, and whichever operand.
+#[test]
+fn a_non_bool_operand_of_unknown_type_fails_alike_in_every_position() {
+    let def = "def f(a):\n    return a\n";
+    for (body, kw) in [
+        ("print(f(1) and true)", "and"),
+        ("print(true and f(1))", "and"),
+        ("print(false or f(1))", "or"),
+        ("print(f(1) or true)", "or"),
+        ("print(true and true and f(1))", "and"),
+        ("print(not f(1))", "not"),
+        ("if f(1):\n    print(1)", "if"),
+        ("if false:\n    print(1)\nelif f(1):\n    print(2)", "if"),
+        (
+            "if false:\n    print(1)\nelif false:\n    print(2)\nelif f(1):\n    print(3)",
+            "if",
+        ),
+        ("print(1 if f(1) else 2)", "if"),
+        ("while f(1):\n    print(1)", "while"),
+        ("k = 0\nwhile k < 3 and f(1):\n    k += 1", "and"),
+    ] {
+        let src = format!("{def}{body}\n");
+        let (walker, sir) = located_errors(&src);
+        let (msg, span) = walker.clone().expect("sky run fails");
+        assert_eq!(
+            msg,
+            format!("`{kw}` needs a Bool operand, found a number"),
+            "{src}"
+        );
+        assert_eq!(sir, walker, "the SIR interpreter differs on:\n{src}");
+        // The span is the operand's.
+        assert!(src[span.start as usize..span.end as usize].starts_with("f(1)"));
+    }
+}
+
+/// A Bool operand that is unknown but really a Bool passes through.
+#[test]
+fn an_unknown_operand_that_is_a_bool_is_checked_and_passed_on() {
+    let o = assert_same(
+        "def f(a):\n    return a\nprint(f(true) and f(false), f(false) or f(true), not f(false))\n\
+         if f(true):\n    print(1)\nk = 0\nwhile f(k < 2):\n    k += 1\nprint(k, 1 if f(false) else 2)\n",
+    );
+    assert_eq!(o.stdout, "false true true\n1\n2 2\n");
+}

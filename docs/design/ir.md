@@ -77,7 +77,7 @@ Planned extension points, which v1 leaves out: an error bound per value (interva
 | Arithmetic | `add`, `sub`, `mul`, `div`, `neg`, `pow` (with a constant rational exponent attribute when known), `inverse` |
 | Linear algebra | `matmul`, `transpose`, `solve` (produced by rewrites, never written by users in v1) |
 | Arrays | `array.literal`, `index`, `slice`, `zeros`, `identity`, `len`; `add`, `sub`, `mul` (scaling), `div`, `neg`, `inverse` and `matmul` also work on arrays |
-| Comparison and logic | `cmp.{eq,ne,lt,le,gt,ge}` (on Bools and strings only `eq`/`ne`), `not`; `and`/`or` short-circuit, so they lower to `if` |
+| Comparison and logic | `cmp.{eq,ne,lt,le,gt,ge}` (on Bools and strings only `eq`/`ne`), `not`; `and`/`or` short-circuit, so they lower to `if`; `expect.bool[and\|or\|not\|if\|while]`, the run-time Bool check of an operand the checker could not type (an unannotated parameter's result), which fails with `sky run`'s wording and on the operand's span |
 | Control | `if` (regions), `while` (regions), `yield`, `call`, `return` |
 | Display | `show "unit"` (`v as km/h`: the operand written in a unit, a `str`, only ever printed) |
 | Environment | `param`, `print` (effectful) |

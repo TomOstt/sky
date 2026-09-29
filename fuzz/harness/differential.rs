@@ -367,6 +367,10 @@ struct Gen<'a> {
     shadow_consts: bool,
     /// No math functions in this program (see GATE_SIR_TEXT_MATH).
     no_math: bool,
+    /// The identity function `def u(a): return a` of this program, if it has
+    /// one: its result has a type the checker cannot know, so a call of it
+    /// can stand where a Bool goes whatever its argument is.
+    unknown: Option<String>,
 }
 
 /// Known bugs the generator steers around, so the fuzzer keeps finding new
@@ -399,14 +403,13 @@ const GATE_CONST_REBIND_IN_BLOCK: bool = false;
 const GATE_SIR_TEXT_MATH: bool = false;
 
 /// `sir_does_not_check_the_right_operand_of_and_or_for_bool` and
-/// `the_left_operand_of_and_is_worded_as_an_if_in_sir`: a value the checker
-/// cannot type (from an unannotated parameter) that is not a Bool, used as an
-/// operand of `and`/`or`. `sky run` stops with "`or` needs a Bool operand,
-/// found a number"; for a right operand the SIR interpreter does not check at
-/// all (`false or f(1)` prints 1), and for a left operand it says "`if`
-/// needs ..." (`and` is lowered to an `if`). The generator only puts
+/// `the_left_operand_of_and_is_worded_as_an_if_in_sir`: fixed (a value the
+/// checker cannot type, from an unannotated parameter, that is not a Bool, as
+/// an operand of `and`/`or`: the SIR interpreter did not check a right
+/// operand at all, and worded a left one as an `if`; lowering now emits
+/// `expect.bool` for it). With the gate on, the generator only puts
 /// Bool-returning functions in such places.
-const GATE_NON_BOOL_OPERAND: bool = true;
+const GATE_NON_BOOL_OPERAND: bool = false;
 
 const MATH_FNS: &[&str] = &[
     "sqrt", "cbrt", "abs", "exp", "log", "log10", "log2", "sin", "cos", "tan", "asin", "acos",
@@ -1363,12 +1366,21 @@ impl Gen<'_> {
             }
         }
         self.weight += f.weight * self.mult;
-        let call = format!("{}({})", f.name, args.join(", "));
-        // A Bool-returning function can be an operand or a condition, though
-        // the checker does not know its type. (Only those: for a number the
-        // two engines word the error differently, see GATE_NON_BOOL_OPERAND.)
-        if (f.ret == Some(Ty::Bool) || !GATE_NON_BOOL_OPERAND) && self.c.chance(50) {
-            match self.c.below(4) {
+        let mut call = format!("{}({})", f.name, args.join(", "));
+        // A call can be an operand or a condition where the checker does not
+        // know its type: a Bool works, and any other result is the run-time
+        // error "`kw` needs a Bool operand", the same in both engines (see
+        // GATE_NON_BOOL_OPERAND). What it returns is only unknown to the
+        // checker through the identity function.
+        let mut unknown = f.ret == Some(Ty::Bool);
+        if let (Some(u), Some(_)) = (&self.unknown, &f.ret) {
+            if self.c.chance(60) {
+                call = format!("{u}({call})");
+                unknown = true;
+            }
+        }
+        if unknown && self.c.chance(50) {
+            match self.c.below(8) {
                 0 => {
                     self.line(&format!("if {call}:"));
                     self.ind += 1;
@@ -1377,6 +1389,24 @@ impl Gen<'_> {
                 }
                 1 => self.line(&format!("print({call} and true)")),
                 2 => self.line(&format!("print(false or {call})")),
+                3 => self.line(&format!("print(true and {call} and true)")),
+                4 => self.line(&format!("print(1 if {call} else 2)")),
+                5 => {
+                    self.line("if false:");
+                    self.ind += 1;
+                    self.line("pass");
+                    self.ind -= 1;
+                    self.line(&format!("elif {call}:"));
+                    self.ind += 1;
+                    self.line("pass");
+                    self.ind -= 1;
+                }
+                6 => {
+                    self.line(&format!("while {call}:"));
+                    self.ind += 1;
+                    self.line("break");
+                    self.ind -= 1;
+                }
                 _ => self.line(&format!("print(not {call})")),
             }
         } else if self.c.chance(70) {
@@ -1938,7 +1968,14 @@ pub fn generate(data: &[u8]) -> String {
         shadowed: Vec::new(),
         shadow_consts,
         no_math,
+        unknown: None,
     };
+    if !GATE_NON_BOOL_OPERAND && g.c.chance(50) {
+        let name = g.fresh("u");
+        g.line(&format!("def {name}(a):"));
+        g.line("    return a");
+        g.unknown = Some(name);
+    }
     // A few of the predefined constants.
     for _ in 0..g.c.below(6) {
         let (name, d) = *g.c.pick(CONSTANTS);

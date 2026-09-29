@@ -592,20 +592,19 @@ fn an_input_declaration_stops_the_sir_interpreter_before_any_output() {
 
 /// A function without annotations has an unknown result type, so the checker
 /// lets `f(1)` stand where a Bool goes. `sky run` checks at run time and stops
-/// ("`or` needs a Bool operand, found a number"); the SIR interpreter checks
-/// the left operand only (as an `if` condition) and lets a number through as
-/// the right operand: `false or f(1)` prints 1.
+/// ("`or` needs a Bool operand, found a number"); the SIR interpreter used to
+/// check the left operand only (as an `if` condition) and let a number
+/// through as the right operand: `false or f(1)` printed 1. Lowering now puts
+/// an `expect.bool` on an operand of unknown type.
 #[test]
-#[ignore = "bug: SIR does not check that the right operand of and/or is a Bool"]
 fn sir_does_not_check_the_right_operand_of_and_or_for_bool() {
     assert_agree("def f(a):\n    return a\nprint(false or f(1))\n");
     assert_agree("def f(a):\n    return a\nprint(true and f(1))\n");
 }
 
-/// The same error in the left operand of `and` is worded as the `if` it is
+/// The same error in the left operand of `and` was worded as the `if` it is
 /// lowered to.
 #[test]
-#[ignore = "bug: the run-time error for a non-Bool left operand of and names `if` in SIR"]
 fn the_left_operand_of_and_is_worded_as_an_if_in_sir() {
     assert_agree("def f(a):\n    return a\nprint(f(1) and true)\n");
 }

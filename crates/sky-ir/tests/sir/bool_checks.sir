@@ -1,0 +1,21 @@
+// The run-time Bool checks lowering puts on operands the checker could not
+// type: `def f(a)` ... `f(1) and true`, `not f(1)`, `if f(1):`, ...
+sir edition 2026
+
+fn @checked(%a: unknown, %b: unknown) -> (bool) effects(fail) {
+  %x = expect.bool[and] %a : bool @ 4..8
+  %y = if %x : bool {
+    ^1:
+      %c = expect.bool[or] %b : bool @ 12..16
+      yield %c
+  } {
+    ^2:
+      %f = const.bool false : bool
+      yield %f
+  }
+  %n = expect.bool[not] %b : bool @ 20..21
+  %z = not %n : bool
+  %w = expect.bool[if] %a : bool
+  %v = expect.bool[while] %b : bool
+  return %y
+}

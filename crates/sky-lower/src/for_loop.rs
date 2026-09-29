@@ -44,7 +44,7 @@ use std::collections::BTreeSet;
 
 use sky_ast::{Block, Expr, ExprKind, Ident};
 use sky_diag::Span;
-use sky_ir::{CmpOp, OpKind, Type, ValueId};
+use sky_ir::{BoolContext, CmpOp, OpKind, Type, ValueId};
 use sky_types::{range_constants, range_runs_at_least_once};
 use sky_units::Dimension;
 
@@ -106,7 +106,10 @@ impl Lower<'_> {
     /// values are in scope.
     pub(crate) fn head_cond(&mut self, head: &Head<'_>) -> R<ValueId> {
         match head {
-            Head::While(cond) => self.expr(cond),
+            Head::While(cond) => {
+                let c = self.expr(cond)?;
+                Ok(self.bool_operand(BoolContext::While, cond, c))
+            }
             Head::Range(r) => self.range_cond(r),
         }
     }

@@ -77,6 +77,13 @@
 //!   arm (below).
 //! * `and`/`or` are a running Bool updated by sibling `if`s, one per
 //!   operand (below); `a if c else b` is an `if` with a result.
+//! * An operand of `and`/`or`/`not`, or a condition, that the checker could
+//!   not type (`Unknown`: the result of a function with unannotated
+//!   parameters) gets an `expect.bool[kw]` at the operand's span, with the
+//!   construct's keyword (`elif` and the conditional expression are `if`).
+//!   It fails with `sky run`'s message on `sky run`'s span, and it covers the
+//!   operand that is only yielded (the last of an `and`/`or`), which no `if`
+//!   tests. A typed Bool gets none.
 //! * `for i in range(a, b, s)` is that `while` over a hidden carried index
 //!   (`<i1>`, `<i2>`, ...) that the body's first operations copy into `i`
 //!   and advance; see `for_loop.rs`. `for x in v` over an array is a

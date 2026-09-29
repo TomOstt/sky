@@ -101,6 +101,40 @@ impl SliceAxis {
     }
 }
 
+/// The source construct a Bool was demanded by, for [`OpKind::ExpectBool`]:
+/// the wording of the run-time error ("`or` needs a Bool operand, found a
+/// number") names it, exactly as `sky run` does. `elif` and the conditional
+/// expression `a if c else b` are `if`, as they are in `sky run`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum BoolContext {
+    And,
+    Or,
+    Not,
+    If,
+    While,
+}
+
+impl BoolContext {
+    pub const ALL: [BoolContext; 5] = [
+        BoolContext::And,
+        BoolContext::Or,
+        BoolContext::Not,
+        BoolContext::If,
+        BoolContext::While,
+    ];
+
+    /// The keyword the error message uses, and the text format's attribute.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            BoolContext::And => "and",
+            BoolContext::Or => "or",
+            BoolContext::Not => "not",
+            BoolContext::If => "if",
+            BoolContext::While => "while",
+        }
+    }
+}
+
 /// The math functions (`sqrt`, `exp`, `sin`, ...): the one list, with each
 /// function's arity, dimension rule and failure behaviour, lives in
 /// sky-units and is shared by the checker, both interpreters and SIR.
@@ -259,6 +293,20 @@ pub enum OpKind {
     /// lower to `if`, not to operations of their own.)
     Not,
 
+    /// `expect.bool[kw] a`: one operand, one Bool result. The run-time check
+    /// of an operand the checker could not type (its type is `unknown`, from
+    /// an unannotated parameter) where the source needs a Bool: an operand of
+    /// `and`, `or` or `not`, or the condition of an `if`, `elif`, `while` or
+    /// conditional expression (`kw` says which; see [`BoolContext`]). It
+    /// gives the operand back if it is a Bool and otherwise fails with
+    /// "`kw` needs a Bool operand, found ..." at the operation's span, which
+    /// lowering sets to the operand's, as `sky run` reports it. A typed Bool
+    /// needs no check, so lowering emits this only for `unknown` operands.
+    /// Effect `Fail`.
+    ExpectBool {
+        context: BoolContext,
+    },
+
     // ----- structured control flow -----
     /// `if`: one Bool operand (the condition) and two regions, `then` and
     /// `else`. Each region's block takes no arguments and ends in `yield`
@@ -360,6 +408,7 @@ impl OpKind {
                 CmpOp::Ge => "cmp.ge",
             },
             OpKind::Not => "not",
+            OpKind::ExpectBool { .. } => "expect.bool",
             OpKind::If => "if",
             OpKind::While => "while",
             OpKind::Yield => "yield",
@@ -394,6 +443,8 @@ impl OpKind {
             }
             // Converting to a tiny unit can overflow.
             OpKind::Show { .. } => (fail, false, false, false),
+            // A value that is not a Bool fails.
+            OpKind::ExpectBool { .. } => (fail, false, false, false),
             // A singular matrix or a zero scalar fails.
             OpKind::Inverse | OpKind::Solve { .. } => (fail, false, false, false),
             OpKind::MatMul => (fail, false, false, true),

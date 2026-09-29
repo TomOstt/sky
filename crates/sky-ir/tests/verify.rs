@@ -1105,6 +1105,21 @@ fn not_needs_a_bool() {
 }
 
 #[test]
+fn expect_bool_checks_a_bool_or_unknown_operand_and_gives_a_bool() {
+    use sky_ir::BoolContext;
+    for context in BoolContext::ALL {
+        let kind = OpKind::ExpectBool { context };
+        accepts(&unary(kind.clone(), Type::Unknown, Type::Bool));
+        accepts(&unary(kind.clone(), Type::Bool, Type::Bool));
+        rejects(
+            &unary(kind.clone(), len(), Type::Bool),
+            "`expect.bool` needs a Bool or unknown operand",
+        );
+        rejects(&unary(kind, Type::Unknown, len()), "must be Bool");
+    }
+}
+
+#[test]
 fn constants_are_typed_exactly() {
     let konst = |kind: OpKind, ty: Type| {
         let mut b = start(vec![], vec![]);

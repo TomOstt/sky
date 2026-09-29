@@ -217,6 +217,9 @@ pub fn differentiate_into(m: &mut Module, func: &str, wrt: usize) -> Result<Stri
         let all = derivative_functions(m, func, wrt)?;
         m.functions.extend(all);
     }
+    // The derivatives are new functions: their effects (and those of any
+    // caller) follow from their bodies, and one pass owns that rule.
+    let _ = sky_ir::effects::infer_effects(m);
     Ok(name)
 }
 

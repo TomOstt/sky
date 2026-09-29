@@ -315,10 +315,10 @@ pub fn lower_with_defs(
         sky_ad::differentiate_into(&mut module, &want.func, want.wrt)
             .map_err(|e| derivative::ad_error(&e, want.span))?;
     }
-    // Effects follow from the bodies (the derivative functions included) and the calls between them; one pass
-    // owns that rule (`sky_ir::effects`), lowering does not repeat it.
+    // Effects follow from the bodies (the derivative functions included)
+    // and the calls between them; one pass owns that rule
+    // (`sky_ir::effects`), lowering does not repeat it.
     let _ = sky_ir::effects::infer_effects(&mut module);
-    Ok(module)
     let defs = fns
         .into_iter()
         .map(|(def, info)| (def, info.name))

@@ -61,8 +61,8 @@ pub use constant::{
     apply_unit, entry_value, express_in_unit, parse_number, NumberError, UnitError,
     MAX_ARRAY_ELEMENTS, MAX_RANGE_BOUND,
 };
-pub use display::a_dimension;
 pub use derivative::DerivativeOf;
+pub use display::a_dimension;
 pub use flow::FuncSig;
 pub use for_loop::{range_constants, range_runs_at_least_once};
 pub use rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};

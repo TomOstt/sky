@@ -460,6 +460,9 @@ fn math_tangents_have_the_right_dimension() {
         assert_eq!(got, want, "{f:?}");
         let mut full = m.clone();
         full.functions.push(d);
+        // Built by hand: effects are derived from the bodies, as lowering and
+        // `differentiate_into` do.
+        let _ = sky_ir::effects::infer_effects(&mut full);
         if let Err(errors) = sky_ir::verify(&full) {
             panic!("{f:?}: ill-typed derivative: {errors:?}");
         }

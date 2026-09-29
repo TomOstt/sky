@@ -772,6 +772,8 @@ fn run_a_loop_variable_after_a_loop_that_may_not_run_is_a_check_error() {
     );
     assert_eq!(o.status.code(), Some(1));
     assert!(err(&o).contains("4:7: error: `i` may be undefined here"));
+}
+
 #[test]
 fn run_evaluates_a_derivative_with_its_unit() {
     // x(t) = 5 m/s^2 t^2: x'(2 s) = 20 m/s, x''(2 s) = 10 m/s^2.

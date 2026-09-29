@@ -1,0 +1,4 @@
+0A: Matrix[3, 3] = eye(3)
+b = zeros(3)
+y = A⁻¹ @ b
+z = A[0, 1] + f(a, g(b)[0].c)

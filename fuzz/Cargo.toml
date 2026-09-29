@@ -10,6 +10,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+sky-ast = { path = "../crates/sky-ast" }
 sky-syntax = { path = "../crates/sky-syntax" }
 sky-diag = { path = "../crates/sky-diag" }
 
@@ -20,6 +21,13 @@ members = ["."]
 [[bin]]
 name = "lex"
 path = "fuzz_targets/lex.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_module"
+path = "fuzz_targets/parse_module.rs"
 test = false
 doc = false
 bench = false

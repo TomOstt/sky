@@ -103,7 +103,18 @@ dependencies = [
  "libfuzzer-sys",
  "sky-ast",
  "sky-diag",
+ "sky-ir",
  "sky-syntax",
+]
+
+[[package]]
+name = "sky-ir"
+version = "0.0.1"
+dependencies = [
+ "sky-diag",
+ "sky-syntax",
+ "sky-types",
+ "sky-units",
 ]
 
 [[package]]
@@ -113,6 +124,19 @@ dependencies = [
  "sky-diag",
  "unicode-ident",
 ]
+
+[[package]]
+name = "sky-types"
+version = "0.0.1"
+dependencies = [
+ "sky-ast",
+ "sky-diag",
+ "sky-units",
+]
+
+[[package]]
+name = "sky-units"
+version = "0.0.1"
 
 [[package]]
 name = "unicode-ident"

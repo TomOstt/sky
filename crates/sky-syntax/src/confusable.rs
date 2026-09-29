@@ -48,7 +48,11 @@ impl fmt::Display for Script {
 fn script(c: char) -> Option<Script> {
     match c as u32 {
         0x41..=0x5A | 0x61..=0x7A => Some(Script::Latin),
-        0xC0..=0x24F | 0x250..=0x2AF | 0x1E00..=0x1EFF | 0x2C60..=0x2C7F | 0xA720..=0xA7FF
+        0xC0..=0x24F
+        | 0x250..=0x2AF
+        | 0x1E00..=0x1EFF
+        | 0x2C60..=0x2C7F
+        | 0xA720..=0xA7FF
         | 0xAB30..=0xAB6F => Some(Script::Latin),
         0x370..=0x3FF | 0x1F00..=0x1FFF => Some(Script::Greek),
         0x400..=0x52F | 0x1C80..=0x1C8F | 0x2DE0..=0x2DFF | 0xA640..=0xA69F => {
@@ -133,9 +137,17 @@ const VARIANTS: &[(char, &str, char)] = &[
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Confusable {
     /// A compatibility variant of a letter, e.g. MICRO SIGN for `μ`.
-    Variant { ch: char, name: &'static str, preferred: Option<char> },
+    Variant {
+        ch: char,
+        name: &'static str,
+        preferred: Option<char>,
+    },
     /// A letter that looks like a Latin letter.
-    Lookalike { ch: char, script: Script, looks_like: char },
+    Lookalike {
+        ch: char,
+        script: Script,
+        looks_like: char,
+    },
     /// Letters from two scripts that should not mix.
     MixedScript { first: Script, second: Script },
 }
@@ -143,17 +155,29 @@ pub enum Confusable {
 impl fmt::Display for Confusable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Confusable::Variant { ch, name, preferred: Some(p) } => write!(
+            Confusable::Variant {
+                ch,
+                name,
+                preferred: Some(p),
+            } => write!(
                 f,
                 "contains {name} U+{:04X}, which looks like '{p}' (U+{:04X}); use '{p}' instead",
                 ch as u32, p as u32
             ),
-            Confusable::Variant { ch, name, preferred: None } => write!(
+            Confusable::Variant {
+                ch,
+                name,
+                preferred: None,
+            } => write!(
                 f,
                 "contains '{ch}' (U+{:04X}), a {name} variant of a Latin letter",
                 ch as u32
             ),
-            Confusable::Lookalike { ch, script, looks_like } => write!(
+            Confusable::Lookalike {
+                ch,
+                script,
+                looks_like,
+            } => write!(
                 f,
                 "contains {script} '{ch}' (U+{:04X}), which looks like Latin '{looks_like}'",
                 ch as u32
@@ -174,14 +198,22 @@ fn lookalike(c: char) -> Option<(char, Script, bool)> {
 
 fn variant(c: char) -> Option<Confusable> {
     if let Some(&(ch, name, preferred)) = VARIANTS.iter().find(|(ch, ..)| *ch == c) {
-        return Some(Confusable::Variant { ch, name, preferred: Some(preferred) });
+        return Some(Confusable::Variant {
+            ch,
+            name,
+            preferred: Some(preferred),
+        });
     }
     let name = match c as u32 {
         0xFF21..=0xFF3A | 0xFF41..=0xFF5A => "fullwidth",
         0x1D400..=0x1D6A5 => "mathematical",
         _ => return None,
     };
-    Some(Confusable::Variant { ch: c, name, preferred: None })
+    Some(Confusable::Variant {
+        ch: c,
+        name,
+        preferred: None,
+    })
 }
 
 /// Checks one identifier. Returns the most specific finding, if any.
@@ -194,13 +226,20 @@ pub fn check_identifier(ident: &str) -> Option<Confusable> {
     }
 
     let has_latin = ident.chars().any(|c| script(c) == Some(Script::Latin));
-    let mut letters = ident.chars().filter(|&c| c != '_' && !c.is_ascii_digit()).peekable();
-    let all_strong = letters.peek().is_some()
-        && letters.all(|c| matches!(lookalike(c), Some((_, _, true))));
+    let mut letters = ident
+        .chars()
+        .filter(|&c| c != '_' && !c.is_ascii_digit())
+        .peekable();
+    let all_strong =
+        letters.peek().is_some() && letters.all(|c| matches!(lookalike(c), Some((_, _, true))));
     for c in ident.chars() {
         if let Some((looks_like, script, _)) = lookalike(c) {
             if has_latin || all_strong {
-                return Some(Confusable::Lookalike { ch: c, script, looks_like });
+                return Some(Confusable::Lookalike {
+                    ch: c,
+                    script,
+                    looks_like,
+                });
             }
         }
     }
@@ -216,7 +255,10 @@ pub fn check_identifier(ident: &str) -> Option<Confusable> {
                     (Script::Latin, Script::Greek) | (Script::Greek, Script::Latin)
                 );
                 if !pair_ok {
-                    return Some(Confusable::MixedScript { first: f, second: s });
+                    return Some(Confusable::MixedScript {
+                        first: f,
+                        second: s,
+                    });
                 }
             }
         }
@@ -235,8 +277,27 @@ mod tests {
     #[test]
     fn ascii_and_scientific_greek_are_clean() {
         for ok in [
-            "x", "velocity", "d", "inv", "grad", "ψ", "ω", "ħ", "λ", "α", "ν", "ρ", "Δt",
-            "λ_max", "μm", "σx", "Ω", "ψ2", "привет", "变量", "é",
+            "x",
+            "velocity",
+            "d",
+            "inv",
+            "grad",
+            "ψ",
+            "ω",
+            "ħ",
+            "λ",
+            "α",
+            "ν",
+            "ρ",
+            "Δt",
+            "λ_max",
+            "μm",
+            "σx",
+            "Ω",
+            "ψ2",
+            "привет",
+            "变量",
+            "é",
         ] {
             assert_eq!(check_identifier(ok), None, "{ok}");
         }
@@ -246,7 +307,11 @@ mod tests {
     fn cyrillic_lookalike_in_latin_word() {
         assert_eq!(
             check_identifier("pаth"),
-            Some(Confusable::Lookalike { ch: 'а', script: Script::Cyrillic, looks_like: 'a' })
+            Some(Confusable::Lookalike {
+                ch: 'а',
+                script: Script::Cyrillic,
+                looks_like: 'a'
+            })
         );
     }
 
@@ -264,7 +329,11 @@ mod tests {
         assert!(!warns("ν"));
         assert_eq!(
             check_identifier("νmax"),
-            Some(Confusable::Lookalike { ch: 'ν', script: Script::Greek, looks_like: 'v' })
+            Some(Confusable::Lookalike {
+                ch: 'ν',
+                script: Script::Greek,
+                looks_like: 'v'
+            })
         );
         assert!(warns("vαlue"));
     }
@@ -273,11 +342,17 @@ mod tests {
     fn mixed_scripts() {
         assert_eq!(
             check_identifier("xЖ"),
-            Some(Confusable::MixedScript { first: Script::Latin, second: Script::Cyrillic })
+            Some(Confusable::MixedScript {
+                first: Script::Latin,
+                second: Script::Cyrillic
+            })
         );
         assert_eq!(
             check_identifier("ψж"),
-            Some(Confusable::MixedScript { first: Script::Greek, second: Script::Cyrillic })
+            Some(Confusable::MixedScript {
+                first: Script::Greek,
+                second: Script::Cyrillic
+            })
         );
     }
 
@@ -285,7 +360,10 @@ mod tests {
     fn compatibility_variants() {
         assert!(matches!(
             check_identifier("\u{00B5}m"),
-            Some(Confusable::Variant { preferred: Some('μ'), .. })
+            Some(Confusable::Variant {
+                preferred: Some('μ'),
+                ..
+            })
         ));
         assert!(warns("\u{212A}"));
         assert!(warns("\u{210F}"));

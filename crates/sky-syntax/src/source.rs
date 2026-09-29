@@ -1,8 +1,7 @@
 /// Unicode bidi controls: LRE, RLE, PDF, LRO, RLO, LRI, RLI, FSI, PDI, LRM, RLM, ALM.
 const BIDI_CONTROLS: &[char] = &[
-    '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}',
-    '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
-    '\u{200E}', '\u{200F}', '\u{061C}',
+    '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}',
+    '\u{2069}', '\u{200E}', '\u{200F}', '\u{061C}',
 ];
 
 #[derive(Debug, PartialEq, Eq)]
@@ -37,7 +36,10 @@ mod tests {
         let src = "x = 1 \u{202E} # comment";
         assert_eq!(
             find_bidi_control(src),
-            Some(BidiControl { byte_offset: 6, ch: '\u{202E}' })
+            Some(BidiControl {
+                byte_offset: 6,
+                ch: '\u{202E}'
+            })
         );
     }
 }

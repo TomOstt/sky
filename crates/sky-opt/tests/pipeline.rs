@@ -288,8 +288,11 @@ fn key(
     )
 }
 
+/// The inverse reaches `@` through a name (`Ai = A⁻¹`): a direct `A⁻¹ @ b`
+/// is a site the checker proves, which lowering already emits as `solve`,
+/// leaving the Cholesky pass nothing to do.
 const ADAPTER_SRC: &str = "x: m\nA: PositiveDefinite Matrix[3, 3]\nb: Vector[3]\n\
-    a = 2 * 3\nunused = a * 4\ny = x * 1\ns = A⁻¹ @ b\nprint(a, y, s)\n";
+    a = 2 * 3\nunused = a * 4\ny = x * 1\nAi = A⁻¹\ns = Ai @ b\nprint(a, y, s)\n";
 
 #[test]
 fn the_pass_adapters_report_the_records_of_the_function_forms() {

@@ -1,0 +1,7 @@
+tests/ir/no_ir_input_in_function.sky:5:5: note: no IR: an input declaration must be at the top level of the file
+  |
+5 |     y: m
+  |     ^^^^
+  = note: a name declared without a value is an input of the program; SIR gives inputs to `<main>` only
+  = note: the program checks, but lowering to SIR does not support it yet
+tests/ir/no_ir_input_in_function.sky: ok

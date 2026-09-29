@@ -345,6 +345,8 @@ fn a_for_over_an_array_says_lowering_needs_array_values() {
     );
     // The tree walker still runs it.
     assert_eq!(run_tree_walker(src).stdout, "1\n2\n");
+}
+
 // ----- arrays -----
 
 /// The spring system of `sky-cli`'s `run_repl` tests: two springs in series,

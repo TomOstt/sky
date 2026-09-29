@@ -182,19 +182,28 @@ fn the_stages_show_each_pass() {
     // egraph: both are rewritten away, and the function's uses follow.
     assert_eq!(count(&egraph, "mul") + count(&egraph, "neg"), 0, "{egraph}");
     assert!(egraph.contains("print %a, %x, %t"), "{egraph}");
-    // dce: nothing dead is left, the inverse is still there.
+    // dce: nothing dead is left.
     assert_eq!(count(&dce, "mul") + count(&dce, "neg"), 0, "{dce}");
     assert!(!dce.contains("const.float 24"), "{dce}");
-    assert_eq!(count(&dce, "inverse"), 1, "{dce}");
-    assert_eq!(count(&dce, "solve[cholesky]"), 0, "{dce}");
-    // cholesky: the last pass.
-    assert_eq!(count(&cholesky, "inverse"), 0, "{cholesky}");
-    assert!(cholesky.contains("solve[cholesky] %A, %b"), "{cholesky}");
+    // The direct `A⁻¹ @ b` is a site the checker proved, so lowering emits
+    // the `solve` itself (bit for bit what `sky run` computes there), and
+    // the Cholesky pass has nothing left to do.
+    assert!(lowered.contains("solve[cholesky] %A, %b"), "{lowered}");
+    assert_eq!(count(&lowered, "inverse"), 0, "{lowered}");
+    assert_eq!(cholesky, dce, "nothing for the cholesky pass");
     // Every stage is valid, parseable SIR.
     for ir in [&lowered, &fold, &egraph, &dce, &cholesky] {
         let m = sky_ir::parse(ir).expect("parses");
         sky_ir::verify(&m).expect("verifies");
     }
+    // The pass acts where only the IR sees the pattern: the inverse
+    // reaches `@` through a name.
+    let through = "tests/ir/cholesky_through_a_name.sky";
+    let stage = |s: &str| out(&sky(&[&format!("--emit-ir={s}"), through]));
+    let (before, after) = (stage("after:dce"), stage("after:cholesky"));
+    // (That program also prints the inverse itself, so `inverse` stays.)
+    assert_eq!(count(&before, "solve[cholesky]"), 0, "{before}");
+    assert_eq!(count(&after, "solve[cholesky]"), 1, "{after}");
 }
 
 #[test]
@@ -231,18 +240,17 @@ fn a_bad_stage_or_repeated_flag_is_a_usage_error() {
 
 #[test]
 fn a_program_without_ir_still_checks() {
-    let file = "tests/ir/no_ir_array_literal.sky";
+    let file = "tests/ir/no_ir_input_in_function.sky";
     let o = sky(&["--emit-ir", file]);
     assert_eq!(o.status.code(), Some(0));
     assert_eq!(out(&o), "", "no IR, so nothing on stdout");
     let stderr = err(&o);
     assert!(
-        stderr.contains("note: no IR: array literals are not supported in SIR yet"),
+        stderr.contains("note: no IR: an input declaration must be at the top level of the file"),
         "{stderr}"
     );
     assert!(stderr.ends_with(&format!("{file}: ok\n")), "{stderr}");
-    // Every stage says the same, and `--explain` alone is unchanged: the
-    // checker's Cholesky note, and no mention of IR.
+    // Every stage says the same, and `--explain` alone never mentions IR.
     for stage in ["lower", "after:fold", "final"] {
         let o = sky(&[&format!("--emit-ir={stage}"), file]);
         assert_eq!((o.status.code(), out(&o)), (Some(0), String::new()));
@@ -250,7 +258,6 @@ fn a_program_without_ir_still_checks() {
     let o = sky(&["--explain", file]);
     assert_eq!(o.status.code(), Some(0));
     assert!(!err(&o).contains("IR"), "{}", err(&o));
-    assert!(err(&o).contains("rewritten to a Cholesky solve"));
 }
 
 #[test]

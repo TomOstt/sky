@@ -775,6 +775,8 @@ fn show_survives_fold_and_dce_and_keeps_its_failure() {
         .filter(|n| *n == "show")
         .count();
     assert_eq!(shows, 2);
+}
+
 // -------------------------------------------------------------- arrays
 
 /// `[1, 2]` from two constants, typed as a vector.

@@ -2,7 +2,7 @@
 // arrays (which the scalar operations already cover).
 sir edition 2026
 
-fn @literals(%i: num[1; ()], %q: unknown) -> (num[L; (3)], num[1; (2, 2)], num[L; ()], num[L; (2)], num[1; ()]) {
+fn @literals(%i: num[1; ()], %q: unknown) -> (num[L; (3)], num[1; (2, 2)], num[L; ()], num[L; (2)], num[1; ()]) effects(fail) {
   %a = const.float 1 : num[L; ()]
   %b = const.float 2 : num[L; ()]
   %c = const.float 3 : num[L; ()]
@@ -21,7 +21,7 @@ fn @literals(%i: num[1; ()], %q: unknown) -> (num[L; (3)], num[1; (2, 2)], num[L
   return %v, %m, %x, %s, %n
 }
 
-fn @subscripts(%A: num[1; (3, 4)], %i: num[1; ()], %j: num[1; ()]) -> (num[1; ()], num[1; (4)], num[1; (3)], num[1; (2, 2)], num[1; (2, 4)]) {
+fn @subscripts(%A: num[1; (3, 4)], %i: num[1; ()], %j: num[1; ()]) -> (num[1; ()], num[1; (4)], num[1; (3)], num[1; (2, 2)], num[1; (2, 4)]) effects(fail) {
   %e = index %A, %i, %j : num[1; ()] @ 1..2
   %row = index %A, %i : num[1; (4)] @ 3..4
   %col = slice[:, at] %A, %j : num[1; (3)] @ 5..6
@@ -30,7 +30,7 @@ fn @subscripts(%A: num[1; (3, 4)], %i: num[1; ()], %j: num[1; ()]) -> (num[1; ()
   return %e, %row, %col, %block, %top
 }
 
-fn @builders() -> (num[1; (3)], num[1; (2, 3)], num[1; (3, 3); {Symmetric, PositiveDefinite, Diagonal, Orthogonal}]) {
+fn @builders() -> (num[1; (3)], num[1; (2, 3)], num[1; (3, 3); {Symmetric, PositiveDefinite, Diagonal, Orthogonal}]) effects(fail) {
   %n = const.float 3 : num[1; ()]
   %m = const.float 2 : num[1; ()]
   %z = zeros %n : num[1; (3)] @ 1..2
@@ -39,7 +39,7 @@ fn @builders() -> (num[1; (3)], num[1; (2, 3)], num[1; (3, 3); {Symmetric, Posit
   return %z, %zz, %eye
 }
 
-fn @arithmetic(%K: num[M·T⁻²; (2, 2); {Symmetric, PositiveDefinite}], %f: num[L·M·T⁻²; (2)]) -> (num[L; (2)], num[L; (2)], num[L·M·T⁻²; (2)]) {
+fn @arithmetic(%K: num[M·T⁻²; (2, 2); {Symmetric, PositiveDefinite}], %f: num[L·M·T⁻²; (2)]) -> (num[L; (2)], num[L; (2)], num[L·M·T⁻²; (2)]) effects(fail) {
   %u = solve[cholesky] %K, %f : num[L; (2)] @ 1..2
   %inv = inverse %K : num[M⁻¹·T²; (2, 2); {Symmetric, PositiveDefinite}] @ 3..4
   %v = matmul %inv, %f : num[L; (2)] @ 5..6

@@ -141,7 +141,7 @@ pub fn build(module: &Ast, src: &str, checked: &Checked, print: bool, explain: b
         Err(e) => return Outcome::Internal(internal(&e)),
     };
     let notes = if explain {
-        explanation_notes(&report, &checked.cholesky_solves)
+        explanation_notes(&report, src, &checked.cholesky_solves)
     } else {
         Vec::new()
     };
@@ -179,15 +179,32 @@ fn note(x: &sky_ir::Explanation) -> Diagnostic {
 
 /// The pass explanations as notes, in pipeline order (the caller sorts
 /// them into source order with the other diagnostics).
+///
+/// Notes speak the user's language: a removal quotes the Sky source it came
+/// from (the passes only see SIR, where it reads `%S = array.literal %0,
+/// ...`), and a rewrite whose two sides read the same (folding `-2`, a
+/// negated constant, into the constant `-2`) says nothing new and is left
+/// out.
 fn explanation_notes(
     report: &sky_ir::PipelineReport,
+    src: &str,
     checker_solves: &HashSet<Span>,
 ) -> Vec<Diagnostic> {
     let mut out: Vec<Diagnostic> = report
         .explanations
         .iter()
         .filter(|x| !(x.rule == CHOLESKY_RULE && checker_solves.contains(&x.span)))
-        .map(note)
+        .filter(|x| x.after.is_empty() || x.before != x.after)
+        .map(|x| {
+            let source = sky_ast::ast::span_text(src, x.span).filter(|t| !t.is_empty());
+            match source {
+                Some(text) if x.after.is_empty() => note(&sky_ir::Explanation {
+                    before: text.to_string(),
+                    ..x.clone()
+                }),
+                _ => note(x),
+            }
+        })
         .collect();
     if report.omitted_explanations > 0 {
         let n = report.omitted_explanations;

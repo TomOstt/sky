@@ -11,8 +11,7 @@ fn @<main>(%x: num[L; ()], %t: num[T; ()], %A: num[1; (3, 3); {Symmetric, Positi
   %11 = neg %t : num[T; ()] @ 245..247
   %z = neg %11 : num[T; ()] @ 243..248
   print %a, %y, %z @ 249..263
-  %13 = inverse %A : num[1; (3, 3); {Symmetric, PositiveDefinite}] @ 270..276
-  %sol = matmul %13, %b : num[1; (3)] @ 270..280
+  %sol = solve[cholesky] %A, %b : num[1; (3)] @ 270..280
   print %sol @ 281..291
   return @ 0..292
 }

@@ -14,7 +14,7 @@ tests/ir/pipeline.sky:8:10: note: [FOLD-FLOAT-001] `6 * 4` is rewritten to `24`
   = note: because every operand is a constant
   = note: because the result is the reference interpreter's own, bit for bit, and it cannot fail at run time
 
-tests/ir/pipeline.sky:8:10: note: [DCE-001] `%unused = const.float 24` is removed
+tests/ir/pipeline.sky:8:10: note: [DCE-001] `a * 4` is removed
   |
 8 | unused = a * 4
   |          ^^^^^

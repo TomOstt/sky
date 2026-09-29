@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 sky-diag = { path = "../sky-diag" }
+# MAX_SOURCE_BYTES, the one source-size limit shared with the lexer.
+sky-syntax = { path = "../sky-syntax" }
 
 [target.'cfg(unix)'.dependencies]
 # geteuid() and getpwuid_r(): std has no API for the effective uid or the

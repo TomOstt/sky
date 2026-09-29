@@ -13,4 +13,5 @@ path = "src/main.rs"
 
 [dependencies]
 sky-diag = { path = "../sky-diag" }
+sky-project = { path = "../sky-project" }
 sky-syntax = { path = "../sky-syntax" }

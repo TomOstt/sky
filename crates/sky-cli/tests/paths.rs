@@ -42,7 +42,11 @@ fn ok_path_is_escaped() {
     let out = sky_check(path);
     let _ = fs::remove_file(path);
     assert_eq!(out.status.code(), Some(0));
-    assert!(out.stderr.is_empty(), "{:?}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.stderr.is_empty(),
+        "{:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8(out.stdout).expect("UTF-8");
     let dir = dir.to_str().unwrap();
     assert_eq!(

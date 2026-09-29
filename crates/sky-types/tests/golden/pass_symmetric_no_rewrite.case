@@ -1,0 +1,5 @@
+# Symmetric alone is not enough for Cholesky: no rewrite.
+let A = Matrix[3,3] Symmetric
+let b = Vector[3]
+show inv(A)
+explain inv(A) @ b

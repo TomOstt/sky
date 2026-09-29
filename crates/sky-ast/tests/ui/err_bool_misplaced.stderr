@@ -1,0 +1,9 @@
+crates/sky-ast/tests/ui/err_bool_misplaced.sky:2:5: error: expected an expression, found keyword `and`
+  |
+2 | a = and b
+  |     ^^^
+
+crates/sky-ast/tests/ui/err_bool_misplaced.sky:3:9: error: expected an expression, found end of line
+  |
+3 | c = d or
+  |         ^

@@ -39,7 +39,7 @@ use crate::precedence::{
 /// bounds of `a[i:j]` sit one level below `a`), an attribute, a `⁻¹`, each
 /// infix operator folded into an operand, and each `and`/`or` run (however
 /// long: a run is one flat node), each `a if c else b`, and each block (the
-/// body of an `if`, `elif`, `else`, `while`, or `def`), so blocks and the
+/// body of an `if`, `elif`, `else`, `while`, `for`, or `def`), so blocks and the
 /// expressions inside them share one budget. `x` uses 0, `(((x)))` 3, `f(g(x))` 2,
 /// `a^b^c` 2, `a + b + c` 2, `not not x` 2, and `a and b and c` 1. The count
 /// bounds both recursion and AST height (which keeps recursive `Drop` and
@@ -130,7 +130,7 @@ pub fn parse_expr(tokens: &[Token], src: &str) -> (Option<Expr>, Vec<ParseError>
 }
 
 /// Parses a file's statements: simple statements and the block statements
-/// `if`/`elif`/`else`, `while`, and `def`, whose bodies are `Indent` ... `Dedent`
+/// `if`/`elif`/`else`, `while`, `for`, and `def`, whose bodies are `Indent` ... `Dedent`
 /// runs of statements. Every error is recorded and parsing resumes at the
 /// next line (or, for a bad block header, after the header's block), so one
 /// mistake doesn't desynchronize the block structure: see
@@ -300,7 +300,7 @@ impl<'t, 's> Parser<'t, 's> {
         let t = self.bump();
         self.errors
             .push(ParseError::new("unexpected indentation", t.span).with_help(
-                "only the body of an `if`, `while`, or `def` is indented; \
+                "only the body of an `if`, `while`, `for`, or `def` is indented; \
                  otherwise align this line with the one before it",
             ));
         if let Some(block) = self.parse_block_body(t.span) {
@@ -319,8 +319,9 @@ impl<'t, 's> Parser<'t, 's> {
         match kw {
             Kw::If => self.parse_if(),
             Kw::While => self.parse_while(),
+            Kw::For => self.parse_for(),
             Kw::Def => self.parse_def(),
-            Kw::For | Kw::Import | Kw::Equation | Kw::Solve | Kw::Field | Kw::Else | Kw::Elif => {
+            Kw::Import | Kw::Equation | Kw::Solve | Kw::Field | Kw::Else | Kw::Elif => {
                 self.reject_statement(tok, kw)
             }
             _ => self.parse_simple_item(),
@@ -381,15 +382,13 @@ impl<'t, 's> Parser<'t, 's> {
         }
     }
 
-    /// `for`, `import`, the reserved words, and an `else`/`elif` with no
-    /// `if` before it, where a statement starts.
+    /// `import`, the reserved words, and an `else`/`elif` with no `if`
+    /// before it, where a statement starts.
     #[cold]
     #[inline(never)]
     fn reject_statement(&mut self, tok: Token, kw: Kw) -> Option<Stmt> {
         let word = kw.as_str();
         let err = match kw {
-            Kw::For => ParseError::new("`for` loops are not supported yet", tok.span)
-                .with_help("Sky has no iterable values yet; loop with `while` and a counter"),
             Kw::Import => ParseError::new("`import` is not supported yet", tok.span)
                 .with_help("there is no module loader yet; keep the code in one file for now"),
             Kw::Equation | Kw::Solve | Kw::Field => ParseError::new(
@@ -493,6 +492,70 @@ impl<'t, 's> Parser<'t, 's> {
             span: kw.span.join(body.span),
             kind: StmtKind::While { cond, body },
         })
+    }
+
+    /// `for name in iter: body`, with `for` current. Only a plain name can
+    /// be the loop variable (no unpacking); `iter` is any expression.
+    fn parse_for(&mut self) -> Option<Stmt> {
+        let kw = self.bump();
+        let Some((var, iter)) = self.parse_for_header(kw.span) else {
+            self.recover_header(kw.span);
+            return None;
+        };
+        let body = self.parse_body(kw.span, "`for`")?;
+        Some(Stmt {
+            span: kw.span.join(body.span),
+            kind: StmtKind::For { var, iter, body },
+        })
+    }
+
+    /// `name in iter` up to (not including) the `:`.
+    fn parse_for_header(&mut self, kw: Span) -> Option<(Ident, Expr)> {
+        let name_tok = self.current();
+        if name_tok.kind != TokenKind::Ident {
+            let message = format!(
+                "expected a loop variable name after `for`, found {}",
+                self.describe(name_tok)
+            );
+            let help = if name_tok.kind == TokenKind::LParen {
+                "a loop binds one name; Sky has no tuples to unpack"
+            } else {
+                "write `for name in ...`"
+            };
+            self.errors.push(
+                ParseError::new(message, name_tok.span)
+                    .with_secondary(kw, "`for` starts here")
+                    .with_help(help),
+            );
+            return None;
+        }
+        self.bump();
+        let in_tok = self.current();
+        if in_tok.kind != TokenKind::Keyword(Kw::In) {
+            let message = format!(
+                "expected `in` after the loop variable, found {}",
+                self.describe(in_tok)
+            );
+            let mut err = ParseError::new(message, in_tok.span)
+                .with_secondary(name_tok.span, "the loop variable");
+            err = if in_tok.kind == TokenKind::Comma {
+                err.with_help(
+                    "a loop binds one name; loop over a matrix's rows with `for row in A:`",
+                )
+            } else {
+                err.with_help("write `for name in range(n):` or `for x in v:`")
+            };
+            self.errors.push(err);
+            return None;
+        }
+        self.bump();
+        let iter = self.expr_bp(0)?;
+        Some((
+            Ident {
+                span: name_tok.span,
+            },
+            iter,
+        ))
     }
 
     /// `def name(params) (-> ret)?: body`, with `def` current.
@@ -1671,10 +1734,9 @@ impl<'t, 's> Parser<'t, 's> {
                 Kw::Equation | Kw::Solve | Kw::Field => {
                     err = err.with_help("this word is reserved for a future version");
                 }
-                Kw::In => {
-                    err = err
-                        .with_help("`in` only appears in `for` loops, which are not supported yet")
-                }
+                Kw::In => err = err.with_help(
+                    "`in` only appears in `for` loops (`for x in v:`); Sky has no membership test",
+                ),
                 Kw::As => {
                     err = err.with_help(
                         "`as` follows a value: write `v as km/h` (it is also a reserved word, so it cannot name a variable)",

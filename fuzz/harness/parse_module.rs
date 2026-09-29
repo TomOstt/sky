@@ -184,6 +184,11 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
                 stack.push(Node::Expr(cond));
                 push_block(&mut stmts, body, &mut f);
             }
+            StmtKind::For { var, iter, body } => {
+                f(var.span);
+                stack.push(Node::Expr(iter));
+                push_block(&mut stmts, body, &mut f);
+            }
             StmtKind::Def {
                 name,
                 params,

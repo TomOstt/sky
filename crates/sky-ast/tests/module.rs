@@ -99,14 +99,16 @@ fn invalid_targets_and_chained_assignment() {
 #[test]
 fn block_statements_parse_and_unsupported_keywords_say_so() {
     assert_eq!(
+        common::module_sexpr("for i in v:\n    pass\n"),
+        "(for i v (block (pass)))"
+    );
+    assert_eq!(
         common::module_sexpr("def f(x):\n    return x\nx = 1\n"),
         "(def f (params x) (block (return x)))\n(= x 1)"
     );
-    let errors = module_errors("for i in x:\n    pass\nx = 1\n");
+    let errors = module_errors("import a\nx = 1\n");
     assert_eq!(errors.len(), 1, "{errors:#?}");
-    assert!(errors[0]
-        .message
-        .contains("`for` loops are not supported yet"));
+    assert!(errors[0].message.contains("`import` is not supported yet"));
 }
 
 fn tok(kind: TokenKind, start: u32, end: u32) -> Token {

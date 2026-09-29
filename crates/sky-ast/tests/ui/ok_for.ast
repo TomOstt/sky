@@ -1,0 +1,5 @@
+(for i (call range 3) (block (= total (+ total i))))
+(for i (call range 1 (+ n 1)) (block (pass)))
+(for k (call range 10 0 (neg 2)) (block (if (== k 4) (block (continue))) (if (== k 2) (block (break)))))
+(for f forces (block (for row A (block (+= x f)))))
+(= after i)

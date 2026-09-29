@@ -128,6 +128,15 @@ impl Stmt {
                 write_block(&mut out, body, src);
                 out.push(')');
             }
+            StmtKind::For { var, iter, body } => {
+                out.push_str("(for ");
+                out.push_str(text(src, var.span));
+                out.push(' ');
+                write_expr(&mut out, iter, src);
+                out.push(' ');
+                write_block(&mut out, body, src);
+                out.push(')');
+            }
             StmtKind::Def {
                 name,
                 params,

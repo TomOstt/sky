@@ -111,9 +111,13 @@ def f(a, b: Vector[3]) -> Matrix[3, 3]:
             break
     return
 x = 1 if c else 2 if d else 3
+for i in range(1, n):
+    for row in A:
+        continue
+    break
 ";
     let out = harness::run(&seed("block_forms", src));
-    assert_eq!(out.stmts, Some(2));
+    assert_eq!(out.stmts, Some(3));
     assert!(out.errors.is_empty(), "{:?}", out.errors);
 
     let src = "\

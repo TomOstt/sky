@@ -531,6 +531,15 @@ pub enum StmtKind {
         cond: Expr,
         body: Block,
     },
+    /// `for var in iter: body`. `iter` is any expression: `range(...)` (a
+    /// plain call, told apart from a user's own `range` by the checker), or
+    /// a vector or matrix. Like `while`, the body shares the enclosing
+    /// scope, and `var` stays bound after the loop.
+    For {
+        var: Ident,
+        iter: Expr,
+        body: Block,
+    },
     /// `def name(params) -> ret: body`. Parameter and return annotations
     /// are types, read like a binding's (`Vector[3] m/s`).
     Def {

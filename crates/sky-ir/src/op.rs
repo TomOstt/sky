@@ -67,6 +67,8 @@ pub enum OpKind {
     },
     /// An exact rational in SI. Lowering may use it for literals that are
     /// exact; passes keep it exact as long as they can (roadmap idea 9).
+    /// When a number is finally needed it is `numer as f64 / denom as f64`
+    /// (one correctly rounded division, as the interpreter computes `1/3`).
     ConstRational(Rational),
     ConstBool(bool),
     ConstStr(String),
@@ -99,7 +101,8 @@ pub enum OpKind {
     Inverse,
     /// `A @ B`: two operands, one result.
     MatMul,
-    /// `Aᵀ`: one operand, one result.
+    /// `Aᵀ`: one operand, one result. Pure: it can't fail. (Running it
+    /// needs arrays at run time, which v1 interpreters don't have yet.)
     Transpose,
     /// `A⁻¹ @ b` computed without forming `A⁻¹`: two operands (`A`, `b`),
     /// one result. Produced by the Cholesky rewrite pass.
@@ -145,13 +148,16 @@ pub enum OpKind {
 
     // ----- functions -----
     /// A call to the module function named `callee`: operands are the
-    /// arguments, results its results.
+    /// arguments, one per parameter; results are exactly the callee's
+    /// declared results (none for a function without a return value; a
+    /// program that uses such a call's value materialises `const.nothing`).
     Call {
         callee: String,
     },
     /// Terminator of a function body's entry block: operands are the
     /// function's results. Early `return`s in Sky lower to flags, so this
-    /// is always the body's last operation.
+    /// is always the body's last operation, and a `return` anywhere else
+    /// (inside an `if` or `while` region) is malformed.
     Return,
 
     // ----- effects -----

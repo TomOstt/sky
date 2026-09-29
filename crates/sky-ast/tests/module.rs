@@ -153,3 +153,66 @@ fn missing_eof_and_tokens_after_eof() {
     assert!(errors.is_empty());
     assert_eq!(module.to_sexpr(src), "(= x 1)");
 }
+
+/// Token streams with no `Eof` (Carla's fuzzer produces them): the end of
+/// the slice acts as `Eof`, placed at the end of the last token.
+#[test]
+fn a_stream_without_eof_ends_at_its_last_token() {
+    use sky_ast::parse_expr;
+
+    fn without_eof(src: &str) -> Vec<sky_ast::Token> {
+        let mut tokens = common::lex(src);
+        tokens.retain(|t| t.kind != TokenKind::Eof);
+        tokens
+    }
+
+    // Empty input, with no tokens at all.
+    let (module, errors) = parse_module(&[], "");
+    assert!(module.stmts.is_empty() && errors.is_empty());
+    let (expr, errors) = parse_expr(&[], "");
+    assert!(expr.is_none());
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].span, Span::point(0));
+
+    // No Eof and no trailing Newline either.
+    let src = "x = 1\ny = x and true";
+    let mut tokens = without_eof(src);
+    tokens.retain(|t| t.kind != TokenKind::Newline || t.span.start == 5);
+    let (module, errors) = parse_module(&tokens, src);
+    assert!(errors.is_empty(), "{errors:#?}");
+    assert_eq!(module.to_sexpr(src), "(= x 1)\n(= y (and x true))");
+
+    // Cut mid-expression: the error points just past the last token.
+    let no_expr = "expected an expression, found end of input";
+    for (src, keep, message, at) in [
+        ("x = 1 + 2", 4, no_expr, 7),
+        ("x = (a)", 4, "expected `)`, found end of input", 6),
+        ("x = f(a, b)", 6, no_expr, 8),
+        ("x = not", 3, no_expr, 7),
+        ("x = a and", 4, no_expr, 9),
+    ] {
+        let tokens = common::lex_prefix(src, keep);
+        assert!(tokens.iter().all(|t| t.kind != TokenKind::Eof));
+        let (_, errors) = parse_module(&tokens, src);
+        assert_eq!(errors.len(), 1, "{src:?}: {errors:#?}");
+        assert_eq!(errors[0].message, message, "{src:?}");
+        assert_eq!(errors[0].span, Span::point(at), "{src:?}");
+    }
+
+    // A stream that ends in Indent or Newline, and a lone Dedent.
+    for kinds in [
+        &[TokenKind::Ident, TokenKind::Newline][..],
+        &[TokenKind::Indent],
+        &[TokenKind::Dedent],
+        &[TokenKind::Ident, TokenKind::Assign],
+    ] {
+        let src = "a =";
+        let tokens: Vec<_> = kinds
+            .iter()
+            .enumerate()
+            .map(|(i, &k)| tok(k, i as u32, i as u32 + 1))
+            .collect();
+        let _ = parse_module(&tokens, src);
+        let _ = parse_expr(&tokens, src);
+    }
+}

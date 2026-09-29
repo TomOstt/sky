@@ -94,7 +94,11 @@ fn explain_is_accepted_before_or_after_the_file() {
             .output()
             .expect("run sky");
         assert_eq!(out.status.code(), Some(0), "{args:?}");
-        assert_eq!(stdout(&out), "tests/ui/check/ok_parses.sky: ok\n");
+        // `--explain` also names the edition (this repo has no `sky.toml`).
+        assert_eq!(
+            stdout(&out),
+            "edition: 2026 (no sky.toml: the latest)\ntests/ui/check/ok_parses.sky: ok\n"
+        );
     }
 }
 

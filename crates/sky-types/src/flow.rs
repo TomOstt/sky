@@ -42,8 +42,9 @@ use sky_diag::{Diagnostic, Span};
 use sky_units::Dimension;
 
 use crate::check::{describe, strip_parens, Checker, Scope, Ty, ValueTy};
+use crate::provenance::label_dim;
 use crate::rules::TensorType;
-use crate::shape::{Shape, ShapeDim, ShapeVar};
+use crate::shape::{Shape, ShapeContext, ShapeDim, ShapeVar};
 use sky_diag::display_capped as quote;
 
 /// A function's signature, as the checker knows it: enough to check a call
@@ -82,6 +83,25 @@ impl FuncSig {
     /// The type a call gives, with the signature's own size variables.
     pub fn ret(&self) -> &Ty {
         &self.ret
+    }
+
+    /// The span of the function's name in its `def`: the key of
+    /// [`crate::Checked::funcs`], and what tells two functions with the same
+    /// name apart.
+    pub fn def_span(&self) -> Span {
+        self.def_span
+    }
+
+    /// The name of parameter `i`.
+    pub fn param_name(&self, i: usize) -> Option<&str> {
+        self.params.get(i).map(|p| p.name.as_str())
+    }
+
+    /// The annotated type of parameter `i` (with the signature's own size
+    /// variables), or `None` for an unannotated parameter, which accepts
+    /// anything and is unknown inside the body.
+    pub fn param_ty(&self, i: usize) -> Option<&ValueTy> {
+        self.params.get(i).and_then(|p| p.ty.as_ref())
     }
 }
 
@@ -561,6 +581,9 @@ impl Checker<'_> {
         for (p, sig) in params.iter().zip(&psigs) {
             let ty = sig.ty.clone().map_or(Ty::Unknown, Ty::Value);
             self.bind_at(&sig.name, ty, p.name.span);
+            if let (Some(_), Some(ann)) = (&sig.ty, sig.annotation) {
+                self.note_param(p.name.span, ann);
+            }
         }
         self.diverged = false;
         self.block(body);
@@ -604,7 +627,9 @@ impl Checker<'_> {
             ret: ret_ty,
             generic,
         };
-        self.bind_at(&fname, Ty::Func(Arc::new(sig)), name.span);
+        let sig = Arc::new(sig);
+        self.funcs.insert(name.span, sig.clone());
+        self.bind_at(&fname, Ty::Func(sig), name.span);
     }
 
     /// The unsolved size variables in the parameters' types and `ret`.
@@ -661,7 +686,7 @@ impl Checker<'_> {
             value: typed.clone(),
         });
         if let Some((decl, dim, ann)) = declared {
-            self.check_declared_return(span, typed, &decl, dim, ann);
+            self.check_declared_return(span, typed, (&decl, dim, ann), value);
         }
     }
 
@@ -672,9 +697,8 @@ impl Checker<'_> {
         &mut self,
         span: Span,
         value: Option<(Span, Ty)>,
-        declared: &TensorType,
-        dim: Option<Dimension>,
-        ann: Span,
+        (declared, dim, ann): (&TensorType, Option<Dimension>, Span),
+        expr: Option<&Expr>,
     ) {
         let Some((vspan, t)) = value else {
             self.error(
@@ -688,19 +712,30 @@ impl Checker<'_> {
         match t {
             Ty::Value(v) => {
                 if let Some(want) = dim.filter(|d| *d != v.dim) {
-                    self.error(
-                        Diagnostic::error(
-                            format!("expected {}, found {}", describe(&want), describe(&v.dim)),
-                            vspan,
-                        )
-                        .with_label(format!("this is {}", describe(&v.dim)))
-                        .with_secondary(ann, "declared here"),
-                    );
+                    let d = Diagnostic::error(
+                        format!("expected {}, found {}", describe(&want), describe(&v.dim)),
+                        vspan,
+                    )
+                    .with_label(format!("this is {}", label_dim(&v.dim)))
+                    .with_secondary(ann, "declared here");
+                    let d = match expr {
+                        Some(e) => self.with_derivations(d, &[(e, v.dim)]),
+                        None => d,
+                    };
+                    self.error(d);
                 }
-                if let Err(e) = self.env.shapes.unify(declared.shape(), v.ty.shape()) {
+                let what = format!(
+                    "`{}` on a value of shape {}",
+                    self.quoted(ann),
+                    self.env.shapes.apply(v.ty.shape())
+                );
+                let unified =
+                    self.with_origin(ann, what, |u| u.unify(declared.shape(), v.ty.shape()));
+                if let Err(e) = unified {
+                    let e = e.in_context(ShapeContext::Declaration);
                     let label = self.this_is(&v);
                     self.error(
-                        Diagnostic::error(format!("mismatched shapes: {e}"), vspan)
+                        self.shape_diagnostic(&e, vspan)
                             .with_label(label)
                             .with_secondary(ann, "declared here"),
                     );
@@ -965,10 +1000,14 @@ impl Checker<'_> {
                 // The shape first: a vector passed for a scalar is a shape
                 // error, whatever the units.
                 let expected = self.substitute(&pt.ty, fresh);
-                if let Err(e) = self.env.shapes.unify(expected.shape(), av.ty.shape()) {
+                let what = format!("`{pname}` of `{fname}` given `{}`", self.quoted(arg.span));
+                let unified =
+                    self.with_origin(arg.span, what, |u| u.unify(expected.shape(), av.ty.shape()));
+                if let Err(e) = unified {
+                    let e = e.in_context(ShapeContext::Argument);
                     let label = self.this_is(av);
                     self.error(
-                        Diagnostic::error(format!("mismatched shapes: {e}"), arg.span)
+                        self.shape_diagnostic(&e, arg.span)
                             .with_label(label)
                             .with_secondary(ann, "expected because of this annotation"),
                     );

@@ -1,0 +1,7 @@
+z = zeros(3)
+Z = zeros(2, 3)
+I = identity(3)
+D: Diagonal Matrix[3, 3] = identity(3)
+n = len(z)
+s = 3 m * zeros(2)
+b: Vector[3] = identity(3) @ z

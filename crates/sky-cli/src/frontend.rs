@@ -1,8 +1,11 @@
 //! The front end shared by `check`, `run` and `repl`: lex, parse, and
 //! type-check one source text, and collect every diagnostic.
 
+use std::collections::HashSet;
+
 use sky_ast::{Module, ParseError};
 use sky_diag::{Diagnostic, Severity, SourceFile, Span};
+use sky_syntax::Edition;
 use sky_types::Env;
 
 /// The outcome of the front end on one source text.
@@ -15,6 +18,9 @@ pub struct FrontEnd {
     /// The checker's environment after the last statement. Meaningful only
     /// when [`FrontEnd::ok`]; the REPL keeps it for the next line.
     pub env: Env,
+    /// The `A⁻¹ @ b` sites the checker rewrote to Cholesky solves, which the
+    /// interpreter must honour (see `sky_interp::run_module_with`).
+    pub cholesky_solves: HashSet<Span>,
     /// Whether no diagnostic is an error.
     pub ok: bool,
 }
@@ -32,9 +38,15 @@ impl FrontEnd {
 /// Lexes, parses, and (if parsing succeeded) type-checks `src` starting
 /// from `env`. With `explain`, the checker's rewrite decisions follow as
 /// notes. Never executes anything. Runs inside `with_deep_stack`.
-pub fn analyze(src: &str, env: Env, explain: bool) -> FrontEnd {
+///
+/// `edition` is the language edition the source is written for. Nothing
+/// consults it yet (there is one edition); it is threaded through now so the
+/// first edition-dependent rule has one place to read it, and no phase can
+/// forget to ask.
+pub fn analyze(src: &str, env: Env, explain: bool, _edition: Edition) -> FrontEnd {
     let mut module_out = None;
     let mut env_out = env.clone();
+    let mut solves = HashSet::new();
     let mut diagnostics: Vec<Diagnostic> = match sky_syntax::lex(src) {
         Err(e) => e.diagnostics().cloned().collect(),
         Ok(lexed) => {
@@ -64,6 +76,7 @@ pub fn analyze(src: &str, env: Env, explain: bool) -> FrontEnd {
                     }
                 }
                 env_out = checked.env;
+                solves = checked.cholesky_solves;
                 module_out = Some(module);
             } else {
                 diagnostics.extend(errors.into_iter().map(ParseError::into_diagnostic));
@@ -79,6 +92,7 @@ pub fn analyze(src: &str, env: Env, explain: bool) -> FrontEnd {
         diagnostics,
         module: module_out,
         env: env_out,
+        cholesky_solves: solves,
         ok,
     }
 }

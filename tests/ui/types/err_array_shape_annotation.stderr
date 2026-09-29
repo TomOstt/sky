@@ -1,0 +1,20 @@
+tests/ui/types/err_array_shape_annotation.sky:1:18: error: declared Vector[3], but the value is Vector[2]
+  |
+1 | v: Vector[3] m = [1 m, 2 m]
+  |                  ^^^^^^^^^^ this is Vector[2] [L]
+  |    ----------- expected because of this annotation
+  = note: axis      0
+  = note: declared  3
+  = note: value     2
+  = note: differs   ^
+
+tests/ui/types/err_array_shape_annotation.sky:2:19: error: declared Matrix[2,3], but the value is Matrix[2,2]
+  |
+2 | A: Matrix[2, 3] = [[1, 2], [3, 4]]
+  |                   ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [1]
+  |    ------------ expected because of this annotation
+  = note: axis      0  1
+  = note: declared  2  3
+  = note: value     2  2
+  = note: differs      ^
+  = note: in a matrix, axis 0 is the rows and axis 1 the columns

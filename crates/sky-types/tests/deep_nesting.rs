@@ -30,7 +30,14 @@ fn nested(kind: &str, n: usize) -> String {
 fn env() -> Env {
     let mut env = Env::new();
     env.bind("x", Ty::scalar(Dimension::DIMENSIONLESS));
-    env.bind("a", Ty::scalar(Dimension::DIMENSIONLESS));
+    // A vector: `a[a[...a[0]...]]` indexes a vector with scalars.
+    env.bind_array(
+        "a",
+        Shape::vector(3u64),
+        TagSet::EMPTY,
+        Dimension::DIMENSIONLESS,
+    )
+    .expect("vector");
     env.bind("p", Ty::Bool);
     env.bind_array(
         "A",

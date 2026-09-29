@@ -1,0 +1,5 @@
+tests/ui/types/err_array_row_length.sky:1:14: error: matrix rows must have the same length: expected 2, found 3
+  |
+1 | A = [[1, 2], [3, 4, 5], [6, 7]]
+  |              ^^^^^^^^^ this row has 3 elements
+  |      ------ this row has 2

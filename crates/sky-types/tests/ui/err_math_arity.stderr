@@ -1,0 +1,33 @@
+crates/sky-types/tests/ui/err_math_arity.sky:2:5: error: `sqrt` takes 1 argument, found 0
+  |
+2 | a = sqrt()
+  |     ^^^^^^ missing argument
+  = help: call it as `sqrt(x)`
+
+crates/sky-types/tests/ui/err_math_arity.sky:3:17: error: `sqrt` takes 1 argument, found 2
+  |
+3 | b = sqrt(1 m^2, 2)
+  |                 ^ extra argument
+  = help: call it as `sqrt(x)`
+
+crates/sky-types/tests/ui/err_math_arity.sky:4:5: error: `atan2` takes 2 arguments, found 1
+  |
+4 | c = atan2(1)
+  |     ^^^^^^^^ missing argument
+  = help: call it as `atan2(a, b)`
+
+crates/sky-types/tests/ui/err_math_arity.sky:5:21: error: `hypot` takes 2 arguments, found 3
+  |
+5 | d = hypot(1 m, 2 m, 3 m)
+  |                     ^^^ extra argument
+  = help: call it as `hypot(a, b)`
+
+crates/sky-types/tests/ui/err_math_arity.sky:6:9: error: `sin` needs a number, found Bool
+  |
+6 | e = sin(true)
+  |         ^^^^ this is Bool
+
+crates/sky-types/tests/ui/err_math_arity.sky:7:9: error: `abs` needs a number, found Bool
+  |
+7 | f = abs(1 m < 2 m)
+  |         ^^^^^^^^^ this is Bool

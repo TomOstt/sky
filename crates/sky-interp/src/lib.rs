@@ -8,13 +8,20 @@
 //!
 //! # Values
 //!
-//! A [`Value`] is a number with a dimension (`Value::Number`), a Bool, or a
-//! string. A unit literal is converted to SI once, at the literal (spec
-//! "Unit values"), so a number is a plain `f64` plus the [`Dimension`] it
-//! is measured in; no value remembers its unit. Arrays will arrive as an
-//! element dimension plus a shape (the checker's `ValueTy` shape); a
-//! [`Value::Number`] is then the rank-0 case. Until then an expression that
-//! would need one (indexing, `@`) is a runtime error, not a panic.
+//! A [`Value`] is a number with a dimension (`Value::Number`), an array
+//! (`Value::Array`), a Bool, or a string. A unit literal is converted to SI
+//! once, at the literal (spec "Unit values"), so a number is a plain `f64`
+//! plus the [`Dimension`] it is measured in; no value remembers its unit. An
+//! array is a vector or matrix of such numbers sharing one dimension, stored
+//! row-major; a [`Value::Number`] is the rank-0 case. The rules for arrays
+//! (elementwise operations, `@`, the inverse, the Cholesky solve, indexing)
+//! are in [`array`], on the dense numerics in [`linalg`].
+//!
+//! # Rewrites
+//!
+//! The checker decides which `A⁻¹ @ b` become Cholesky solves and records
+//! their spans (`sky_types::Checked::cholesky_solves`); [`run_module_with`]
+//! takes that set and honours it. [`run_module`] runs without one.
 //!
 //! # Arithmetic
 //!
@@ -31,16 +38,25 @@
 
 #![forbid(unsafe_code)]
 
+pub mod arith;
+pub mod array;
 mod env;
 mod error;
 mod eval;
+pub mod linalg;
+mod literal;
+pub mod math;
 mod value;
 
 #[cfg(test)]
+mod array_tests;
+#[cfg(test)]
 mod tests;
 
+pub use arith::MAX_CALL_DEPTH;
 pub use env::RuntimeEnv;
 pub use error::{ErrorDetails, RuntimeError};
-pub use eval::run_module;
+pub use eval::{run_module, run_module_with};
+pub use literal::{number_literal, unit_literal_si};
 pub use sky_units::Dimension;
 pub use value::{format_number, si_unit, Value};

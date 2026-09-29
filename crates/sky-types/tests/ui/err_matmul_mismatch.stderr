@@ -1,6 +1,8 @@
-crates/sky-types/tests/ui/err_matmul_mismatch.sky:3:7: error: `@` inner dimensions differ: 4 vs 5 in Matrix[3,4] @ Matrix[5,8]
+crates/sky-types/tests/ui/err_matmul_mismatch.sky:3:7: error: cannot multiply Matrix[3,4] by Matrix[5,8]
   |
 3 | C = A @ B
-  |       ^
+  |       ^ inner dimensions differ: 4 vs 5
   |     - this is Matrix[3,4] [1]
   |         - this is Matrix[5,8] [1]
+  = note: `@` contracts the last axis of the left operand with the first axis of the right one: [m, k] @ [k, n] -> [m, n]
+  = note: here [3, *4*] @ [*5*, 8] needs 4 == 5

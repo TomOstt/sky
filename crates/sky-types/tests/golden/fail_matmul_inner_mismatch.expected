@@ -1,1 +1,1 @@
-error: `@` inner dimensions differ: 4 vs 5 in Matrix[3,4] @ Matrix[5,8]
+error: cannot multiply Matrix[3,4] by Matrix[5,8]

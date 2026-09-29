@@ -1,0 +1,5 @@
+# A `def` named like a builtin is called instead of the builtin: this
+# `max` takes any two arguments, so mixed dimensions are fine.
+def max(a, b):
+    return a
+r = max(1 m, 2 s)

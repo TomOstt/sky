@@ -1,0 +1,9 @@
+# Math builtins reject the wrong dimensions, and say how to fix it.
+x = 3 m
+a = exp(x)
+b = log(2 s)
+c = sin(5 m/s)
+d = atan2(1 m, 2 s)
+e = hypot(1 m, 2 kg)
+f = round(1.5 km)
+g = exp(3 kg * x)

@@ -1,0 +1,10 @@
+tests/ui/types/err_derivation_constants.sky:6:9: error: cannot add energy and time
+  |
+6 | bad = E + t
+  |         ^ mismatched dimensions
+  |       - energy (L²·M·T⁻²)
+  |           - time
+  = note: both operands of `+` must have the same dimension
+  = note: `E` is an energy because `E = m * c^2` (line 4), where `m` is a mass (`m = 3 kg`, line 3) and `c` is a velocity (a predefined constant)
+  = note: `t` is a time because `t = 2 s` (line 5)
+  = help: convert one side, or fix the unit

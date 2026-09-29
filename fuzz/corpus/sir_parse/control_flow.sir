@@ -1,0 +1,44 @@
+// x = 0 m; while x < 10 m: x += 1 m (with an if inside), then a call.
+sir edition 2026
+
+fn @clamp(%v: num[L; ()], %hi: num[L; ()]) -> (num[L; ()]) effects(fail) @ 0..60 {
+  %over = cmp.gt %v, %hi : bool @ 10..20
+  %r = if %over : num[L; ()] {
+    ^1:
+      yield %hi
+  } {
+    ^2:
+      yield %v
+  } @ 5..50
+  return %r
+}
+
+fn @<main>() -> () effects(io, fail, call) {
+  %zero = const.float 0 : num[L; ()]
+  %step = const.float 1 : num[L; ()]
+  %limit = const.float 10 : num[L; ()]
+  %n0 = const.rational 0 : num[1; ()]
+  %x, %n = while %zero, %n0 : num[L; ()], num[1; ()] {
+    ^1(%i: num[L; ()], %k: num[1; ()]):
+      %go = cmp.lt %i, %limit : bool
+      condition %go, %i, %k
+  } {
+    ^2(%j: num[L; ()], %count: num[1; ()]):
+      %next = add %j, %step : num[L; ()]
+      %odd = cmp.eq %count, %n0 : bool
+      %bumped = if %odd : num[L; ()] {
+        ^3:
+          yield %next
+      } {
+        ^4:
+          %again = add %next, %step : num[L; ()]
+          yield %again
+      }
+      %one = const.rational 1 : num[1; ()]
+      %count2 = add %count, %one : num[1; ()]
+      yield %bumped, %count2
+  } @ 100..200
+  %clamped = call @clamp(%x, %limit) : num[L; ()]
+  print %clamped, %n
+  return
+}

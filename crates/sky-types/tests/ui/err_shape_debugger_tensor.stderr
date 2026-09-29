@@ -1,0 +1,30 @@
+crates/sky-types/tests/ui/err_shape_debugger_tensor.sky:6:7: error: cannot add Tensor[2,8,32,64] to Tensor[2,8,16,64]
+  |
+6 | T = Q + K
+  |       ^ axis 2 differs: N = 16 vs 32
+  |     - this is Tensor[2,8,16,64] [1]
+  |         - this is Tensor[2,8,32,64] [1]
+  = note: axis     0  1  2       3
+  = note: left     2  8  N = 16  64
+  = note: right    2  8  32      64
+  = note: differs        ^
+  = note: `N` was fixed to 16 at line 5 (`Q + V`)
+  = help: check the size variable `N`: every `N` in a module (or, per call, in a function) stands for one size
+
+crates/sky-types/tests/ui/err_shape_debugger_tensor.sky:8:7: error: cannot add a matrix to a rank-4 tensor
+  |
+8 | X = V + W
+  |       ^ rank 4 vs rank 2
+  |     - this is Tensor[2,8,16,64] [1]
+  |         - this is Matrix[16,64] [1]
+  = note: left: [2, 8, 16, 64] has 4 axes, right: [16, 64] has 2 axes
+  = note: axes are numbered from 0 and have no names yet; only shapes of the same rank can be compared axis by axis
+
+crates/sky-types/tests/ui/err_shape_debugger_tensor.sky:9:7: error: cannot multiply Tensor[2,8,16,64] by Matrix[16,64]
+  |
+9 | Y = V @ W
+  |       ^ `@` needs vectors or matrices
+  |     - this is Tensor[2,8,16,64] [1]
+  |         - this is Matrix[16,64] [1]
+  = note: the left operand is a rank-4 tensor ([2, 8, 16, 64]), the right operand is a matrix ([16, 64])
+  = note: `@` works on vectors and matrices only (no batching or broadcasting yet)

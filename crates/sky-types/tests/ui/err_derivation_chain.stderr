@@ -1,0 +1,32 @@
+crates/sky-types/tests/ui/err_derivation_chain.sky:7:9: error: cannot add L²·T⁻² and time
+  |
+7 | bad = k + t0
+  |         ^ mismatched dimensions
+  |       - L²·T⁻²
+  |           -- time
+  = note: both operands of `+` must have the same dimension
+  = note: `k` is of dimension L²·T⁻² because `k = a * d` (line 6), where `a` is of dimension L·T⁻² (`a = v / t0`, line 5, where `v` is a velocity (`v = d / t0`, line 4) and `t0` is a time (`t0 = 2 s`, line 3)) and `d` is a length (`d = 10 km`, line 2)
+  = note: `t0` is a time because `t0 = 2 s` (line 3)
+  = help: convert one side, or fix the unit
+
+crates/sky-types/tests/ui/err_derivation_chain.sky:9:9: error: cannot add length and velocity
+  |
+9 | gap = d + v
+  |         ^ mismatched dimensions
+  |       - length
+  |           - velocity (L·T⁻¹)
+  = note: both operands of `+` must have the same dimension
+  = note: `d` is a length because `d = 10 km` (line 2)
+  = note: `v` is a velocity because `v = d / t0` (line 4), where `d` is a length (`d = 10 km`, line 2) and `t0` is a time (`t0 = 2 s`, line 3)
+  = help: these differ by a factor of time: `d` is `v` times a time
+
+crates/sky-types/tests/ui/err_derivation_chain.sky:11:15: error: cannot add length and velocity
+   |
+11 | step = v * t0 + v
+   |               ^ mismatched dimensions
+   |        ------ length
+   |                 - velocity (L·T⁻¹)
+   = note: both operands of `+` must have the same dimension
+   = note: `v * t0` is a length, where `v` is a velocity (`v = d / t0`, line 4, where `d` is a length (`d = 10 km`, line 2) and `t0` is a time (`t0 = 2 s`, line 3)) and `t0` is a time (`t0 = 2 s`, line 3)
+   = note: `v` is a velocity because `v = d / t0` (line 4), where `d` is a length (`d = 10 km`, line 2) and `t0` is a time (`t0 = 2 s`, line 3)
+   = help: did you mean `v * t0` (a length)?

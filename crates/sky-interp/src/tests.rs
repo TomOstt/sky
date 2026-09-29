@@ -272,22 +272,23 @@ fn annotated_binding_binds_its_value() {
     let mut env = RuntimeEnv::new();
     run_in(&mut env, "a: Vector[3] = 1\n").unwrap();
     assert_eq!(env.get("a"), Some(&Value::scalar(1.0)));
-    // A declaration without a value would be an array.
+    // A declaration without a value is an input nothing supplies.
     let e = run_in(&mut env, "A: Matrix[3, 3]\n").unwrap_err();
-    assert_eq!(e.message, "arrays are not supported by the interpreter yet");
+    assert_eq!(e.message, "`A` is declared but has no value");
 }
 
 #[test]
-fn arrays_are_a_runtime_error_not_a_panic() {
-    let want = "arrays are not supported by the interpreter yet";
-    assert_eq!(err("x = 1\nx[0]").message, want);
+fn indexing_a_non_array_is_a_runtime_error_not_a_panic() {
+    assert_eq!(err("x = 1\nx[0]").message, "cannot index a number");
     let mut env = RuntimeEnv::new();
     run_in(&mut env, "A = 2\n").unwrap();
-    assert_eq!(run_in(&mut env, "A[0, :]\n").unwrap_err().message, want);
-    assert_eq!(run_in(&mut env, "A @ A\n").unwrap_err().message, want);
     assert_eq!(
-        run_in(&mut env, "Matrix[3, 3]\n").unwrap_err().message,
-        want
+        run_in(&mut env, "A[0, :]\n").unwrap_err().message,
+        "cannot index a number"
+    );
+    assert_eq!(
+        run_in(&mut env, "A @ A\n").unwrap_err().message,
+        "`@` needs two arrays, found a number and a number"
     );
 }
 
@@ -469,4 +470,111 @@ fn decimal_exponents_match_the_checker() {
     assert_eq!(show("(4 m)^0.5"), "2 m^(1/2)");
     assert_eq!(show("(8 s)^(1/3)"), "2 s^(1/3)");
     assert_eq!(show("(9 m^2)^0.5"), "3 m");
+}
+
+// Math builtins (`crate::math`). These run without the checker, so the
+// dynamic dimension re-checks are covered too.
+
+#[test]
+fn math_dimension_rules() {
+    assert_eq!(show("sqrt(9 m^2)"), "3 m");
+    assert_eq!(show("sqrt(16)"), "4");
+    assert_eq!(show("cbrt(-8 m^3)"), "-2 m");
+    assert_eq!(show("abs(-3 m/s)"), "3 m/s");
+    assert_eq!(show("hypot(3 m, 4 m)"), "5 m");
+    assert_eq!(show("min(2 s, 1 s)"), "1 s");
+    assert_eq!(show("max(1 kg, 2 kg)"), "2 kg");
+    assert_eq!(
+        show("atan2(1 m, 1 m)"),
+        format_number(std::f64::consts::FRAC_PI_4)
+    );
+    // Hz times s is dimensionless, so it may feed a trig function.
+    assert_eq!(show("cos(0 Hz * 2 s)"), "1");
+    assert_eq!(show("exp(0)"), "1");
+    assert_eq!(show("log2(8) + log10(1000)"), "6");
+    assert_eq!(show("sin(0 rad)"), "0");
+}
+
+#[test]
+fn math_rounding_is_half_away_from_zero_and_never_negative_zero() {
+    assert_eq!(show("round(2.5)"), "3");
+    assert_eq!(show("round(-2.5)"), "-3");
+    assert_eq!(show("round(-0.4)"), "0");
+    assert_eq!(show("floor(-0.5)"), "-1");
+    assert_eq!(show("ceil(-0.5)"), "0");
+}
+
+#[test]
+fn math_domain_errors_never_produce_nan_or_inf() {
+    assert_eq!(err("log(0)").message, "`log` of zero has no real value");
+    assert_eq!(
+        err("log10(-1)").message,
+        "`log10` of a negative number has no real value"
+    );
+    assert_eq!(
+        err("sqrt(-1 m^2)").message,
+        "`sqrt` of a negative number has no real value"
+    );
+    assert_eq!(
+        err("asin(2)").message,
+        "`asin` of a number outside [-1, 1] has no real value"
+    );
+    assert_eq!(
+        err("atan2(0 m, 0 m)").message,
+        "`atan2` of the zero vector has no real value"
+    );
+    assert_eq!(err("exp(1000)").message, "arithmetic overflow");
+    assert_eq!(
+        err("hypot(1.5e308 m, 1.5e308 m)").message,
+        "arithmetic overflow"
+    );
+    // Underflow is a correct zero, not an error.
+    assert_eq!(show("exp(-1000)"), "0");
+}
+
+#[test]
+fn math_dimension_and_type_errors_at_run_time() {
+    assert_eq!(
+        err("exp(3 m)").message,
+        "the argument of `exp` must be dimensionless, found length"
+    );
+    assert_eq!(
+        err("max(1 m, 1 s)").message,
+        "the arguments of `max` must have the same dimension, found length and time"
+    );
+    assert_eq!(
+        err("round(1.5 km)").message,
+        "the argument of `round` must be dimensionless, found length"
+    );
+    assert!(err("sin(true)").message.starts_with("`sin` needs a number"));
+    assert_eq!(
+        err("sqrt(1, 2)").message,
+        "`sqrt` takes 1 argument, found 2"
+    );
+    assert_eq!(
+        err("hypot(1)").message,
+        "`hypot` takes 2 arguments, found 1"
+    );
+}
+
+#[test]
+fn a_user_binding_or_def_shadows_a_math_builtin() {
+    let (_, out) = run_in(
+        &mut RuntimeEnv::new(),
+        "def sqrt(x):\n    return x + 1\nprint(sqrt(9))\nabs = 5\nprint(abs)\n",
+    )
+    .expect("runs");
+    assert_eq!(out, "10\n5\n");
+}
+
+#[test]
+fn pi_is_a_dimensionless_prelude_constant() {
+    let mut env = RuntimeEnv::with_prelude();
+    let (v, _) = run_in(&mut env, "2 * pi == 2 * π\n").expect("runs");
+    assert_eq!(v.map(|v| v.to_string()), Some("true".to_string()));
+    let (v, _) = run_in(&mut env, "pi\n").expect("runs");
+    assert_eq!(
+        v.map(|v| v.to_string()),
+        Some(format_number(std::f64::consts::PI))
+    );
 }

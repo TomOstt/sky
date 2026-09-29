@@ -5,6 +5,7 @@ tests/ui/types/err_compound_assign.sky:6:3: error: cannot add length and time
   | - length
   |      --- time
   = note: both operands of `+` must have the same dimension
+  = note: `x` is a length because `x = 5 m` (line 4)
   = help: convert one side, or fix the unit
 
 tests/ui/types/err_compound_assign.sky:7:3: error: `*=` would change `x` from length to L²
@@ -13,6 +14,7 @@ tests/ui/types/err_compound_assign.sky:7:3: error: `*=` would change `x` from le
   |   ^^
   | - this is length
   = note: the result of `*=` must keep the type of `x`
+  = note: `x` is a length because `x = 5 m` (line 4)
   = help: bind a new name instead: `y = x * …`
 
 tests/ui/types/err_compound_assign.sky:8:3: error: `@=` would drop `K`'s Symmetric, PositiveDefinite tags

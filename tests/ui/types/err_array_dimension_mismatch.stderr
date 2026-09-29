@@ -1,0 +1,17 @@
+tests/ui/types/err_array_dimension_mismatch.sky:2:11: error: array elements must have the same dimension: expected length, found time
+  |
+2 | v = [1 m, 2 s, 3 m]
+  |           ^^^ this is time
+  |      --- this is length
+
+tests/ui/types/err_array_dimension_mismatch.sky:3:24: error: array elements must have the same dimension: expected length, found mass
+  |
+3 | A = [[1 m, 2 m], [3 m, 4 kg]]
+  |                        ^^^^ this is mass
+  |       --- this is length
+
+tests/ui/types/err_array_dimension_mismatch.sky:4:18: error: expected time, found length
+  |
+4 | d: Vector[2] s = [1 m, 2 m]
+  |                  ^^^^^^^^^^ this is length
+  |              - expected time because of this unit

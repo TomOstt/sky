@@ -2,7 +2,8 @@ crates/sky-types/tests/ui/err_constant_dimension_mismatch.sky:3:7: error: cannot
   |
 3 | x = E + 1 kg
   |       ^ mismatched dimensions
-  |     - energy
+  |     - energy (L²·M·T⁻²)
   |         ---- mass
   = note: both operands of `+` must have the same dimension
+  = note: `E` is an energy because `E = 2 kg * c^2` (line 2), where `c` is a velocity (a predefined constant)
   = help: convert one side, or fix the unit

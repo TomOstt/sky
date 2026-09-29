@@ -1,0 +1,14 @@
+// A value defined inside the `then` arm is used after the `if`.
+sir edition 2026
+fn @f(%c: bool, %x: num[L; ()]) -> (num[L; ()]) {
+  %r = if %c : num[L; ()] {
+    ^0:
+      %inner = neg %x : num[L; ()]  @ 5..9
+      yield %inner
+  } {
+    ^1:
+      yield %x
+  }
+  %bad = add %r, %inner : num[L; ()]  @ 12..20
+  return %bad
+}

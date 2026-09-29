@@ -1,0 +1,4 @@
+@f: operands of `add` have different dimensions: L and T (op0) @ 1..2
+@f: cannot multiply Matrix[4,4] by Vector[3] (op1) @ 3..4
+@f: the result of `mul` should have dimension L², found L (op2) @ 5..6
+@f: operands of `cmp.lt` have different dimensions: L and T (op3) @ 7..8

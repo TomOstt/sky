@@ -4,51 +4,28 @@
 //! are exhaustive on purpose (no `_ =>` arms), so a node another change adds
 //! to the AST fails to compile here instead of being silently ignored.
 
+use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
-
-use sky_ast::ast::span_text;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use sky_ast::ast::span_text;
+
 use sky_ast::{
-    AssignTarget, BinaryOp, Block, BoolOp, Expr, ExprKind, Literal, Module, Stmt, StmtKind,
-    UnaryOp, UnitExpr,
+    AssignTarget, BinaryOp, Block, BoolOp, Expr, ExprKind, IndexItem, Literal, Module, Stmt,
+    StmtKind, UnaryOp,
 };
 use sky_diag::Span;
 use sky_syntax::lexer::unescape_str;
-use sky_units::{lookup, Dimension, Rational};
+use sky_units::MathFn;
 
+use crate::arith::{
+    arith, arity_mismatch, equal, expect_bool, order, pow, reciprocal, recursion_too_deep, sign,
+    ArithOp, StackMeter, MAX_CALL_DEPTH, R,
+};
+use crate::array::{self, Ix};
+use crate::literal::{number_literal, unit_literal_si};
 use crate::value::Function;
 use crate::{RuntimeEnv, RuntimeError, Value};
-
-type R<T> = Result<T, RuntimeError>;
-
-/// Integer exponents up to this size use `powi` (repeated multiplication,
-/// exact whenever the true result is representable); larger or fractional
-/// ones use `powf`.
-const POWI_MAX: f64 = 64.0;
-
-/// Most user-function calls active at once, like Python's recursion limit:
-/// a friendly error for runaway recursion.
-pub const MAX_CALL_DEPTH: usize = 1000;
-
-/// How much of the stack the walk may use before it stops with an error.
-/// The walk recurses on the Rust stack, and how much each level costs
-/// depends on the build (a debug build needs several KiB per nested
-/// expression), so a fixed depth count can't be both safe and generous.
-/// Instead every `eval` and block measures how far the stack has grown
-/// since `run_module` started. The budget leaves 1 MiB of
-/// `sky_ast::DEEP_STACK_BYTES` (`run_module` must run under
-/// `with_deep_stack`) for the frames between two checks and for printing.
-const STACK_BUDGET: usize = sky_ast::DEEP_STACK_BYTES - (1 << 20);
-
-/// The address of a local: where the stack is now. Only ever compared with
-/// another such address, never dereferenced.
-#[inline(never)]
-fn stack_position() -> usize {
-    let marker = 0u8;
-    std::hint::black_box(&marker) as *const u8 as usize
-}
 
 /// How a statement finished: normally (with the value of an expression
 /// statement, for the REPL), or by leaving its block early.
@@ -72,12 +49,30 @@ pub fn run_module<W: Write>(
     env: &mut RuntimeEnv,
     out: &mut W,
 ) -> Result<Option<Value>, RuntimeError> {
+    run_module_with(module, src, env, out, &HashSet::new())
+}
+
+/// Like [`run_module`], and honours the checker's rewrites: `solves` is
+/// `Checked::cholesky_solves`, the span of every `A⁻¹ @ b` the checker
+/// decided to rewrite to a Cholesky solve (its `A` is PositiveDefinite). At
+/// such a span the interpreter factors `A` and solves for `b` instead of
+/// forming `A⁻¹`. The spans must come from checking this same `src`. With an
+/// empty set the program still runs, computing the inverse and multiplying,
+/// which gives the same answer up to rounding.
+pub fn run_module_with<W: Write>(
+    module: &Module,
+    src: &str,
+    env: &mut RuntimeEnv,
+    out: &mut W,
+    solves: &HashSet<Span>,
+) -> Result<Option<Value>, RuntimeError> {
     let mut it = Interp {
         src,
         env,
         out,
+        solves,
         frames: Vec::new(),
-        stack_base: stack_position(),
+        stack: StackMeter::new(),
     };
     let mut last = None;
     for stmt in &module.stmts {
@@ -96,26 +91,14 @@ struct Interp<'a> {
     /// Module-level names.
     env: &'a mut RuntimeEnv,
     out: &'a mut dyn Write,
+    /// The `A⁻¹ @ b` sites to solve by Cholesky; see [`run_module_with`].
+    solves: &'a HashSet<Span>,
     /// The local variables of each active user-function call, innermost
     /// last. Inside a call, names are read from its frame and then from the
     /// module (Python's rule); assignments go to the frame.
     frames: Vec<BTreeMap<String, Value>>,
-    /// [`stack_position`] when the run started; see [`STACK_BUDGET`].
-    stack_base: usize,
-}
-
-fn arrays_unsupported(span: Span) -> RuntimeError {
-    RuntimeError::new("arrays are not supported by the interpreter yet", span)
-        .with_label("this needs an array")
-        .with_note("the checker accepts array types in v0.1, but `sky run` cannot execute them yet")
-}
-
-/// `length`, or `L·M` for a dimension without a name (as the checker says it).
-fn describe(d: &Dimension) -> String {
-    match d.name() {
-        Some(n) => n.to_string(),
-        None => d.to_string(),
-    }
+    /// Where the run started; see [`crate::arith::STACK_BUDGET`].
+    stack: StackMeter,
 }
 
 impl<'a> Interp<'a> {
@@ -139,22 +122,8 @@ impl<'a> Interp<'a> {
         }
     }
 
-    /// An error if the walk has used up [`STACK_BUDGET`]: deep recursion
-    /// combined with deeply nested expressions ends here, cleanly, rather
-    /// than in a stack overflow.
     fn check_stack(&self, span: Span) -> R<()> {
-        // Direction-agnostic: the stack grows down on every target Sky
-        // supports, but `abs_diff` doesn't need to know.
-        if self.stack_base.abs_diff(stack_position()) > STACK_BUDGET {
-            return Err(RuntimeError::new(
-                "the program nests too deeply for the interpreter",
-                span,
-            )
-            .with_label("stopped here")
-            .with_note("`sky run` stops before it runs out of stack")
-            .with_help("reduce the recursion depth, or use a `while` loop"));
-        }
-        Ok(())
+        self.stack.check(span)
     }
 
     /// Runs a block's statements until one leaves it early.
@@ -271,9 +240,13 @@ impl<'a> Interp<'a> {
                     self.assign(name, v);
                     Ok(Flow::Normal(None))
                 }
-                // A declaration without a value only makes sense for an
-                // array (the annotation is a shape).
-                None => Err(arrays_unsupported(s.span)),
+                // A declaration without a value is an input: the checker
+                // takes its shape, tags and unit on trust, and nothing in
+                // v0.1 supplies one.
+                None => Err(crate::arith::declared_without_value(
+                    self.text(name.span),
+                    s.span,
+                )),
             },
         }
     }
@@ -304,12 +277,8 @@ impl<'a> Interp<'a> {
                         return Err(RuntimeError::new("a unit needs a number", *s));
                     }
                 };
-                let x = self.number(span)?;
                 // Converted to SI once, here (spec "Unit values").
-                let (si, dim) = self.apply_unit(unit, x)?;
-                if !si.is_finite() {
-                    return Err(overflow(e.span));
-                }
+                let (si, dim) = unit_literal_si(self.src, span, unit, e.span)?;
                 Ok(Value::number(si, dim))
             }
             ExprKind::Unary {
@@ -317,20 +286,10 @@ impl<'a> Interp<'a> {
                 op_span: _,
                 operand,
             } => match op {
-                UnaryOp::Neg | UnaryOp::Pos => match self.eval(operand)? {
-                    Value::Number { value, dim } => {
-                        let value = if *op == UnaryOp::Neg { -value } else { value };
-                        Ok(Value::number(value, dim))
-                    }
-                    other => Err(RuntimeError::new(
-                        format!(
-                            "`{}` needs a number, found {}",
-                            if *op == UnaryOp::Neg { "-" } else { "+" },
-                            other.kind()
-                        ),
-                        operand.span,
-                    )),
-                },
+                UnaryOp::Neg | UnaryOp::Pos => {
+                    let v = self.eval(operand)?;
+                    sign(*op == UnaryOp::Neg, v, operand.span)
+                }
                 UnaryOp::Not => Ok(Value::Bool(!self.expect_bool("not", operand)?)),
                 UnaryOp::Partial | UnaryOp::Nabla => Err(RuntimeError::new(
                     "derivative operators are not supported by the interpreter yet",
@@ -358,7 +317,7 @@ impl<'a> Interp<'a> {
                     let r = self.eval(rhs)?;
                     self.binary_values(*op, l, r, e.span, lhs.span, rhs)
                 }
-                BinaryOp::MatMul => Err(arrays_unsupported(e.span)),
+                BinaryOp::MatMul => self.matmul(e, lhs, rhs),
             },
             ExprKind::BoolOp { op, operands, .. } => {
                 // The operand that settles the result: `false` for `and`,
@@ -383,7 +342,8 @@ impl<'a> Interp<'a> {
                 self.reciprocal("⁻¹", v, e.span, operand.span)
             }
             ExprKind::Call { callee, args } => self.call(e, callee, args),
-            ExprKind::Index { .. } => Err(arrays_unsupported(e.span)),
+            ExprKind::Array(elems) => self.array_literal(e, elems),
+            ExprKind::Index { base, items } => self.index(e, base, items),
             ExprKind::Attribute { base: _, name } => Err(RuntimeError::new(
                 format!(
                     "attribute `{}` is not supported by the interpreter yet",
@@ -404,74 +364,13 @@ impl<'a> Interp<'a> {
 
     /// Evaluates an operand of `and`, `or` or `not`, which must be a Bool.
     fn expect_bool(&mut self, kw: &str, operand: &Expr) -> R<bool> {
-        match self.eval(operand)? {
-            Value::Bool(b) => Ok(b),
-            other => Err(RuntimeError::new(
-                format!("`{kw}` needs a Bool operand, found {}", other.kind()),
-                operand.span,
-            )
-            .with_label("not a Bool")
-            .with_note("v0.1 has no truthiness")),
-        }
+        let v = self.eval(operand)?;
+        expect_bool(kw, &v, operand.span)
     }
 
-    /// Reads a numeric literal's text (`1_000`, `2.5e-3`) as an `f64`.
+    /// Reads a numeric literal's text as an `f64` (see [`crate::literal`]).
     fn number(&self, span: Span) -> R<f64> {
-        let text = self.text(span).replace('_', "");
-        match text.parse::<f64>() {
-            Ok(x) if x.is_finite() => Ok(x),
-            Ok(_) => Err(RuntimeError::new("number too large", span)
-                .with_label("does not fit in a 64-bit float")
-                .with_note("the largest Sky number is about 1.8e308")),
-            Err(_) => Err(RuntimeError::new("invalid number", span)),
-        }
-    }
-
-    /// Applies unit `u` to the value `v`, factor by factor: `36 km/h` is
-    /// `36 * 1000 / 3600`, which is exactly 10, where multiplying by a
-    /// precomputed `1000/3600` would not be. A single unit is `v * scale`,
-    /// as the spec says. Returns the SI value and the dimension.
-    fn apply_unit(&self, u: &UnitExpr, v: f64) -> R<(f64, Dimension)> {
-        let overflow_dim = || RuntimeError::new("dimension exponent too large", u.span());
-        match u {
-            UnitExpr::Name(id) => {
-                let name = self.text(id.span);
-                match lookup(name) {
-                    Some(unit) => Ok((v * unit.scale, unit.dim)),
-                    None => Err(RuntimeError::new(format!("unknown unit `{name}`"), id.span)),
-                }
-            }
-            UnitExpr::Mul { lhs, rhs, .. } => {
-                let (v, d1) = self.apply_unit(lhs, v)?;
-                let (v, d2) = self.apply_unit(rhs, v)?;
-                Ok((v, d1.checked_mul(d2).map_err(|_| overflow_dim())?))
-            }
-            UnitExpr::Div { lhs, rhs, .. } => {
-                let (v, d1) = self.apply_unit(lhs, v)?;
-                let (scale, d2) = self.apply_unit(rhs, 1.0)?;
-                Ok((v / scale, d1.checked_div(d2).map_err(|_| overflow_dim())?))
-            }
-            UnitExpr::Pow { base, num, den, .. } => {
-                let (scale, d) = self.apply_unit(base, 1.0)?;
-                let exp = i64::try_from(*den)
-                    .ok()
-                    .and_then(|den| Rational::checked_new(*num, den).ok())
-                    .ok_or_else(overflow_dim)?;
-                let dim = d.pow_rat(exp).map_err(|_| overflow_dim())?;
-                let factor = if *den == 1 {
-                    // Integer exponent: multiply or divide, `s^-2` is `/ s^2`.
-                    let k = i32::try_from(num.unsigned_abs()).map_err(|_| overflow_dim())?;
-                    let p = scale.powi(k);
-                    if *num < 0 {
-                        return Ok((v / p, dim));
-                    }
-                    p
-                } else {
-                    scale.powf(*num as f64 / *den as f64)
-                };
-                Ok((v * factor, dim))
-            }
-        }
+        number_literal(self.src, span)
     }
 
     fn call(&mut self, call: &Expr, callee: &Expr, args: &[Expr]) -> R<Value> {
@@ -484,7 +383,12 @@ impl<'a> Interp<'a> {
                 match name {
                     "print" => return self.print(args),
                     "inv" => return self.inv(call, args),
-                    _ => {}
+                    "zeros" | "identity" | "len" => return self.array_builtin(name, call, args),
+                    _ => {
+                        if let Some(f) = MathFn::from_name(name) {
+                            return self.math(f, call, args);
+                        }
+                    }
                 }
             }
         }
@@ -497,30 +401,137 @@ impl<'a> Interp<'a> {
         }
     }
 
+    /// `[a, b]` or `[[a, b], [c, d]]`: entries are evaluated left to right,
+    /// row by row. A matrix is a literal whose elements are all literals.
+    fn array_literal(&mut self, e: &Expr, elems: &[Expr]) -> R<Value> {
+        let matrix = elems.iter().all(|x| matches!(x.kind, ExprKind::Array(_)));
+        let mut rows = Vec::new();
+        if matrix {
+            for row in elems {
+                let ExprKind::Array(items) = &row.kind else {
+                    continue;
+                };
+                rows.push(self.entries(items)?);
+            }
+        } else {
+            rows.push(self.entries(elems)?);
+        }
+        array::literal(rows, !matrix, e.span)
+    }
+
+    fn entries(&mut self, items: &[Expr]) -> R<Vec<(Value, Span)>> {
+        items
+            .iter()
+            .map(|x| Ok((self.eval(x)?, x.span)))
+            .collect::<R<Vec<_>>>()
+    }
+
+    /// `base[items]`, reading only.
+    fn index(&mut self, e: &Expr, base: &Expr, items: &[IndexItem]) -> R<Value> {
+        let b = self.eval(base)?;
+        let mut ixs = Vec::with_capacity(items.len());
+        for item in items {
+            ixs.push(match item {
+                IndexItem::Expr(x) => Ix::At {
+                    i: array::to_index(&self.eval(x)?, x.span)?,
+                    span: x.span,
+                },
+                IndexItem::Slice {
+                    start, stop, span, ..
+                } => {
+                    let mut bound = |x: &Option<Expr>| match x {
+                        Some(x) => array::to_index(&self.eval(x)?, x.span).map(Some),
+                        None => Ok(None),
+                    };
+                    Ix::Slice {
+                        start: bound(start)?,
+                        stop: bound(stop)?,
+                        span: *span,
+                    }
+                }
+            });
+        }
+        array::index(&b, &ixs, e.span, base.span)
+    }
+
+    /// `l @ r`. Where the checker rewrote `A⁻¹ @ b` (`solves` holds the
+    /// span of the whole expression) the interpreter factors `A` and solves
+    /// for `b`, and never forms `A⁻¹`.
+    fn matmul(&mut self, e: &Expr, lhs: &Expr, rhs: &Expr) -> R<Value> {
+        if self.solves.contains(&e.span) {
+            if let Some(a) = self.inverted_operand(lhs) {
+                let av = self.eval(a)?;
+                let bv = self.eval(rhs)?;
+                return array::cholesky_solve(&av, &bv, e.span, a.span, rhs.span);
+            }
+        }
+        let l = self.eval(lhs)?;
+        let r = self.eval(rhs)?;
+        array::matmul(&l, &r, e.span, lhs.span, rhs.span)
+    }
+
+    /// `A` if `e` is `A⁻¹` or `inv(A)` (the builtin, not a user's own
+    /// `inv`), possibly parenthesized: the forms the checker rewrites.
+    fn inverted_operand<'x>(&self, e: &'x Expr) -> Option<&'x Expr> {
+        let mut e = e;
+        while let ExprKind::Paren(inner) = &e.kind {
+            e = inner;
+        }
+        match &e.kind {
+            ExprKind::Inverse { operand, .. } => Some(operand),
+            ExprKind::Call { callee, args } => match (&callee.kind, args.as_slice()) {
+                (ExprKind::Name(id), [arg])
+                    if self.text(id.span) == "inv" && self.lookup("inv").is_none() =>
+                {
+                    Some(arg)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// `zeros(n)`, `zeros(m, n)`, `identity(n)`, `len(x)`.
+    fn array_builtin(&mut self, name: &str, call: &Expr, args: &[Expr]) -> R<Value> {
+        let takes = |n: &str| {
+            RuntimeError::new(
+                format!("`{name}` takes {n}, found {}", args.len()),
+                call.span,
+            )
+        };
+        let mut sizes = Vec::with_capacity(args.len());
+        for a in args {
+            let v = self.eval(a)?;
+            if name == "len" {
+                let [_] = args else {
+                    return Err(takes("1 argument"));
+                };
+                return array::len(&v, a.span);
+            }
+            sizes.push(array::size_arg(name, &v, a.span)?);
+        }
+        match (name, sizes.as_slice()) {
+            ("zeros", [_] | [_, _]) => array::zeros(&sizes, call.span),
+            ("identity", [n]) => array::identity(*n, call.span),
+            ("zeros", _) => Err(takes("1 or 2 arguments")),
+            _ => Err(takes("1 argument")),
+        }
+    }
+
     /// Calls a user function: arguments are evaluated in the caller's
     /// scope, then the body runs in a new frame holding the parameters.
     fn call_user(&mut self, func: &Arc<Function>, call: &Expr, args: &[Expr]) -> R<Value> {
         if args.len() != func.params.len() {
             // The checker checks arity; this guards the interpreter anyway.
-            return Err(RuntimeError::new(
-                format!(
-                    "`{}` takes {} argument{}, found {}",
-                    func.name,
-                    func.params.len(),
-                    if func.params.len() == 1 { "" } else { "s" },
-                    args.len()
-                ),
+            return Err(arity_mismatch(
+                &func.name,
+                func.params.len(),
+                args.len(),
                 call.span,
             ));
         }
         if self.frames.len() >= MAX_CALL_DEPTH {
-            return Err(RuntimeError::new(
-                format!("recursion is too deep: more than {MAX_CALL_DEPTH} nested calls"),
-                call.span,
-            )
-            .with_label(format!("calling `{}` here", func.name))
-            .with_note("`sky run` limits nested calls instead of overflowing the stack")
-            .with_help("check the recursion's base case, or use a `while` loop"));
+            return Err(recursion_too_deep(&func.name, call.span));
         }
         let mut frame = BTreeMap::new();
         for (name, a) in func.params.iter().zip(args) {
@@ -559,6 +570,17 @@ impl<'a> Interp<'a> {
         Ok(Value::None)
     }
 
+    /// A builtin math function: arguments left to right, then the shared
+    /// evaluation in `math`.
+    fn math(&mut self, f: MathFn, call: &Expr, args: &[Expr]) -> R<Value> {
+        let vals = args
+            .iter()
+            .map(|a| self.eval(a))
+            .collect::<R<Vec<Value>>>()?;
+        let spans: Vec<Span> = args.iter().map(|a| a.span).collect();
+        crate::math::apply(f, &vals, call.span, &spans)
+    }
+
     /// `inv(x)`: the function spelling of `x⁻¹`.
     fn inv(&mut self, call: &Expr, args: &[Expr]) -> R<Value> {
         let [arg] = args else {
@@ -573,19 +595,7 @@ impl<'a> Interp<'a> {
 
     /// `1/x` with the inverse dimension.
     fn reciprocal(&self, what: &str, v: Value, whole: Span, operand: Span) -> R<Value> {
-        let Value::Number { value, dim } = v else {
-            return Err(RuntimeError::new(
-                format!("`{what}` needs a number, found {}", v.kind()),
-                operand,
-            ));
-        };
-        if value == 0.0 {
-            return Err(div_zero(whole, operand));
-        }
-        let dim = dim
-            .inverse()
-            .map_err(|_| RuntimeError::new("dimension exponent too large", whole))?;
-        Ok(Value::number(finite(1.0 / value, whole)?, dim))
+        reciprocal(what, &v, whole, operand)
     }
 
     /// Applies a binary operator to two evaluated operands. `whole` is the
@@ -602,206 +612,48 @@ impl<'a> Interp<'a> {
     ) -> R<Value> {
         let rspan = rexpr.span;
         match op {
-            BinaryOp::Add | BinaryOp::Sub => {
-                let (verb, prep) = if op == BinaryOp::Add {
-                    ("add", "and")
-                } else {
-                    ("subtract", "from")
-                };
-                let (Value::Number { value: a, dim: da }, Value::Number { value: b, dim: db }) =
-                    (&l, &r)
-                else {
-                    // `subtract b from a`: name the right operand first.
-                    let (x, y) = if op == BinaryOp::Add {
-                        (&l, &r)
-                    } else {
-                        (&r, &l)
-                    };
-                    return Err(RuntimeError::new(
-                        format!("cannot {verb} {} {prep} {}", x.kind(), y.kind()),
-                        whole,
-                    ));
-                };
-                if da != db {
-                    let message = if op == BinaryOp::Add {
-                        format!("cannot add {} and {}", describe(da), describe(db))
-                    } else {
-                        format!("cannot subtract {} from {}", describe(db), describe(da))
-                    };
-                    return Err(RuntimeError::new(message, whole)
-                        .with_label("mismatched dimensions")
-                        .with_secondary(lspan, describe(da))
-                        .with_secondary(rspan, describe(db)));
-                }
-                let x = if op == BinaryOp::Add { a + b } else { a - b };
-                Ok(Value::number(finite(x, whole)?, *da))
-            }
-            BinaryOp::Mul | BinaryOp::Div => {
-                let (Value::Number { value: a, dim: da }, Value::Number { value: b, dim: db }) =
-                    (&l, &r)
-                else {
-                    return Err(RuntimeError::new(
-                        format!(
-                            "cannot {} {} and {}",
-                            if op == BinaryOp::Mul {
-                                "multiply"
-                            } else {
-                                "divide"
-                            },
-                            l.kind(),
-                            r.kind()
-                        ),
-                        whole,
-                    ));
-                };
-                let dim = if op == BinaryOp::Mul {
-                    da.checked_mul(*db)
-                } else {
-                    da.checked_div(*db)
-                }
-                .map_err(|_| RuntimeError::new("dimension exponent too large", whole))?;
-                if op == BinaryOp::Div {
-                    if *b == 0.0 {
-                        return Err(div_zero(whole, rspan));
-                    }
-                    return Ok(Value::number(finite(a / b, whole)?, dim));
-                }
-                Ok(Value::number(finite(a * b, whole)?, dim))
-            }
-            BinaryOp::Pow => self.pow(l, r, whole, lspan, rexpr),
+            BinaryOp::Add => arith(ArithOp::Add, &l, &r, whole, lspan, rspan),
+            BinaryOp::Sub => arith(ArithOp::Sub, &l, &r, whole, lspan, rspan),
+            BinaryOp::Mul => arith(ArithOp::Mul, &l, &r, whole, lspan, rspan),
+            BinaryOp::Div => arith(ArithOp::Div, &l, &r, whole, lspan, rspan),
+            // The result's dimension comes from the constant rational
+            // exponent in the source, exactly as the checker computes it.
+            BinaryOp::Pow => pow(
+                &l,
+                &r,
+                || sky_types::const_exponent(self.src, rexpr),
+                whole,
+                lspan,
+                rspan,
+            ),
             BinaryOp::Eq | BinaryOp::Ne => {
-                let eq = match (&l, &r) {
-                    (Value::Number { value: a, dim: da }, Value::Number { value: b, dim: db }) => {
-                        if da != db {
-                            return Err(cannot_compare(&l, &r, whole, lspan, rspan));
-                        }
-                        a == b
-                    }
-                    (Value::Bool(a), Value::Bool(b)) => a == b,
-                    (Value::Str(a), Value::Str(b)) => a == b,
-                    _ => return Err(cannot_compare(&l, &r, whole, lspan, rspan)),
-                };
+                let eq = equal(&l, &r, whole, lspan, rspan)?;
                 Ok(Value::Bool(eq == (op == BinaryOp::Eq)))
             }
-            BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
-                let (Value::Number { value: a, dim: da }, Value::Number { value: b, dim: db }) =
-                    (&l, &r)
-                else {
-                    return Err(RuntimeError::new(
-                        format!(
-                            "cannot order {} and {} with `{}`",
-                            l.kind(),
-                            r.kind(),
-                            op.symbol()
-                        ),
-                        whole,
-                    ));
-                };
-                if da != db {
-                    return Err(cannot_compare(&l, &r, whole, lspan, rspan));
-                }
-                Ok(Value::Bool(match op {
-                    BinaryOp::Lt => a < b,
-                    BinaryOp::Le => a <= b,
-                    BinaryOp::Gt => a > b,
-                    BinaryOp::Ge => a >= b,
-                    BinaryOp::Add
-                    | BinaryOp::Sub
-                    | BinaryOp::Mul
-                    | BinaryOp::Div
-                    | BinaryOp::Pow
-                    | BinaryOp::MatMul
-                    | BinaryOp::Eq
-                    | BinaryOp::Ne => false, // not reachable: this arm is the four orderings
-                }))
-            }
-            BinaryOp::MatMul => Err(arrays_unsupported(whole)),
+            BinaryOp::Lt => self.ordering(op, |a, b| a < b, &l, &r, whole, lspan, rspan),
+            BinaryOp::Le => self.ordering(op, |a, b| a <= b, &l, &r, whole, lspan, rspan),
+            BinaryOp::Gt => self.ordering(op, |a, b| a > b, &l, &r, whole, lspan, rspan),
+            BinaryOp::Ge => self.ordering(op, |a, b| a >= b, &l, &r, whole, lspan, rspan),
+            BinaryOp::MatMul => array::matmul(&l, &r, whole, lspan, rspan),
         }
     }
 
-    /// `base ^ exp`. The result's dimension comes from the constant
-    /// rational exponent in the source, exactly as the checker computes it.
-    fn pow(&self, base: Value, exp: Value, whole: Span, lspan: Span, rexpr: &Expr) -> R<Value> {
-        let (Value::Number { value: b, dim: db }, Value::Number { value: x, dim: dx }) =
-            (&base, &exp)
-        else {
-            return Err(RuntimeError::new(
-                format!("cannot raise {} to {}", base.kind(), exp.kind()),
-                whole,
-            ));
-        };
-        if !dx.is_dimensionless() {
-            return Err(
-                RuntimeError::new("the exponent must be dimensionless", rexpr.span)
-                    .with_label(format!("this is {}", describe(dx))),
-            );
-        }
-        let dim = if db.is_dimensionless() {
-            Dimension::DIMENSIONLESS
-        } else {
-            let Some(r) = sky_types::const_exponent(self.src, rexpr) else {
-                return Err(RuntimeError::new(
-                    "the exponent must be a constant number when the base has a unit",
-                    rexpr.span,
-                )
-                .with_secondary(lspan, format!("this is {}", describe(db))));
-            };
-            db.pow_rat(r)
-                .map_err(|_| RuntimeError::new("dimension exponent too large", whole))?
-        };
-        if *b == 0.0 && *x < 0.0 {
-            return Err(div_zero(whole, lspan));
-        }
-        if *b < 0.0 && x.fract() != 0.0 {
-            return Err(RuntimeError::new("the result is not a real number", whole)
-                .with_label("a negative base with a fractional exponent")
-                .with_note("Sky numbers are real; it never produces NaN or a complex number"));
-        }
-        let value = if x.fract() == 0.0 && x.abs() <= POWI_MAX {
-            b.powi(*x as i32)
-        } else {
-            b.powf(*x)
-        };
-        Ok(Value::number(finite(value, whole)?, dim))
+    #[allow(clippy::too_many_arguments)]
+    fn ordering(
+        &self,
+        op: BinaryOp,
+        holds: fn(f64, f64) -> bool,
+        l: &Value,
+        r: &Value,
+        whole: Span,
+        lspan: Span,
+        rspan: Span,
+    ) -> R<Value> {
+        order(op.symbol(), holds, l, r, whole, lspan, rspan).map(Value::Bool)
     }
 }
 
 fn write_through(span: Span) -> RuntimeError {
     RuntimeError::new("cannot assign through an index or attribute", span)
         .with_note("arrays are immutable in v0.1")
-}
-
-fn overflow(span: Span) -> RuntimeError {
-    RuntimeError::new("arithmetic overflow", span)
-        .with_label("the result does not fit in a 64-bit float")
-        .with_note("Sky numbers never become inf or NaN; the largest is about 1.8e308")
-}
-
-/// `x` if it is finite. Every operand is finite, so a non-finite result of
-/// `+ - * / ^` is an overflow.
-fn finite(x: f64, span: Span) -> R<f64> {
-    if x.is_finite() {
-        Ok(x)
-    } else {
-        Err(overflow(span))
-    }
-}
-
-fn div_zero(whole: Span, zero: Span) -> RuntimeError {
-    RuntimeError::new("division by zero", whole)
-        .with_label("this divides by zero")
-        .with_secondary(zero, "this is zero")
-        .with_note("Sky reports division by zero instead of returning inf or NaN")
-}
-
-fn cannot_compare(l: &Value, r: &Value, whole: Span, lspan: Span, rspan: Span) -> RuntimeError {
-    let (a, b) = match (l, r) {
-        (Value::Number { dim: da, .. }, Value::Number { dim: db, .. }) => {
-            (describe(da), describe(db))
-        }
-        _ => (l.kind().to_string(), r.kind().to_string()),
-    };
-    RuntimeError::new(format!("cannot compare {a} and {b}"), whole)
-        .with_secondary(lspan, a)
-        .with_secondary(rspan, b)
 }

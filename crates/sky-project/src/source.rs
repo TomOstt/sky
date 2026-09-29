@@ -143,7 +143,7 @@ impl SourceError {
 
     /// The message, unescaped. The renderer escapes it; [`fmt::Display`]
     /// escapes it too.
-    fn message(&self) -> String {
+    pub(crate) fn message(&self) -> String {
         match self {
             SourceError::Io { path, error } => format!("cannot read {}: {error}", path.display()),
             SourceError::NotAFile { path } => {
@@ -197,11 +197,14 @@ impl SourceError {
     }
 }
 
-/// `limit` in MiB when it is a whole number of MiB, else in bytes.
+/// `limit` in MiB or KiB when it is a whole number of them, else in bytes.
 fn human(limit: u64) -> String {
+    const KIB: u64 = 1024;
     const MIB: u64 = 1024 * 1024;
     if limit % MIB == 0 {
         format!("{} MiB", limit / MIB)
+    } else if limit % KIB == 0 {
+        format!("{} KiB", limit / KIB)
     } else {
         format!("{limit} bytes")
     }

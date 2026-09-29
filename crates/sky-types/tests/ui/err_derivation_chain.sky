@@ -1,0 +1,11 @@
+# Multi-hop: the note follows a name back through at most three bindings.
+d = 10 km
+t0 = 2 s
+v = d / t0
+a = v / t0
+k = a * d
+bad = k + t0
+# Two names differing by one factor of time.
+gap = d + v
+# Multiplying the lone side by an operand of the other side would fix it.
+step = v * t0 + v

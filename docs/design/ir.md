@@ -53,14 +53,17 @@ Value      { id, ty: Type }               -- SSA: defined once
 
 ```text
 Type = Number { dim: Dimension, shape: Shape, tags: TagSet, repr: Repr }
-     | Bool   { shape: Shape }
+     | Bool             -- a scalar condition (v1 has no Bool arrays)
      | Str
-     | Function { params: [Type], results: [Type], effects: EffectSet }
+     | Nothing          -- what `print` and a function without a return value give
+     | Unknown          -- the checker couldn't type it; passes treat it conservatively
 
-Repr = Exact            -- rational or symbolic until approximation is needed (idea 9)
-     | Float(Format)    -- F16 | BF16 | F32 | F64 | F128, chosen by precision passes
-     | Unchosen         -- L1 default: a strategy pass decides
+Repr = Unchosen         -- L1 default: a strategy pass decides
+     | Exact            -- rational or symbolic until approximation is needed (idea 9)
+     | F32 | F64        -- chosen by precision passes (F16, BF16, F128 come with Phase 3)
 ```
+
+Functions are not first-class values in v1: calls name their callee (`call @f`). A function's parameter types are also the types of its entry block's arguments, and the verifier checks that the two agree. `if` and `while` report no effects of their own; a pass computes their effects from their regions.
 
 `Dimension`, `Shape` and `TagSet` are the existing types from sky-units and sky-types, reused as they are. SIR depends on those crates and does not copy them. Tags stay *closed* (implications applied), as the checker already guarantees.
 
@@ -73,7 +76,7 @@ Planned extension points, which v1 leaves out: an error bound per value (interva
 | Constants | `const.rational`, `const.float`, `const.bool`, `const.str`, `const.symbol` (π, e, √2) |
 | Arithmetic | `add`, `sub`, `mul`, `div`, `neg`, `pow` (with a constant rational exponent attribute when known), `inverse` |
 | Linear algebra | `matmul`, `transpose`, `solve` (produced by rewrites, never written by users in v1) |
-| Comparison and logic | `cmp.{eq,ne,lt,le,gt,ge}`, `not`, `and`/`or` (short-circuit, as regions) |
+| Comparison and logic | `cmp.{eq,ne,lt,le,gt,ge}` (on Bools and strings only `eq`/`ne`), `not`; `and`/`or` short-circuit, so they lower to `if` |
 | Control | `if` (regions), `while` (regions), `yield`, `call`, `return` |
 | Environment | `param`, `print` (effectful) |
 
@@ -137,19 +140,26 @@ A rewrite rule must state its side conditions in terms of facts: for example, `A
 
 ## Text format
 
-A human-readable, data-only format, round-trip exact:
+A human-readable, data-only format, round-trip exact (`parse(print(m)) == m`, after ids are renumbered into the printer's canonical pre-order). `crates/sky-ir/src/parse.rs` documents the grammar; the printer is `print.rs`.
 
 ```text
 sir edition 2026
-fn @main() effects(IO) {
-  %0 = const.rational 10 : Number[L; ()]
-  %1 = const.rational 1/1000 : Number[1; ()]
-  %2 = mul %0, %1 : Number[L; ()]        @ 1:5-1:10
-  print %2                               @ 2:1-2:9
+
+fn @main() -> () effects(io) {
+  %0 = const.float 10000 : num[L; ()]
+  %1 = const.rational 1/1000 : num[1; ()]
+  %x = mul %0, %1 : num[L; ()] @ 34..52
+  print %x @ 60..68
+  return
 }
 ```
 
-It is parsed by a small hand-written parser. It never carries executable content or serialized closures (non-negotiable 3).
+* Types are `num[<dim>; <shape>; {<tags>}; <repr>]` (tags and repr only when present; repr only when not `unchosen`), `bool`, `str`, `nothing` and `unknown`. Dimensions print as `Dimension` displays them (`L²·M·T⁻²`), shapes as `(3, N#0)` (a shape variable prints with its id, because identity is the id).
+* Regions nest as `{ ... }` after the operation, with block labels and arguments (`^1(%i: num[1; ()]):`); the function body's entry block is implicit.
+* Spans are byte ranges, not line:column, because the parser can only restore what does not need the source file. `0..0` is omitted.
+* Floats print in the shortest round-trip form, or as `0x` plus the bits when not finite.
+
+It is parsed by a small hand-written parser that never panics, limits nesting to `MAX_REGION_DEPTH` and input size to `sky_syntax::MAX_SOURCE_BYTES`, and has a fuzz target. It never carries executable content or serialized closures (non-negotiable 3).
 
 ## Crates
 
@@ -165,7 +175,7 @@ It is parsed by a small hand-written parser. It never carries executable content
 2. `sky-lower` for every v0.1 construct; `--emit-ir`; golden IR tests.
 3. Reference interpreter; differential tests against sky-interp on every run test.
 4. The Cholesky rewrite and DCE as passes with explanations; delete `cholesky_rewrite` from the checker.
-5. `edition` in `sky.toml` and in SIR; the spec defines what an edition may and may not change.
+5. `edition` in `sky.toml` and in SIR; the spec defines what an edition may and may not change. (`sky.toml` half done: spec "Editions"; `Edition` lives in `sky-syntax` and `sky-ir` re-exports it.)
 
 ## Open questions
 - **Build the IR ourselves or use MLIR directly?** The proposal is our own L1 and L2 in Rust (fast to build, keeps the Rust-only toolchain, Sky-specific types), with MLIR as a possible L3/L4 target in Phase 5 through `melior`. This needs a decision before milestone 1.

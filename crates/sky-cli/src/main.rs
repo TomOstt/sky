@@ -3,7 +3,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use sky_diag::{display_safe, SourceFile};
-use sky_project::SystemIdentity;
+use sky_project::{Project, SystemIdentity};
+use sky_syntax::Edition;
 
 mod frontend;
 mod repl;
@@ -23,7 +24,8 @@ const USAGE: &str =
 /// * `1`: diagnostics with at least one error, whatever the phase: a lexer,
 ///   parser or checker error, a runtime error in `sky run`, or a refused
 ///   project root (a `sky.toml` that is a link, foreign-owned or
-///   world-writable).
+///   world-writable) or an invalid `sky.toml` (unknown key, unsupported
+///   edition, ...).
 /// * `2`: a usage error (unknown command, wrong arguments), or an input that
 ///   cannot be read (missing, not a regular file, too large, not UTF-8).
 ///
@@ -107,14 +109,33 @@ fn check(path: &str, file: &File, src: &str, explain: bool) -> ExitCode {
     // stops the check; its diagnostic goes through the renderer, which
     // escapes the path. Discovery also checks that the path still names
     // the file that was opened and read.
-    if let Err(e) = sky_project::discover_opened(Path::new(path), file, &SystemIdentity) {
-        eprint!("{}", e.to_diagnostic().display(&e.source_file()));
-        return ExitCode::FAILURE;
+    let discovery = match sky_project::discover_opened(Path::new(path), file, &SystemIdentity) {
+        Ok(d) => d,
+        Err(e) => {
+            eprint!("{}", e.to_diagnostic().display(&e.source_file()));
+            return ExitCode::FAILURE;
+        }
+    };
+    // stdout, not stderr: the `--explain` goldens pin stderr, and this is a
+    // fact about the run, not a diagnostic. After discovery so an invalid
+    // manifest never prints an edition.
+    if explain {
+        let origin = match &discovery.project {
+            Project::Rooted { manifest, .. } => {
+                format!(
+                    "declared in {}",
+                    display_safe(&manifest.display().to_string())
+                )
+            }
+            Project::SingleFile => "no sky.toml: the latest".to_string(),
+        };
+        println!("edition: {} ({origin})", discovery.edition);
     }
     // The whole front end runs in one call on the known-size stack, so the
     // parser's and checker's depth limits hold (and a panic inside
     // propagates unchanged).
-    let (rendered, ok) = sky_ast::with_deep_stack(|| check_source(path, src, explain));
+    let (rendered, ok) =
+        sky_ast::with_deep_stack(|| check_source(path, src, explain, discovery.edition));
     eprint!("{}", rendered.join("\n"));
     if ok {
         println!("{}: ok", display_safe(path));
@@ -127,8 +148,8 @@ fn check(path: &str, file: &File, src: &str, explain: bool) -> ExitCode {
 /// Lexes, parses, and (if parsing succeeded) type-checks `src`, and renders
 /// every diagnostic. Returns the rendered diagnostics in source order and
 /// whether none is an error. Runs inside `with_deep_stack`.
-fn check_source(path: &str, src: &str, explain: bool) -> (Vec<String>, bool) {
-    let front = frontend::analyze(src, sky_types::Env::with_prelude(), explain);
+fn check_source(path: &str, src: &str, explain: bool, edition: Edition) -> (Vec<String>, bool) {
+    let front = frontend::analyze(src, sky_types::Env::with_prelude(), explain, edition);
     // Pass the source unchanged: spans are byte offsets into it, and the
     // renderer escapes terminal-unsafe characters itself (spec/diagnostics.md).
     let file = SourceFile::new(path, src);

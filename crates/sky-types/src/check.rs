@@ -5,10 +5,12 @@
 //! comparison operators, `@`, postfix `⁻¹` (and `inv(x)`), `^`, the Bool
 //! literals `true`/`false`, and `and`/`or`/`not` (strict Bool operands, no
 //! truthiness, per the spec's "Booleans and conditions"), the builtin
-//! `print(...)` call, and calls to user functions. Anything else (strings,
-//! indexing, attributes, `∂`, `∇`, calls to names that are not functions) is typed as
-//! [`Ty::Unknown`] without a diagnostic, and an operator with an unknown
-//! operand is unknown too, so one error never cascades.
+//! `print(...)` call, and calls to user functions. Array literals, indexing
+//! and the builtins `zeros`, `identity` and `len` are in [`crate::array`].
+//! Anything else (strings, attributes, `∂`, `∇`, calls to names that are not
+//! functions) is typed as [`Ty::Unknown`] without a diagnostic, and an
+//! operator with an unknown operand is unknown too, so one error never
+//! cascades.
 //!
 //! Blocks, control flow, and functions (`if`/`while`/`def`, scoping, calls to
 //! user functions) live in [`crate::flow`]; the rules are in the spec's
@@ -49,7 +51,7 @@
 //! the parser (see the crate's `deep_nesting` test).
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -61,11 +63,13 @@ use sky_ast::{
 use sky_diag::{Diagnostic, Severity, Span};
 use sky_units::{lookup, lookup_constant, suggest_unit, Dimension, Rational, CONSTANTS};
 
+use crate::array::LiteralProof;
 use crate::flow::{FnCtx, FuncSig, LoopFrame};
+use crate::provenance::{label_dim, Provenance};
 use crate::rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 use crate::rules::{elementwise, inverse, matmul, TensorType};
 use crate::scale::{negated_tags, scaled_tags};
-use crate::shape::{Shape, ShapeDim, ShapeError, ShapeUnifier, ShapeVar};
+use crate::shape::{Shape, ShapeContext, ShapeDim, ShapeError, ShapeUnifier, ShapeVar};
 use crate::tags::{Tag, TagSet};
 use sky_diag::display_capped as quote;
 
@@ -147,7 +151,7 @@ pub struct Env {
     /// Names still bound to a predefined constant (see [`Env::with_prelude`]).
     /// A name leaves the set when the program rebinds it, which is when the
     /// checker warns once.
-    prelude: BTreeSet<String>,
+    pub(crate) prelude: BTreeSet<String>,
     pub(crate) shape_vars: BTreeMap<String, ShapeVar>,
     pub(crate) shapes: ShapeUnifier,
     /// Where each name was last bound in the source, for labels. Names
@@ -257,6 +261,15 @@ impl Env {
         self.names.get(name).map(|t| self.resolve(t))
     }
 
+    /// The type of `name` with its shape variables left as they are. The
+    /// checker reads names through this so a later conflict can still say
+    /// which variable a size came from (see [`ShapeUnifier::provenance`]):
+    /// once a variable is substituted by its solution, its identity is gone.
+    /// Everything that compares or prints shapes applies the substitution.
+    pub(crate) fn get_symbolic(&self, name: &str) -> Option<Ty> {
+        self.names.get(name).cloned()
+    }
+
     /// Every binding in name order, with solved shape variables substituted.
     pub fn bindings(&self) -> impl Iterator<Item = (&str, Ty)> + '_ {
         self.names
@@ -269,7 +282,7 @@ impl Env {
         &self.shapes
     }
 
-    fn resolve(&self, t: &Ty) -> Ty {
+    pub(crate) fn resolve(&self, t: &Ty) -> Ty {
         match t {
             Ty::Value(v) => Ty::value(v.dim, self.shapes.apply_type(&v.ty)),
             other => other.clone(),
@@ -320,11 +333,53 @@ pub struct Checked {
     /// Rewrite decisions made after [`MAX_STORED_REWRITES`] were stored.
     /// They are still rewrites; only their explanations are dropped.
     pub rewrites_omitted: usize,
+    /// The span of every `A⁻¹ @ b` (the whole expression) the checker
+    /// decided to rewrite to a Cholesky solve. Unlike [`Checked::rewrites`]
+    /// it is not capped: it is what the interpreter reads to honour the
+    /// rewrite, so every site must be in it. Checking the same code twice
+    /// (a loop body) adds the same span once.
+    pub cholesky_solves: HashSet<Span>,
     /// The environment after the last statement.
     pub env: Env,
+    /// The type of every expression the walk typed, keyed by the
+    /// expression's span, for later stages that must not re-derive types
+    /// (lowering to SIR). Nodes have no ids, but spans are unique per
+    /// expression node, with these exceptions:
+    ///
+    /// * the `x op value` node the checker synthesizes for `x op= value`
+    ///   has the span `x`..`value` (no source expression has it), and its
+    ///   name node `x` is keyed by the target's span;
+    /// * the callee of a builtin call (`print`, `inv`) is never typed, so
+    ///   it has no entry;
+    /// * in `A⁻¹ @ b` the inverse node and any parentheses around it get the
+    ///   type of the inverse (the rewrite types `A` and `b` itself).
+    ///
+    /// Types hold the shape variables as they were when the expression was
+    /// typed: resolve them with [`Checked::resolve_ty`].
+    pub expr_types: HashMap<Span, Ty>,
+    /// The type given to each name a statement binds (`x = ...`, `x: T`,
+    /// `x: T = ...`), keyed by the span of the name in the statement. For
+    /// `x: T` without a value this is the declared type, which nothing else
+    /// records.
+    pub binding_types: HashMap<Span, Ty>,
+    /// The final signature of every `def`, keyed by the span of its name.
+    /// A call's callee has type [`Ty::Func`] with this signature (the
+    /// signature's [`FuncSig::def_span`] is the key).
+    pub funcs: HashMap<Span, Arc<FuncSig>>,
 }
 
 impl Checked {
+    /// The type of the expression at `span`, with solved shape variables
+    /// substituted. See [`Checked::expr_types`].
+    pub fn expr_ty(&self, span: Span) -> Option<Ty> {
+        self.expr_types.get(&span).map(|t| self.resolve_ty(t))
+    }
+
+    /// `t` with the shape variables the walk solved substituted.
+    pub fn resolve_ty(&self, t: &Ty) -> Ty {
+        self.env.resolve(t)
+    }
+
     /// Whether any diagnostic is an error.
     pub fn has_errors(&self) -> bool {
         self.diagnostics
@@ -349,9 +404,14 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         diagnostics: Vec::new(),
         rewrites: Vec::new(),
         rewrites_omitted: 0,
+        solves: HashSet::new(),
         fns: Vec::new(),
         loops: Vec::new(),
         diverged: false,
+        prov: Provenance::new(source),
+        expr_types: HashMap::new(),
+        binding_types: HashMap::new(),
+        funcs: HashMap::new(),
     };
     for stmt in &module.stmts {
         c.stmt(stmt);
@@ -360,7 +420,11 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         diagnostics: c.diagnostics,
         rewrites: c.rewrites,
         rewrites_omitted: c.rewrites_omitted,
+        cholesky_solves: c.solves,
         env: c.env,
+        expr_types: c.expr_types,
+        binding_types: c.binding_types,
+        funcs: c.funcs,
     }
 }
 
@@ -385,6 +449,8 @@ pub(crate) struct Checker<'s> {
     diagnostics: Vec<Diagnostic>,
     rewrites: Vec<RewriteSite>,
     rewrites_omitted: usize,
+    /// See [`Checked::cholesky_solves`].
+    solves: HashSet<Span>,
     /// The `def`s being checked, innermost last.
     pub(crate) fns: Vec<FnCtx>,
     /// The `while` loops around the current statement within the current
@@ -393,6 +459,15 @@ pub(crate) struct Checker<'s> {
     /// Whether the statement just checked cannot fall through: it ended in
     /// `return`, `break`, or `continue`, or every branch of an `if` did.
     pub(crate) diverged: bool,
+    /// Why each binding has its dimension (see [`crate::provenance`]).
+    pub(crate) prov: Provenance,
+    /// See [`Checked::expr_types`]. Recording is write-only: nothing in the
+    /// walk reads these tables, so they cannot change a diagnostic.
+    pub(crate) expr_types: HashMap<Span, Ty>,
+    /// See [`Checked::binding_types`].
+    binding_types: HashMap<Span, Ty>,
+    /// See [`Checked::funcs`].
+    pub(crate) funcs: HashMap<Span, Arc<FuncSig>>,
 }
 
 /// Human wording for a dimension in error text: its name if it has one
@@ -423,7 +498,7 @@ fn exact_decimal(text: &str) -> Option<Rational> {
     Rational::checked_new(num, den).ok()
 }
 
-fn rank_noun(rank: usize) -> String {
+pub(crate) fn rank_noun(rank: usize) -> String {
     match rank {
         0 => "scalar".to_string(),
         1 => "vector".to_string(),
@@ -524,7 +599,7 @@ impl<'s> Checker<'s> {
     /// literal, unit literal, call, index, attribute, or parenthesized
     /// expression), so it can be spliced into a larger suggested expression
     /// such as `(K⁻¹)⁻¹` or `(-2) * ones(A)`.
-    fn operand_text(&self, e: &Expr) -> String {
+    pub(crate) fn operand_text(&self, e: &Expr) -> String {
         let text = self.quoted(e.span);
         match e.kind {
             ExprKind::Binary { .. } | ExprKind::Unary { .. } | ExprKind::Inverse { .. } => {
@@ -609,6 +684,7 @@ impl<'s> Checker<'s> {
     fn bind_name(&mut self, id: &Ident, ty: Ty) {
         self.warn_if_shadowing(id);
         let name = self.ident(id);
+        self.binding_types.insert(id.span, ty.clone());
         self.bind_at(name, ty, id.span);
     }
 
@@ -624,10 +700,12 @@ impl<'s> Checker<'s> {
         let d = Diagnostic::warning(format!("`{q}` shadows {}", c.description), id.span)
             .with_label("shadows a predefined constant")
             .with_note(format!(
-                "`{q}` is predefined by Sky: {} ({}, {:e} in SI units, CODATA 2018), defined in the sky-units constants table",
+                "`{q}` is predefined by Sky: {} ({}, {:e} in SI units{}), defined in the sky-units constants table",
                 c.description,
                 describe(&c.dim),
-                c.value
+                c.value,
+                // π is not a measured constant.
+                if c.dim.is_dimensionless() { "" } else { ", CODATA 2018" }
             ))
             .with_help(format!(
                 "rename your variable to keep using the constant, e.g. `my_{q} = …`"
@@ -654,6 +732,7 @@ impl<'s> Checker<'s> {
                 let t = self.expr(value);
                 match target {
                     AssignTarget::Name(id) => {
+                        self.note_binding(id.span, Some(value), None);
                         self.bind_name(id, t);
                     }
                     _ => self.reject_write(target, "="),
@@ -674,6 +753,8 @@ impl<'s> Checker<'s> {
             StmtKind::Binding { name, ty, value } => {
                 let declared = self.annotation(ty);
                 let found = value.as_ref().map(|v| (v, self.expr(v)));
+                let declares_unit = declared.as_ref().is_some_and(|d| d.dim.is_some());
+                self.note_binding(name.span, value.as_ref(), declares_unit.then_some(ty.span));
                 let bound = self.binding_type(ty, declared, found);
                 self.bind_name(name, bound);
             }
@@ -747,32 +828,44 @@ impl<'s> Checker<'s> {
             }
             Ty::Unknown => return Ty::value(declared_dim, tensor),
         };
-        if let Err(e) = self.env.shapes.unify(tensor.shape(), v.ty.shape()) {
+        let what = format!(
+            "`{}` on a value of shape {}",
+            self.quoted(ty.span),
+            self.env.shapes.apply(v.ty.shape())
+        );
+        let unified = self.with_origin(ty.span, what, |u| u.unify(tensor.shape(), v.ty.shape()));
+        if let Err(e) = unified {
+            let e = e.in_context(ShapeContext::Declaration);
             let label = self.this_is(&v);
             self.error(
-                Diagnostic::error(format!("mismatched shapes: {e}"), value.span)
+                self.shape_diagnostic(&e, value.span)
                     .with_label(label)
                     .with_secondary(ty.span, "expected because of this annotation"),
             );
         }
         if let (Some(want), Some(unit)) = (dim, unit_span) {
             if want != v.dim {
-                self.error(
-                    Diagnostic::error(
-                        format!("expected {}, found {}", describe(&want), describe(&v.dim)),
-                        value.span,
-                    )
-                    .with_label(format!("this is {}", describe(&v.dim)))
-                    .with_secondary(
-                        unit,
-                        format!("expected {} because of this unit", describe(&want)),
-                    ),
+                let d = Diagnostic::error(
+                    format!("expected {}, found {}", describe(&want), describe(&v.dim)),
+                    value.span,
+                )
+                .with_label(format!("this is {}", label_dim(&v.dim)))
+                .with_secondary(
+                    unit,
+                    format!("expected {} because of this unit", describe(&want)),
                 );
+                let d = self.with_derivations(d, &[(value, v.dim)]);
+                self.error(d);
             }
         }
         // The first property the user wrote that the value isn't known to
-        // have (the closure adds implied ones, which they didn't write).
-        let missing = written.iter().find(|t| !v.ty.tags().closure().contains(*t));
+        // have (the closure adds implied ones, which they didn't write). A
+        // matrix literal of numbers can prove some from its entries.
+        let proof = LiteralProof::of(self.src, value);
+        let have = v.ty.tags().closure();
+        let missing = written
+            .iter()
+            .find(|t| !have.contains(*t) && !proof.as_ref().is_some_and(|p| p.proves(*t)));
         if let Some(tag) = missing {
             let label = self.this_is(&v);
             let subject = self.quoted(value.span);
@@ -785,8 +878,23 @@ impl<'s> Checker<'s> {
             .with_note(
                 "the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it",
             );
-            d = match &value.kind {
-                ExprKind::Name(_) => {
+            d = match (&value.kind, &proof) {
+                (_, Some(p)) => {
+                    let f = p.failure(tag);
+                    for (span, label) in f.entries {
+                        d = d.with_secondary(span, label);
+                    }
+                    d = d.with_note(f.note);
+                    if tag == Tag::Orthogonal {
+                        d.with_help("declare Orthogonal on an input, or build the matrix from `identity(n)`")
+                    } else {
+                        d.with_help(format!(
+                            "fix the entries, or declare the {} property on an input the value is computed from",
+                            tag.name()
+                        ))
+                    }
+                }
+                (ExprKind::Name(_), _) => {
                     let shape = self.env.shapes.apply(v.ty.shape());
                     d.with_help(format!(
                         "if `{subject}` is an input with this property, declare it that way where it is defined: `{subject}: {} {shape}`",
@@ -870,7 +978,7 @@ impl<'s> Checker<'s> {
             kind: ExprKind::Binary {
                 op: op.binary(),
                 op_span,
-                lhs: Box::new(name_expr),
+                lhs: Box::new(name_expr.clone()),
                 rhs: Box::new(value.clone()),
             },
             span: id.span.join(value.span),
@@ -882,38 +990,36 @@ impl<'s> Checker<'s> {
         let name = self.quoted(id.span);
         let sym = op.symbol();
         if dv.dim != rv.dim {
-            self.error(
-                Diagnostic::error(
-                    format!(
-                        "`{sym}` would change `{name}` from {} to {}",
-                        describe(&dv.dim),
-                        describe(&rv.dim)
-                    ),
-                    op_span,
-                )
-                .with_secondary(id.span, format!("this is {}", describe(&dv.dim)))
-                .with_note(format!(
-                    "the result of `{sym}` must keep the type of `{name}`"
-                ))
-                .with_help(format!(
-                    "bind a new name instead: `y = {name} {} …`",
-                    op.binary().symbol()
-                )),
-            );
+            let d = Diagnostic::error(
+                format!(
+                    "`{sym}` would change `{name}` from {} to {}",
+                    describe(&dv.dim),
+                    describe(&rv.dim)
+                ),
+                op_span,
+            )
+            .with_secondary(id.span, format!("this is {}", label_dim(&dv.dim)))
+            .with_note(format!(
+                "the result of `{sym}` must keep the type of `{name}`"
+            ));
+            let mut sides = vec![(&name_expr, dv.dim)];
+            sides.extend(self.name_dim(value).map(|dim| (value, dim)));
+            let d = self.with_derivations(d, &sides).with_help(format!(
+                "bind a new name instead: `y = {name} {} …`",
+                op.binary().symbol()
+            ));
+            self.error(d);
             return;
         }
-        if let Err(e) = self.env.shapes.unify(dv.ty.shape(), rv.ty.shape()) {
+        let what = format!("`{name} {sym} …`");
+        let unified = self.with_origin(op_span, what, |u| u.unify(dv.ty.shape(), rv.ty.shape()));
+        if let Err(e) = unified {
             let label = self.this_is(dv);
-            self.error(
-                Diagnostic::error(
-                    format!("`{sym}` would change the shape of `{name}`: {e}"),
-                    op_span,
-                )
-                .with_secondary(id.span, label)
-                .with_note(format!(
-                    "the result of `{sym}` must keep the type of `{name}`"
-                )),
-            );
+            let mut d = self.shape_diagnostic(&e, op_span);
+            d.message = format!("`{sym}` would change the shape of `{name}`: {e}");
+            self.error(d.with_secondary(id.span, label).with_note(format!(
+                "the result of `{sym}` must keep the type of `{name}`"
+            )));
             return;
         }
         let (had, has) = (dv.ty.tags().closure(), rv.ty.tags().closure());
@@ -1141,7 +1247,16 @@ impl<'s> Checker<'s> {
         }
     }
 
+    /// Types `e` and records the type in [`Checked::expr_types`]. Every
+    /// expression goes through here, so the table is complete by
+    /// construction (see the exceptions on the field).
     pub(crate) fn expr(&mut self, e: &Expr) -> Ty {
+        let t = self.expr_untabled(e);
+        self.expr_types.insert(e.span, t.clone());
+        t
+    }
+
+    fn expr_untabled(&mut self, e: &Expr) -> Ty {
         match &e.kind {
             ExprKind::Literal(lit) => match lit {
                 Literal::Int(_) | Literal::Float(_) => Ty::scalar(Dimension::DIMENSIONLESS),
@@ -1162,7 +1277,7 @@ impl<'s> Checker<'s> {
             },
             ExprKind::Name(id) => {
                 let name = self.ident(id);
-                match self.env.get(name) {
+                match self.env.get_symbolic(name) {
                     Some(t) => t,
                     None => self.undefined_name(name, id.span),
                 }
@@ -1196,6 +1311,7 @@ impl<'s> Checker<'s> {
                 }
                 self.invert(t, *op_span, operand.span)
             }
+            ExprKind::Array(elems) => self.array_literal(elems),
             ExprKind::Call { callee, args } => {
                 if let Some(arg) = self.inv_call(callee, args) {
                     let t = self.expr(arg);
@@ -1208,14 +1324,16 @@ impl<'s> Checker<'s> {
                     }
                     return Ty::Unknown;
                 }
+                if let Some(t) = self.math_call(callee, args, e.span) {
+                    return t;
+                }
+                if let Some(t) = self.builtin_call(callee, args, e.span) {
+                    return t;
+                }
                 let callee_ty = self.expr(callee);
                 self.call(callee_ty, callee, args, e.span)
             }
-            ExprKind::Index { base, items } => {
-                self.expr(base);
-                self.index_items(items);
-                Ty::Unknown
-            }
+            ExprKind::Index { base, items } => self.index_expr(base, items),
             ExprKind::Attribute { base, .. } => {
                 self.expr(base);
                 Ty::Unknown
@@ -1337,12 +1455,14 @@ impl<'s> Checker<'s> {
             self.overflow(op_span.join(operand));
             return Ty::Unknown;
         };
-        match inverse(&mut self.env.shapes, &v.ty) {
+        let what = format!("`{}⁻¹`", self.quoted(operand));
+        match self.with_origin(op_span, what, |u| inverse(u, &v.ty)) {
             Ok(ty) => Ty::value(dim, ty),
             Err(e) => {
                 let label = self.this_is(&v);
                 self.error(
-                    Diagnostic::error(e.to_string(), op_span).with_secondary(operand, label),
+                    self.shape_diagnostic(&e, op_span)
+                        .with_secondary(operand, label),
                 );
                 Ty::Unknown
             }
@@ -1367,6 +1487,18 @@ impl<'s> Checker<'s> {
             }
             None => (None, self.expr(lhs)),
         };
+        if inverted.is_some() {
+            // The inverse node was typed by `invert`, not by `expr`: give it
+            // (and any parentheses around it) its type in the table.
+            let mut node = lhs;
+            loop {
+                self.expr_types.insert(node.span, l.clone());
+                match &node.kind {
+                    ExprKind::Paren(inner) => node = inner,
+                    _ => break,
+                }
+            }
+        }
         let r = self.expr(rhs);
         let lb = self.reject_bool("@", lhs, &l);
         if self.reject_bool("@", rhs, &r) || lb {
@@ -1383,6 +1515,7 @@ impl<'s> Checker<'s> {
             if let Some(rewrite) =
                 cholesky_rewrite(MatmulLhs::Inverse(&av.ty), &rv.ty, &self.env.shapes)
             {
+                self.solves.insert(span);
                 if self.rewrites.len() < MAX_STORED_REWRITES {
                     let rewrite = self.name_operands(rewrite, operand, rhs);
                     self.rewrites.push(RewriteSite {
@@ -1396,12 +1529,13 @@ impl<'s> Checker<'s> {
                 }
             }
         }
-        match matmul(&mut self.env.shapes, &lv.ty, &rv.ty) {
+        let what = format!("`{}`", self.quoted(span));
+        match self.with_origin(op_span, what, |u| matmul(u, &lv.ty, &rv.ty)) {
             Ok(ty) => Ty::value(dim, ty),
             Err(e) => {
                 let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
                 self.error(
-                    Diagnostic::error(e.to_string(), op_span)
+                    self.shape_diagnostic(&e, op_span)
                         .with_secondary(lhs.span, ll)
                         .with_secondary(rhs.span, rl),
                 );
@@ -1575,17 +1709,17 @@ impl<'s> Checker<'s> {
         l: (&Expr, &ValueTy),
         r: (&Expr, &ValueTy),
     ) {
-        self.error(
-            Diagnostic::error(message, op_span)
-                .with_label("mismatched dimensions")
-                .with_secondary(l.0.span, describe(&l.1.dim))
-                .with_secondary(r.0.span, describe(&r.1.dim))
-                .with_note(format!(
-                    "both operands of `{}` must have the same dimension",
-                    op.symbol()
-                ))
-                .with_help("convert one side, or fix the unit"),
-        );
+        let d = Diagnostic::error(message, op_span)
+            .with_label("mismatched dimensions")
+            .with_secondary(l.0.span, label_dim(&l.1.dim))
+            .with_secondary(r.0.span, label_dim(&r.1.dim))
+            .with_note(format!(
+                "both operands of `{}` must have the same dimension",
+                op.symbol()
+            ));
+        let help = self.suggest((l.0, &l.1.dim), (r.0, &r.1.dim));
+        let d = self.with_derivations(d, &[(l.0, l.1.dim), (r.0, r.1.dim)]);
+        self.error(d.with_help(help.unwrap_or_else(|| "convert one side, or fix the unit".into())));
     }
 
     fn additive(
@@ -1604,6 +1738,9 @@ impl<'s> Checker<'s> {
                 // type-checks. When the dimensions differ the operation fails
                 // below (after the shape error, which has priority), so probe
                 // on a copy then; otherwise commit.
+                let what = format!("`{}`", self.quoted(le.span.join(re.span)));
+                // Set before the probe is cloned so the copy records it too.
+                self.set_origin(op_span, what);
                 let mut probe;
                 let shapes = if lv.dim == rv.dim {
                     &mut self.env.shapes
@@ -1611,10 +1748,13 @@ impl<'s> Checker<'s> {
                     probe = self.env.shapes.clone();
                     &mut probe
                 };
-                if let Err(e) = elementwise(shapes, &lv.ty, &rv.ty) {
+                let checked = elementwise(shapes, &lv.ty, &rv.ty);
+                self.env.shapes.set_origin(None);
+                if let Err(e) = checked {
+                    let e = e.in_context(ShapeContext::Operator(Arc::from(sym)));
                     let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
                     self.error(
-                        Diagnostic::error(e.to_string(), op_span)
+                        self.shape_diagnostic(&e, op_span)
                             .with_secondary(le.span, ll)
                             .with_secondary(re.span, rl),
                     );
@@ -1636,10 +1776,22 @@ impl<'s> Checker<'s> {
                     (_, true) => format!("cannot subtract a {noun} from a scalar"),
                 };
                 let c = self.operand_text(sc_e);
+                // The identity builtin needs a constant size; a symbolic
+                // one is spelled `n` for the user to fill in.
+                let n = match self.env.shapes.apply(arr.ty.shape()).dims() {
+                    [ShapeDim::Known(n), _] => n.to_string(),
+                    _ => "n".to_string(),
+                };
                 let (ones, identity) = if left_scalar {
-                    (format!("{c} * ones({a}) {sym} {a}"), format!("I {sym} {a}"))
+                    (
+                        format!("{c} * ones({a}) {sym} {a}"),
+                        format!("identity({n}) {sym} {a}"),
+                    )
                 } else {
-                    (format!("{a} {sym} {c} * ones({a})"), format!("{a} {sym} I"))
+                    (
+                        format!("{a} {sym} {c} * ones({a})"),
+                        format!("{a} {sym} identity({n})"),
+                    )
                 };
                 let sc = if left_scalar { &lv } else { &rv };
                 let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
@@ -2026,7 +2178,7 @@ mod tests {
             help,
             vec![
                 vec![
-                    "write `A + 2 * ones(A)` for every element, or `A + I` for the identity"
+                    "write `A + 2 * ones(A)` for every element, or `A + identity(n)` for the identity"
                         .to_string()
                 ],
                 vec!["write `v + 2 * ones(v)` for every element".to_string()],

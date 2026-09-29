@@ -1,0 +1,53 @@
+crates/sky-types/tests/ui/err_math_dimensions.sky:3:9: error: the argument of `exp` must be dimensionless, found length
+  |
+3 | a = exp(x)
+  |         ^ this has dimension length
+  = note: exp(x) = 1 + x + x²/2 + …, which adds terms of different dimensions unless x has none
+  = help: divide by a reference length, e.g. `exp(x / (1 m))`
+
+crates/sky-types/tests/ui/err_math_dimensions.sky:4:9: error: the argument of `log` must be dimensionless, found time
+  |
+4 | b = log(2 s)
+  |         ^^^ this has dimension time
+  = note: log(x·u) = log(x) + log(u): the result would depend on a unit that has no logarithm
+  = help: divide by a reference time, e.g. `log(x / (1 s))`
+
+crates/sky-types/tests/ui/err_math_dimensions.sky:5:9: error: the argument of `sin` must be dimensionless, found velocity
+  |
+5 | c = sin(5 m/s)
+  |         ^^^^^ this has dimension velocity
+  = note: trigonometric functions take an angle, and an angle is a pure number (`rad` is a dimensionless unit)
+  = help: divide by a reference velocity, e.g. `sin(x / (1 m/s))`
+  = help: angles are dimensionless: write `0.5 rad`, or a plain number of radians
+
+crates/sky-types/tests/ui/err_math_dimensions.sky:6:5: error: the arguments of `atan2` must have the same dimension, found length and time
+  |
+6 | d = atan2(1 m, 2 s)
+  |     ^^^^^ mismatched dimensions
+  |           --- length
+  |                --- time
+  = note: `atan2` compares or combines its two arguments, which only makes sense in one dimension
+  = help: convert one side, or fix the unit
+
+crates/sky-types/tests/ui/err_math_dimensions.sky:7:5: error: the arguments of `hypot` must have the same dimension, found length and mass
+  |
+7 | e = hypot(1 m, 2 kg)
+  |     ^^^^^ mismatched dimensions
+  |           --- length
+  |                ---- mass
+  = note: `hypot` compares or combines its two arguments, which only makes sense in one dimension
+  = help: convert one side, or fix the unit
+
+crates/sky-types/tests/ui/err_math_dimensions.sky:8:11: error: the argument of `round` must be dimensionless, found length
+  |
+8 | f = round(1.5 km)
+  |           ^^^^^^ this has dimension length
+  = note: values are stored in SI, so rounding a quantity depends on the unit you would show it in, which Sky does not keep
+  = help: divide by a reference length, e.g. `round(x / (1 m))`
+
+crates/sky-types/tests/ui/err_math_dimensions.sky:9:9: error: the argument of `exp` must be dimensionless, found L·M
+  |
+9 | g = exp(3 kg * x)
+  |         ^^^^^^^^ this has dimension L·M
+  = note: exp(x) = 1 + x + x²/2 + …, which adds terms of different dimensions unless x has none
+  = help: divide by a reference quantity, e.g. `exp(x / x_ref)`

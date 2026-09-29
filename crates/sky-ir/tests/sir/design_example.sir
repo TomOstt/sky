@@ -1,0 +1,10 @@
+// The example from docs/design/ir.md, in the final spelling.
+sir edition 2026
+
+fn @main() -> () effects(io) {
+  %0 = const.float 10000 : num[L; ()]
+  %1 = const.rational 1/1000 : num[1; ()]
+  %x = mul %0, %1 : num[L; ()] @ 3..8
+  print %x @ 9..17
+  return
+}

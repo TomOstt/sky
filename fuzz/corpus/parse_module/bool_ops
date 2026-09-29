@@ -1,0 +1,3 @@
+0ok = not a < b and b <= c or x == y
+flag = true or (3 m + 2 s)
+n = not not false

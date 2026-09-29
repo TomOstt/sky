@@ -19,6 +19,8 @@ sky check file.sky            # diagnostics on stderr; exit 1 on any error
 sky check --explain file.sky  # also show rewrite decisions (A⁻¹ @ b → Cholesky solve)
 ```
 
+Exit status: `0` ok; `1` diagnostics with at least one error (including a refused project root, and `sky run` and `sky repl`, which are not implemented); `2` usage error or input that can't be read.
+
 Not there yet:
 - blocks: `def`, `if`, `for`, `import`, and indented code
 - syntax for matrix tags (`PositiveDefinite`, ...) and for the unit of an array's elements, which the checker supports internally

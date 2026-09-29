@@ -118,6 +118,14 @@ fn run<'a, W: Write>(
     Ok(last)
 }
 
+/// One active call of a user function.
+struct Frame {
+    /// The call's local variables: the parameters and what the body binds.
+    vars: BTreeMap<String, Value>,
+    /// The function being run, for its captured functions.
+    func: Arc<Function>,
+}
+
 pub(crate) struct Interp<'a> {
     src: &'a str,
     /// Module-level names.
@@ -125,10 +133,11 @@ pub(crate) struct Interp<'a> {
     pub(crate) out: &'a mut dyn Write,
     /// The `A⁻¹ @ b` sites to solve by Cholesky; see [`run_module_with`].
     solves: &'a HashSet<Span>,
-    /// The local variables of each active user-function call, innermost
-    /// last. Inside a call, names are read from its frame and then from the
-    /// module (Python's rule); assignments go to the frame.
-    frames: Vec<BTreeMap<String, Value>>,
+    /// The active user-function calls, innermost last. Inside a call, names
+    /// are read from its frame and then from the module (Python's rule);
+    /// assignments go to the frame. *Calls* of a name are the exception:
+    /// they are bound where the function was defined (see [`Function`]).
+    frames: Vec<Frame>,
     /// Where the run started; see [`crate::arith::STACK_BUDGET`].
     pub(crate) stack: StackMeter,
     /// What evaluates `derivative(f, x)(args)`, if the caller has one.
@@ -143,14 +152,75 @@ impl<'a> Interp<'a> {
     pub(crate) fn lookup(&self, name: &str) -> Option<&Value> {
         self.frames
             .last()
-            .and_then(|f| f.get(name))
+            .and_then(|f| f.vars.get(name))
             .or_else(|| self.env.get(name))
+    }
+
+    /// The function a call of `name` runs, if a call binds it lexically:
+    /// inside a function body, and `name` is not a local, the function
+    /// itself or the one in scope where it was defined. A call binds the
+    /// definition the checker typed it against, so a later `def` of the same
+    /// name, or `name = 5`, does not change it. `None` at the top level
+    /// (which uses the current binding, as the checker does), and for names
+    /// the body binds itself (a parameter, a nested `def`).
+    pub(crate) fn lexical_function(&self, name: &str) -> Option<Arc<Function>> {
+        let frame = self.frames.last()?;
+        if frame.vars.contains_key(name) {
+            return None;
+        }
+        if frame.func.name == name {
+            return Some(frame.func.clone());
+        }
+        frame.func.captured.get(name).cloned()
+    }
+
+    /// Whether the program binds `name` itself, as a call sees it: then it
+    /// wins over a builtin of that name. Inside a function that is the
+    /// function's own view (locals, itself, what it captured), not the
+    /// module's later state.
+    pub(crate) fn is_user_bound(&self, name: &str) -> bool {
+        match self.frames.last() {
+            Some(f) => {
+                f.vars.contains_key(name)
+                    || f.func.name == name
+                    || f.func.captured.contains_key(name)
+            }
+            None => self.env.get(name).is_some(),
+        }
+    }
+
+    /// The functions in scope now, for a `def` to capture: at the top level
+    /// the module's, inside a function what it captured plus its own name and
+    /// its local functions (a nested `def` sees the definitions its
+    /// enclosing function saw, not the module's state at the time it runs).
+    fn visible_functions(&self) -> BTreeMap<String, Arc<Function>> {
+        let mut out = BTreeMap::new();
+        match self.frames.last() {
+            Some(f) => {
+                out.extend(f.func.captured.iter().map(|(k, v)| (k.clone(), v.clone())));
+                out.insert(f.func.name.clone(), f.func.clone());
+                for (k, v) in &f.vars {
+                    match v {
+                        Value::Func(func) => out.insert(k.clone(), func.clone()),
+                        _ => out.remove(k),
+                    };
+                }
+            }
+            None => {
+                for (k, v) in self.env.bindings() {
+                    if let Value::Func(func) = v {
+                        out.insert(k.to_string(), func.clone());
+                    }
+                }
+            }
+        }
+        out
     }
 
     fn assign(&mut self, name: &str, v: Value) {
         match self.frames.last_mut() {
             Some(frame) => {
-                frame.insert(name.to_string(), v);
+                frame.vars.insert(name.to_string(), v);
             }
             None => self.env.set(name, v),
         }
@@ -216,6 +286,7 @@ impl<'a> Interp<'a> {
                         .map(|p| self.text(p.name.span).to_string())
                         .collect(),
                     body: body.clone(),
+                    captured: self.visible_functions(),
                 };
                 self.assign(name, Value::Func(Arc::new(func)));
                 Ok(Flow::Normal(None))
@@ -423,7 +494,10 @@ impl<'a> Interp<'a> {
         // applies the same rule).
         if let ExprKind::Name(id) = &callee.kind {
             let name = self.text(id.span);
-            if self.lookup(name).is_none() {
+            if let Some(func) = self.lexical_function(name) {
+                return self.call_user(&func, call, args);
+            }
+            if !self.is_user_bound(name) {
                 match name {
                     "print" => return self.print(args),
                     "inv" => return self.inv(call, args),
@@ -525,7 +599,7 @@ impl<'a> Interp<'a> {
             ExprKind::Inverse { operand, .. } => Some(operand),
             ExprKind::Call { callee, args } => match (&callee.kind, args.as_slice()) {
                 (ExprKind::Name(id), [arg])
-                    if self.text(id.span) == "inv" && self.lookup("inv").is_none() =>
+                    if self.text(id.span) == "inv" && !self.is_user_bound("inv") =>
                 {
                     Some(arg)
                 }
@@ -577,12 +651,15 @@ impl<'a> Interp<'a> {
         if self.frames.len() >= MAX_CALL_DEPTH {
             return Err(recursion_too_deep(&func.name, call.span));
         }
-        let mut frame = BTreeMap::new();
+        let mut vars = BTreeMap::new();
         for (name, a) in func.params.iter().zip(args) {
             let v = self.eval(a)?;
-            frame.insert(name.clone(), v);
+            vars.insert(name.clone(), v);
         }
-        self.frames.push(frame);
+        self.frames.push(Frame {
+            vars,
+            func: func.clone(),
+        });
         let flow = self.block(&func.body);
         self.frames.pop();
         match flow? {

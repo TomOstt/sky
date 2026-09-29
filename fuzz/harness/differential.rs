@@ -376,13 +376,12 @@ struct Gen<'a> {
 /// gate to `false` when the bug is fixed.
 ///
 /// Some reported differences the generator never produces, by construction
-/// (see the tests of the same file): a call whose name is defined again
-/// after the caller (`lowering_binds_a_call_to_the_definition_seen_at_check_time`:
-/// only the most recent function is redefined, and a `def` that shadows a
-/// builtin comes before any other function), a conditionally defined
-/// function, a nested `def`, an input declaration, and a literal that
-/// overflows `f64` in a program that must run (huge numbers get plain SI
-/// units).
+/// (see the tests of the same file): a conditionally defined function, a
+/// nested `def`, an input declaration, and a literal that overflows `f64` in
+/// a program that must run (huge numbers get plain SI units). A function may
+/// be defined again, and a `def` may shadow a builtin, after functions that
+/// call the name (calls bind where the caller is defined,
+/// `lowering_binds_a_call_to_the_definition_seen_at_check_time`).
 ///
 /// `lowering_loses_a_name_bound_beside_a_break_arm`: fixed (a name bound only
 /// by the arms of an `if` that fall through, when another arm `break`s or
@@ -1669,17 +1668,26 @@ impl Gen<'_> {
             .c
             .weighted(&[50, 25, 10, 6, if self.risk > 0 { 3 } else { 0 }, 12]);
         let poly = kind == 5;
-        let shadow = self.fns.is_empty() && kind == 0 && self.c.chance(8);
-        // Redefining the most recent function: nothing defined later can call
-        // it, so lowering's early binding of calls cannot show (see the
-        // gates' comment).
+        // A `def` of a name an earlier function already calls (a user
+        // function, or a builtin the `def` shadows): calls bind to the
+        // definition in scope where the caller is defined, so the earlier
+        // callers keep the old one.
         let redefine = !self.fns.is_empty() && self.c.chance(10);
+        let redefined = if redefine {
+            self.c.below(self.fns.len())
+        } else {
+            0
+        };
+        let shadow_name = *self.c.pick(SHADOWABLE);
+        let shadow = !redefine
+            && kind == 0
+            && self.c.chance(8)
+            && !self.fns.iter().any(|f| f.name == shadow_name);
         let name = if redefine {
-            self.fns.last().map(|f| f.name.clone()).unwrap_or_default()
+            self.fns[redefined].name.clone()
         } else if shadow {
-            let n = *self.c.pick(SHADOWABLE);
-            self.shadowed.push(n);
-            n.to_string()
+            self.shadowed.push(shadow_name);
+            shadow_name.to_string()
         } else {
             self.fresh("f")
         };
@@ -1749,9 +1757,8 @@ impl Gen<'_> {
             weight: 0,
         };
         let idx = if redefine {
-            let i = self.fns.len() - 1;
-            self.fns[i] = sig;
-            i
+            self.fns[redefined] = sig;
+            redefined
         } else {
             self.fns.push(sig);
             self.fns.len() - 1

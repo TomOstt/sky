@@ -654,3 +654,51 @@ fn a_user_binding_named_derivative_shadows_the_builtin() {
     assert_eq!(out, "");
     assert_eq!(v, Value::scalar(3.0));
 }
+
+/// The output of `src` (which must run).
+fn output(src: &str) -> String {
+    run_in(&mut RuntimeEnv::new(), src).expect("runs").1
+}
+
+#[test]
+fn a_call_in_a_body_binds_the_definition_in_scope_at_the_def() {
+    // A later `def` of the callee does not change what the caller calls; a
+    // call at the top level uses the current one.
+    let src = "def f(x):\n    return x + 1\ndef g(x):\n    return f(x)\nprint(g(1))\ndef f(x):\n    return x + 100\nprint(g(1), f(1))\n";
+    assert_eq!(output(src), "2\n2 101\n");
+    // A rebinding to a non-function.
+    let src = "def f(x):\n    return x + 1\ndef g(x):\n    return f(x)\nf = 5\nprint(g(1), f)\n";
+    assert_eq!(output(src), "2 5\n");
+}
+
+#[test]
+fn a_def_that_shadows_a_builtin_does_not_change_earlier_callers() {
+    let src = "def f(x):\n    return max(x, 2)\nprint(f(1))\ndef max(a, b):\n    return a\nprint(f(1), max(1, 2))\n";
+    assert_eq!(output(src), "2\n2 1\n");
+    // The other way round: a caller defined after the shadowing `def` calls it.
+    let src = "def max(a, b):\n    return a\ndef f(x):\n    return max(x, 2)\nprint(f(1))\n";
+    assert_eq!(output(src), "1\n");
+    // A non-function rebinding of a builtin's name after the caller.
+    let src = "def f(x):\n    return max(x, 2)\nmax = 5\nprint(f(1), max)\n";
+    assert_eq!(output(src), "2 5\n");
+}
+
+#[test]
+fn a_redefined_recursive_function_recurses_into_itself() {
+    let src = "def f(n):\n    if n < 1:\n        return 0\n    return n + f(n - 1)\ndef h(n):\n    return f(n)\ndef f(n):\n    if n < 1:\n        return 100\n    return n + f(n - 1)\nprint(h(2), f(2))\n";
+    assert_eq!(output(src), "3 103\n");
+}
+
+#[test]
+fn a_nested_def_sees_what_its_enclosing_function_saw() {
+    // `k` is defined again before `outer` runs; the inner function still
+    // calls the one `outer` was defined with.
+    let src = "def k(x):\n    return x\ndef outer(a):\n    def inner(b):\n        return k(b) + 1\n    return inner(a)\ndef k(x):\n    return x + 50\nprint(outer(1), k(1))\n";
+    assert_eq!(output(src), "2 51\n");
+}
+
+#[test]
+fn a_variable_is_still_read_when_the_function_runs() {
+    let src = "x = 1\ndef f():\n    return x\nx = 2\nprint(f())\n";
+    assert_eq!(output(src), "2\n");
+}

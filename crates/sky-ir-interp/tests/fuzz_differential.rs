@@ -532,12 +532,13 @@ fn lowering_ignores_a_constant_rebound_in_a_block() {
     assert_agree("def f():\n    while true:\n        y = pi\n        pi = 2\n        break\n    return y\nprint(f())\n");
 }
 
-/// `sky run` looks a called name up when the call runs; lowering binds each
-/// call to the definition the checker saw. They differ when the name is
-/// defined again after the caller: a second `def`, a `def` that shadows a
-/// builtin (`max`), or a rebinding to a number.
+/// `sky run` used to look a called name up when the call ran, lowering bound
+/// each call to the definition the checker saw. They differed when the name
+/// was defined again after the caller: a second `def`, a `def` that shadows a
+/// builtin (`max`), or a rebinding to a number. Early (lexical) binding is
+/// the language rule (spec, "Functions"), so the tree-walker now binds a
+/// call in a function body to the definition in scope at the `def`.
 #[test]
-#[ignore = "bug: lowering binds calls to the definition seen at check time, sky run to the current one"]
 fn lowering_binds_a_call_to_the_definition_seen_at_check_time() {
     assert_agree(
         "def f(x):\n    return x + 1\ndef g(x):\n    return f(x)\nprint(g(1))\ndef f(x):\n    return x + 100\nprint(g(1), f(1))\n",

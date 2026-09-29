@@ -94,7 +94,7 @@ impl Interp<'_> {
     /// `derivative` while the program has not bound that name itself.
     fn is_derivative(&self, callee: &Expr) -> bool {
         matches!(&callee.kind, ExprKind::Name(id)
-            if self.text(id.span) == "derivative" && self.lookup("derivative").is_none())
+            if self.text(id.span) == "derivative" && !self.is_user_bound("derivative"))
     }
 
     /// `derivative(dargs...)(args...)`, where `form` is the expression
@@ -112,7 +112,13 @@ impl Interp<'_> {
                 form.span,
             ));
         };
-        let func = match self.eval(f_arg)? {
+        // A name in a function body is the function in scope where that
+        // function was defined, as for a call.
+        let named = match &f_arg.kind {
+            ExprKind::Name(id) => self.lexical_function(self.text(id.span)).map(Value::Func),
+            _ => None,
+        };
+        let func = match named.map_or_else(|| self.eval(f_arg), Ok)? {
             Value::Func(f) => f,
             other => {
                 return Err(RuntimeError::new(

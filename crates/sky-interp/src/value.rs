@@ -1,5 +1,6 @@
 //! Runtime values and how they print.
 
+use std::collections::BTreeMap;
 use std::fmt::{self, Write as _};
 
 use std::sync::Arc;
@@ -47,7 +48,6 @@ pub enum Value {
 /// A user function: what a call needs to run it. The body is a copy of the
 /// checked AST (the interpreter walks the tree; there is no compiled form
 /// yet).
-#[derive(Debug, PartialEq)]
 pub struct Function {
     pub name: String,
     /// The span of the function's name in its `def`: which `def` of the
@@ -56,6 +56,44 @@ pub struct Function {
     pub def_span: Span,
     pub params: Vec<String>,
     pub body: Block,
+    /// The functions in scope where the `def` ran, by name. A call inside
+    /// the body of a name that is not a local refers to the function here
+    /// (or to the builtin, if the name is not here), whatever the name means
+    /// by the time of the call: calls are bound where a function is
+    /// *defined*, as the checker types them (spec, "Functions"). The
+    /// function itself is not in the map (a recursive call is to it).
+    pub captured: BTreeMap<String, Arc<Function>>,
+}
+
+impl fmt::Debug for Function {
+    /// Without `captured`, whose functions capture each other's ancestors:
+    /// printing them all is exponential in the number of `def`s.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Function")
+            .field("name", &self.name)
+            .field("def_span", &self.def_span)
+            .field("params", &self.params)
+            .field("body", &self.body)
+            .field("captured", &self.captured.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+impl PartialEq for Function {
+    /// The same `def` with the same captured functions (by identity: a
+    /// structural comparison of `captured` is exponential).
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.def_span == other.def_span
+            && self.params == other.params
+            && self.body == other.body
+            && self.captured.len() == other.captured.len()
+            && self
+                .captured
+                .iter()
+                .zip(&other.captured)
+                .all(|((ka, a), (kb, b))| ka == kb && Arc::ptr_eq(a, b))
+    }
 }
 
 impl Value {

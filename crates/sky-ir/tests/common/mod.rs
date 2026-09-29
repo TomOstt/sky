@@ -119,6 +119,7 @@ pub fn all_ops() -> Module {
         sp(0, 0),
     );
     let c5 = b.op1(OpKind::ConstNothing, vec![], Type::Nothing, sp(0, 0));
+    let input = b.op1(OpKind::Input { name: "in".into() }, vec![], len(), sp(0, 0));
 
     let sum = b.op1(OpKind::Add, vec![x, c1], len(), sp(20, 25));
     let diff = b.op1(OpKind::Sub, vec![x, c1], len(), sp(20, 25));
@@ -319,7 +320,15 @@ pub fn all_ops() -> Module {
     ] {
         last_cmp = b.op1(OpKind::Cmp(op), vec![x, c1], Type::Bool, sp(0, 0));
     }
-    let not = b.op1(OpKind::Not, vec![last_cmp], Type::Bool, sp(0, 0));
+    let checked = b.op1(
+        OpKind::ExpectBool {
+            context: sky_ir::BoolContext::And,
+        },
+        vec![last_cmp],
+        Type::Bool,
+        sp(0, 0),
+    );
+    let not = b.op1(OpKind::Not, vec![checked], Type::Bool, sp(0, 0));
 
     // if not: yield x else yield -x
     let (iff, res) = b.op(OpKind::If, vec![not], vec![len()], sp(50, 90));
@@ -383,8 +392,8 @@ pub fn all_ops() -> Module {
     b.op(
         OpKind::Print,
         vec![
-            called[0], c4, c5, a_inv, prod, at, solved, neg, root, p, recip, c2, c3, shown, entry,
-            row, part, whole, head, zs, zm, eye, count, root2,
+            called[0], c4, c5, input, a_inv, prod, at, solved, neg, root, p, recip, c2, c3, shown,
+            entry, row, part, whole, head, zs, zm, eye, count, root2,
         ],
         vec![],
         sp(1, 9),

@@ -216,6 +216,12 @@ fn comparisons_and_not() {
 }
 
 #[test]
+fn an_input_always_fails_with_the_declaration_error() {
+    let e = apply(OpKind::Input { name: "A".into() }, vec![]).expect_err("nothing supplies it");
+    assert_eq!(msg(&e), "`A` is declared but has no value");
+}
+
+#[test]
 fn expect_bool_passes_a_bool_and_fails_with_the_constructs_wording() {
     use sky_ir::BoolContext;
     for context in BoolContext::ALL {

@@ -580,14 +580,17 @@ fn lowering_rejects_a_literal_too_large_even_if_never_evaluated() {
     assert_agree("print(1)\nx = 1e300 ms/nm^2/μg\nprint(2)\n");
 }
 
-/// A declaration without a value is an input of `<main>`: the SIR
-/// interpreter stops at entry, before anything is printed, while `sky run`
-/// prints up to the declaration and stops there. Same error, different
-/// stdout.
+/// A declaration without a value used to be a parameter of `<main>`: the SIR
+/// interpreter stopped at entry, before anything was printed, while `sky run`
+/// prints up to the declaration and stops there. It is an `input` operation
+/// now, which fails where the declaration is.
 #[test]
-#[ignore = "limitation: an input declaration fails before any output in the SIR interpreter"]
 fn an_input_declaration_stops_the_sir_interpreter_before_any_output() {
     assert_agree("print(1)\nx: m\nprint(2)\n");
+    // Inside a loop that runs first, and with the declared type in use.
+    assert_agree(
+        "k = 0\nwhile k < 2:\n    print(k)\n    k += 1\nA: Matrix[2, 2]\nprint(A[0, 0])\n",
+    );
 }
 
 /// A function without annotations has an unknown result type, so the checker

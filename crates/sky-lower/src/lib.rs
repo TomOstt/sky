@@ -18,9 +18,13 @@
 //! # Module layout
 //!
 //! * The file's top-level statements are the function [`Module::MAIN`]
-//!   (`<main>`), first in the module; it has no results. A declaration
-//!   without a value at the top level (`A: PositiveDefinite Matrix[N, N]`)
-//!   is an *input*, a parameter of `<main>` typed with the declared type.
+//!   (`<main>`), first in the module; it has no results and no parameters.
+//!   A declaration without a value at the top level
+//!   (`A: PositiveDefinite Matrix[N, N]`) is an *input*: an `input`
+//!   operation, at the declaration, whose result has the declared type. It
+//!   fails when it runs ("`A` is declared but has no value": nothing
+//!   supplies an input in v0.1), so the program prints what comes before it
+//!   and stops there, as `sky run` does.
 //! * Every `def` (however nested) is a function with the def's name (a
 //!   later def of the same name is `name#2`, ...), in source order after
 //!   `<main>`. Its parameters are typed by the annotations

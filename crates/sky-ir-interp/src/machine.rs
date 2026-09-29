@@ -615,6 +615,7 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             let b = expect_bool("not", act.get(a, s)?, s)?;
             act.define(op, vec![Value::Bool(!b)])
         }
+        OpKind::Input { name } => Err(sky_interp::arith::declared_without_value(name, s).into()),
         OpKind::ExpectBool { context } => {
             let [a] = fixed(op)?;
             let b = expect_bool(context.keyword(), act.get(a, s)?, s)?;

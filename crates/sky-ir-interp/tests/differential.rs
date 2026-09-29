@@ -631,6 +631,18 @@ fn a_matrix_declared_without_a_value_is_an_input_nothing_supplies() {
     assert_eq!(o.error.as_deref(), Some("`A` is declared but has no value"));
 }
 
+/// The declaration is where the run stops: what is printed before it stays,
+/// and the error points at the declaration, as in `sky run`.
+#[test]
+fn an_input_declaration_fails_where_it_is_after_the_earlier_output() {
+    let src = "print(1)\nA: Matrix[2, 2]\nprint(2)\n";
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "1\n");
+    assert_eq!(o.error.as_deref(), Some("`A` is declared but has no value"));
+    let (walker, sir) = located_errors(src);
+    assert_eq!(sir, walker);
+}
+
 // ----- derivative(f, x)(args) -----
 //
 // `sky run` evaluates a derivative by lowering the function to SIR and

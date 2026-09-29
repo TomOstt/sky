@@ -273,10 +273,12 @@ fn a_function_reading_a_positive_definite_module_name_solves() {
 }
 
 #[test]
-fn a_declared_matrix_input_is_a_parameter_of_main() {
+fn a_declared_matrix_input_is_an_input_operation_in_main() {
     let m = lower_ok("A: Matrix[3, 3]\nb: Vector[3]\nx = A @ b\ny = A[0, 1]\nn = len(b)\n");
     let f = main_fn(&m);
-    assert_eq!(f.param_values().len(), 2);
+    assert_eq!(f.param_values().len(), 0);
+    assert_eq!(count(f, "input"), 2);
+    assert_eq!(dims(number(f, named(f, "A"))), [3, 3]);
     assert_eq!(dims(number(f, named(f, "x"))), [3]);
 }
 

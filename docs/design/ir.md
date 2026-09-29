@@ -80,7 +80,7 @@ Planned extension points, which v1 leaves out: an error bound per value (interva
 | Comparison and logic | `cmp.{eq,ne,lt,le,gt,ge}` (on Bools and strings only `eq`/`ne`), `not`; `and`/`or` short-circuit, so they lower to `if`; `expect.bool[and\|or\|not\|if\|while]`, the run-time Bool check of an operand the checker could not type (an unannotated parameter's result), which fails with `sky run`'s wording and on the operand's span |
 | Control | `if` (regions), `while` (regions), `yield`, `call`, `return` |
 | Display | `show "unit"` (`v as km/h`: the operand written in a unit, a `str`, only ever printed) |
-| Environment | `param`, `print` (effectful) |
+| Environment | `param`, `input "name"` (a value-less declaration: no operands, a result of the declared type; nothing supplies it in v0.1, so it fails when run with "`name` is declared but has no value", at the declaration), `print` (effectful) |
 
 Every operation kind is declared once, in a table with:
 - its operand and result type rule (a function reusing `sky_types::rules`);

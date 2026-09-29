@@ -299,24 +299,34 @@ impl Lower<'_> {
         Ok(())
     }
 
-    /// `A: PositiveDefinite Matrix[N, N]`: an input. Inputs are the
-    /// parameters of `<main>`, in declaration order, typed with the
-    /// declared type the checker recorded (tags included). Only a
-    /// declaration at the top level of the file is an input.
+    /// `A: PositiveDefinite Matrix[N, N]`: an input. It is an `input`
+    /// operation at the declaration, with the declared type the checker
+    /// recorded (tags included) as its result's: nothing supplies an input
+    /// in v0.1, so running it fails right there, after the output before it,
+    /// as `sky run` does. Only a declaration at the top level of the file is
+    /// supported.
     fn declare_input(&mut self, name: &Ident, span: Span) -> R<()> {
         if !(self.st.is_main && self.st.nest == 0) {
             return Err(LowerError::new(
                 "an input declaration must be at the top level of the file",
                 span,
             )
-            .with_note("a name declared without a value is an input of the program; SIR gives inputs to `<main>` only"));
+            .with_note("a name declared without a value is an input of the program; lowering supports inputs at the top level of the file only"));
         }
         let Some(t) = self.checked.binding_types.get(&name.span) else {
             return self.err("internal error: the checker recorded no type here", span);
         };
         let ty = crate::ctx::map_ty(&self.checked.resolve_ty(t)).unwrap_or(Type::Unknown);
-        let v = self.st.b.add_param(ty);
-        self.bind(self.text(name.span), v);
+        let text = self.text(name.span);
+        let v = self.op1(
+            OpKind::Input {
+                name: text.to_string(),
+            },
+            Vec::new(),
+            ty,
+            span,
+        );
+        self.bind(text, v);
         Ok(())
     }
 

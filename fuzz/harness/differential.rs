@@ -381,8 +381,9 @@ struct Gen<'a> {
 ///
 /// Some reported differences the generator never produces, by construction
 /// (see the tests of the same file): a conditionally defined function, a
-/// nested `def`, an input declaration, and a literal that overflows `f64` in
-/// a program that must run (huge numbers get plain SI units). A function may
+/// nested `def`, and a literal that overflows `f64` in a program that must
+/// run (huge numbers get plain SI units). An input declaration is generated
+/// (rarely: the run ends at it). A function may
 /// be defined again, and a `def` may shadow a builtin, after functions that
 /// call the name (calls bind where the caller is defined,
 /// `lowering_binds_a_call_to_the_definition_seen_at_check_time`).
@@ -1298,6 +1299,8 @@ impl Gen<'_> {
             } else {
                 0
             }, // 11 probe
+            // 12 an input declaration: the run ends there, so it is rare
+            if self.ind == 0 && !self.in_fn { 1 } else { 0 },
         ];
         match self.c.weighted(&w) {
             0 => {
@@ -1332,6 +1335,10 @@ impl Gen<'_> {
             }
             10 => {
                 self.annotated();
+                Exit::Falls
+            }
+            12 => {
+                self.input_declaration();
                 Exit::Falls
             }
             _ => {
@@ -1443,6 +1450,17 @@ impl Gen<'_> {
         let ann = self.annotation(d);
         let e = self.num(d, 3);
         self.line(&format!("{name}: {ann} = {}", e.s));
+        self.bind(name, Ty::Num(d), false);
+    }
+
+    /// `x: m`: a name declared without a value, an input nothing supplies. The
+    /// run stops here with "`x` is declared but has no value", so what the
+    /// program printed before it must be the same in both engines.
+    fn input_declaration(&mut self) {
+        let d = self.rand_dim();
+        let name = self.fresh_name();
+        let ann = self.annotation(d);
+        self.line(&format!("{name}: {ann}"));
         self.bind(name, Ty::Num(d), false);
     }
 

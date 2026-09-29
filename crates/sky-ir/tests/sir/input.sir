@@ -1,0 +1,12 @@
+// A value-less declaration (`A: PositiveDefinite Matrix[3, 3]`) is an
+// `input` at the declaration: it fails when it runs, after the output before.
+sir edition 2026
+
+fn @<main>() -> () effects(io, fail) @ 0..40 {
+  %one = const.float 1 : num[1; ()] @ 6..7
+  print %one @ 0..8
+  %A = input "A" : num[1; (3, 3); {Symmetric, PositiveDefinite}] @ 10..30
+  %d = inverse %A : num[1; (3, 3); {Symmetric, PositiveDefinite}] @ 31..35
+  print %d @ 36..39
+  return
+}

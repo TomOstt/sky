@@ -160,6 +160,17 @@ pub enum OpKind {
     /// The value of `print(...)` or a call to a function without a return
     /// value, when a program uses it. Result type `Nothing`.
     ConstNothing,
+    /// `input "A"`: no operands, one result, of the type the program
+    /// declared for the name (a value-less declaration such as
+    /// `A: PositiveDefinite Matrix[N, N]`; the checker takes its shape, tags
+    /// and unit on trust). Nothing in v0.1 supplies an input, so running it
+    /// always fails with "`A` is declared but has no value", at the
+    /// declaration: the program runs up to there and stops, as `sky run`
+    /// does. The result's type is what later operations are typed against.
+    /// Effect `Fail`, so no pass removes or moves it past output.
+    Input {
+        name: String,
+    },
 
     // ----- arithmetic on numbers -----
     /// `a + b`, `a - b`, `a * b`, `a / b`: two operands, one result.
@@ -379,6 +390,7 @@ impl OpKind {
             OpKind::ConstBool(_) => "const.bool",
             OpKind::ConstStr(_) => "const.str",
             OpKind::ConstNothing => "const.nothing",
+            OpKind::Input { .. } => "input",
             OpKind::Add => "add",
             OpKind::Sub => "sub",
             OpKind::Mul => "mul",
@@ -441,6 +453,8 @@ impl OpKind {
                 let e = if f.can_fail() { fail } else { EffectSet::PURE };
                 (e, false, f.commutative(), false)
             }
+            // Fails always: nothing supplies an input.
+            OpKind::Input { .. } => (fail, false, false, false),
             // Converting to a tiny unit can overflow.
             OpKind::Show { .. } => (fail, false, false, false),
             // A value that is not a Bool fails.

@@ -251,17 +251,24 @@ fn a_user_defined_inv_and_print_shadow_the_builtins() {
 fn matmul_and_the_checkers_matrix_types() {
     let m = lower_ok("A: Matrix[2, 3] m\nb: Vector[3] s\nx = A @ b\n");
     let f = main_fn(&m);
-    assert_eq!(top_kinds(f), ["matmul", "return"]);
+    assert_eq!(top_kinds(f), ["input", "input", "matmul", "return"]);
     let x = f.ty(named(f, "x")).as_number().expect("number").clone();
     assert_eq!(x.shape.to_string(), "Vector[2]");
     assert_eq!(
         x.dim,
         Dimension::LENGTH.checked_mul(Dimension::TIME).expect("mul")
     );
-    // The inputs are the parameters of <main>, in order, with declared types.
-    assert_eq!(f.params.len(), 2);
-    assert_eq!(f.param_values().len(), 2);
-    assert_eq!(f.value(f.param_values()[0]).name.as_deref(), Some("A"));
+    // The inputs are `input` operations, in order, with the declared types.
+    assert_eq!(f.param_values().len(), 0);
+    assert_eq!(f.value(named(f, "A")).name.as_deref(), Some("A"));
+    assert_eq!(
+        f.ty(named(f, "A"))
+            .as_number()
+            .expect("number")
+            .shape
+            .to_string(),
+        "Matrix[2,3]"
+    );
 }
 
 #[test]

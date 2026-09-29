@@ -695,6 +695,12 @@ impl<'a> Parser<'a> {
             }
             "const.str" => OpKind::ConstStr(self.string()?),
             "const.nothing" => OpKind::ConstNothing,
+            "input" => {
+                self.skip_inline();
+                OpKind::Input {
+                    name: self.string()?,
+                }
+            }
             "show" => {
                 self.skip_inline();
                 OpKind::Show {

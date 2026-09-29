@@ -1,0 +1,5 @@
+tests/ui/lexer/err_unterminated_string.sky:1:8: error: unterminated string
+  |
+1 | name = "unterminated
+  |        ^^^^^^^^^^^^^ string starts here and is not closed on this line
+  = help: add a closing `"`

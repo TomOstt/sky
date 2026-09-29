@@ -1,0 +1,11 @@
+# Standalone Greek and Latin+Greek identifiers are not confusable.
+ψ = 1
+ω = 2
+ħ = 1.054_571_817e-34 J
+λ = 500 nm
+α = 1 / 137
+ν = 5 GHz
+Δt = 10 ms
+λ_max = 2
+size = 3 μm
+E = ħ * ω

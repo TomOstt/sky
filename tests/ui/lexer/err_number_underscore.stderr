@@ -1,0 +1,4 @@
+tests/ui/lexer/err_number_underscore.sky:1:6: error: `_` in a number must be between two digits
+  |
+1 | n = 1__000
+  |      ^

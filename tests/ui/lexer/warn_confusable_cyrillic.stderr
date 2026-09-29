@@ -1,0 +1,4 @@
+tests/ui/lexer/warn_confusable_cyrillic.sky:2:1: warning: identifier `pаth` contains Cyrillic 'а' (U+0430), which looks like Latin 'a'
+  |
+2 | pаth = 1
+  | ^^^^ possibly confusable identifier

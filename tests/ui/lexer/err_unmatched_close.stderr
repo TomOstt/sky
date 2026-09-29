@@ -1,0 +1,4 @@
+tests/ui/lexer/err_unmatched_close.sky:1:6: error: unmatched `)`
+  |
+1 | x = 1)
+  |      ^ no matching opening bracket

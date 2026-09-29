@@ -1,0 +1,7 @@
+# Each confusable name warns once, at its first use.
+х = 1
+xЖ = 2
+size = 5 µm
+T = 300 K
+vαlue = 3
+y = х + х

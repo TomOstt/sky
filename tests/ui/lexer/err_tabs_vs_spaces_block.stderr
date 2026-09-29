@@ -1,0 +1,5 @@
+tests/ui/lexer/err_tabs_vs_spaces_block.sky:3:1: error: indentation uses tabs, but the enclosing block uses spaces
+  |
+3 | 		return 1
+  | ^^ indented with tabs
+  = help: indent with spaces only, or with tabs only

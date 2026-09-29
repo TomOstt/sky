@@ -6,7 +6,7 @@
 //! regions do), with two rules for calls:
 //!
 //! * a `call` has the callee's effects. The call operation itself is
-//!   [`Effect::Call`] (see [`crate::op::OpKind::properties`]), and that mark
+//!   [`crate::ir::Effect::Call`] (see [`crate::op::OpKind::properties`]), and that mark
 //!   stays in the caller's set, because a call can also fail by exhausting
 //!   the call depth, which no callee body says;
 //! * recursion (direct or mutual) makes the effect sets a system of

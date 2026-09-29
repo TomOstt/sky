@@ -144,7 +144,7 @@ fn explain(f: &Function, id: OpId) -> Option<Rewrite> {
         rule: "DCE-001",
         span: op.span,
         before: op_text(f, id),
-        after: "(removed)".to_string(),
+        after: String::new(),
         because: vec![
             format!("{what} is never used"),
             format!(

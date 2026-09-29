@@ -3,9 +3,12 @@
 use std::fmt;
 
 use sky_diag::Span;
+use sky_ir::PassCx;
 
 /// One applied rewrite. The fields mirror the design document's
-/// `Explanation { pass, rule, span, before, after, because }`.
+/// `Explanation { pass, rule, span, before, after, because }`; the pass
+/// adapters in [`crate::pipeline`] hand each one to
+/// [`Rewrite::explain`], the single place that converts it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Rewrite {
     /// The pass that applied it (`"fold"`, `"dce"`, `"cholesky"`).
@@ -20,6 +23,23 @@ pub struct Rewrite {
     pub after: String,
     /// The facts and type properties the rewrite relied on.
     pub because: Vec<String>,
+}
+
+impl Rewrite {
+    /// Reports the rewrite through the pass manager's collector, as a
+    /// `sky_ir::Explanation` with the same rule, span, texts and reasons.
+    /// The explanation's pass name is the running pass's, which is this
+    /// rewrite's `pass` when it runs through [`crate::pipeline`].
+    pub fn explain(&self, cx: &mut PassCx) {
+        debug_assert_eq!(self.pass, cx.pass_name(), "explained by a different pass");
+        cx.explain(
+            self.rule,
+            self.span,
+            self.before.clone(),
+            self.after.clone(),
+            self.because.clone(),
+        );
+    }
 }
 
 impl fmt::Display for Rewrite {

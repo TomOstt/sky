@@ -606,12 +606,19 @@ fn explanation_text_matches_the_checkers() {
             repr: Repr::Unchosen,
         });
         let mut s = solve_program(matrix(PD(), 3), b_ty, res, false);
-        let rws = cholesky(&mut s.m);
-        let r = &rws[0];
-        let text = format!(
-            "rewrite `{}` to a Cholesky solve: {}, {}. {}. {}.",
-            r.before, r.because[0], r.because[1], r.because[2], r.because[3]
-        );
+        // Through the pass manager, so this is the explanation
+        // `sky check --explain` gets, not just the pass's own record.
+        // (The hand-built types here have unclosed tag sets, which the
+        // verifier rightly refuses; the pass does not care.)
+        let report = sky_ir::PassManager::for_tests()
+            .verify_each(false)
+            .with(crate::CholeskyPass)
+            .run(&mut s.m)
+            .unwrap();
+        assert_eq!(report.explanations.len(), 1);
+        let x = &report.explanations[0];
+        assert_eq!((x.pass, x.rule), ("cholesky", "LA-CHOLESKY-001"));
+        let text = crate::cholesky_text(x).expect("a Cholesky explanation");
         assert_eq!(text, checker_text(Shape::matrix(3, 3), PD(), b_shape));
     }
 }
@@ -645,6 +652,22 @@ fn user_names_appear_in_before_and_after() {
     let rws = cholesky(&mut m);
     assert_eq!(rws[0].before, "K⁻¹ @ y");
     assert_eq!(rws[0].after, "solve[cholesky](K, y)");
+    // The names are in the reasons too, and they join into the checker's
+    // wording for named operands.
+    let x = sky_ir::Explanation {
+        pass: "cholesky",
+        rule: rws[0].rule,
+        span: rws[0].span,
+        before: rws[0].before.clone(),
+        after: rws[0].after.clone(),
+        because: rws[0].because.clone(),
+    };
+    assert_eq!(
+        crate::cholesky_text(&x).unwrap(),
+        "rewrite `K⁻¹ @ y` to a Cholesky solve: K is Matrix[2,2] and PositiveDefinite, \
+         y is Vector[2]. Factor K = L·Lᵀ (L lower-triangular), solve L·y = y, \
+         then Lᵀ·x = y. x = K⁻¹·y is Vector[2], and K⁻¹ is never formed."
+    );
 }
 
 #[test]

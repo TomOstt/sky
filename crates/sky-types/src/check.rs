@@ -54,12 +54,12 @@ use sky_ast::{
 use sky_diag::{Diagnostic, Severity, Span};
 use sky_units::{lookup, Dimension, Rational};
 
-use crate::quote::quote;
 use crate::rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 use crate::rules::{elementwise, inverse, matmul, TensorType};
 use crate::scale::{negated_tags, scaled_tags};
 use crate::shape::{Shape, ShapeDim, ShapeError, ShapeUnifier, ShapeVar};
 use crate::tags::TagSet;
+use sky_diag::display_capped as quote;
 
 /// The type of a numeric value: element dimension plus shape and tags.
 #[derive(Clone, PartialEq, Eq, Debug)]

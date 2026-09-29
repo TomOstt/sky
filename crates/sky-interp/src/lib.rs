@@ -45,10 +45,13 @@ mod error;
 mod eval;
 mod literal;
 pub mod math;
+pub mod show;
 mod value;
 
 #[cfg(test)]
 mod array_tests;
+#[cfg(test)]
+mod show_tests;
 #[cfg(test)]
 mod tests;
 
@@ -59,5 +62,6 @@ pub use eval::{run_module, run_module_with};
 pub use literal::{number_literal, unit_literal_si};
 /// The dense numerics, shared with the checker (see `sky_types::linalg`).
 pub use sky_types::linalg;
+pub use show::{show_unit_text, show_value};
 pub use sky_units::Dimension;
 pub use value::{format_number, si_unit, Value};

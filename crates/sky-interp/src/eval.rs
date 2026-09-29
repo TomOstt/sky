@@ -24,6 +24,7 @@ use crate::arith::{
 };
 use crate::array::{self, Ix};
 use crate::literal::{number_literal, unit_literal_si};
+use crate::show::show_value;
 use crate::value::Function;
 use crate::{RuntimeEnv, RuntimeError, Value};
 
@@ -358,6 +359,10 @@ impl<'a> Interp<'a> {
                 } else {
                     self.eval(else_)
                 }
+            }
+            ExprKind::As { value, unit, .. } => {
+                let v = self.eval(value)?;
+                show_value(self.src, unit, &v, e.span)
             }
         }
     }

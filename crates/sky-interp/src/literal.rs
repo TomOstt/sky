@@ -28,6 +28,17 @@ pub fn number_literal(src: &str, span: Span) -> R<f64> {
     }
 }
 
+/// A unit the table cannot apply, as a runtime error.
+pub(crate) fn unit_error(src: &str, e: UnitError) -> RuntimeError {
+    match e {
+        UnitError::Unknown(span) => RuntimeError::new(
+            format!("unknown unit `{}`", span_text(src, span).unwrap_or("")),
+            span,
+        ),
+        UnitError::Exponent(span) => RuntimeError::new("dimension exponent too large", span),
+    }
+}
+
 /// The SI value and dimension of the unit literal whose number is at
 /// `value` and whose unit is `unit` (`whole` is the literal's span, for the
 /// overflow error). The unit is applied factor by factor
@@ -39,13 +50,7 @@ pub fn unit_literal_si(
     whole: Span,
 ) -> R<(f64, Dimension)> {
     let x = number_literal(src, value)?;
-    let (si, dim) = sky_types::apply_unit(src, unit, x).map_err(|e| match e {
-        UnitError::Unknown(span) => RuntimeError::new(
-            format!("unknown unit `{}`", span_text(src, span).unwrap_or("")),
-            span,
-        ),
-        UnitError::Exponent(span) => RuntimeError::new("dimension exponent too large", span),
-    })?;
+    let (si, dim) = sky_types::apply_unit(src, unit, x).map_err(|e| unit_error(src, e))?;
     if !si.is_finite() {
         return Err(overflow(whole));
     }

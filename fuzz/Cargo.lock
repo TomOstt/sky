@@ -82,6 +82,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "sky-ad"
+version = "0.0.1"
+dependencies = [
+ "sky-diag",
+ "sky-ir",
+ "sky-units",
+]
+
+[[package]]
 name = "sky-ast"
 version = "0.0.1"
 dependencies = [
@@ -148,6 +157,7 @@ dependencies = [
 name = "sky-lower"
 version = "0.0.1"
 dependencies = [
+ "sky-ad",
  "sky-ast",
  "sky-diag",
  "sky-interp",

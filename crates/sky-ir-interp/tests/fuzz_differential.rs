@@ -152,8 +152,11 @@ fn generated_programs_agree_in_both_engines() {
         "too few kinds of run-time error: {:?}",
         stats.errors
     );
+    // About 7% of the fixed seeds fail at run time since math is no longer
+    // steered around (math calls take choices that riskier arithmetic used
+    // to); 6% keeps the error paths meaningfully exercised.
     assert!(
-        stats.failed * 100 >= total * 8,
+        stats.failed * 100 >= total * 6,
         "too few failing programs: {}",
         stats.failed
     );
@@ -479,14 +482,11 @@ fn assert_agree(src: &str) {
     }
 }
 
-/// `sky_ir::print` writes `math.sqrt` (and every other math function), and
-/// `sky_ir::parse` answers "unknown operation `math.sqrt`": a module with a
-/// math operation does not survive the text format. (`sky-ir` is in the
-/// middle of its own work; the harness skips the round trip for these
-/// programs until this is fixed: see `KNOWN`.)
+/// Found by the fuzzer: `sky_ir::print` wrote `math.sqrt`, which
+/// `sky_ir::parse` used to reject, so a module with a math operation did not
+/// survive the text format. Fixed; kept as a regression test.
 #[test]
-#[ignore = "bug: the SIR parser rejects the math.* operations the printer writes"]
-fn sir_text_parse_rejects_the_math_operations_the_printer_writes() {
+fn sir_text_parse_accepts_the_math_operations_the_printer_writes() {
     assert_agree("print(sqrt(4))\n");
 }
 

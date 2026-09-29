@@ -395,10 +395,9 @@ const GATE_MERGE_AFTER_JUMP: bool = true;
 /// function: after the block, lowering still reads the constant's own value.
 const GATE_CONST_REBIND_IN_BLOCK: bool = true;
 
-/// `sir_text_parse_rejects_the_math_operations_the_printer_writes`:
-/// `sky_ir::print` writes `math.sqrt` and friends, and `sky_ir::parse`
-/// rejects them ("unknown operation `math.sqrt`").
-const GATE_SIR_TEXT_MATH: bool = true;
+/// `sir_text_parse_accepts_the_math_operations_the_printer_writes`: fixed
+/// (the SIR parser reads `math.*`), so the generator uses math freely.
+const GATE_SIR_TEXT_MATH: bool = false;
 
 /// `sir_does_not_check_the_right_operand_of_and_or_for_bool` and
 /// `the_left_operand_of_and_is_worded_as_an_if_in_sir`: a value the checker
@@ -1908,11 +1907,11 @@ pub fn generate(data: &[u8]) -> String {
     let mut c = Choices::new(data);
     let risk = *c.pick(&[0, 0, 2, 5, 10, 25]);
     let shadow_consts = c.chance(15);
-    // Known bug (GATE_SIR_TEXT_MATH): the SIR parser does not read the
-    // `math.*` operations the printer writes, so a lenient check stops at the
-    // round trip of any program that has one. Some programs avoid math, so
-    // the round trip is still checked on the rest.
-    let no_math = GATE_SIR_TEXT_MATH && c.chance(40);
+    // GATE_SIR_TEXT_MATH is off now that the SIR parser reads `math.*`; the
+    // gate stays so a regression can be steered around again.
+    // The choice is drawn either way, so turning the gate off doesn't shift
+    // every later choice (and the fixed seeds' programs) along the stream.
+    let no_math = c.chance(40) && GATE_SIR_TEXT_MATH;
     let mut g = Gen {
         c,
         out: String::new(),
@@ -2000,7 +1999,6 @@ pub struct Outcome {
 /// regression tests in `fuzz_differential.rs`) reports it. Delete the entry
 /// when the bug is fixed.
 const KNOWN: &[(&str, &str)] = &[
-    ("sir-text-math-ops", "unknown operation `math."),
     // Documented in sky-lower: a number literal that overflows f64 (here
     // through its unit's scale) is refused when lowering, while `sky run`
     // reports it only if the literal is evaluated.

@@ -161,3 +161,11 @@ fn type_annotations_parse_and_recover() {
     assert_eq!(out.stmts, Some(6));
     assert_eq!(out.errors.len(), 3, "{:?}", out.errors);
 }
+
+#[test]
+fn as_display_parses_and_recovers() {
+    let src = "v = 25 m/s\nprint(v as km/h, v as kg*m^2/s^2)\nv as km/h\nx = a + b as km\nbad = v as\nbad2 = v as km as m\nbad3 = v as km + 1\nbad4 = v as m / s\nbad5 = 3 as 4\n";
+    let out = harness::run(&seed("as_display", src));
+    assert_eq!(out.stmts, Some(4));
+    assert_eq!(out.errors.len(), 5, "{:?}", out.errors);
+}

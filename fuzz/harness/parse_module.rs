@@ -280,6 +280,15 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
                     ExprKind::IfElse { then, cond, else_ } => {
                         stack.extend([then, cond, else_].map(|e| Node::Expr(e)));
                     }
+                    ExprKind::As {
+                        value,
+                        unit,
+                        as_span,
+                    } => {
+                        f(*as_span);
+                        stack.push(Node::Expr(value));
+                        stack.push(Node::Unit(unit));
+                    }
                 }
             }
             Node::Item(item) => {
@@ -389,6 +398,7 @@ const KINDS: &[TokenKind] = {
         Keyword(Kw::While),
         Keyword(Kw::For),
         Keyword(Kw::In),
+        Keyword(Kw::As),
         Keyword(Kw::Import),
         Keyword(Kw::Pass),
         Keyword(Kw::Break),

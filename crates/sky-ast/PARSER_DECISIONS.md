@@ -46,6 +46,7 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 
 | level | operators | associativity |
 |---|---|---|
+| -1 | `v as unit` | none: covers the whole expression and ends it (see "Display units") |
 | 0 | `a if c else b` | right, in the `else` arm; the condition is an `or` expression (see "Blocks and control flow") |
 | 1 | `or` | left (Eng Lead) |
 | 2 | `and` | left (Eng Lead) |
@@ -75,6 +76,13 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 - They stay attribute names after `.` (`y = x.true` parses). Since `sky-ast/assign-targets`, `x.true = 1` parses as an attribute target, exactly like `x.flag = 1` (it was a parse error while targets were plain names; the golden is now `ok_assign_attribute`). The v0.1 checker rejects both writes.
 - `true = 1`, `false = 0`, and `true: Bool` are errors on the literal: "cannot assign to `true`" / "cannot annotate `true`", with the help "`true` and `false` are Bool literals, not names". Other non-name targets keep the generic "invalid assignment target" message.
 - `True`/`False` are ordinary identifiers, and the parser does nothing special with them. The checker should give an undefined `True`/`False` the help "Sky writes booleans as `true`/`false`" (Dinesh's side).
+
+**Display units** (`v as unit`, spec "Showing values in a unit"):
+- `as` is a keyword (`Kw::As`), like `in`: the alternative, a contextual word, is ambiguous after a number (`10 as` would read `as` as a unit). Like every keyword it stays an attribute name (`x.as`).
+- **AST:** `ExprKind::As { value: Box<Expr>, unit: Box<UnitExpr>, as_span }`. The unit is boxed so `Expr` (and every recursive parser frame) stays small; the max-depth-in-1-MiB test caught it when it was inline.
+- **Precedence: the loosest construct** (`AS_BP` 0, only continues an operand where any expression is allowed). `a + b as km` is `(a + b) as km`, `x if c else y as km` is `(x if c else y) as km`, `a < b as km` is `(a < b) as km` (a Bool, so a check error). It ends the expression: after the unit nothing may follow, and an operator, a second `as`, or an `if` there is a parse error with help "put the arithmetic before `as`". Parentheses and call arguments restart the level, so `print(a + b as km, c)` works.
+- The unit is read by `parse_unit` with a third `UnitCtx::Display`, which behaves like an annotation (no number precedes the unit, so a spaced `m / s` is "a unit's `/` cannot have spaces around it"). So the parser's unit rules (adjacent `*`, `/`, `^`, exponent forms, the factor limit) are shared with unit literals and annotations; unit names, prefixes and dimensions are the checker's.
+- S-expression: `(as v (/ km h))`. It counts one nesting level.
 
 **AST shape:**
 - `Expr` is a struct holding `kind: ExprKind` and `span`; likewise `Stmt`/`StmtKind`.

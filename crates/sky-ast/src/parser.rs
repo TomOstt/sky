@@ -30,7 +30,7 @@ use crate::ast::{
     UnitExpr, TAG_NAMES,
 };
 use crate::precedence::{
-    bool_binding_power, infix_binding_power, is_postfix_start, prefix_binding_power,
+    bool_binding_power, infix_binding_power, is_postfix_start, prefix_binding_power, AS_BP,
     CONDITIONAL_BP, CONDITIONAL_COND_BP, NOT_BP, POSTFIX_BP,
 };
 
@@ -917,6 +917,8 @@ impl<'t, 's> Parser<'t, 's> {
                     prev_comparison = None;
                     self.parse_conditional(lhs, if_span)?
                 }
+                // `as` ends the expression: no chaining, nothing after it.
+                Step::As(as_span) => return self.parse_as(lhs, as_span),
                 Step::Inverse(op_span) => inverse(lhs, op_span),
                 Step::Attribute(name) => attribute(lhs, name),
                 Step::Call(open) => self.parse_call(lhs, open)?,
@@ -969,6 +971,75 @@ impl<'t, 's> Parser<'t, 's> {
         Some(conditional(then, cond, else_))
     }
 
+    /// `value as unit` with `as` (`as_span`) already consumed and counted.
+    /// The unit is read by [`Parser::parse_unit`], the same sub-grammar as
+    /// a unit literal, so `km/h`, `kg*m^2/s^2` and `MeV` are spelled alike
+    /// in both places. Nothing may follow it in the same expression.
+    #[inline(never)]
+    fn parse_as(&mut self, value: Expr, as_span: Span) -> Option<Expr> {
+        let first = self.current();
+        if first.kind != TokenKind::Ident {
+            return self.fail_as_unit(first, as_span);
+        }
+        let unit = self.parse_unit(UnitCtx::Display)?;
+        self.reject_after_as(&value, &unit, as_span)?;
+        Some(as_expr(value, unit, as_span))
+    }
+
+    /// `as` must be the last thing in its expression: it shows a value, it
+    /// does not make a number, so an operator, a second `as`, or an `if`
+    /// after the unit is a mistake with a clear fix.
+    fn reject_after_as(&mut self, value: &Expr, unit: &UnitExpr, as_span: Span) -> Option<()> {
+        let tok = self.current();
+        let is_operator = infix_binding_power(tok.kind).is_some()
+            || bool_binding_power(tok.kind).is_some()
+            || is_postfix_start(tok.kind);
+        let (message, help) = match tok.kind {
+            TokenKind::Keyword(Kw::As) => (
+                "a value can be shown in only one unit".to_string(),
+                "remove the second `as`".to_string(),
+            ),
+            TokenKind::Keyword(Kw::If) => (
+                "`as` must come last in an expression".to_string(),
+                "to show a conditional in a unit, write `(a if c else b) as km` or `a if c else b as km`"
+                    .to_string(),
+            ),
+            _ if is_operator => (
+                format!("`{}` cannot follow `as`", self.text(tok.span)),
+                format!(
+                    "`as` shows a value in `{}`; it does not produce a number to compute with. \
+                     Put the arithmetic before it: `(… {} …) as {}`",
+                    self.text(unit.span()),
+                    self.text(tok.span),
+                    self.text(unit.span())
+                ),
+            ),
+            _ => return Some(()),
+        };
+        self.errors.push(
+            ParseError::new(message, tok.span)
+                .with_secondary(as_span.join(unit.span()), "shown in this unit")
+                .with_secondary(value.span, "the value")
+                .with_help(help),
+        );
+        None
+    }
+
+    /// `x as` followed by something that is not a unit name.
+    #[cold]
+    #[inline(never)]
+    fn fail_as_unit<T>(&mut self, found: Token, as_span: Span) -> Option<T> {
+        self.errors.push(
+            ParseError::new(
+                format!("expected a unit after `as`, found {}", self.describe(found)),
+                found.span,
+            )
+            .with_secondary(as_span, "`as` shows a value in a unit")
+            .with_help("write the unit to show the value in, e.g. `v as km/h`"),
+        );
+        None
+    }
+
     fn parse_call(&mut self, callee: Expr, open: Span) -> Option<Expr> {
         let (args, close) = self.parse_delimited(open, TokenKind::RParen)?;
         Some(call(callee, args, close))
@@ -1009,6 +1080,14 @@ impl<'t, 's> Parser<'t, 's> {
                 // Unreachable by construction; report instead of panicking.
                 _ => self.fail_expected_expression(tok),
             };
+        }
+        if tok.kind == TokenKind::Keyword(Kw::As) {
+            if AS_BP < min_bp {
+                return Some(Step::Done);
+            }
+            self.bump();
+            self.enter(tok.span)?;
+            return Some(Step::As(tok.span));
         }
         if tok.kind == TokenKind::Keyword(Kw::If) {
             if CONDITIONAL_BP < min_bp {
@@ -1596,6 +1675,11 @@ impl<'t, 's> Parser<'t, 's> {
                     err = err
                         .with_help("`in` only appears in `for` loops, which are not supported yet")
                 }
+                Kw::As => {
+                    err = err.with_help(
+                        "`as` follows a value: write `v as km/h` (it is also a reserved word, so it cannot name a variable)",
+                    );
+                }
                 _ => {
                     err = err.with_help(format!(
                         "`{}` starts a statement, so it cannot be part of an expression",
@@ -1773,7 +1857,7 @@ impl<'t, 's> Parser<'t, 's> {
                             symbol(op.kind)
                         ),
                     ),
-                    UnitCtx::Annotation => (
+                    UnitCtx::Annotation | UnitCtx::Display => (
                         "unit",
                         format!(
                             "write a unit name after `{}`, e.g. `m/s` or `kg*m`",
@@ -1826,7 +1910,7 @@ impl<'t, 's> Parser<'t, 's> {
             // `x: symmetric Matrix[3, 3]`: a lowercase tag reads as a unit.
             let shape_word = span_text(self.src, tok.span).and_then(ShapeKind::from_name);
             err = match (ctx, shape_word) {
-                (UnitCtx::Annotation, Some(kind)) => err.with_help(format!(
+                (UnitCtx::Annotation | UnitCtx::Display, Some(kind)) => err.with_help(format!(
                     "matrix properties are capitalized and go before the shape: `PositiveDefinite {}[…]`",
                     kind.name()
                 )),
@@ -2437,17 +2521,22 @@ impl<'t, 's> Parser<'t, 's> {
     }
 }
 
-/// Where a unit is being parsed: after a number (`10 km`), or in a type
-/// annotation (`m/s`). See `Parser::parse_unit`.
+/// Where a unit is being parsed: after a number (`10 km`), in a type
+/// annotation (`m/s`), or after `as` (`v as m/s`). See `Parser::parse_unit`.
 #[derive(Clone, Copy)]
 enum UnitCtx<'a> {
     Literal(&'a Literal),
     Annotation,
+    /// After `as`. Like an annotation there is no quantity next to the
+    /// unit, so a spaced `m / s` can only be a unit written with spaces.
+    Display,
 }
 
 impl UnitCtx<'_> {
+    /// True where no quantity precedes the unit (a type, or `as`), so the
+    /// errors have no number to mention.
     fn is_annotation(self) -> bool {
-        matches!(self, UnitCtx::Annotation)
+        matches!(self, UnitCtx::Annotation | UnitCtx::Display)
     }
 }
 
@@ -2467,6 +2556,8 @@ enum Step {
     },
     /// The `if` of `a if c else b`, already consumed.
     Conditional(Span),
+    /// The `as` of `v as unit`, already consumed.
+    As(Span),
     Inverse(Span),
     Attribute(Ident),
     /// Holds the span of the opening `(` or `[`, already consumed.
@@ -2485,6 +2576,18 @@ fn binary(op: BinaryOp, op_span: Span, lhs: Expr, rhs: Expr) -> Expr {
             op_span,
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
+        },
+    }
+}
+
+#[inline(never)]
+fn as_expr(value: Expr, unit: UnitExpr, as_span: Span) -> Expr {
+    Expr {
+        span: value.span.join(unit.span()),
+        kind: ExprKind::As {
+            value: Box::new(value),
+            unit: Box::new(unit),
+            as_span,
         },
     }
 }

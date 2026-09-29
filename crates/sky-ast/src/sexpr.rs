@@ -9,7 +9,8 @@
 //! `A: Symmetric Matrix[3, 3] N = v` → `(: A (type (tags Symmetric) (Matrix 3 3) (unit N)) v)`,
 //! `a.b = x` → `(= (attr a b) x)`, `x += e` → `(+= x e)`,
 //! `true` → `true`, `not a` → `(not a)`, `a and b and c` → `(and a b c)`,
-//! `a and b or c` → `(or (and a b) c)`, `a if c else b` → `(ifelse c a b)`.
+//! `a and b or c` → `(or (and a b) c)`, `a if c else b` → `(ifelse c a b)`,
+//! `v as km/h` → `(as v (/ km h))`.
 //!
 //! Compound statements print on one line, blocks as `(block stmt...)`:
 //! `if c: A elif d: B else: C` → `(if c (block A) d (block B) (else (block C)))`,
@@ -281,6 +282,13 @@ fn write_expr(out: &mut String, e: &Expr, src: &str) {
         ExprKind::Attribute { base, name } => write_attr(out, base, name.span, src),
         ExprKind::Paren(inner) => node(out, "paren", src, &[inner]),
         ExprKind::IfElse { then, cond, else_ } => node(out, "ifelse", src, &[cond, then, else_]),
+        ExprKind::As { value, unit, .. } => {
+            out.push_str("(as ");
+            write_expr(out, value, src);
+            out.push(' ');
+            write_unit(out, unit, src);
+            out.push(')');
+        }
     }
 }
 

@@ -338,6 +338,48 @@ fn strip_parens(mut e: &Expr) -> &Expr {
     e
 }
 
+/// A constant exponent: an integer or decimal literal, possibly negated or
+/// parenthesized, or a quotient of two such (`(1/2)`). A decimal literal is
+/// read from its source text as the exact fraction it spells (`0.5` is 1/2);
+/// see [`exact_decimal`].
+///
+/// The single definition shared by the checker (for dimensions) and the
+/// interpreter (for values), so the two can never disagree about which
+/// exponents are constant.
+pub fn const_exponent(src: &str, e: &Expr) -> Option<Rational> {
+    let text = |span: Span| span_text(src, span);
+    match &e.kind {
+        ExprKind::Literal(Literal::Float(span)) => exact_decimal(text(*span)?),
+        ExprKind::Literal(Literal::Int(span)) => {
+            text(*span)?.parse::<i64>().ok().map(Rational::integer)
+        }
+        ExprKind::Paren(inner) => const_exponent(src, inner),
+        ExprKind::Unary {
+            op: UnaryOp::Neg,
+            operand,
+            ..
+        } => const_exponent(src, operand)?.checked_neg().ok(),
+        ExprKind::Unary {
+            op: UnaryOp::Pos,
+            operand,
+            ..
+        } => const_exponent(src, operand),
+        ExprKind::Binary {
+            op: BinaryOp::Div,
+            lhs,
+            rhs,
+            ..
+        } => {
+            let (a, b) = (const_exponent(src, lhs)?, const_exponent(src, rhs)?);
+            if b.is_zero() {
+                return None;
+            }
+            a.checked_div(b).ok()
+        }
+        _ => None,
+    }
+}
+
 impl<'s> Checker<'s> {
     fn text(&self, span: Span) -> &'s str {
         span_text(self.src, span).unwrap_or("…")
@@ -1075,41 +1117,8 @@ impl<'s> Checker<'s> {
         }
     }
 
-    /// A constant exponent: an integer or decimal literal, possibly negated
-    /// or parenthesized, or a quotient of two such (`(1/2)`). A decimal
-    /// literal is read from its source text as the exact fraction it spells
-    /// (`0.5` is 1/2); see [`exact_decimal`].
     fn const_exponent(&self, e: &Expr) -> Option<Rational> {
-        match &e.kind {
-            ExprKind::Literal(Literal::Float(span)) => exact_decimal(self.text(*span)),
-            ExprKind::Literal(Literal::Int(span)) => {
-                self.text(*span).parse::<i64>().ok().map(Rational::integer)
-            }
-            ExprKind::Paren(inner) => self.const_exponent(inner),
-            ExprKind::Unary {
-                op: UnaryOp::Neg,
-                operand,
-                ..
-            } => self.const_exponent(operand)?.checked_neg().ok(),
-            ExprKind::Unary {
-                op: UnaryOp::Pos,
-                operand,
-                ..
-            } => self.const_exponent(operand),
-            ExprKind::Binary {
-                op: BinaryOp::Div,
-                lhs,
-                rhs,
-                ..
-            } => {
-                let (a, b) = (self.const_exponent(lhs)?, self.const_exponent(rhs)?);
-                if b.is_zero() {
-                    return None;
-                }
-                a.checked_div(b).ok()
-            }
-            _ => None,
-        }
+        const_exponent(self.src, e)
     }
 
     fn pow(&mut self, op_span: Span, base: &Expr, exp: &Expr) -> Ty {

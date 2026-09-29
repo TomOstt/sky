@@ -460,3 +460,13 @@ fn deep_expressions_do_not_overflow_the_stack() {
     let v = sky_ast::with_deep_stack(|| eval(&chain));
     assert_eq!(v, Value::scalar(250.0));
 }
+
+#[test]
+fn decimal_exponents_match_the_checker() {
+    // The checker and the interpreter share `sky_types::const_exponent`, so
+    // a decimal exponent the checker accepts is also one the interpreter
+    // can evaluate, with the same dimension.
+    assert_eq!(show("(4 m)^0.5"), "2 m^(1/2)");
+    assert_eq!(show("(8 s)^(1/3)"), "2 s^(1/3)");
+    assert_eq!(show("(9 m^2)^0.5"), "3 m");
+}

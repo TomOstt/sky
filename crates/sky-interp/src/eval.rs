@@ -541,7 +541,7 @@ impl<'a> Interp<'a> {
         let dim = if db.is_dimensionless() {
             Dimension::DIMENSIONLESS
         } else {
-            let Some(r) = const_exponent(self.src, rexpr) else {
+            let Some(r) = sky_types::const_exponent(self.src, rexpr) else {
                 return Err(RuntimeError::new(
                     "the exponent must be a constant number when the base has a unit",
                     rexpr.span,
@@ -565,51 +565,6 @@ impl<'a> Interp<'a> {
             b.powf(*x)
         };
         Ok(Value::number(finite(value, whole)?, dim))
-    }
-}
-
-/// A constant exponent read from source: an integer literal, possibly
-/// negated or parenthesized, or a quotient of two such (`(1/2)`). The same
-/// rule as the checker's, so dimensions agree.
-fn const_exponent(src: &str, e: &Expr) -> Option<Rational> {
-    match &e.kind {
-        ExprKind::Literal(Literal::Int(span)) => span_text(src, *span)?
-            .parse::<i64>()
-            .ok()
-            .map(Rational::integer),
-        ExprKind::Paren(inner) => const_exponent(src, inner),
-        ExprKind::Unary {
-            op: UnaryOp::Neg,
-            operand,
-            ..
-        } => const_exponent(src, operand)?.checked_neg().ok(),
-        ExprKind::Unary {
-            op: UnaryOp::Pos,
-            operand,
-            ..
-        } => const_exponent(src, operand),
-        ExprKind::Binary {
-            op: BinaryOp::Div,
-            lhs,
-            rhs,
-            ..
-        } => {
-            let (a, b) = (const_exponent(src, lhs)?, const_exponent(src, rhs)?);
-            if b.is_zero() {
-                return None;
-            }
-            a.checked_div(b).ok()
-        }
-        ExprKind::Literal(_)
-        | ExprKind::Name(_)
-        | ExprKind::UnitLiteral { .. }
-        | ExprKind::Unary { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::BoolOp { .. }
-        | ExprKind::Inverse { .. }
-        | ExprKind::Call { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::Attribute { .. } => None,
     }
 }
 

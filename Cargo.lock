@@ -173,6 +173,7 @@ dependencies = [
  "sky-ast",
  "sky-diag",
  "sky-syntax",
+ "sky-types",
  "sky-units",
 ]
 

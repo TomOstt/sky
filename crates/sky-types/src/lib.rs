@@ -30,7 +30,8 @@ pub mod tag_ops;
 pub mod tags;
 
 pub use check::{
-    check_module, check_module_with, Checked, Env, RewriteSite, Ty, ValueTy, MAX_STORED_REWRITES,
+    check_module, check_module_with, const_exponent, Checked, Env, RewriteSite, Ty, ValueTy,
+    MAX_STORED_REWRITES,
 };
 pub use rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 pub use rules::{elementwise, inverse, matmul, transpose, TensorType};

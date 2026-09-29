@@ -110,3 +110,26 @@ fn symlinked_sky_toml_is_refused_with_a_diagnostic() {
     );
     assert!(out.stdout.is_empty());
 }
+
+#[test]
+fn refusal_diagnostic_escapes_control_characters_in_the_path() {
+    let s = Sandbox::new("escape");
+    // A directory name carrying an ANSI "clear screen" and a bidi override.
+    let dir = "proj\u{1b}[2J\u{202e}x";
+    s.trap(dir);
+    let f = s.file(&format!("{dir}/main.sky"), "x = 1\n");
+    let out = sky_check(&s.0, &f, &[]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(
+        !err.contains('\u{1b}') && !err.contains('\u{202e}'),
+        "{err:?}"
+    );
+    let m = format!("{}/proj\\u{{001B}}[2J\\u{{202E}}x/sky.toml", s.0.display());
+    assert!(
+        err.starts_with(&format!(
+            "{m}:1:1: error: refusing to use {m}: it is a symbolic link\n"
+        )),
+        "{err:?}"
+    );
+}

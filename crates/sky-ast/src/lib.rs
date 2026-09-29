@@ -3,6 +3,8 @@
 //! Entry points: [`parse_expr`] and [`parse_module`]. Both take the lexer's
 //! token slice plus the source text (token text is `source[span]`), return
 //! every error they found, and never panic on any input.
+//! Entry points that parse, check, or interpret run inside
+//! [`with_deep_stack`], so the depth limits hold on a stack of known size.
 //!
 //! Design decisions that still need Eng Lead sign-off are listed in
 //! `crates/sky-ast/PARSER_DECISIONS.md`.
@@ -13,9 +15,11 @@ pub mod ast;
 pub mod parser;
 pub mod precedence;
 mod sexpr;
+pub mod stack;
 
 pub use ast::{
-    BinaryOp, Expr, ExprKind, Ident, Literal, Module, Stmt, StmtKind, UnaryOp, UnitExpr,
+    BinaryOp, BoolOp, Expr, ExprKind, Ident, Literal, Module, Stmt, StmtKind, UnaryOp, UnitExpr,
 };
 pub use parser::{parse_expr, parse_module, ParseError, MAX_DEPTH, MAX_UNIT_FACTORS};
 pub use sky_syntax::{Kw, Span, Token, TokenKind};
+pub use stack::{with_deep_stack, DEEP_STACK_BYTES};

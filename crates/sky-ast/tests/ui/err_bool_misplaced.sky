@@ -1,0 +1,3 @@
+# `and`/`or` need an operand on each side.
+a = and b
+c = d or

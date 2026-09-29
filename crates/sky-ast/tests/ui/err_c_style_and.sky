@@ -1,0 +1,2 @@
+# Sky spells logical and as `and`.
+ok = a && b

@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_superscript_inverse_unit.sky:2:15: error: unexpected character '⁻' (U+207B)
+  |
+2 | density = 10 m⁻²
+  |               ^
+  = help: the inverse operator is the glyph `⁻¹` (or the function `inv`)

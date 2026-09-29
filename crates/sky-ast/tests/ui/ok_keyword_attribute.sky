@@ -1,0 +1,3 @@
+# Any keyword may be an attribute name, but only right after `.`.
+x = linalg.solve(A, b)
+y = cond.if

@@ -1,0 +1,7 @@
+# Every spec example that is an expression or a simple binding.
+distance = 10 km
+bad = 5 meters + 20 kelvin
+C = Matrix[3,4] @ Matrix[4,8]
+x = A⁻¹ @ b
+velocity = 10 km / 30 min
+df = ∂f/∂x

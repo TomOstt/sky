@@ -1,0 +1,2 @@
+# `⁻¹` directly after a unit is rejected: write `10 km^-1` or `(10 km)⁻¹`.
+rate = 10 km⁻¹

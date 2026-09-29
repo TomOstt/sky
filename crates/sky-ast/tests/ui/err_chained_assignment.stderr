@@ -1,0 +1,4 @@
+crates/sky-ast/tests/ui/err_chained_assignment.sky:1:7: error: chained assignment (`a = b = c`) is not supported
+  |
+1 | a = b = c
+  |       ^

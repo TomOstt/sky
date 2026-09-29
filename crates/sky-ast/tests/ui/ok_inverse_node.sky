@@ -1,0 +1,4 @@
+# `⁻¹` stays its own node (the checker rewrites `A⁻¹ @ b` with a
+# positive-definite `A` to a Cholesky solve); `A^-1` stays a plain power.
+x = A⁻¹ @ b
+y = A^-1

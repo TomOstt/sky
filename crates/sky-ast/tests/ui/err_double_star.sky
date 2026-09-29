@@ -1,0 +1,2 @@
+# Sky writes powers as `^`.
+y = x**2

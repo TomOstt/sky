@@ -1,0 +1,4 @@
+crates/sky-ast/tests/ui/err_zero_denominator.sky:1:12: error: the denominator of a unit exponent cannot be zero
+  |
+1 | r = 1 m^(1/0)
+  |            ^

@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_double_star.sky:2:6: error: `**` is not an operator
+  |
+2 | y = x**2
+  |      ^^
+  = help: Sky writes powers as `^`

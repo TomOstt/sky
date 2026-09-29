@@ -1241,7 +1241,18 @@ impl<'s> Checker<'s> {
         match (lv.is_scalar(), rv.is_scalar()) {
             (true, true) => {}
             (false, false) => {
-                if let Err(e) = elementwise(&mut self.env.shapes, &lv.ty, &rv.ty) {
+                // Shape variables are solved only if the whole operation
+                // type-checks. When the dimensions differ the operation fails
+                // below (after the shape error, which has priority), so probe
+                // on a copy then; otherwise commit.
+                let mut probe;
+                let shapes = if lv.dim == rv.dim {
+                    &mut self.env.shapes
+                } else {
+                    probe = self.env.shapes.clone();
+                    &mut probe
+                };
+                if let Err(e) = elementwise(shapes, &lv.ty, &rv.ty) {
                     let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
                     self.error(
                         Diagnostic::error(e.to_string(), op_span)

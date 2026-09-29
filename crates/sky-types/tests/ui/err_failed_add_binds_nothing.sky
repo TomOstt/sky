@@ -1,0 +1,8 @@
+# A failed `+` must not leave shape variables bound. `S + T` fails on the
+# dimensions (dimensionless vs length) after the shapes already unified, so
+# `N` must stay free; `S + V` then solves N = 4 instead of hitting a stale N = 3.
+# env: S: Matrix[N,N]
+# env: T: Matrix[3,3] unit m
+# env: V: Matrix[4,4]
+X = S + T
+Y = S + V

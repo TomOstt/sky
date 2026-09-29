@@ -1,0 +1,8 @@
+crates/sky-types/tests/ui/err_failed_add_binds_nothing.sky:7:7: error: cannot add dimensionless and length
+  |
+7 | X = S + T
+  |       ^ mismatched dimensions
+  |     - dimensionless
+  |         - length
+  = note: both operands of `+` must have the same dimension
+  = help: convert one side, or fix the unit

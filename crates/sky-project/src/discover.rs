@@ -53,6 +53,15 @@ pub enum DiscoverError {
         owner: u32,
         euid: u32,
     },
+    /// `path` (the manifest or its directory) is writable by every user: any
+    /// user could replace `sky.toml`, or put one in the directory. The mode
+    /// rules are those of the import walk (`check_dir`, `check_file`): a
+    /// directory is refused unless the sticky bit is set, a file always.
+    WorldWritable {
+        manifest: PathBuf,
+        path: PathBuf,
+        mode: u32,
+    },
     /// The checked file's path no longer names the file that was opened
     /// (it was replaced or renamed between the open and discovery).
     FileChanged { path: PathBuf },
@@ -185,7 +194,10 @@ fn check_manifest(
         path: dir.to_path_buf(),
         error,
     })?;
-    for (path, m) in [(manifest, meta), (dir, &dir_meta)] {
+    // The same mode rules as the import walk applies below the root, so a
+    // root that discovery accepts is never one the walk then refuses: a
+    // directory may not be world-writable unless sticky, a file never.
+    for (path, m, is_dir) in [(manifest, meta, false), (dir, &dir_meta, true)] {
         let owner = owner_uid(m);
         if owner != Some(euid) {
             return Err(DiscoverError::ForeignOwner {
@@ -193,6 +205,14 @@ fn check_manifest(
                 path: path.to_path_buf(),
                 owner: owner.unwrap_or(u32::MAX),
                 euid,
+            });
+        }
+        let mode = mode_bits(m);
+        if mode & 0o002 != 0 && (!is_dir || mode & 0o1000 == 0) {
+            return Err(DiscoverError::WorldWritable {
+                manifest: manifest.to_path_buf(),
+                path: path.to_path_buf(),
+                mode,
             });
         }
     }
@@ -211,6 +231,19 @@ fn owner_uid(_meta: &fs::Metadata) -> Option<u32> {
     None
 }
 
+#[cfg(unix)]
+fn mode_bits(meta: &fs::Metadata) -> u32 {
+    use std::os::unix::fs::MetadataExt;
+    meta.mode() & 0o7777
+}
+
+/// No mode bits off Unix; unreachable in practice, because [`owner_uid`]
+/// already refused the path.
+#[cfg(not(unix))]
+fn mode_bits(_meta: &fs::Metadata) -> u32 {
+    0
+}
+
 impl DiscoverError {
     /// The file the diagnostic is reported against. Its text is empty on
     /// purpose: a refused manifest is never read.
@@ -219,7 +252,8 @@ impl DiscoverError {
             DiscoverError::Io { path, .. } | DiscoverError::FileChanged { path } => path,
             DiscoverError::ManifestSymlink { manifest }
             | DiscoverError::ManifestNotFile { manifest }
-            | DiscoverError::ForeignOwner { manifest, .. } => manifest,
+            | DiscoverError::ForeignOwner { manifest, .. }
+            | DiscoverError::WorldWritable { manifest, .. } => manifest,
         };
         SourceFile::new(path.display().to_string(), "")
     }
@@ -266,6 +300,16 @@ impl DiscoverError {
                 "if you trust this project, have {} and the directory containing it owned by uid {euid}, or copy the project into a directory you own",
                 manifest.display()
             )),
+            DiscoverError::WorldWritable { path, mode, .. } => Diagnostic::error(
+                format!(
+                    "refusing to use project root: {} is writable by every user (mode {:04o})",
+                    path.display(),
+                    mode & 0o7777
+                ),
+                at,
+            )
+            .with_note("any user could replace a world-writable sky.toml, or add one to a world-writable directory without the sticky bit, and redirect imports to code you did not write")
+            .with_help(format!("remove write permission for others: chmod o-w {}", path.display())),
         }
     }
 }

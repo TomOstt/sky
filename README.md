@@ -32,6 +32,8 @@ sky check --explain file.sky  # also show the edition, the checker's rewrites (A
 sky check --emit-ir file.sky  # print the program's IR (SIR text) on stdout; --emit-ir=lower, =after:fold|egraph|dce|cholesky, =final
 sky run file.sky              # check, then run; only a clean file runs. print() writes to stdout
 sky repl                      # expressions echo their value; blocks (def, if, while, for) continue on `...` lines until an empty line
+sky run --engine=ast file.sky # pick the engine: sir (lower to SIR, run it), ast (tree-walker), auto (the default)
+sky repl                      # one line at a time; expressions echo their value
 ```
 
 ```
@@ -66,6 +68,8 @@ f.sky:2:5: note: [ALG-001] `x * 1` is rewritten to `x`
   = note: applied by the `egraph` pass
   = note: because multiplying a finite float by 1 gives it back bit for bit, and cannot overflow
 ```
+
+`sky run` has two engines that print the same bytes, on stdout and stderr, with the same exit status. `--engine=auto` (the default) lowers the program to SIR, runs the optimization pipeline with verification, and executes it on the SIR reference interpreter; a program SIR cannot express yet (iterating over an array, a `range` bound computed at run time, an input declaration inside a function, ...) silently runs on the tree-walking interpreter instead. `--engine=sir` never falls back and reports such a program as an error (`cannot run on SIR: ...`), and `--engine=ast` always uses the tree-walker, which stays as the oracle the SIR engine is tested against. A runtime error found on SIR is re-run on the tree-walker, with its output discarded, so that it is pointed at and labelled exactly as before (see "Running programs" in `spec/v0.1.md`).
 
 Numbers are always finite: division by zero and overflow are runtime errors, not `inf` or `NaN`. See "Running programs" in `spec/v0.1.md`. The REPL keeps no session file.
 

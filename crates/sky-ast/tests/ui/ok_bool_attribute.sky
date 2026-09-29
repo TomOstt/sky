@@ -1,0 +1,3 @@
+# Keywords are attribute names after `.`, so `x.true` is an attribute.
+y = x.true
+z = x.false or not x.true

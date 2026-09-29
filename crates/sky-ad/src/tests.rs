@@ -726,6 +726,71 @@ fn bad_results_and_arrays() {
     ));
 }
 
+#[test]
+fn array_operations_are_unsupported_where_the_derivative_flows() {
+    // f(x) = [x, 1][0]: the derivative would flow through `array.literal`
+    // and `index`, which have no rules yet, and says so.
+    let vec2 = Type::Number(NumberType {
+        shape: sky_types::Shape::vector(2u64),
+        ..NumberType::scalar(Dimension::DIMENSIONLESS)
+    });
+    let mut b = FunctionBuilder::new("pick", vec![num()], vec![num()], sp());
+    let x = b.params()[0];
+    let one = b.op1(
+        OpKind::ConstFloat {
+            bits: 1f64.to_bits(),
+        },
+        vec![],
+        num(),
+        sp(),
+    );
+    let v = b.op1(
+        OpKind::ArrayLiteral { cols: None },
+        vec![x, one],
+        vec2,
+        sp(),
+    );
+    let zero = b.op1(OpKind::ConstFloat { bits: 0 }, vec![], num(), sp());
+    let e = b.op1(OpKind::Index, vec![v, zero], num(), sp());
+    b.op(OpKind::Return, vec![e], vec![], sp());
+    let m = module(vec![b.finish()]);
+    let err = derivative(&m, "pick", 0).expect_err("no rule");
+    assert!(matches!(err, AdError::Unsupported { .. }), "{err}");
+    assert_eq!(
+        err.to_string(),
+        "cannot differentiate `array.literal` in `pick`: array differentiation is not supported yet"
+    );
+
+    // An array that does not depend on x is only data: its derivative is
+    // never asked for.
+    let mut b = FunctionBuilder::new("const_array", vec![num()], vec![num()], sp());
+    let x = b.params()[0];
+    let one = b.op1(
+        OpKind::ConstFloat {
+            bits: 1f64.to_bits(),
+        },
+        vec![],
+        num(),
+        sp(),
+    );
+    let vec2 = Type::Number(NumberType {
+        shape: sky_types::Shape::vector(2u64),
+        ..NumberType::scalar(Dimension::DIMENSIONLESS)
+    });
+    let v = b.op1(
+        OpKind::ArrayLiteral { cols: None },
+        vec![one, one],
+        vec2,
+        sp(),
+    );
+    let zero = b.op1(OpKind::ConstFloat { bits: 0 }, vec![], num(), sp());
+    let e = b.op1(OpKind::Index, vec![v, zero], num(), sp());
+    let r = b.op1(OpKind::Mul, vec![x, e], num(), sp());
+    b.op(OpKind::Return, vec![r], vec![], sp());
+    let m = module(vec![b.finish()]);
+    assert!(derivative(&m, "const_array", 0).is_ok());
+}
+
 // ----- properties -----
 
 /// `Σ c_k x^k` by Horner: `((c_n x + c_{n-1}) x + ...) + c_0`.

@@ -775,4 +775,103 @@ fn show_survives_fold_and_dce_and_keeps_its_failure() {
         .filter(|n| *n == "show")
         .count();
     assert_eq!(shows, 2);
+// -------------------------------------------------------------- arrays
+
+/// `[1, 2]` from two constants, typed as a vector.
+fn literal(b: &mut FunctionBuilder) -> ValueId {
+    let (x, y) = (rat(b, 1, 1), rat(b, 2, 1));
+    b.op1(
+        OpKind::ArrayLiteral { cols: None },
+        vec![x, y],
+        vector(2),
+        sp(),
+    )
+}
+
+#[test]
+fn array_operations_are_not_folded() {
+    let mut b = main_builder();
+    let v = literal(&mut b);
+    let i = rat(&mut b, 0, 1);
+    let e = b.op1(OpKind::Index, vec![v, i], num(), sp());
+    let n = b.op1(OpKind::Len, vec![v], num(), sp());
+    let z = b.op1(OpKind::Zeros, vec![n], vector(2), sp());
+    let sum = b.op1(OpKind::Add, vec![v, z], vector(2), sp());
+    print(&mut b, e);
+    print(&mut b, sum);
+    let mut m = finish_main(b);
+    let before = entry_mnemonics(&m.functions[0]);
+    assert!(fold(&mut m).is_empty());
+    assert!(fold_with(&mut m, FoldMode::Exact).is_empty());
+    assert_eq!(entry_mnemonics(&m.functions[0]), before);
+}
+
+#[test]
+fn unused_pure_array_literals_go_but_operations_that_can_fail_stay() {
+    let mut b = main_builder();
+    let v = literal(&mut b);
+    let i = rat(&mut b, 5, 1);
+    // Unused, but out of bounds at run time.
+    b.op1(OpKind::Index, vec![v, i], num(), sp());
+    b.op1(
+        OpKind::Slice {
+            axes: vec![sky_ir::SliceAxis::Range {
+                start: true,
+                stop: false,
+            }],
+        },
+        vec![v, i],
+        vector(1),
+        sp(),
+    );
+    b.op1(OpKind::Zeros, vec![i], vector(5), sp());
+    b.op1(OpKind::Identity, vec![i], matrix(TagSet::EMPTY, 5), sp());
+    b.op1(OpKind::Len, vec![v], num(), sp());
+    // A literal nobody reads is pure and vanishes.
+    let (x, y) = (rat(&mut b, 3, 1), rat(&mut b, 4, 1));
+    b.op1(
+        OpKind::ArrayLiteral { cols: None },
+        vec![x, y],
+        vector(2),
+        sp(),
+    );
+    let mut m = finish_main(b);
+    dce(&mut m);
+    verify(&m).unwrap();
+    assert_eq!(
+        entry_mnemonics(&m.functions[0]),
+        [
+            "const.rational",
+            "const.rational",
+            "array.literal",
+            "const.rational",
+            "index",
+            "slice",
+            "zeros",
+            "identity",
+            "len",
+            "return"
+        ]
+    );
+}
+
+#[test]
+fn a_solve_the_lowering_already_chose_is_left_alone() {
+    let pd = matrix(TagSet::of(Tag::PositiveDefinite).closure(), 2);
+    let mut b = FunctionBuilder::new("f", vec![pd, vector(2)], vec![vector(2)], sp());
+    let [a, rhs] = b.params()[..] else {
+        unreachable!()
+    };
+    let x = b.op1(
+        OpKind::Solve {
+            method: SolveMethod::Cholesky,
+        },
+        vec![a, rhs],
+        vector(2),
+        sp(),
+    );
+    b.op(OpKind::Return, vec![x], vec![], sp());
+    let mut m = module_of(b.finish());
+    assert!(cholesky(&mut m).is_empty());
+    assert_eq!(entry_mnemonics(&m.functions[0]), ["solve", "return"]);
 }

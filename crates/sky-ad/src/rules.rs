@@ -201,7 +201,15 @@ impl Diff<'_> {
                 let prod = self.emit(OpKind::Mul, vec![sq, ta], ty.clone(), span);
                 Ok(Some(self.emit(OpKind::Neg, vec![prod], ty, span)))
             }
-            OpKind::MatMul | OpKind::Transpose | OpKind::Solve { .. } => Err(self.unsupported(
+            OpKind::MatMul
+            | OpKind::Transpose
+            | OpKind::Solve { .. }
+            | OpKind::ArrayLiteral { .. }
+            | OpKind::Index
+            | OpKind::Slice { .. }
+            | OpKind::Zeros
+            | OpKind::Identity
+            | OpKind::Len => Err(self.unsupported(
                 op.kind.mnemonic(),
                 "array differentiation is not supported yet",
             )),

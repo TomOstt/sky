@@ -25,9 +25,10 @@
 //!   else (a Bool flag, say), and are passed through.
 //! * Exactly one result, a scalar number.
 //! * Every scalar operation of SIR v1, `if`, `while` and `call`. Array
-//!   operations (`matmul`, `transpose`, `solve`, non-scalar shapes) are
-//!   errors when the derivative flows through them; array AD comes with
-//!   arrays in the interpreter.
+//!   operations (`matmul`, `transpose`, `solve`, `array.literal`, `index`,
+//!   `slice`, `zeros`, `identity`, `len`, non-scalar shapes) are errors
+//!   when the derivative flows through them ("array differentiation is not
+//!   supported yet"); array AD is future work.
 //!
 //! # `Unknown` types
 //!

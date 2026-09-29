@@ -377,7 +377,7 @@ impl<'s> Checker<'s> {
                 None => d.with_help("compare it with a value of the same dimension"),
             };
         } else {
-            d = d.with_note("a condition must be a single value");
+            d = d.with_help("a condition must be a single `Bool` (shape `()`)");
         }
         self.error(d);
     }

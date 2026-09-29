@@ -31,7 +31,7 @@ crates/sky-types/tests/ui/err_bool_operands.sky:7:5: error: `and` needs a Bool o
 7 | d = v and true
   |     ^ not a Bool
   = note: v0.1 has no truthiness
-  = note: a condition must be a single value
+  = help: a condition must be a single `Bool` (shape `()`)
 
 crates/sky-types/tests/ui/err_bool_operands.sky:8:9: error: `not` needs a Bool operand, found Scalar [L·M·T⁻¹]
   |
@@ -39,3 +39,12 @@ crates/sky-types/tests/ui/err_bool_operands.sky:8:9: error: `not` needs a Bool o
   |         ^^^^^^^^^^ not a Bool
   = note: v0.1 has no truthiness
   = help: compare it instead, e.g. `(3 kg*m/s) != 0 kg*m/s`
+
+crates/sky-types/tests/ui/err_bool_operands.sky:9:18: error: cannot add length and time
+  |
+9 | f = true or (3 m + 2 s)
+  |                  ^ mismatched dimensions
+  |              --- length
+  |                    --- time
+  = note: both operands of `+` must have the same dimension
+  = help: convert one side, or fix the unit

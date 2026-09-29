@@ -7,8 +7,10 @@
 //! lowered module, so every program here is checked three ways: same
 //! output, same errors, and valid SIR.
 
-use sky_diag::Severity;
-use sky_interp::{run_module, RuntimeEnv};
+use std::collections::HashSet;
+
+use sky_diag::{Severity, Span};
+use sky_interp::{run_module_with, RuntimeEnv};
 
 /// What running a program did: its stdout, and the message of the runtime
 /// error that stopped it, if any.
@@ -20,8 +22,9 @@ struct Outcome {
 
 /// Lex, parse and check `src`, panicking with the diagnostics if it is not
 /// a valid program: a differential test on a program `sky run` refuses
-/// would compare nothing.
-fn parse_checked(src: &str) -> sky_ast::Module {
+/// would compare nothing. Also returns the `A⁻¹ @ b` sites the checker
+/// rewrote to Cholesky solves, which `sky run` honours.
+fn parse_checked(src: &str) -> (sky_ast::Module, HashSet<Span>) {
     let lexed = sky_syntax::lex(src).unwrap_or_else(|_| panic!("lex error in {src:?}"));
     let (module, errors) = sky_ast::parse_module(&lexed.tokens, src);
     assert!(errors.is_empty(), "parse errors in {src:?}: {errors:?}");
@@ -33,16 +36,16 @@ fn parse_checked(src: &str) -> sky_ast::Module {
         .map(|d| d.message.clone())
         .collect();
     assert!(errs.is_empty(), "check errors in {src:?}: {errs:?}");
-    module
+    (module, checked.cholesky_solves)
 }
 
 /// The `sky run` side: exactly what `sky-cli`'s `run` does after checking.
 fn run_tree_walker(src: &str) -> Outcome {
-    let module = parse_checked(src);
+    let (module, solves) = parse_checked(src);
     sky_ast::with_deep_stack(|| {
         let mut out = Vec::new();
         let mut env = RuntimeEnv::with_prelude();
-        let result = run_module(&module, src, &mut env, &mut out);
+        let result = run_module_with(&module, src, &mut env, &mut out, &solves);
         Outcome {
             stdout: String::from_utf8(out).expect("utf-8 output"),
             error: result.err().map(|e| e.message.clone()),
@@ -342,4 +345,276 @@ fn a_for_over_an_array_says_lowering_needs_array_values() {
     );
     // The tree walker still runs it.
     assert_eq!(run_tree_walker(src).stdout, "1\n2\n");
+// ----- arrays -----
+
+/// The spring system of `sky-cli`'s `run_repl` tests: two springs in series,
+/// fixed at the left, `K u = f`. `K` is only declared Symmetric, so
+/// `u = K⁻¹ f` is the general inverse.
+const SPRING: &str = "\
+K: Symmetric Matrix[2, 2] N/m = [[2000 N/m, -1000 N/m], [-1000 N/m, 1000 N/m]]
+f: Vector[2] N = [0 N, 100 N]
+u = K⁻¹ @ f
+print(u)
+print(u[1] / 1 mm)
+";
+
+#[test]
+fn the_spring_system_prints_the_same_displacements() {
+    let o = assert_same(SPRING);
+    assert_eq!(o.error, None);
+    assert_eq!(o.stdout, "[0.1 m, 0.2 m]\n200\n");
+}
+
+#[test]
+fn a_positive_definite_stiffness_is_solved_by_cholesky_in_both() {
+    // PositiveDefinite is proven from the entries, so the checker records
+    // the site and `sky run` factors K. Lowering emits `solve[cholesky]`
+    // for the same site, so the output is bit-identical (`assert_same`).
+    let src = SPRING.replace("Symmetric", "PositiveDefinite");
+    let ir = sky_lower::lower_source(&src).expect("lowers");
+    let text = sky_ir::print(&ir);
+    assert!(text.contains("solve[cholesky]"), "{text}");
+    assert!(!text.contains("inverse"), "{text}");
+    let o = assert_same(&src);
+    assert_eq!(o.error, None);
+    assert!(o.stdout.trim_end().contains(" m]"), "{}", o.stdout);
+}
+
+#[test]
+fn only_the_sites_the_checker_rewrote_become_solves() {
+    // `K` is PositiveDefinite, but `(K + K)⁻¹` has no tags (the checker
+    // claims none for a sum), so it stays an inverse and a product, and the
+    // spellings of the rewritten form (`K⁻¹`, `inv(K)`, `(K⁻¹)`) are solves.
+    let src = "\
+K: PositiveDefinite Matrix[2, 2] = [[4, 1], [1, 3]]
+f = [1, 2]
+a = K⁻¹ @ f
+b = inv(K) @ f
+c = (K + K)⁻¹ @ f
+d = (K⁻¹) @ f
+print(a, b, c, d)
+";
+    let ir = sky_lower::lower_source(src).expect("lowers");
+    let text = sky_ir::print(&ir);
+    assert_eq!(text.matches("solve[cholesky]").count(), 3, "{text}");
+    assert_eq!(text.matches("inverse").count(), 1, "{text}");
+    assert_eq!(assert_same(src).error, None);
+}
+
+#[test]
+fn a_cholesky_solve_with_several_right_hand_sides() {
+    let src = "\
+K: PositiveDefinite Matrix[2, 2] = [[4, 1], [1, 3]]
+print(K⁻¹ @ [[1, 2], [3, 4]])
+print(K⁻¹ @ identity(2))
+print(K⁻¹ @ [1 m, 2 m])
+";
+    let ir = sky_lower::lower_source(src).expect("lowers");
+    assert_eq!(sky_ir::print(&ir).matches("solve[cholesky]").count(), 3);
+    assert_eq!(assert_same(src).error, None);
+}
+
+#[test]
+fn a_function_reading_a_positive_definite_name_still_solves_by_cholesky() {
+    let src = "\
+K: PositiveDefinite Matrix[2, 2] = [[4, 1], [1, 3]]
+def displace(f: Vector[2]):
+    return K⁻¹ @ f
+print(displace([1, 2]))
+def solve_with(A: PositiveDefinite Matrix[2, 2], f: Vector[2]):
+    return A⁻¹ @ f
+print(solve_with(K, [3, 4]))
+";
+    let o = assert_same(src);
+    assert_eq!(o.error, None);
+    assert_eq!(o.stdout.lines().count(), 2);
+}
+
+#[test]
+fn literals_arithmetic_and_builtins_agree() {
+    let o = assert_same(
+        "\
+v = [1 m, 2 m, 3 m]
+w = [1, 2, 3]
+A = [[1, 2], [3, 4]]
+B = [[1 N, 2 N, 3 N],
+     [4 N, 5 N, 6 N]]
+t = [v[0], v[1] + 1 m]
+print(v, w, A, B, t)
+print(v + v, v - v, -v, 2 * A, A * 2, A / 4, 3 m * w)
+print(A @ [1, 1], [1, 1] @ A, w @ w, A @ A)
+print(zeros(3), zeros(2, 3), identity(3), len(v), len(B), len(zeros(4, 2)))
+print(A⁻¹, inv(A), A⁻¹ @ A)
+print(A[0], A[1, 0], A[:, 1], A[0, 1:], A[0:1, 0:2], v[1:], v[:2], v[0:3])
+",
+    );
+    assert_eq!(o.error, None);
+    assert!(o
+        .stdout
+        .starts_with("[1 m, 2 m, 3 m] [1, 2, 3] [[1, 2], [3, 4]]"));
+}
+
+#[test]
+fn arrays_in_functions_loops_and_conditionals() {
+    let o = assert_same(
+        "\
+def norm2(v: Vector[N]):
+    return v @ v
+def count(v: Vector[N]):
+    return len(v)
+def pair(x, y):
+    return [x, y]
+def first(a):
+    return a[0]
+def scale(A: Matrix[N, N], k):
+    return A * k
+i = 0
+total = [0, 0]
+while i < 3:
+    total = total + [i, 2 * i]
+    i += 1
+print(total, norm2([3, 4]), count([1, 2, 3]), count(zeros(5)))
+print(pair(1, 2), pair(1 m, 2 m), first(pair(5, 6)), first([[1, 2], [3, 4]]))
+print(scale(identity(2), 3))
+best = [1, 2] if i > 2 else [3, 4]
+print(best, best[0] if i > 2 else best[1])
+",
+    );
+    assert_eq!(o.error, None);
+    assert_eq!(
+        o.stdout.lines().next(),
+        Some("[3, 6] 25 3 5"),
+        "{}",
+        o.stdout
+    );
+}
+
+#[test]
+fn index_and_bounds_errors_have_the_same_messages() {
+    let cases = [
+        (
+            "v = [1, 2, 3]\ni = 3\nprint(v[i])\n",
+            "index 3 is out of bounds for axis 0 with length 3",
+        ),
+        (
+            "A = [[1, 2], [3, 4]]\ni = 2\nprint(A[0, i])\n",
+            "index 2 is out of bounds for axis 1 with length 2",
+        ),
+        (
+            "A = [[1, 2], [3, 4]]\ni = 2\nprint(A[i])\n",
+            "index 2 is out of bounds for axis 0 with length 2",
+        ),
+        (
+            "v = [1, 2, 3]\ni = 0 - 1\nprint(v[i])\n",
+            "an index cannot be negative",
+        ),
+        (
+            "v = [1, 2, 3]\ni = 1 / 2\nprint(v[i])\n",
+            "an index must be an integer, found 0.5",
+        ),
+        (
+            "def at(v, i):\n    return v[i]\nprint(at([1, 2, 3], 1 m))\n",
+            "an index must be dimensionless",
+        ),
+        (
+            "v = [1, 2, 3]\ni = 5\nprint(v[0:i])\n",
+            "slice 0..5 is out of bounds for axis 0 with length 3",
+        ),
+        (
+            "v = [1, 2, 3]\ni = 5\nprint(v[i:])\n",
+            "slice 5..3 is out of bounds for axis 0 with length 3",
+        ),
+        (
+            "v = [1, 2, 3]\ni = 2\nprint(v[i:i])\n",
+            "this slice is empty",
+        ),
+        (
+            "A = [[1, 2], [3, 4]]\ni = 3\nprint(A[0:1, 1:i])\n",
+            "slice 1..3 is out of bounds for axis 1 with length 2",
+        ),
+        (
+            "def at(v, i):\n    return v[i]\nprint(at([1, 2], 2))\n",
+            "index 2 is out of bounds for axis 0 with length 2",
+        ),
+        (
+            "def at(v, i):\n    return v[i]\nprint(at(1, 0))\n",
+            "cannot index a number",
+        ),
+    ];
+    for (src, message) in cases {
+        let o = assert_same(src);
+        assert_eq!(o.error.as_deref(), Some(message), "{src}");
+        assert_eq!(o.stdout, "", "{src}");
+    }
+}
+
+#[test]
+fn output_before_an_index_error_is_kept() {
+    let o = assert_same("v = [1, 2]\nprint(v)\ni = 2\nprint(v[i])\nprint(\"never\")\n");
+    assert_eq!(o.stdout, "[1, 2]\n");
+    assert!(o.error.is_some());
+}
+
+#[test]
+fn a_singular_matrix_has_the_same_error() {
+    for src in [
+        "print([[1, 2], [2, 4]]⁻¹)\n",
+        "A = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]\nprint(inv(A))\n",
+        "A = [[0, 0], [0, 0]]\nb = [1, 2]\nprint(A⁻¹ @ b)\n",
+        "def inverse_of(A):\n    return A⁻¹\nprint(inverse_of([[1, 1], [1, 1]]))\n",
+    ] {
+        let o = assert_same(src);
+        assert_eq!(o.error.as_deref(), Some("the matrix is singular"), "{src}");
+    }
+    // Scalars keep their own error.
+    let o = assert_same("print(0⁻¹)\n");
+    assert_eq!(o.error.as_deref(), Some("division by zero"));
+}
+
+#[test]
+fn other_array_runtime_errors_agree() {
+    // Overflow in an elementwise operation and in a product.
+    let o = assert_same("v = [1e200, 1]\nprint(v * 1e200)\n");
+    assert_eq!(o.error.as_deref(), Some("arithmetic overflow"));
+    let o = assert_same("A = [[1e200, 0], [0, 1e200]]\nprint(A @ A)\n");
+    assert_eq!(o.error.as_deref(), Some("arithmetic overflow"));
+    // Division of an array by zero.
+    let o = assert_same("v = [1, 2]\nz = 0\nprint(v / z)\n");
+    assert_eq!(o.error.as_deref(), Some("division by zero"));
+    // Comparing arrays is not defined.
+    let o = assert_same("def same(a, b):\n    return a == b\nprint(same([1, 2], [1, 2]))\n");
+    assert_eq!(
+        o.error.as_deref(),
+        Some("cannot compare a vector and a vector")
+    );
+    // A function given the wrong kind of value fails dynamically, in both.
+    let o = assert_same("def f(a, b):\n    return a + b\nprint(f([1, 2], 3))\n");
+    assert_eq!(o.error.as_deref(), Some("cannot add a vector and a number"));
+    let o = assert_same("def f(a, b):\n    return a + b\nprint(f([1, 2], [1, 2, 3]))\n");
+    assert_eq!(
+        o.error.as_deref(),
+        Some("cannot add Vector[2] and Vector[3]")
+    );
+    let o = assert_same("def n(a):\n    return len(a)\nprint(n(3))\n");
+    assert_eq!(
+        o.error.as_deref(),
+        Some("`len` needs a vector or a matrix, found a number")
+    );
+    let o = assert_same("def z(n):\n    return zeros(n)\nprint(z(3))\nprint(z(0))\n");
+    assert_eq!(o.stdout, "[0, 0, 0]\n");
+    assert_eq!(
+        o.error.as_deref(),
+        Some("`zeros` needs a size, a positive integer, found 0")
+    );
+    let o = assert_same("def f(a, b):\n    return [a, b]\nprint(f(1 m, 2 s))\n");
+    assert!(o
+        .error
+        .as_deref()
+        .is_some_and(|e| e.starts_with("array elements must have the same dimension")));
+}
+
+#[test]
+fn a_matrix_declared_without_a_value_is_an_input_nothing_supplies() {
+    let o = assert_same("A: Matrix[2, 2]\nprint(A[0, 0])\n");
+    assert_eq!(o.error.as_deref(), Some("`A` is declared but has no value"));
 }

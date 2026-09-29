@@ -43,7 +43,10 @@ fn check(path: &str, src: &str) -> ExitCode {
     // Pass the source unchanged: spans are byte offsets into it, and the
     // renderer escapes terminal-unsafe characters itself (spec/diagnostics.md).
     let file = SourceFile::new(path, src);
-    let rendered: Vec<String> = diagnostics.iter().map(|d| d.render_to_string(&file)).collect();
+    let rendered: Vec<String> = diagnostics
+        .iter()
+        .map(|d| d.render_to_string(&file))
+        .collect();
     eprint!("{}", rendered.join("\n"));
     if ok {
         println!("{}: ok", display_safe(path));

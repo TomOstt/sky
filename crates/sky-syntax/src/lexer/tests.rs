@@ -100,7 +100,11 @@ fn assert_err(src: &str, kind: LexErrorKind, span_text: &str) -> LexError {
     let e = lex_err(src);
     assert_eq!(e.kind, kind, "{src:?}: {:?}", e.diagnostic);
     assert_eq!(e.diagnostic.severity, sky_diag::Severity::Error);
-    assert_eq!(&src[e.diagnostic.primary.span.range()], span_text, "{src:?}");
+    assert_eq!(
+        &src[e.diagnostic.primary.span.range()],
+        span_text,
+        "{src:?}"
+    );
     e
 }
 
@@ -112,7 +116,14 @@ fn sp(start: u32, end: u32) -> Span {
 
 #[test]
 fn empty_and_trivia_only_sources() {
-    for src in ["", "\n", "\n\n  \n", "# only a comment", "# c\n   # indented c\n", "\u{FEFF}"] {
+    for src in [
+        "",
+        "\n",
+        "\n\n  \n",
+        "# only a comment",
+        "# c\n   # indented c\n",
+        "\u{FEFF}",
+    ] {
         assert_eq!(kinds(src), [Eof], "{src:?}");
     }
 }
@@ -137,11 +148,29 @@ fn simple_binding_spans() {
 #[test]
 fn missing_final_newline_gets_zero_width_newline() {
     let l = lexed("x = 1");
-    assert_eq!(l.tokens[3], Token { kind: Newline, span: sp(5, 5) });
-    assert_eq!(l.tokens[4], Token { kind: Eof, span: sp(5, 5) });
+    assert_eq!(
+        l.tokens[3],
+        Token {
+            kind: Newline,
+            span: sp(5, 5)
+        }
+    );
+    assert_eq!(
+        l.tokens[4],
+        Token {
+            kind: Eof,
+            span: sp(5, 5)
+        }
+    );
     // Also after a trailing comment.
     let l = lexed("x = 1  # c");
-    assert_eq!(l.tokens[3], Token { kind: Newline, span: sp(10, 10) });
+    assert_eq!(
+        l.tokens[3],
+        Token {
+            kind: Newline,
+            span: sp(10, 10)
+        }
+    );
 }
 
 #[test]
@@ -154,8 +183,20 @@ fn comments_produce_no_tokens() {
 #[test]
 fn crlf_newline_covers_both_bytes() {
     let l = lexed("x = 1\r\ny = 2\r\n");
-    assert_eq!(l.tokens[3], Token { kind: Newline, span: sp(5, 7) });
-    assert_eq!(l.tokens[7], Token { kind: Newline, span: sp(12, 14) });
+    assert_eq!(
+        l.tokens[3],
+        Token {
+            kind: Newline,
+            span: sp(5, 7)
+        }
+    );
+    assert_eq!(
+        l.tokens[7],
+        Token {
+            kind: Newline,
+            span: sp(12, 14)
+        }
+    );
 }
 
 #[test]
@@ -181,9 +222,22 @@ fn indent_and_dedent() {
     assert_eq!(
         kinds(src),
         [
-            Keyword(Kw::Def), Ident, LParen, Ident, RParen, Colon, Newline,
-            Indent, Keyword(Kw::Return), Ident, Newline,
-            Dedent, Ident, Assign, Int, Newline,
+            Keyword(Kw::Def),
+            Ident,
+            LParen,
+            Ident,
+            RParen,
+            Colon,
+            Newline,
+            Indent,
+            Keyword(Kw::Return),
+            Ident,
+            Newline,
+            Dedent,
+            Ident,
+            Assign,
+            Int,
+            Newline,
             Eof,
         ]
     );
@@ -200,19 +254,47 @@ fn multiple_dedents_at_once_and_at_eof() {
     assert_eq!(
         kinds(src),
         [
-            Keyword(Kw::If), Ident, Colon, Newline,
-            Indent, Keyword(Kw::If), Ident, Colon, Newline,
-            Indent, Ident, Newline,
-            Dedent, Ident, Newline,
-            Dedent, Ident, Newline,
-            Keyword(Kw::If), Ident, Colon, Newline,
-            Indent, Keyword(Kw::If), Ident, Colon, Newline,
-            Indent, Ident, Newline, Dedent, Dedent, Eof,
+            Keyword(Kw::If),
+            Ident,
+            Colon,
+            Newline,
+            Indent,
+            Keyword(Kw::If),
+            Ident,
+            Colon,
+            Newline,
+            Indent,
+            Ident,
+            Newline,
+            Dedent,
+            Ident,
+            Newline,
+            Dedent,
+            Ident,
+            Newline,
+            Keyword(Kw::If),
+            Ident,
+            Colon,
+            Newline,
+            Indent,
+            Keyword(Kw::If),
+            Ident,
+            Colon,
+            Newline,
+            Indent,
+            Ident,
+            Newline,
+            Dedent,
+            Dedent,
+            Eof,
         ]
     );
     let l = lexed(src);
     let end = Span::point(src.len() as u32);
-    let tail: Vec<_> = l.tokens[l.tokens.len() - 4..].iter().map(|t| t.span).collect();
+    let tail: Vec<_> = l.tokens[l.tokens.len() - 4..]
+        .iter()
+        .map(|t| t.span)
+        .collect();
     assert_eq!(tail, [end, end, end, end]);
 }
 
@@ -230,10 +312,23 @@ fn blank_and_comment_only_lines_do_not_affect_indentation() {
     assert_eq!(
         kinds(src),
         [
-            Keyword(Kw::Def), Ident, LParen, RParen, Colon, Newline,
-            Indent, Ident, Assign, Int, Newline,
-            Ident, Assign, Int, Newline,
-            Dedent, Eof,
+            Keyword(Kw::Def),
+            Ident,
+            LParen,
+            RParen,
+            Colon,
+            Newline,
+            Indent,
+            Ident,
+            Assign,
+            Int,
+            Newline,
+            Ident,
+            Assign,
+            Int,
+            Newline,
+            Dedent,
+            Eof,
         ]
     );
 }
@@ -251,11 +346,25 @@ fn tab_indentation_is_fine_on_its_own() {
     assert_eq!(
         kinds("if a:\n\tb\n\tif c:\n\t\td\ne\n"),
         [
-            Keyword(Kw::If), Ident, Colon, Newline,
-            Indent, Ident, Newline,
-            Keyword(Kw::If), Ident, Colon, Newline,
-            Indent, Ident, Newline,
-            Dedent, Dedent, Ident, Newline, Eof,
+            Keyword(Kw::If),
+            Ident,
+            Colon,
+            Newline,
+            Indent,
+            Ident,
+            Newline,
+            Keyword(Kw::If),
+            Ident,
+            Colon,
+            Newline,
+            Indent,
+            Ident,
+            Newline,
+            Dedent,
+            Dedent,
+            Ident,
+            Newline,
+            Eof,
         ]
     );
 }
@@ -286,9 +395,20 @@ fn tabs_mixed_with_spaces_in_one_line_is_an_error() {
 
 #[test]
 fn tabs_vs_spaces_across_lines_is_an_error() {
-    let e = assert_err("if a:\n    b\n    if c:\n\t\td\n", LexErrorKind::MixedIndentation, "\t\t");
-    assert!(e.diagnostic.message.contains("uses tabs, but the enclosing block uses spaces"));
-    assert_err("if a:\n\tb\n        c\n", LexErrorKind::MixedIndentation, "        ");
+    let e = assert_err(
+        "if a:\n    b\n    if c:\n\t\td\n",
+        LexErrorKind::MixedIndentation,
+        "\t\t",
+    );
+    assert!(e
+        .diagnostic
+        .message
+        .contains("uses tabs, but the enclosing block uses spaces"));
+    assert_err(
+        "if a:\n\tb\n        c\n",
+        LexErrorKind::MixedIndentation,
+        "        ",
+    );
 }
 
 #[test]
@@ -304,8 +424,8 @@ fn no_newline_or_indent_inside_parens() {
     assert_eq!(
         kinds(src),
         [
-            Ident, Assign, Ident, LParen, Int, Comma, Int, RParen, Newline,
-            Ident, Assign, Int, Newline, Eof,
+            Ident, Assign, Ident, LParen, Int, Comma, Int, RParen, Newline, Ident, Assign, Int,
+            Newline, Eof,
         ]
     );
 }
@@ -316,11 +436,34 @@ fn no_newline_or_dedent_inside_brackets() {
     assert_eq!(
         kinds(src),
         [
-            Keyword(Kw::Def), Ident, LParen, RParen, Colon, Newline,
-            Indent, Ident, Assign, LBracket, LBracket, Int, Comma, Int, RBracket, Comma,
-            LBracket, Int, Comma, Int, RBracket, RBracket, Newline,
-            Keyword(Kw::Return), Ident, Newline,
-            Dedent, Eof,
+            Keyword(Kw::Def),
+            Ident,
+            LParen,
+            RParen,
+            Colon,
+            Newline,
+            Indent,
+            Ident,
+            Assign,
+            LBracket,
+            LBracket,
+            Int,
+            Comma,
+            Int,
+            RBracket,
+            Comma,
+            LBracket,
+            Int,
+            Comma,
+            Int,
+            RBracket,
+            RBracket,
+            Newline,
+            Keyword(Kw::Return),
+            Ident,
+            Newline,
+            Dedent,
+            Eof,
         ]
     );
 }
@@ -348,11 +491,29 @@ fn every_operator_ascii_forms() {
     assert_eq!(
         texts("( ) [ ] , : = . -> + - * / ^ @ == != < <= > >=\n"),
         [
-            (LParen, "("), (RParen, ")"), (LBracket, "["), (RBracket, "]"),
-            (Comma, ","), (Colon, ":"), (Assign, "="), (Dot, "."), (Arrow, "->"),
-            (Plus, "+"), (Minus, "-"), (Star, "*"), (Slash, "/"), (Caret, "^"),
-            (At, "@"), (Eq, "=="), (Ne, "!="), (Lt, "<"),
-            (Le, "<="), (Gt, ">"), (Ge, ">="), (Newline, "\n"), (Eof, ""),
+            (LParen, "("),
+            (RParen, ")"),
+            (LBracket, "["),
+            (RBracket, "]"),
+            (Comma, ","),
+            (Colon, ":"),
+            (Assign, "="),
+            (Dot, "."),
+            (Arrow, "->"),
+            (Plus, "+"),
+            (Minus, "-"),
+            (Star, "*"),
+            (Slash, "/"),
+            (Caret, "^"),
+            (At, "@"),
+            (Eq, "=="),
+            (Ne, "!="),
+            (Lt, "<"),
+            (Le, "<="),
+            (Gt, ">"),
+            (Ge, ">="),
+            (Newline, "\n"),
+            (Eof, ""),
         ]
     );
 }
@@ -362,8 +523,14 @@ fn every_operator_glyph_forms() {
     assert_eq!(
         texts("⁻¹ ∂ ∇ ≤ ≥ ≠\n"),
         [
-            (Inverse, "⁻¹"), (Partial, "∂"), (Nabla, "∇"),
-            (Le, "≤"), (Ge, "≥"), (Ne, "≠"), (Newline, "\n"), (Eof, ""),
+            (Inverse, "⁻¹"),
+            (Partial, "∂"),
+            (Nabla, "∇"),
+            (Le, "≤"),
+            (Ge, "≥"),
+            (Ne, "≠"),
+            (Newline, "\n"),
+            (Eof, ""),
         ]
     );
 }
@@ -373,7 +540,10 @@ fn operators_without_spaces_use_longest_match() {
     assert_eq!(line("a==b\n"), [Ident, Eq, Ident]);
     assert_eq!(line("a=-b\n"), [Ident, Assign, Minus, Ident]);
     assert_eq!(line("a<=b>=c\n"), [Ident, Le, Ident, Ge, Ident]);
-    assert_eq!(line("f(x)->y\n"), [Ident, LParen, Ident, RParen, Arrow, Ident]);
+    assert_eq!(
+        line("f(x)->y\n"),
+        [Ident, LParen, Ident, RParen, Arrow, Ident]
+    );
     assert_eq!(line("a+-b\n"), [Ident, Plus, Minus, Ident]);
     assert_eq!(line("a+ -b\n"), [Ident, Plus, Minus, Ident]);
     assert_eq!(line("a- >b\n"), [Ident, Minus, Gt, Ident]);
@@ -397,13 +567,22 @@ fn plus_minus_is_plus_then_minus_and_glyph_is_rejected() {
         [(Ident, "a"), (Plus, "+"), (Minus, "-"), (Ident, "b")]
     );
     assert_eq!(line("a+-b\n"), line("a + -b\n"));
-    assert_eq!(line("5.31 +- 0.02 kg\n"), [Float, Plus, Minus, Float, Ident]);
+    assert_eq!(
+        line("5.31 +- 0.02 kg\n"),
+        [Float, Plus, Minus, Float, Ident]
+    );
     assert_eq!(line("a+--b\n"), [Ident, Plus, Minus, Minus, Ident]);
-    assert_eq!(line("f(x)+->y\n"), [Ident, LParen, Ident, RParen, Plus, Arrow, Ident]);
+    assert_eq!(
+        line("f(x)+->y\n"),
+        [Ident, LParen, Ident, RParen, Plus, Arrow, Ident]
+    );
 
     let e = assert_err("m = 5.31 ± 0.02 kg\n", LexErrorKind::UnexpectedChar, "±");
     assert_eq!(e.diagnostic.message, "unexpected character '±' (U+00B1)");
-    assert_eq!(e.diagnostic.help, ["uncertainty (±) is not supported in v0.1"]);
+    assert_eq!(
+        e.diagnostic.help,
+        ["uncertainty (±) is not supported in v0.1"]
+    );
     assert_err("a±b\n", LexErrorKind::UnexpectedChar, "±");
 }
 
@@ -413,19 +592,35 @@ fn spec_examples() {
     assert_eq!(texts("10 km\n")[..2], [(Int, "10"), (Ident, "km")]);
     assert_eq!(
         texts("x = A⁻¹ @ b\n")[..6],
-        [(Ident, "x"), (Assign, "="), (Ident, "A"), (Inverse, "⁻¹"), (At, "@"), (Ident, "b")]
+        [
+            (Ident, "x"),
+            (Assign, "="),
+            (Ident, "A"),
+            (Inverse, "⁻¹"),
+            (At, "@"),
+            (Ident, "b")
+        ]
     );
-    assert_eq!(line("x = inv(A) @ b\n"), [Ident, Assign, Ident, LParen, Ident, RParen, At, Ident]);
-    assert_eq!(line("df = ∂f/∂x\n"), [Ident, Assign, Partial, Ident, Slash, Partial, Ident]);
+    assert_eq!(
+        line("x = inv(A) @ b\n"),
+        [Ident, Assign, Ident, LParen, Ident, RParen, At, Ident]
+    );
+    assert_eq!(
+        line("df = ∂f/∂x\n"),
+        [Ident, Assign, Partial, Ident, Slash, Partial, Ident]
+    );
     assert_eq!(line("df = d(f)/d(x)\n")[2], Ident);
     assert_eq!(line("g = ∇φ\n"), [Ident, Assign, Nabla, Ident]);
     assert_eq!(line("g = grad(φ)\n")[2], Ident);
-    assert_eq!(line("x = 5 meters + 20 kelvin\n"), [Ident, Assign, Int, Ident, Plus, Int, Ident]);
+    assert_eq!(
+        line("x = 5 meters + 20 kelvin\n"),
+        [Ident, Assign, Int, Ident, Plus, Int, Ident]
+    );
     assert_eq!(
         line("C = Matrix[3,4] @ Matrix[4,8]\n"),
         [
-            Ident, Assign, Ident, LBracket, Int, Comma, Int, RBracket, At,
-            Ident, LBracket, Int, Comma, Int, RBracket,
+            Ident, Assign, Ident, LBracket, Int, Comma, Int, RBracket, At, Ident, LBracket, Int,
+            Comma, Int, RBracket,
         ]
     );
     assert_eq!(line("E = ħ * ω\n"), [Ident, Assign, Ident, Star, Ident]);
@@ -460,8 +655,16 @@ fn unicode_lookalike_operators_get_help() {
 fn keywords() {
     let src = "def return if else for in import equation solve field\n";
     let expected: Vec<_> = [
-        Kw::Def, Kw::Return, Kw::If, Kw::Else, Kw::For, Kw::In, Kw::Import,
-        Kw::Equation, Kw::Solve, Kw::Field,
+        Kw::Def,
+        Kw::Return,
+        Kw::If,
+        Kw::Else,
+        Kw::For,
+        Kw::In,
+        Kw::Import,
+        Kw::Equation,
+        Kw::Solve,
+        Kw::Field,
     ]
     .into_iter()
     .map(Keyword)
@@ -492,8 +695,16 @@ fn unicode_identifiers() {
 
 #[test]
 fn invisible_characters_break_identifiers() {
-    assert_err("ab\u{200D}c = 1\n", LexErrorKind::UnexpectedChar, "\u{200D}");
-    assert_err("ab\u{200C}c = 1\n", LexErrorKind::UnexpectedChar, "\u{200C}");
+    assert_err(
+        "ab\u{200D}c = 1\n",
+        LexErrorKind::UnexpectedChar,
+        "\u{200D}",
+    );
+    assert_err(
+        "ab\u{200C}c = 1\n",
+        LexErrorKind::UnexpectedChar,
+        "\u{200C}",
+    );
     assert_err("a\u{200B}b = 1\n", LexErrorKind::UnexpectedChar, "\u{200B}");
     assert_err("a\u{00AD}b = 1\n", LexErrorKind::UnexpectedChar, "\u{00AD}");
 }
@@ -509,8 +720,15 @@ fn numbers() {
             .take(9)
             .collect::<Vec<_>>(),
         [
-            (Int, "0"), (Int, "42"), (Int, "1_000"), (Float, "3.14"), (Float, "1e-10"),
-            (Float, "1E+5"), (Float, "2e3"), (Float, "6.022_140_76e23"), (Float, "0.5"),
+            (Int, "0"),
+            (Int, "42"),
+            (Int, "1_000"),
+            (Float, "3.14"),
+            (Float, "1e-10"),
+            (Float, "1E+5"),
+            (Float, "2e3"),
+            (Float, "6.022_140_76e23"),
+            (Float, "0.5"),
         ]
         .map(|(k, t)| (k, t.to_string()))
     );
@@ -561,10 +779,22 @@ fn strings() {
 
 #[test]
 fn unterminated_strings() {
-    assert_err("s = \"abc\nx = 1\n", LexErrorKind::UnterminatedString, "\"abc");
+    assert_err(
+        "s = \"abc\nx = 1\n",
+        LexErrorKind::UnterminatedString,
+        "\"abc",
+    );
     assert_err("s = \"abc", LexErrorKind::UnterminatedString, "\"abc");
-    assert_err("s = \"abc\\\"\n", LexErrorKind::UnterminatedString, "\"abc\\\"");
-    assert_err("s = \"abc\\\n\"\n", LexErrorKind::UnterminatedString, "\"abc\\");
+    assert_err(
+        "s = \"abc\\\"\n",
+        LexErrorKind::UnterminatedString,
+        "\"abc\\\"",
+    );
+    assert_err(
+        "s = \"abc\\\n\"\n",
+        LexErrorKind::UnterminatedString,
+        "\"abc\\",
+    );
 }
 
 #[test]
@@ -591,7 +821,10 @@ fn bidi_controls_are_rejected_everywhere() {
         assert_eq!(span.start, at, "{src:?}");
         let ch = src[at as usize..].chars().next().unwrap();
         assert_eq!(span.len() as usize, ch.len_utf8());
-        assert!(e.diagnostic.message.contains(&format!("U+{:04X}", ch as u32)));
+        assert!(e
+            .diagnostic
+            .message
+            .contains(&format!("U+{:04X}", ch as u32)));
     }
 }
 
@@ -658,7 +891,10 @@ fn warnings_before_an_error_are_kept() {
     assert_eq!(e.kind, LexErrorKind::UnterminatedString);
     assert_eq!(e.warnings.len(), 1);
     let order: Vec<_> = e.diagnostics().map(|d| d.severity).collect();
-    assert_eq!(order, [sky_diag::Severity::Warning, sky_diag::Severity::Error]);
+    assert_eq!(
+        order,
+        [sky_diag::Severity::Warning, sky_diag::Severity::Error]
+    );
 }
 
 // ---- invariants over a mixed program ---------------------------------------

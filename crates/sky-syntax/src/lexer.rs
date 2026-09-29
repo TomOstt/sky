@@ -69,7 +69,9 @@ pub struct LexError {
 impl LexError {
     /// Warnings, then the error: the order `sky check` prints them in.
     pub fn diagnostics(&self) -> impl Iterator<Item = &Diagnostic> {
-        self.warnings.iter().chain(std::iter::once(&*self.diagnostic))
+        self.warnings
+            .iter()
+            .chain(std::iter::once(&*self.diagnostic))
     }
 }
 
@@ -585,9 +587,7 @@ impl<'a> Lexer<'a> {
                                     format!("unknown escape `\\{}`", describe_escape(e)),
                                     self.span_from(at),
                                 )
-                                .with_help(
-                                    "valid escapes are \\\\ \\\" \\n \\t \\r \\0",
-                                ),
+                                .with_help("valid escapes are \\\\ \\\" \\n \\t \\r \\0"),
                             );
                         }
                     }
@@ -628,12 +628,9 @@ impl<'a> Lexer<'a> {
                 let expected = if open == '(' { ')' } else { ']' };
                 return err(
                     LexErrorKind::MismatchedBracket,
-                    Diagnostic::error(
-                        format!("mismatched `{close}`: expected `{expected}`"),
-                        span,
-                    )
-                    .with_label(format!("expected `{expected}`"))
-                    .with_secondary(open_span, format!("`{open}` opened here")),
+                    Diagnostic::error(format!("mismatched `{close}`: expected `{expected}`"), span)
+                        .with_label(format!("expected `{expected}`"))
+                        .with_secondary(open_span, format!("`{open}` opened here")),
                 );
             }
             None => {

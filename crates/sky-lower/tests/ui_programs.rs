@@ -48,6 +48,10 @@ const REJECTED: &[(&str, &str)] = &[
         "array literals are not supported in SIR yet",
     ),
     (
+        "ok_for_arrays.sky",
+        "iteration over arrays lowers once SIR has array values",
+    ),
+    (
         "ok_literal_tag_proofs.sky",
         "array literals are not supported in SIR yet",
     ),

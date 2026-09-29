@@ -233,7 +233,9 @@ impl Lower<'_> {
                         self.collect_defs(&b.stmts);
                     }
                 }
-                StmtKind::While { body, .. } => self.collect_defs(&body.stmts),
+                StmtKind::While { body, .. } | StmtKind::For { body, .. } => {
+                    self.collect_defs(&body.stmts)
+                }
                 _ => {}
             }
         }
@@ -346,6 +348,10 @@ impl Lower<'_> {
             }
             StmtKind::While { cond, body } => {
                 self.scan_expr(cond, defined, direct, callees);
+                self.scan_block(body, defined, direct, callees);
+            }
+            StmtKind::For { iter, body, .. } => {
+                self.scan_expr(iter, defined, direct, callees);
                 self.scan_block(body, defined, direct, callees);
             }
             StmtKind::Return(v) => {

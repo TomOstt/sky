@@ -65,7 +65,7 @@ pub(crate) fn exits_stmt(s: &Stmt) -> Exits {
             e
         }
         // The loop catches its own break and continue.
-        StmtKind::While { body, .. } => Exits {
+        StmtKind::While { body, .. } | StmtKind::For { body, .. } => Exits {
             ret: exits_stmts(&body.stmts).ret,
             ..Exits::default()
         },
@@ -116,6 +116,10 @@ pub(crate) fn assigned_vars(stmts: &[Stmt], src: &str, out: &mut BTreeSet<String
                 }
             }
             StmtKind::While { body, .. } => assigned_vars(&body.stmts, src, out),
+            StmtKind::For { var, body, .. } => {
+                out.insert(span_text(src, var.span).unwrap_or("").to_string());
+                assigned_vars(&body.stmts, src, out);
+            }
             _ => {}
         }
     }
@@ -124,7 +128,9 @@ pub(crate) fn assigned_vars(stmts: &[Stmt], src: &str, out: &mut BTreeSet<String
 /// Whether a statement cannot fall through, by the checker's rule (its
 /// `diverged` flag): `return`, `break`, `continue`, an `if` with an `else`
 /// whose every branch diverges, and `while true` with no `break`. The
-/// checker lets a diverging branch out of merges, so lowering must too.
+/// checker lets a diverging branch out of merges, so lowering must too. (A
+/// `for` whose body always returns diverges in the checker when it is known
+/// to run; here it does not, which only costs a guard after it.)
 pub(crate) fn stmt_diverges(s: &Stmt) -> bool {
     match &s.kind {
         StmtKind::Return(_) | StmtKind::Break | StmtKind::Continue => true,
@@ -178,7 +184,7 @@ pub(crate) fn count_returns(stmts: &[Stmt]) -> usize {
                     .sum::<usize>()
                     + else_block.as_ref().map_or(0, |b| count_returns(&b.stmts))
             }
-            StmtKind::While { body, .. } => count_returns(&body.stmts),
+            StmtKind::While { body, .. } | StmtKind::For { body, .. } => count_returns(&body.stmts),
             _ => 0,
         })
         .sum()
@@ -195,7 +201,7 @@ pub(crate) fn returns_value(stmts: &[Stmt]) -> bool {
             branches.iter().any(|(_, b)| returns_value(&b.stmts))
                 || else_block.as_ref().is_some_and(|b| returns_value(&b.stmts))
         }
-        StmtKind::While { body, .. } => returns_value(&body.stmts),
+        StmtKind::While { body, .. } | StmtKind::For { body, .. } => returns_value(&body.stmts),
         _ => false,
     })
 }

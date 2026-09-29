@@ -46,7 +46,7 @@
 //! # Variables are SSA
 //!
 //! Lowering keeps a map from name to the current SSA value, with the
-//! scoping the checker and interpreter define: `if` and `while` share the
+//! scoping the checker and interpreter define: `if`, `while` and `for` share the
 //! enclosing scope, a `def` opens a new one.
 //!
 //! * `if`: each arm is lowered from the scope before the `if`. Afterwards
@@ -97,6 +97,13 @@
 //! that gates a loop's condition or an `elif` condition. `tests/depth.rs`
 //! checks the bound on generated programs, and the chain tests in
 //! `tests/robustness.rs` lower chains of thousands.
+//! * `for i in range(a, b, s)` is that `while` over a hidden carried index
+//!   (`<i1>`, `<i2>`, ...) that the body's first operations copy into `i`
+//!   and advance; see `for_loop.rs`. `for x in v` over an array is a
+//!   [`LowerError`] until SIR has array values.
+//! * `and`/`or` are nested `if`s, so the right operand runs only when the
+//!   left does not decide the result; `a if c else b` is an `if` with a
+//!   result.
 //!
 //! # `break`, `continue` and early `return`
 //!
@@ -164,6 +171,7 @@ mod analysis;
 mod build;
 mod ctx;
 mod expr;
+mod for_loop;
 mod func;
 mod stmt;
 

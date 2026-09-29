@@ -16,10 +16,11 @@ use sky_ir::{BlockId, OpId, OpKind, Type, ValueId};
 use sky_types::Ty;
 
 use crate::analysis::{
-    assigned_vars, block_diverges, exits_stmt, exits_stmts, is_forever, stmt_diverges, Exits,
+    assigned_vars, block_diverges, exits_stmt, exits_stmts, stmt_diverges, Exits,
 };
 use crate::ctx::{assignable, brk_flag, join_ty, skip_flag, Lower, Needed, Scope, R, RET, RETVAL};
 use crate::expr::ARRAYS;
+use crate::for_loop::Head;
 use crate::LowerError;
 
 /// One way control can reach the end of an `if`: the block it ends in, the
@@ -211,7 +212,10 @@ impl Lower<'_> {
                 branches,
                 else_block,
             } => self.if_stmt(s.span, branches, else_block.as_ref(), needed),
-            StmtKind::While { cond, body } => self.while_stmt(s.span, cond, body, needed),
+            StmtKind::While { cond, body } => {
+                self.while_loop(s.span, Head::While(cond), body, needed)
+            }
+            StmtKind::For { var, iter, body } => self.for_stmt(s.span, var, iter, body, needed),
             StmtKind::Def {
                 name, params, body, ..
             } => self.lower_def(name, params, body, s.span),
@@ -663,13 +667,21 @@ impl Lower<'_> {
     /// variables the body assigns (that are bound before the loop) plus the
     /// flags the body may set. `before` computes the condition, `after` is
     /// the body. Carried values get their final types after the body is
-    /// lowered (the join of the initial and the next value).
+    /// lowered (the join of the initial and the next value). A `for` is the
+    /// same loop with a counting `head` (see `for_loop.rs`).
     #[inline(never)]
-    fn while_stmt(&mut self, span: Span, cond: &Expr, body: &Block, needed: &Needed) -> R<()> {
+    pub(crate) fn while_loop(
+        &mut self,
+        span: Span,
+        head: Head<'_>,
+        body: &Block,
+        needed: &Needed,
+    ) -> R<()> {
         let d = self.st.loops;
         let n = d + 1;
         let ex = exits_stmts(&body.stmts);
-        let forever = is_forever(cond);
+        let cond_span = head.span();
+        let carry_new = head.carries_new_names();
         let outer = self.st.b.at();
         let mut base = self.st.scope.clone();
 
@@ -678,9 +690,10 @@ impl Lower<'_> {
         // bind it (from the `break`s).
         let mut vars = BTreeSet::new();
         assigned_vars(&body.stmts, self.src, &mut vars);
+        head.assigned(&mut vars);
         let mut carried: Vec<String> = vars
             .into_iter()
-            .filter(|v| forever || base.contains_key(v))
+            .filter(|v| carry_new || base.contains_key(v))
             .collect();
         let brk = brk_flag(n);
         let skip = skip_flag(n);
@@ -721,26 +734,26 @@ impl Lower<'_> {
             let Some(bi) = carried.iter().position(|c| *c == brk) else {
                 return self.err("internal error: the loop's break flag is not carried", span);
             };
-            let go = self.op1(OpKind::Not, vec![before_args[bi]], Type::Bool, cond.span);
-            let (ifop, _) = self.st.b.op(OpKind::If, vec![go], Vec::new(), cond.span);
+            let go = self.op1(OpKind::Not, vec![before_args[bi]], Type::Bool, cond_span);
+            let (ifop, _) = self.st.b.op(OpKind::If, vec![go], Vec::new(), cond_span);
             let then_b = self.new_arm(ifop);
             let else_b = self.new_arm(ifop);
             self.st.b.set_at(then_b);
-            let cv = self.expr(cond)?;
-            self.st.b.op(OpKind::Yield, vec![cv], Vec::new(), cond.span);
+            let cv = self.head_cond(&head)?;
+            self.st.b.op(OpKind::Yield, vec![cv], Vec::new(), cond_span);
             self.st.b.set_at(else_b);
-            let f = self.const_bool(false, cond.span);
-            self.st.b.op(OpKind::Yield, vec![f], Vec::new(), cond.span);
+            let f = self.const_bool(false, cond_span);
+            self.st.b.op(OpKind::Yield, vec![f], Vec::new(), cond_span);
             self.st.b.set_at(before_b);
             self.st.b.add_result(ifop, Type::Bool)
         } else {
-            self.expr(cond)?
+            self.head_cond(&head)?
         };
         let mut forward = vec![c];
         forward.extend(&before_args);
         self.st
             .b
-            .op(OpKind::Condition, forward, Vec::new(), cond.span);
+            .op(OpKind::Condition, forward, Vec::new(), cond_span);
 
         // after: the body.
         self.st.b.set_at(after_b);
@@ -754,11 +767,12 @@ impl Lower<'_> {
             self.st.scope.insert(skip.clone(), f);
         }
         let mut body_needed = needed.clone();
-        if forever {
+        if carry_new {
             body_needed.extend(carried.iter().cloned());
         }
         self.st.loops = n;
         self.st.nest += 1;
+        self.head_prologue(&head)?;
         self.block(&body.stmts, &body_needed)?;
         self.st.nest -= 1;
         self.st.loops = d;

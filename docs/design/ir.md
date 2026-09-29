@@ -165,7 +165,7 @@ It is parsed by a small hand-written parser. It never carries executable content
 2. `sky-lower` for every v0.1 construct; `--emit-ir`; golden IR tests.
 3. Reference interpreter; differential tests against sky-interp on every run test.
 4. The Cholesky rewrite and DCE as passes with explanations; delete `cholesky_rewrite` from the checker.
-5. `edition` in `sky.toml` and in SIR; the spec defines what an edition may and may not change.
+5. `edition` in `sky.toml` and in SIR; the spec defines what an edition may and may not change. (`sky.toml` half done: spec "Editions"; `Edition` lives in `sky-syntax` and `sky-ir` re-exports it.)
 
 ## Open questions
 - **Build the IR ourselves or use MLIR directly?** The proposal is our own L1 and L2 in Rust (fast to build, keeps the Rust-only toolchain, Sky-specific types), with MLIR as a possible L3/L4 target in Phase 5 through `melior`. This needs a decision before milestone 1.

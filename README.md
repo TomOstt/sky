@@ -23,7 +23,7 @@ u = K⁻¹ @ f                      # --explain: rewritten to a Cholesky solve
 
 ```
 sky check file.sky            # diagnostics on stderr; exit 1 on any error
-sky check --explain file.sky  # also show rewrite decisions (A⁻¹ @ b → Cholesky solve)
+sky check --explain file.sky  # also show the edition and rewrite decisions (A⁻¹ @ b → Cholesky solve)
 sky run file.sky              # check, then run; only a clean file runs. print() writes to stdout
 sky repl                      # one line at a time; expressions echo their value
 ```
@@ -41,7 +41,15 @@ error: division by zero   (rendered with the source span, like any diagnostic)
 
 Numbers are always finite: division by zero and overflow are runtime errors, not `inf` or `NaN`. See "Running programs" in `spec/v0.1.md`. The REPL keeps no session file.
 
-Exit status: `0` ok; `1` diagnostics with at least one error (including a refused project root, or a runtime error in `sky run`); `2` usage error or input that can't be read.
+Exit status: `0` ok; `1` diagnostics with at least one error (including a refused project root or invalid `sky.toml`, or a runtime error in `sky run`); `2` usage error or input that can't be read.
+
+A project can declare its language edition in `sky.toml`, so the meaning of old code never changes silently:
+
+```
+edition = "2026"     # the only key; the file is a tiny data-only subset of TOML
+```
+
+Without a `sky.toml` a file uses the latest edition. An edition newer than the installed Sky is an error. See "Editions" in `spec/v0.1.md`.
 
 Not there yet:
 - `for` loops and `import`
@@ -54,16 +62,16 @@ Not there yet:
 ```
 crates/
   sky-diag/     diagnostics and the terminal-safe renderer
-  sky-syntax/   lexer: tokens, indentation, Unicode safety checks
+  sky-syntax/   lexer: tokens, indentation, Unicode safety checks; the Edition type
   sky-ast/      typed AST with source spans, and the parser
   sky-units/    dimensions and the unit table
   sky-types/    type checker (units, shapes, matrix properties)
-  sky-project/  project root discovery and import resolution
+  sky-project/  project root discovery, sky.toml manifest, import resolution
   sky-interp/   tree-walking interpreter
   sky-cli/      the `sky` command: check, run, repl
 spec/           grammar, typing rules, diagnostic format
 tests/ui/       golden diagnostic tests for `sky check`
-fuzz/           cargo-fuzz targets for the lexer and parser
+fuzz/           cargo-fuzz targets for the lexer, parser and manifest
 ```
 
 ## Development

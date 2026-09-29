@@ -23,8 +23,8 @@
 //!   `0..source.len()`.
 
 use sky_ast::{
-    parse_module, with_deep_stack, Expr, ExprKind, Kw, Module, Span, StmtKind, Token, TokenKind,
-    UnitExpr,
+    parse_module, with_deep_stack, AssignTarget, Expr, ExprKind, IndexItem, Kw, Module, Span,
+    StmtKind, Token, TokenKind, UnitExpr,
 };
 use sky_diag::{Diagnostic, SourceFile};
 
@@ -142,6 +142,8 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
     enum Node<'a> {
         Expr(&'a Expr),
         Unit(&'a UnitExpr),
+        Item(&'a IndexItem),
+        Target(&'a AssignTarget),
     }
     let mut stack: Vec<Node<'_>> = Vec::new();
     for stmt in &module.stmts {
@@ -149,7 +151,17 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
         match &stmt.kind {
             StmtKind::Expr(e) => stack.push(Node::Expr(e)),
             StmtKind::Assign { target, value } => {
-                f(target.span);
+                stack.push(Node::Target(target));
+                stack.push(Node::Expr(value));
+            }
+            StmtKind::CompoundAssign {
+                target,
+                op_span,
+                value,
+                ..
+            } => {
+                f(*op_span);
+                stack.push(Node::Target(target));
                 stack.push(Node::Expr(value));
             }
             StmtKind::Binding { name, ty, value } => {
@@ -199,15 +211,50 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
                         stack.push(Node::Expr(callee));
                         stack.extend(args.iter().map(Node::Expr));
                     }
-                    ExprKind::Index { base, indices } => {
+                    ExprKind::Index { base, items } => {
                         stack.push(Node::Expr(base));
-                        stack.extend(indices.iter().map(Node::Expr));
+                        stack.extend(items.iter().map(Node::Item));
                     }
                     ExprKind::Attribute { base, name } => {
                         f(name.span);
                         stack.push(Node::Expr(base));
                     }
                     ExprKind::Paren(inner) => stack.push(Node::Expr(inner)),
+                }
+            }
+            Node::Item(item) => {
+                f(item.span());
+                match item {
+                    IndexItem::Expr(e) => stack.push(Node::Expr(e)),
+                    IndexItem::Slice {
+                        start,
+                        stop,
+                        colon_span,
+                        ..
+                    } => {
+                        f(*colon_span);
+                        stack.extend(start.iter().chain(stop.iter()).map(Node::Expr));
+                    }
+                }
+            }
+            Node::Target(target) => {
+                f(target.span());
+                match target {
+                    AssignTarget::Name(id) => f(id.span),
+                    AssignTarget::Index {
+                        base,
+                        items,
+                        bracket_span,
+                        ..
+                    } => {
+                        f(*bracket_span);
+                        stack.push(Node::Expr(base));
+                        stack.extend(items.iter().map(Node::Item));
+                    }
+                    AssignTarget::Attribute { base, name, .. } => {
+                        f(name.span);
+                        stack.push(Node::Expr(base));
+                    }
                 }
             }
             Node::Unit(u) => {
@@ -268,6 +315,12 @@ const KINDS: &[TokenKind] = {
         Le,
         Gt,
         Ge,
+        PlusAssign,
+        MinusAssign,
+        StarAssign,
+        SlashAssign,
+        CaretAssign,
+        AtAssign,
         Keyword(Kw::Def),
         Keyword(Kw::Return),
         Keyword(Kw::If),

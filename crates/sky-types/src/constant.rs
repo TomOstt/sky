@@ -54,21 +54,87 @@ pub enum UnitError {
 /// precomputed `1000/3600` would not be. A single unit is `v * scale`.
 /// Returns the SI value (not checked for overflow) and the dimension.
 pub fn apply_unit(src: &str, u: &UnitExpr, v: f64) -> Result<(f64, Dimension), UnitError> {
+    convert_unit(src, u, v, Direction::ToSi)
+}
+
+/// The inverse of [`apply_unit`]: the number that, written with unit `u`,
+/// is the SI value `si` (`25 m/s` in `km/h` is 90). It undoes the factors
+/// in the opposite order: `25 * 3600 / 1000`, so it is exact wherever the
+/// forward direction is. Returns the number (not checked for overflow) and
+/// the unit's dimension, which the caller compares with the value's.
+///
+/// This is the single implementation of the unit table's arithmetic in
+/// both directions: [`apply_unit`] and this function are one walk over the
+/// unit, [`convert_unit`], differing only in which way each factor is
+/// applied. Showing a value in a unit (`v as km/h`) is built on it.
+pub fn express_in_unit(src: &str, u: &UnitExpr, si: f64) -> Result<(f64, Dimension), UnitError> {
+    convert_unit(src, u, si, Direction::FromSi)
+}
+
+/// Which way a unit's factors are applied.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    /// A number in the unit to SI (`10 km` to 10000).
+    ToSi,
+    /// An SI value to a number in the unit (10000 to `10 km`).
+    FromSi,
+}
+
+impl Direction {
+    /// `v` scaled by the factor `s` in this direction.
+    fn scale(self, v: f64, s: f64) -> f64 {
+        match self {
+            Direction::ToSi => v * s,
+            Direction::FromSi => v / s,
+        }
+    }
+
+    /// `v` scaled by the reciprocal of the factor `s`.
+    fn unscale(self, v: f64, s: f64) -> f64 {
+        match self {
+            Direction::ToSi => v / s,
+            Direction::FromSi => v * s,
+        }
+    }
+}
+
+fn convert_unit(
+    src: &str,
+    u: &UnitExpr,
+    v: f64,
+    dir: Direction,
+) -> Result<(f64, Dimension), UnitError> {
     let overflow = || UnitError::Exponent(u.span());
     match u {
         UnitExpr::Name(id) => match lookup(span_text(src, id.span).unwrap_or("")) {
-            Some(unit) => Ok((v * unit.scale, unit.dim)),
+            Some(unit) => Ok((dir.scale(v, unit.scale), unit.dim)),
             None => Err(UnitError::Unknown(id.span)),
         },
         UnitExpr::Mul { lhs, rhs, .. } => {
-            let (v, d1) = apply_unit(src, lhs, v)?;
-            let (v, d2) = apply_unit(src, rhs, v)?;
+            // Forward: left factor then right. Backward: undo in reverse.
+            let (first, second) = match dir {
+                Direction::ToSi => (lhs, rhs),
+                Direction::FromSi => (rhs, lhs),
+            };
+            let (v, d1) = convert_unit(src, first, v, dir)?;
+            let (v, d2) = convert_unit(src, second, v, dir)?;
             Ok((v, d1.checked_mul(d2).map_err(|_| overflow())?))
         }
         UnitExpr::Div { lhs, rhs, .. } => {
-            let (v, d1) = apply_unit(src, lhs, v)?;
+            // The divisor's whole scale, applied as one step, after the
+            // dividend forward and before it backward.
             let (scale, d2) = apply_unit(src, rhs, 1.0)?;
-            Ok((v / scale, d1.checked_div(d2).map_err(|_| overflow())?))
+            let dim = |d1: Dimension| d1.checked_div(d2).map_err(|_| overflow());
+            match dir {
+                Direction::ToSi => {
+                    let (v, d1) = convert_unit(src, lhs, v, dir)?;
+                    Ok((dir.unscale(v, scale), dim(d1)?))
+                }
+                Direction::FromSi => {
+                    let (v, d1) = convert_unit(src, lhs, dir.unscale(v, scale), dir)?;
+                    Ok((v, dim(d1)?))
+                }
+            }
         }
         UnitExpr::Pow { base, num, den, .. } => {
             let (scale, d) = apply_unit(src, base, 1.0)?;
@@ -82,13 +148,13 @@ pub fn apply_unit(src: &str, u: &UnitExpr, v: f64) -> Result<(f64, Dimension), U
                 let k = i32::try_from(num.unsigned_abs()).map_err(|_| overflow())?;
                 let p = scale.powi(k);
                 if *num < 0 {
-                    return Ok((v / p, dim));
+                    return Ok((dir.unscale(v, p), dim));
                 }
                 p
             } else {
                 scale.powf(*num as f64 / *den as f64)
             };
-            Ok((v * factor, dim))
+            Ok((dir.scale(v, factor), dim))
         }
     }
 }

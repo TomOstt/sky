@@ -414,6 +414,7 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         binding_types: HashMap::new(),
         funcs: HashMap::new(),
         num: NumState::default(),
+        shown_ok: None,
     };
     for stmt in &module.stmts {
         c.stmt(stmt);
@@ -472,6 +473,10 @@ pub(crate) struct Checker<'s> {
     pub(crate) funcs: HashMap<Span, Arc<FuncSig>>,
     /// What the numerical warnings remember (see [`crate::numerics`]).
     pub(crate) num: NumState,
+    /// The one `v as unit` the next `expr` call may type without an error:
+    /// the argument of `print` or the expression statement being checked
+    /// (see [`crate::display`]).
+    pub(crate) shown_ok: Option<Span>,
 }
 
 /// Human wording for a dimension in error text: its name if it has one
@@ -731,6 +736,7 @@ impl<'s> Checker<'s> {
     pub(crate) fn stmt(&mut self, stmt: &Stmt) {
         match &stmt.kind {
             StmtKind::Expr(e) => {
+                self.allow_show(e);
                 self.expr(e);
             }
             StmtKind::Assign { target, value } => {
@@ -1336,6 +1342,7 @@ impl<'s> Checker<'s> {
                 if self.is_print(callee) {
                     // The builtin: any arguments, no result to use.
                     for a in args {
+                        self.allow_show(a);
                         self.expr(a);
                     }
                     return Ty::Unknown;
@@ -1355,6 +1362,7 @@ impl<'s> Checker<'s> {
                 Ty::Unknown
             }
             ExprKind::IfElse { then, cond, else_ } => self.if_else(then, cond, else_),
+            ExprKind::As { value, unit, .. } => self.show(e, value, unit),
             ExprKind::Binary {
                 op,
                 op_span,
@@ -1392,7 +1400,7 @@ impl<'s> Checker<'s> {
             if self.ident(id) == "print" && self.env.get("print").is_none())
     }
 
-    fn unit(&mut self, u: &UnitExpr) -> Option<Dimension> {
+    pub(crate) fn unit(&mut self, u: &UnitExpr) -> Option<Dimension> {
         let r = match u {
             UnitExpr::Name(id) => {
                 let name = self.ident(id);

@@ -1,0 +1,20 @@
+# `v as unit` shows a value in a chosen unit: only print and an expression
+# statement (the REPL echo) may use it. Everything is checked against the
+# unit's dimension, and arithmetic goes before `as`.
+v = 90 km/h
+print(v as km/h)
+print(v as m/s, v)
+v as km/h
+(v as km/h)
+distance = 1 AU
+print(distance as km)
+E = 511 keV
+print(E as eV, E as MeV, E as J)
+print(E as kg*m^2/s^2)
+print(1 h + 30 min as min)
+u = [0.1 m, 0.2 m]
+print(u as mm)
+M = [[1 m, 2 m], [3 m, 4 m]]
+print(M as cm)
+print((v * 2) as km/h)
+print(v * 2 as km/h)

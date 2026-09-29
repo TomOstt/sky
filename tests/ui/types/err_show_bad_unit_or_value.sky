@@ -1,0 +1,11 @@
+# Unknown units get the checker's did-you-mean; only numbers can be shown.
+v = 90 km/h
+print(v as parsecs)
+print(v as kmh)
+print(v as c)
+print(true as km)
+print((1 < 2) as m)
+def f(a):
+    return a
+print(f as m)
+print(v as Gy)

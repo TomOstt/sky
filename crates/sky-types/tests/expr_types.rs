@@ -78,6 +78,7 @@ impl Walk<'_> {
                 self.expr(cond, false);
                 self.expr(else_, false);
             }
+            ExprKind::As { value, .. } => self.expr(value, false),
         }
     }
 
@@ -248,6 +249,15 @@ k = 2 ^ 0.5
 ";
     let n = assert_complete("mixed", src);
     assert!(n > 60, "{n}");
+}
+
+#[test]
+fn display_values_and_their_misuse_have_type_entries() {
+    // `v as unit` is typed (as unknown: it has no type to compute with), in
+    // the places it is allowed and in the ones that are errors.
+    let src = "v = 25 m/s\nprint(v as km/h, (v as m/s))\nv as km/h\nx = 2 * (v as km/h)\n";
+    let n = assert_complete("show", src);
+    assert!(n >= 12, "{n}");
 }
 
 #[test]

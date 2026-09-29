@@ -8,6 +8,8 @@
 //!   rewrite decisions ([`RewriteSite`]). Everything below is AST-free.
 //!   Blocks, control flow, and functions (scoping, merges, calls to `def`s)
 //!   are in the private `flow` module, documented at its top.
+//! * `display`: `v as unit`, a value shown in a chosen unit (only printed,
+//!   never computed with; private).
 //! * `provenance`: why a name has its dimension, for the derivation notes on
 //!   dimension-mismatch errors (private; see its module docs for the bounds).
 //! * [`linalg`]: dense linear algebra on `f64` slices (inverse, Cholesky),
@@ -35,6 +37,7 @@ mod builtins;
 mod cancellation;
 pub mod check;
 pub mod constant;
+mod display;
 mod flow;
 pub mod linalg;
 pub mod numerics;
@@ -52,8 +55,10 @@ pub use check::{
     MAX_STORED_REWRITES,
 };
 pub use constant::{
-    apply_unit, entry_value, parse_number, NumberError, UnitError, MAX_ARRAY_ELEMENTS,
+    apply_unit, entry_value, express_in_unit, parse_number, NumberError, UnitError,
+    MAX_ARRAY_ELEMENTS,
 };
+pub use display::a_dimension;
 pub use flow::FuncSig;
 pub use rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 pub use rules::{elementwise, inverse, matmul, transpose, TensorType};

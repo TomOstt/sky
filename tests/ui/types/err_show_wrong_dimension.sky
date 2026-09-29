@@ -1,0 +1,12 @@
+# The target unit must measure what the value measures.
+v = 90 km/h
+E = 2 J
+print(v as kg)
+print(E as m)
+print(3 as m)
+print(v as m/s^2)
+print(v as ms)
+u = [0.1 m, 0.2 m]
+print(u as s)
+print(v * 1 s as m)
+print(v * 1 s as km/h)

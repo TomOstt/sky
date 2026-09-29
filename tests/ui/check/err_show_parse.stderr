@@ -1,0 +1,50 @@
+tests/ui/check/err_show_parse.sky:3:9: error: expected a unit after `as`, found end of line
+  |
+3 | a = v as
+  |         ^
+  |       -- `as` shows a value in a unit
+  = help: write the unit to show the value in, e.g. `v as km/h`
+
+tests/ui/check/err_show_parse.sky:4:15: error: a value can be shown in only one unit
+  |
+4 | b = v as km/h as m
+  |               ^^
+  |     - the value
+  |       ------- shown in this unit
+  = help: remove the second `as`
+
+tests/ui/check/err_show_parse.sky:5:15: error: `+` cannot follow `as`
+  |
+5 | c = v as km/h + 1
+  |               ^
+  |     - the value
+  |       ------- shown in this unit
+  = help: `as` shows a value in `km/h`; it does not produce a number to compute with. Put the arithmetic before it: `(… + …) as km/h`
+
+tests/ui/check/err_show_parse.sky:6:10: error: expected a unit after `as`, found integer literal `5`
+  |
+6 | d = v as 5
+  |          ^
+  |       -- `as` shows a value in a unit
+  = help: write the unit to show the value in, e.g. `v as km/h`
+
+tests/ui/check/err_show_parse.sky:7:12: error: a unit's `/` cannot have spaces around it
+  |
+7 | e = v as m / s
+  |            ^
+  |          - unit so far
+  = help: write the unit without spaces: `m/s`
+
+tests/ui/check/err_show_parse.sky:8:17: error: `as` must come last in an expression
+  |
+8 | print(v as km/h if true else v)
+  |                 ^^
+  |       - the value
+  |         ------- shown in this unit
+  = help: to show a conditional in a unit, write `(a if c else b) as km` or `a if c else b as km`
+
+tests/ui/check/err_show_parse.sky:9:1: error: expected an expression, found keyword `as`
+  |
+9 | as = 3
+  | ^^
+  = help: `as` follows a value: write `v as km/h` (it is also a reserved word, so it cannot name a variable)

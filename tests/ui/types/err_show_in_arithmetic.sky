@@ -1,0 +1,15 @@
+# A shown value is for display, not for computing: no arithmetic, no
+# binding, no call argument, no comparison. Put `as` last.
+v = 90 km/h
+print((v as km/h) + 1)
+print(2 * (v as km/h))
+x = v as km/h
+y: km/h = v as km/h
+print((v as km/h) == v)
+def f(a):
+    return a
+print(f(v as km/h))
+print(-(v as km/h))
+if (v as km/h) > 3:
+    pass
+w = [v as km/h, v]

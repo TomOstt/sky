@@ -1,0 +1,9 @@
+a = zeros()
+b = zeros(1, 2, 3)
+p = zeros(0)
+d = zeros(2.5)
+n = 3
+e = identity(n)
+f = zeros(3 m)
+g = len(1)
+q = identity(100000)

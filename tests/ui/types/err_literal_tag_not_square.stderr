@@ -1,0 +1,5 @@
+tests/ui/types/err_literal_tag_not_square.sky:1:4: error: matrix property tags {Symmetric} need a square matrix, found Matrix[2,3]
+  |
+1 | S: Symmetric Matrix[2, 3] = [[1, 2, 3], [2, 4, 5]]
+  |    ^^^^^^^^^^^^^^^^^^^^^^ matrix properties apply to square matrices only
+  = help: declare a square matrix, e.g. `Symmetric Matrix[N, N]` or `Diagonal Matrix[3, 3]`

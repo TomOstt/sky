@@ -16,6 +16,13 @@
 //!   dimensions unless `x` has none, and `log(3 m)` has no unit to be in
 //!   (`log(3 m) = log 3 + log m`). `rad` is dimensionless in this table, so
 //!   `sin(30 rad)` works and `omega * t` (Hz times s) is a valid argument.
+//! * `expm1`, `log1p`, the hyperbolic functions and their inverses, and
+//!   `erf` are dimensionless-only for the same reasons as `exp` and `log`:
+//!   each is a power series or logarithm of its argument.
+//! * `sign` is the exception that takes any dimension: the sign of `-3 m`
+//!   is `-1`, a pure number, because the sign of a quantity does not depend
+//!   on the unit it is written in (SI scales are positive). Its result is
+//!   dimensionless, unlike `abs`, which keeps the dimension. `sign(0)` is 0.
 //! * `floor`/`ceil`/`round` are dimensionless-only: values are stored in SI,
 //!   so `round(1.5 km)` would round 1500 m to 1500 m while a person reading
 //!   it in km expects 2. The result depends on the display unit, which Sky
@@ -48,6 +55,16 @@ pub enum MathFn {
     Floor,
     Ceil,
     Round,
+    Expm1,
+    Log1p,
+    Sinh,
+    Cosh,
+    Tanh,
+    Asinh,
+    Acosh,
+    Atanh,
+    Erf,
+    Sign,
 }
 
 /// How a function's result dimension follows from its arguments'.
@@ -57,6 +74,8 @@ pub enum DimRule {
     Root(i64),
     /// One argument of any dimension, kept (`abs`).
     Keep,
+    /// One argument of any dimension, dimensionless result (`sign`).
+    AnyRatio,
     /// One dimensionless argument, dimensionless result.
     Dimensionless,
     /// Two arguments of one shared dimension, which is the result's
@@ -82,7 +101,7 @@ pub enum MathDimError {
 
 impl MathFn {
     /// Every function, in the order the spec lists them.
-    pub const ALL: [MathFn; 20] = [
+    pub const ALL: [MathFn; 30] = [
         MathFn::Sqrt,
         MathFn::Cbrt,
         MathFn::Abs,
@@ -103,6 +122,16 @@ impl MathFn {
         MathFn::Floor,
         MathFn::Ceil,
         MathFn::Round,
+        MathFn::Expm1,
+        MathFn::Log1p,
+        MathFn::Sinh,
+        MathFn::Cosh,
+        MathFn::Tanh,
+        MathFn::Asinh,
+        MathFn::Acosh,
+        MathFn::Atanh,
+        MathFn::Erf,
+        MathFn::Sign,
     ];
 
     /// The name as written in Sky.
@@ -128,6 +157,16 @@ impl MathFn {
             MathFn::Floor => "floor",
             MathFn::Ceil => "ceil",
             MathFn::Round => "round",
+            MathFn::Expm1 => "expm1",
+            MathFn::Log1p => "log1p",
+            MathFn::Sinh => "sinh",
+            MathFn::Cosh => "cosh",
+            MathFn::Tanh => "tanh",
+            MathFn::Asinh => "asinh",
+            MathFn::Acosh => "acosh",
+            MathFn::Atanh => "atanh",
+            MathFn::Erf => "erf",
+            MathFn::Sign => "sign",
         }
     }
 
@@ -156,7 +195,17 @@ impl MathFn {
             | MathFn::Atan
             | MathFn::Floor
             | MathFn::Ceil
-            | MathFn::Round => DimRule::Dimensionless,
+            | MathFn::Round
+            | MathFn::Expm1
+            | MathFn::Log1p
+            | MathFn::Sinh
+            | MathFn::Cosh
+            | MathFn::Tanh
+            | MathFn::Asinh
+            | MathFn::Acosh
+            | MathFn::Atanh
+            | MathFn::Erf => DimRule::Dimensionless,
+            MathFn::Sign => DimRule::AnyRatio,
         }
     }
 
@@ -164,7 +213,7 @@ impl MathFn {
     pub const fn arity(self) -> usize {
         match self.rule() {
             DimRule::SameKeep | DimRule::SameRatio => 2,
-            DimRule::Root(_) | DimRule::Keep | DimRule::Dimensionless => 1,
+            DimRule::Root(_) | DimRule::Keep | DimRule::AnyRatio | DimRule::Dimensionless => 1,
         }
     }
 
@@ -178,6 +227,7 @@ impl MathFn {
                 .pow_rat(Rational::new(1, n))
                 .map_err(|_: DimError| MathDimError::Overflow),
             (DimRule::Keep, [d]) => Ok(*d),
+            (DimRule::AnyRatio, [_]) => Ok(dimensionless),
             (DimRule::Dimensionless, [d]) if d.is_dimensionless() => Ok(dimensionless),
             (DimRule::Dimensionless, [_]) => Err(MathDimError::NotDimensionless),
             (DimRule::SameKeep | DimRule::SameRatio, [a, b]) if a != b => {
@@ -212,13 +262,24 @@ impl MathFn {
             MathFn::Floor => "math.floor",
             MathFn::Ceil => "math.ceil",
             MathFn::Round => "math.round",
+            MathFn::Expm1 => "math.expm1",
+            MathFn::Log1p => "math.log1p",
+            MathFn::Sinh => "math.sinh",
+            MathFn::Cosh => "math.cosh",
+            MathFn::Tanh => "math.tanh",
+            MathFn::Asinh => "math.asinh",
+            MathFn::Acosh => "math.acosh",
+            MathFn::Atanh => "math.atanh",
+            MathFn::Erf => "math.erf",
+            MathFn::Sign => "math.sign",
         }
     }
 
     /// Whether evaluating it can fail at run time, which makes its SIR op
     /// fallible (`Effect::Fail`): a domain error (`sqrt` of a negative,
-    /// `log` of a non-positive, `asin`/`acos` outside [-1, 1], `atan2(0, 0)`)
-    /// or an overflow (`exp`, `hypot`). Must agree with `sky_interp::math`,
+    /// `log` of a non-positive, `log1p` of x <= -1, `asin`/`acos` outside
+    /// [-1, 1], `acosh` below 1, `atanh` outside (-1, 1), `atan2(0, 0)`) or
+    /// an overflow (`exp`, `expm1`, `sinh`, `cosh`, `hypot`). Must agree with `sky_interp::math`,
     /// the one evaluator; a test checks it.
     pub const fn can_fail(self) -> bool {
         matches!(
@@ -232,6 +293,12 @@ impl MathFn {
                 | MathFn::Acos
                 | MathFn::Atan2
                 | MathFn::Hypot
+                | MathFn::Expm1
+                | MathFn::Log1p
+                | MathFn::Sinh
+                | MathFn::Cosh
+                | MathFn::Acosh
+                | MathFn::Atanh
         )
     }
 
@@ -276,6 +343,27 @@ mod tests {
             MathFn::Atan2.result_dim(&[Dimension::LENGTH, Dimension::LENGTH]),
             Ok(Dimension::DIMENSIONLESS)
         );
+        assert_eq!(
+            MathFn::Sign.result_dim(&[Dimension::LENGTH]),
+            Ok(Dimension::DIMENSIONLESS)
+        );
+        for f in [
+            MathFn::Expm1,
+            MathFn::Log1p,
+            MathFn::Sinh,
+            MathFn::Erf,
+            MathFn::Atanh,
+        ] {
+            assert_eq!(
+                f.result_dim(&[Dimension::LENGTH]),
+                Err(MathDimError::NotDimensionless),
+                "{f:?}"
+            );
+            assert_eq!(
+                f.result_dim(&[Dimension::DIMENSIONLESS]),
+                Ok(Dimension::DIMENSIONLESS)
+            );
+        }
         assert_eq!(
             MathFn::Max.result_dim(&[Dimension::TIME, Dimension::TIME]),
             Ok(Dimension::TIME)

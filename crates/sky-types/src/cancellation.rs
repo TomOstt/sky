@@ -9,8 +9,8 @@
 //! | `sqrt(x^2 + c) - x` | `c / (sqrt(x^2 + c) + x)` |
 //! | `(1 + x) - 1` | `x` |
 //! | `x^2 - y^2` | `(x - y) * (x + y)` |
-//! | `exp(x) - 1` | `expm1(x)` (a series until it exists) |
-//! | `log(1 + x)` | `log1p(x)` (a series until it exists) |
+//! | `exp(x) - 1` | `expm1(x)` |
+//! | `log(1 + x)` | `log1p(x)` |
 //! | `(-b + sqrt(b^2 - 4*a*c)) / (2*a)` | `2*c / (-b - sqrt(b^2 - 4*a*c))` |
 //!
 //! # Confidence
@@ -32,10 +32,8 @@
 //! rewrite, and is left out when any piece is not quotable verbatim (too
 //! long, or spanning lines); the note still explains the identity.
 //!
-//! `expm1` and `log1p` are not builtins yet (they would be new
-//! `sky_units::MathFn` variants, which is shared): the lint checks
-//! `MathFn::from_name` and suggests `expm1(x)` the day it exists, and a
-//! short series until then.
+//! `expm1` and `log1p` are builtins (`sky_units::MathFn`), so the help names
+//! them.
 
 use sky_ast::{BinaryOp, Expr, ExprKind, UnaryOp};
 use sky_units::{MathFn, Rational};
@@ -359,16 +357,8 @@ impl Checker<'_> {
         }
         let shown = self.quoted(e.span);
         let help = match self.verbatim(x) {
-            Some(x) if MathFn::from_name("expm1").is_some() => format!("write `expm1({x})`"),
-            Some(x) => format!(
-                "when `{x}` is small, use the series `{x} + {x}^2 / 2 + {x}^3 / 6`, whose \
-                 error is about `{x}^4 / 24` (Sky has no `expm1` yet, which computes this \
-                 accurately for every argument)"
-            ),
-            None => {
-                "Sky has no `expm1` yet: for a small argument use its series x + x^2 / 2 + x^3 / 6"
-                    .to_string()
-            }
+            Some(x) => format!("write `expm1({x})`"),
+            None => "write `expm1(x)`, with your argument for x".to_string(),
         };
         let d = Diagnostic::warning(
             format!("`{shown}` loses digits to cancellation when the argument is small"),
@@ -400,16 +390,8 @@ impl Checker<'_> {
         }
         let shown = self.quoted(e.span);
         let help = match self.verbatim(x) {
-            Some(x) if MathFn::from_name("log1p").is_some() => format!("write `log1p({x})`"),
-            Some(x) => format!(
-                "when `{x}` is small, use the series `{x} - {x}^2 / 2 + {x}^3 / 3`, whose \
-                 error is about `{x}^4 / 4` (Sky has no `log1p` yet, which computes this \
-                 accurately for every argument)"
-            ),
-            None => {
-                "Sky has no `log1p` yet: for a small argument use its series x - x^2 / 2 + x^3 / 3"
-                    .to_string()
-            }
+            Some(x) => format!("write `log1p({x})`"),
+            None => "write `log1p(x)`, with the term added to 1 for x".to_string(),
         };
         let d = Diagnostic::warning(
             format!("`{shown}` loses digits when the term added to 1 is small"),

@@ -274,6 +274,7 @@ fn derive_ty(op: Op, kids: &[&Info]) -> Option<NumberType> {
                 MathFn::Sqrt => root(2)?,
                 MathFn::Cbrt => root(3)?,
                 MathFn::Abs | MathFn::Floor | MathFn::Ceil | MathFn::Round => a.dim,
+                MathFn::Sign => Dimension::DIMENSIONLESS,
                 MathFn::Hypot | MathFn::Min | MathFn::Max => {
                     let b = t(1)?;
                     if b.dim != a.dim || !scalar(b) {
@@ -338,7 +339,7 @@ fn derive_sign(op: Op, kids: &[&Info], value: Option<f64>) -> Sign {
         }
         Op::Math(_) => match op.math_fn() {
             Some(MathFn::Abs | MathFn::Hypot | MathFn::Round) => Sign::NonNeg,
-            Some(MathFn::Exp) => Sign::Pos,
+            Some(MathFn::Exp | MathFn::Cosh) => Sign::Pos,
             Some(MathFn::Sqrt | MathFn::Cbrt | MathFn::Ceil) => s(0),
             Some(MathFn::Floor) => {
                 if known(s(0)) {

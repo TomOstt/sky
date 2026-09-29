@@ -146,7 +146,7 @@ impl Checker<'_> {
                     self.divided(arg, &found)
                 ));
                 if matches!(f, MathFn::Sin | MathFn::Cos | MathFn::Tan) {
-                    d = d.with_help("angles are dimensionless: write `0.5 rad`, or a plain number of radians");
+                    d = d.with_help("angles are dimensionless: write `0.5 rad` or `30 deg`, or a plain number of radians");
                 }
                 d
             }
@@ -211,6 +211,19 @@ fn why_dimensionless(f: MathFn) -> &'static str {
         }
         MathFn::Asin | MathFn::Acos | MathFn::Atan => {
             "inverse trigonometric functions take a ratio, which is a pure number"
+        }
+        MathFn::Expm1 => "expm1(x) = exp(x) - 1, and exp needs a pure number",
+        MathFn::Log1p => {
+            "log1p(x) = log(1 + x) adds x to 1, which only makes sense when x is a pure number"
+        }
+        MathFn::Sinh | MathFn::Cosh | MathFn::Tanh => {
+            "hyperbolic functions are built from exp(x) and exp(-x), which need a pure number"
+        }
+        MathFn::Asinh | MathFn::Acosh | MathFn::Atanh => {
+            "inverse hyperbolic functions are logarithms of expressions in a pure number x, like log(x + sqrt(x² + 1))"
+        }
+        MathFn::Erf => {
+            "erf(x) integrates exp(-t²) up to x, and exp needs a pure number, so x must be one"
         }
         _ => {
             "values are stored in SI, so rounding a quantity depends on the unit you would show it in, which Sky does not keep"

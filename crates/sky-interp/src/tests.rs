@@ -499,6 +499,115 @@ fn math_dimension_rules() {
 }
 
 #[test]
+fn expm1_log1p_and_the_hyperbolic_family() {
+    // Exact where the answer is exact.
+    assert_eq!(show("expm1(0)"), "0");
+    assert_eq!(show("log1p(0)"), "0");
+    assert_eq!(show("sinh(0)"), "0");
+    assert_eq!(show("cosh(0)"), "1");
+    assert_eq!(show("tanh(0)"), "0");
+    assert_eq!(show("asinh(0)"), "0");
+    assert_eq!(show("acosh(1)"), "0");
+    assert_eq!(show("atanh(0)"), "0");
+    // The point of expm1/log1p: full precision where exp(x) - 1 and
+    // log(1 + x) cancel. exp(1e-10) - 1 has about 6 correct digits.
+    assert_eq!(show("expm1(1e-10)"), format_number(1e-10_f64.exp_m1()));
+    assert_ne!(show("expm1(1e-10)"), show("exp(1e-10) - 1"));
+    assert_eq!(show("log1p(1e-10)"), format_number(1e-10_f64.ln_1p()));
+    assert_ne!(show("log1p(1e-10)"), show("log(1 + 1e-10)"));
+    assert_eq!(show("sinh(1)"), format_number(1.0_f64.sinh()));
+    assert_eq!(show("cosh(1)"), format_number(1.0_f64.cosh()));
+    assert_eq!(show("tanh(0.5)"), format_number(0.5_f64.tanh()));
+    // Odd and even.
+    assert_eq!(show("sinh(-2) + sinh(2)"), "0");
+    assert_eq!(show("cosh(-2) - cosh(2)"), "0");
+    // Inverses.
+    assert_eq!(show("abs(sinh(asinh(0.75)) - 0.75) < 1e-15"), "true");
+    assert_eq!(show("abs(cosh(acosh(3)) - 3) < 1e-14"), "true");
+    assert_eq!(show("abs(tanh(atanh(0.75)) - 0.75) < 1e-15"), "true");
+    // Huge arguments stay finite where the function does.
+    assert_eq!(show("tanh(1000)"), "1");
+    assert_eq!(show("tanh(-1000)"), "-1");
+    assert_eq!(
+        show("asinh(1e308)"),
+        format_number(1e308_f64.ln() + std::f64::consts::LN_2)
+    );
+    assert_eq!(
+        show("acosh(1e308)"),
+        format_number(1e308_f64.ln() + std::f64::consts::LN_2)
+    );
+    assert_eq!(show("asinh(-1e308) + asinh(1e308)"), "0");
+}
+
+#[test]
+fn hyperbolic_domain_errors_and_overflow() {
+    assert_eq!(
+        err("acosh(0.5)").message,
+        "`acosh` of a number below 1 has no real value"
+    );
+    assert_eq!(
+        err("atanh(1)").message,
+        "`atanh` of a number outside (-1, 1) has no real value"
+    );
+    assert_eq!(
+        err("atanh(-2)").message,
+        "`atanh` of a number outside (-1, 1) has no real value"
+    );
+    assert_eq!(err("log1p(-1)").message, "`log1p` of -1 has no real value");
+    assert_eq!(
+        err("log1p(-3)").message,
+        "`log1p` of a number below -1 has no real value"
+    );
+    assert_eq!(err("expm1(1000)").message, "arithmetic overflow");
+    assert_eq!(err("sinh(1000)").message, "arithmetic overflow");
+    assert_eq!(err("cosh(-1000)").message, "arithmetic overflow");
+    // Dimensions: all but `sign` need a plain number.
+    for f in [
+        "expm1", "log1p", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "erf",
+    ] {
+        assert_eq!(
+            err(&format!("{f}(3 m)")).message,
+            format!("the argument of `{f}` must be dimensionless, found length")
+        );
+    }
+}
+
+#[test]
+fn erf_values() {
+    assert_eq!(show("erf(0)"), "0");
+    assert_eq!(show("erf(-0)"), "0");
+    assert_eq!(show("erf(10)"), "1");
+    assert_eq!(show("erf(-10)"), "-1");
+    assert_eq!(show("abs(erf(1) - 0.8427007929497149) < 1e-15"), "true");
+    assert_eq!(show("abs(erf(0.5) - 0.5204998778130465) < 1e-15"), "true");
+    assert_eq!(show("erf(-0.5) + erf(0.5)"), "0");
+    assert_eq!(show("abs(erf(3) - 0.9999779095030014) < 1e-15"), "true");
+}
+
+#[test]
+fn sign_takes_any_dimension_and_returns_a_number() {
+    assert_eq!(show("sign(-3 m)"), "-1");
+    assert_eq!(show("sign(2 kg/s)"), "1");
+    assert_eq!(show("sign(0 m)"), "0");
+    assert_eq!(show("sign(-0.0)"), "0");
+    assert_eq!(show("sign(-4)"), "-1");
+    // Dimensionless: it may feed `exp`.
+    assert_eq!(show("exp(sign(0 m))"), "1");
+    assert_eq!(show("abs(-3 m) * sign(-3 m)"), "-3 m");
+}
+
+#[test]
+fn degrees_are_a_dimensionless_angle() {
+    assert_eq!(show("180 deg"), format_number(std::f64::consts::PI));
+    assert_eq!(show("abs(sin(30 deg) - 0.5) < 1e-15"), "true");
+    assert_eq!(show("abs(cos(60 deg) - 0.5) < 1e-15"), "true");
+    assert_eq!(show("abs(tan(45 deg) - 1) < 1e-15"), "true");
+    assert_eq!(show("sin(0 deg)"), "0");
+    assert_eq!(show("abs(atan(1) - 45 deg) < 1e-15"), "true");
+    assert_eq!(show("1 deg == 0.017453292519943295 rad"), "true");
+}
+
+#[test]
 fn math_rounding_is_half_away_from_zero_and_never_negative_zero() {
     assert_eq!(show("round(2.5)"), "3");
     assert_eq!(show("round(-2.5)"), "-3");

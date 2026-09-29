@@ -188,6 +188,67 @@ fn math_functions_agree_including_domain_errors() {
 }
 
 #[test]
+fn added_math_functions_and_degrees_agree_including_domain_errors() {
+    let o = assert_same(
+        "print(expm1(1e-10), log1p(1e-10), expm1(0.5), log1p(2))\n\
+         print(sinh(1), cosh(1), tanh(0.5), asinh(2), acosh(3), atanh(0.25))\n\
+         print(erf(0.5), erf(-1.5), erf(3), erf(7), erf(0))\n\
+         print(sign(-3 m), sign(0 kg), sign(2 m/s), sign(0 - 0.0))\n\
+         print(sin(30 deg), cos(60 deg), tan(45 deg), 180 deg)\n\
+         print(asinh(1e308), acosh(1e308), tanh(1000))\n",
+    );
+    assert_eq!(o.error, None);
+    assert!(
+        o.stdout
+            .starts_with("1.00000000005e-10 9.999999999500001e-11 "),
+        "{}",
+        o.stdout
+    );
+    for (bad, message) in [
+        (
+            "print(acosh(0.5))\n",
+            "`acosh` of a number below 1 has no real value",
+        ),
+        (
+            "print(atanh(1))\n",
+            "`atanh` of a number outside (-1, 1) has no real value",
+        ),
+        (
+            "print(atanh(0 - 2))\n",
+            "`atanh` of a number outside (-1, 1) has no real value",
+        ),
+        ("print(log1p(0 - 1))\n", "`log1p` of -1 has no real value"),
+        (
+            "print(log1p(0 - 3))\n",
+            "`log1p` of a number below -1 has no real value",
+        ),
+        ("print(expm1(1000))\n", "arithmetic overflow"),
+        ("print(sinh(1000))\n", "arithmetic overflow"),
+        ("print(cosh(0 - 1000))\n", "arithmetic overflow"),
+    ] {
+        let o = assert_same(bad);
+        assert_eq!(o.error.as_deref(), Some(message), "{bad}");
+    }
+}
+
+#[test]
+fn derivatives_of_added_math_functions() {
+    let o = assert_same(
+        "def f(x: rad) -> rad:\n    return expm1(x) + log1p(x) + sinh(x) + cosh(x) + tanh(x) + erf(x)\n\
+         def g(x: rad) -> rad:\n    return asinh(x) + acosh(x + 2 rad) + atanh(x / 2) + sign(x)\n\
+         print(derivative(f, x)(0.5 rad))\nprint(derivative(g, x)(0.5 rad))\n",
+    );
+    assert_eq!(o.error, None);
+    // f' = e^x + 1/(1+x) + cosh x + sinh x + sech^2 x + 2/sqrt(pi) e^(-x^2)
+    // at 0.5, one number per line.
+    assert_eq!(o.stdout.lines().count(), 2, "{}", o.stdout);
+    let o = assert_same(
+        "def root(a: rad) -> rad:\n    return acosh(a)\nprint(derivative(root, a)(1 rad))\n",
+    );
+    assert_eq!(o.error.as_deref(), Some("division by zero"));
+}
+
+#[test]
 fn for_range_forms_agree() {
     let src = "\
 for i in range(3):

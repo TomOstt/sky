@@ -36,3 +36,6 @@ def log(t):
     return t
 u = exp(eps) - 1
 v = log(1 + eps)
+# The cures the lint recommends are quiet.
+r13 = expm1(eps)
+r14 = log1p(eps)

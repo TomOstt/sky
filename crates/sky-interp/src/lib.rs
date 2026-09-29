@@ -42,6 +42,7 @@ pub mod arith;
 pub mod array;
 mod derivative;
 mod env;
+mod erf;
 mod error;
 mod eval;
 mod literal;

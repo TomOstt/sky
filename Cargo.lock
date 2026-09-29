@@ -167,6 +167,9 @@ name = "sky-interp"
 version = "0.0.1"
 dependencies = [
  "sky-ast",
+ "sky-diag",
+ "sky-syntax",
+ "sky-units",
 ]
 
 [[package]]

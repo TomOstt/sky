@@ -1,0 +1,41 @@
+crates/sky-ast/tests/ui/err_shape_dims.sky:2:14: error: a shape dimension cannot be a slice
+  |
+2 | a: Matrix[3, :]
+  |              ^
+  |          - in this shape
+  = help: write dimensions as integers or size-variable names: `Matrix[N, 3]`
+
+crates/sky-ast/tests/ui/err_shape_dims.sky:3:11: error: a shape dimension must be a non-negative integer or a name, found float literal `2.5`
+  |
+3 | b: Matrix[2.5, 3]
+  |           ^^^
+  |          - in this shape
+  = help: write dimensions as integers or size-variable names: `Matrix[N, 3]`
+
+crates/sky-ast/tests/ui/err_shape_dims.sky:4:11: error: a shape needs at least one dimension
+  |
+4 | c: Matrix[]
+  |           ^
+  |          - in this shape
+  = help: write dimensions as integers or size-variable names: `Matrix[N, 3]`
+
+crates/sky-ast/tests/ui/err_shape_dims.sky:5:13: error: expected `,` or `]` after a shape dimension, found integer literal `3`
+  |
+5 | e: Matrix[3 3]
+  |             ^
+  |          - in this shape
+  = help: separate dimensions with commas: `Matrix[3, 3]`
+
+crates/sky-ast/tests/ui/err_shape_dims.sky:6:11: error: a shape dimension must be a non-negative integer or a name, found `-`
+  |
+6 | f: Vector[-1]
+  |           ^
+  |          - in this shape
+  = help: write dimensions as integers or size-variable names: `Matrix[N, 3]`
+
+crates/sky-ast/tests/ui/err_shape_dims.sky:7:11: error: a shape dimension must be a non-negative integer or a name, found `(`
+  |
+7 | g: Matrix[(3), 3]
+  |           ^
+  |          - in this shape
+  = help: write dimensions as integers or size-variable names: `Matrix[N, 3]`

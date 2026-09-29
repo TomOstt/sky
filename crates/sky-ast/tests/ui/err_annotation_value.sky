@@ -1,0 +1,5 @@
+# An annotation is a type, not a value.
+x: 5 m
+y: 3
+z: "s"
+w: true

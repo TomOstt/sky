@@ -1,0 +1,7 @@
+# Constants are names in scope: E = m c^2 is energy, and hc/λ is energy too.
+m = 2 kg
+E = m * c^2
+lam = 500 nm
+photon = h * c / lam
+total = E + photon + 1 GeV
+kT = k_B * 300 K + 25 meV

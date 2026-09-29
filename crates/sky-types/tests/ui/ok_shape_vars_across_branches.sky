@@ -1,0 +1,9 @@
+# Constraints learned in a branch persist (a size variable is one size for
+# the module); merges don't add any.
+A: Matrix[N, N]
+b: Vector[N]
+c: Vector[3]
+if true:
+    r = A @ b
+else:
+    r = b

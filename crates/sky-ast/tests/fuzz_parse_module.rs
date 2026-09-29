@@ -70,6 +70,76 @@ fn and_chain_of_10000_parses() {
     assert!(out.errors.is_empty(), "{:?}", out.errors);
 }
 
+fn nested_ifs(n: usize) -> String {
+    let mut src = String::new();
+    for i in 0..n {
+        src.push_str(&"\t".repeat(i));
+        src.push_str("if a:\n");
+    }
+    src.push_str(&"\t".repeat(n));
+    src.push_str("pass\n");
+    src
+}
+
+#[test]
+fn nested_256_blocks_parse() {
+    let out = harness::run(&seed("blocks_256", &nested_ifs(256)));
+    assert_eq!(out.stmts, Some(1));
+    assert!(out.errors.is_empty(), "{:?}", out.errors);
+}
+
+#[test]
+fn nested_257_blocks_are_a_depth_error() {
+    let out = harness::run(&seed("blocks_257", &nested_ifs(257)));
+    assert_eq!(out.stmts, Some(1));
+    assert_eq!(
+        out.errors,
+        ["blocks are nested too deeply (the limit is 256 levels)"]
+    );
+}
+
+#[test]
+fn block_forms_parse_and_block_errors_recover() {
+    let src = "\
+def f(a, b: Vector[3]) -> Matrix[3, 3]:
+    if a > 0 m:
+        return b
+    elif a < 0 m:
+        pass
+    else:
+        while true:
+            break
+    return
+x = 1 if c else 2 if d else 3
+";
+    let out = harness::run(&seed("block_forms", src));
+    assert_eq!(out.stmts, Some(2));
+    assert!(out.errors.is_empty(), "{:?}", out.errors);
+
+    let src = "\
+def f(x):
+    if x = 1:
+        y = 2 +
+    z = 3 +
+    while x
+        pass
+    return z
+if a: b = 1
+for i in x:
+    pass
+else:
+    pass
+if c:
+d = 1
+    e = 2
+equation u:
+    solve
+";
+    let out = harness::run(&seed("block_errors", src));
+    assert!(out.errors.len() >= 8, "{:?}", out.errors);
+    assert!(out.stmts.is_some());
+}
+
 #[test]
 fn every_seed_passes_the_fuzz_check() {
     let mut names: Vec<_> = std::fs::read_dir(corpus_dir())
@@ -77,9 +147,17 @@ fn every_seed_passes_the_fuzz_check() {
         .map(|e| e.expect("dir entry").path())
         .collect();
     names.sort();
-    assert!(names.len() >= 10, "{names:?}");
+    assert!(names.len() >= 14, "{names:?}");
     for path in names {
         let data = std::fs::read(&path).expect("seed file");
         let _ = harness::run(&data);
     }
+}
+
+#[test]
+fn type_annotations_parse_and_recover() {
+    let src = "t: s\nv: Vector[3] m/s\nA: PositiveDefinite Matrix[N, N]\nK: Symmetric Diagonal Matrix[3, 3] N/m\nx: Scalar\nM: Tensor[B, T, D,] kg\nbad1: Matrix[N+1]\nbad2: Matrix[3,3] PositiveDefinite m s\nbad3: 5 m\n";
+    let out = harness::run(&seed("type_annotations", src));
+    assert_eq!(out.stmts, Some(6));
+    assert_eq!(out.errors.len(), 3, "{:?}", out.errors);
 }

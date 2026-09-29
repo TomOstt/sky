@@ -6,6 +6,12 @@
 //! 0 otherwise. Paths are passed relative to the workspace root with `/`
 //! separators, so goldens read `tests/ui/lexer/foo.sky:1:1: ...`.
 //!
+//! When `NAME.explain` exists next to `NAME.sky`, the file is also run with
+//! `sky check --explain` and that stderr must equal `NAME.explain`. This
+//! pins the Cholesky rewrite decisions end to end; an empty `.explain` pins
+//! "no rewrite". A `.types` file belongs to the sky-types runner (see
+//! `crates/sky-types/tests/ui_check.rs`) and is ignored here.
+//!
 //! To regenerate expectations after an intended change, run
 //! `SKY_BLESS=1 cargo test -p sky-cli --test ui` and review the diff.
 
@@ -32,7 +38,9 @@ fn collect_sky_files(dir: &Path, out: &mut Vec<PathBuf>) {
             collect_sky_files(&path, out);
         } else if path.extension().is_some_and(|x| x == "sky") {
             out.push(path);
-        } else if path.extension().is_some_and(|x| x == "stderr")
+        } else if path
+            .extension()
+            .is_some_and(|x| x == "stderr" || x == "explain" || x == "types")
             && !path.with_extension("sky").exists()
         {
             panic!("{} has no matching .sky file", path.display());
@@ -81,14 +89,35 @@ fn ui() {
             .map(|c| c.as_os_str().to_string_lossy())
             .collect();
         let rel_arg = rel_arg.join("/");
-        let output = Command::new(env!("CARGO_BIN_EXE_sky"))
-            .arg("check")
-            .arg(&rel_arg)
-            .current_dir(&root)
-            .output()
-            .expect("run sky");
+        let run = |explain: bool| {
+            let mut cmd = Command::new(env!("CARGO_BIN_EXE_sky"));
+            cmd.arg("check");
+            if explain {
+                cmd.arg("--explain");
+            }
+            cmd.arg(&rel_arg)
+                .current_dir(&root)
+                .output()
+                .expect("run sky")
+        };
+        let output = run(false);
         let actual = String::from_utf8(output.stderr).expect("stderr is UTF-8");
         let expected_path = sky.with_extension("stderr");
+
+        let explain_path = sky.with_extension("explain");
+        if explain_path.exists() {
+            let explained = String::from_utf8(run(true).stderr).expect("stderr is UTF-8");
+            if bless {
+                fs::write(&explain_path, &explained).expect("write .explain");
+            } else {
+                let expected = fs::read_to_string(&explain_path).expect("read .explain");
+                if explained != expected {
+                    failures.push(format!(
+                        "{rel_arg}: --explain stderr mismatch\n--- expected\n{expected}--- actual\n{explained}---"
+                    ));
+                }
+            }
+        }
 
         if bless {
             fs::write(&expected_path, &actual).expect("write .stderr");

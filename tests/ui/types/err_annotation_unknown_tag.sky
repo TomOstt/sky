@@ -1,0 +1,4 @@
+# A misspelled matrix property gets a did-you-mean.
+A: PositveDefinite Matrix[3, 3]
+B: Symetric Matrix[3, 3]
+C: Positive Matrix[3, 3]

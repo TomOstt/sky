@@ -1,0 +1,30 @@
+crates/sky-ast/tests/ui/err_def_headers.sky:1:11: error: default parameter values are not supported yet
+  |
+1 | def f(x, y=1):
+  |           ^
+  |          - this parameter
+  = help: pass the value at every call
+
+crates/sky-ast/tests/ui/err_def_headers.sky:3:5: error: expected a function name after `def`, found `(`
+  |
+3 | def (x):
+  |     ^
+  | --- `def` starts here
+
+crates/sky-ast/tests/ui/err_def_headers.sky:5:6: error: expected `(` after the function name, found `:`
+  |
+5 | def g:
+  |      ^
+  |     - function name
+
+crates/sky-ast/tests/ui/err_def_headers.sky:7:7: error: expected a parameter name, found integer literal `1`
+  |
+7 | def h(1):
+  |       ^
+  |      - parameters start here
+
+crates/sky-ast/tests/ui/err_def_headers.sky:9:9: error: expected `,` or `)` after the parameter, found name `b`
+  |
+9 | def k(a b):
+  |         ^
+  |       - this parameter

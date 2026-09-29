@@ -1,0 +1,10 @@
+def f(x, y=1):
+    pass
+def (x):
+    pass
+def g:
+    pass
+def h(1):
+    pass
+def k(a b):
+    pass

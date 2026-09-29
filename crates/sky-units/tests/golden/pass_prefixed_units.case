@@ -1,0 +1,8 @@
+# A prefix never changes the dimension, and `kg` is k + g.
+unify [mm] with [km]
+unify [kg] with [g]
+unify [GeV] with [J]
+unify [Mpc] with [m]
+unify [L] with [m]^3
+unify [mol] with [kmol]
+show [ms]

@@ -1,0 +1,4 @@
+# A compound unit written with a space: the help points at `*`. Capitalized
+# unit names like `N` and `Pa` are units here, not matrix properties.
+a: N m
+b: Pa s

@@ -1,0 +1,13 @@
+crates/sky-ast/tests/ui/err_one_line_body.sky:3:7: error: the body of `if` must be on its own indented line
+  |
+3 | if x: y = 1
+  |       ^
+  |     - the block starts after this `:`
+  = help: put the body on its own indented line
+
+crates/sky-ast/tests/ui/err_one_line_body.sky:5:10: error: the body of `while` must be on its own indented line
+  |
+5 | while x: pass
+  |          ^^^^
+  |        - the block starts after this `:`
+  = help: put the body on its own indented line

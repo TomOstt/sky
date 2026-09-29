@@ -1,0 +1,9 @@
+# Units in a type follow the unit-literal rules: `*` and `/` touch their
+# operands, exponents touch the name, and there is no juxtaposition.
+a: m s
+b: m / s
+c: m ^2
+d: m⁻¹
+e: kg*
+f: Vector[3] m s
+g: m/2

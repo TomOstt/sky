@@ -47,7 +47,7 @@ use std::collections::HashSet;
 
 use sky_diag::Diagnostic;
 
-use crate::confusable::check_identifier;
+use crate::confusable::{check_identifier, INTENDED_LETTERS};
 use crate::invisible_table::DEFAULT_IGNORABLE_IDENT;
 use crate::nfkc;
 use crate::source::find_bidi_control;
@@ -863,37 +863,6 @@ fn write_as_help(n: &str) -> String {
         format!("write it as `{n}` (`{}`)", escape_non_ascii(n))
     }
 }
-
-/// Compatibility characters whose NFKC form is a different, specific letter
-/// that scientific code means: `(char, its name, intended char, its name)`.
-const INTENDED_LETTERS: &[(char, &str, char, &str)] = &[
-    (
-        '\u{00B5}',
-        "MICRO SIGN",
-        '\u{03BC}',
-        "GREEK SMALL LETTER MU",
-    ),
-    ('\u{212A}', "KELVIN SIGN", 'K', "LATIN CAPITAL LETTER K"),
-    (
-        '\u{210F}',
-        "PLANCK CONSTANT OVER TWO PI",
-        '\u{0127}',
-        "LATIN SMALL LETTER H WITH STROKE",
-    ),
-    (
-        '\u{2126}',
-        "OHM SIGN",
-        '\u{03A9}',
-        "GREEK CAPITAL LETTER OMEGA",
-    ),
-    (
-        '\u{212B}',
-        "ANGSTROM SIGN",
-        '\u{00C5}',
-        "LATIN CAPITAL LETTER A WITH RING ABOVE",
-    ),
-    ('\u{210E}', "PLANCK CONSTANT", 'h', "LATIN SMALL LETTER H"),
-];
 
 /// True if `s` would lex as one identifier (or keyword) token under the
 /// lexer's own character rules.

@@ -1,0 +1,1 @@
+(def f (params) (block (def g (params x) (block (while true (block (if x (block (return x)) (else (block (break)))))) (return 0))) (return g)))

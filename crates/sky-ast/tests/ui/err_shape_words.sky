@@ -1,0 +1,6 @@
+# Only Vector, Matrix and Tensor take dimensions, and they need them.
+a: Matrix
+b: Vector m
+c: Scalar[3]
+d: Scalar m
+e: List[int]

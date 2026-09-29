@@ -296,6 +296,33 @@ fn table_unit() -> impl Strategy<Value = &'static sky_units::Unit> {
     prop::sample::select(sky_units::UNITS.iter().collect::<Vec<_>>())
 }
 
+/// Every valid unit spelling, enumerated the slow way.
+fn spelled_in_the_model(candidate: &str) -> bool {
+    let spellings = |name: &'static str, ascii: Option<&'static str>| {
+        [Some(name), ascii]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+    };
+    for u in sky_units::UNITS {
+        for us in spellings(u.name, u.ascii) {
+            if candidate == us {
+                return true;
+            }
+            if u.prefixable {
+                for p in sky_units::PREFIXES {
+                    for ps in spellings(p.name, p.ascii) {
+                        if candidate == format!("{ps}{us}") {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 fn udim(name: &str) -> Dimension {
     sky_units::lookup(name).expect(name).dim
 }
@@ -344,15 +371,17 @@ proptest! {
         );
     }
 
-    /// Lookup is exact: every table symbol finds its own entry, and a
-    /// symbol with anything appended or prepended is not a unit unless it is
-    /// itself in the table.
+    /// Lookup is exact: every table symbol finds its own entry unprefixed.
+    /// A symbol with anything appended or prepended (or any text at all) is
+    /// a unit exactly when it is a table spelling or a prefix followed by a
+    /// prefixable table spelling, per an independent enumeration.
     #[test]
-    fn lookup_is_exact(u in table_unit(), extra in "[A-Za-z]{1,2}") {
-        prop_assert!(std::ptr::eq(sky_units::lookup(u.name).unwrap(), u));
-        for candidate in [format!("{}{extra}", u.name), format!("{extra}{}", u.name)] {
-            let in_table = sky_units::UNITS.iter().any(|t| t.name == candidate);
-            prop_assert_eq!(sky_units::is_unit_symbol(&candidate), in_table);
+    fn lookup_is_exact(u in table_unit(), extra in "[A-Za-z]{1,2}", any in "\\PC{0,6}") {
+        let found = sky_units::lookup(u.name).unwrap();
+        prop_assert!(std::ptr::eq(found.unit, u));
+        prop_assert!(found.prefix.is_none());
+        for candidate in [format!("{}{extra}", u.name), format!("{extra}{}", u.name), any] {
+            prop_assert_eq!(sky_units::is_unit_symbol(&candidate), spelled_in_the_model(&candidate));
         }
     }
 }

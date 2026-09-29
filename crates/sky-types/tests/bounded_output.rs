@@ -50,8 +50,8 @@ fn span_text(src: &str, d: &Diagnostic) -> String {
     src[d.primary.span.start as usize..d.primary.span.end as usize].to_string()
 }
 
-fn capped(text_len: usize) -> String {
-    format!("{}… ({text_len} bytes)", "x".repeat(QUOTE_MAX_CHARS))
+fn capped() -> String {
+    format!("{}…", "x".repeat(QUOTE_MAX_CHARS))
 }
 
 #[test]
@@ -61,10 +61,7 @@ fn huge_annotation_is_quoted_capped_but_spanned_in_full() {
     let c = check(&src, Env::new());
     assert_eq!(c.diagnostics.len(), 1, "{:#?}", c.diagnostics);
     let d = &c.diagnostics[0];
-    assert_eq!(
-        d.message,
-        format!("unsupported type annotation `{}`", capped(HUGE))
-    );
+    assert_eq!(d.message, format!("unknown unit `{}`", capped()));
     assert!(checker_text_len(d) < KIB, "{}", checker_text_len(d));
     assert_eq!(span_text(&src, d), name);
 }
@@ -77,7 +74,7 @@ fn huge_undefined_name_is_quoted_capped() {
     let d = &c.diagnostics[0];
     assert_eq!(
         d.message,
-        format!("cannot find `{}` in this scope", capped(HUGE))
+        format!("cannot find `{}` in this scope", capped())
     );
     assert!(checker_text_len(d) < KIB);
     assert_eq!(span_text(&src, d), name);
@@ -103,7 +100,7 @@ fn huge_size_variable_is_capped_in_types() {
     assert!(checker_text_len(d) < KIB, "{}", checker_text_len(d));
     let ty = c.env.get("A").expect("A is bound").to_string();
     assert!(ty.len() < KIB, "{}", ty.len());
-    assert!(ty.contains(&capped(HUGE)), "{ty}");
+    assert!(ty.contains(&capped()), "{ty}");
 }
 
 #[test]
@@ -131,7 +128,7 @@ fn huge_operand_name_in_the_cholesky_explanation_is_capped() {
     let explanation = site.rewrite.explanation();
     // The name appears several times in the formulas; each is capped.
     assert!(explanation.len() < 2 * KIB, "{}", explanation.len());
-    assert!(explanation.contains(&capped(HUGE)), "{explanation}");
+    assert!(explanation.contains(&capped()), "{explanation}");
     let d = site.to_diagnostic(&src);
     assert!(checker_text_len(&d) < 2 * KIB, "{}", checker_text_len(&d));
     assert_eq!(
@@ -217,15 +214,15 @@ fn every_quoting_diagnostic_stays_small() {
     )
     .unwrap();
     let m = "y".repeat(HUGE);
+    let big = "Y".repeat(HUGE);
     let cases = [
         // (source, expected message prefix)
-        (format!("A: Matrix[{m} + 1, 3]\n"), "shape arithmetic like"),
         (format!("A: Matrix[{digits}, 3]\n"), "shape dimension `"),
         (
-            format!("A: Matrix[{m}.z, 3]\n"),
-            "a shape dimension must be",
+            format!("A: {big} Matrix[3, 3]\n"),
+            "unknown matrix property `",
         ),
-        (format!("A: {m}[3]\n"), "unsupported type annotation"),
+        (format!("A: Matrix[3, 3] {big}\n"), "unknown unit `"),
         (format!("A: Matrix[{n}, {n}]\n"), "size variable `"),
         (format!("q = 1 {m}\n"), "unknown unit `"),
         (format!("q = {n} + 1\n"), "cannot add a scalar to a matrix"),
@@ -265,10 +262,7 @@ fn a_bool_operand_help_quotes_the_operand_capped() {
     let d = &c.diagnostics[0];
     assert_eq!(
         d.help,
-        vec![format!(
-            "compare it instead, e.g. `{} != 0 m`",
-            capped(HUGE)
-        )]
+        vec![format!("compare it instead, e.g. `{} != 0 m`", capped())]
     );
     assert!(checker_text_len(d) < KIB);
     assert_eq!(span_text(&src, d), k);

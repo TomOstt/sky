@@ -1,0 +1,6 @@
+tests/ui/types/err_scalar_div_matrix.sky:2:7: error: cannot divide a scalar by a matrix
+  |
+2 | z = 1 / A
+  |       ^
+  |         - this is Matrix[3,3] [1]
+  = help: for the matrix inverse write `A⁻¹`

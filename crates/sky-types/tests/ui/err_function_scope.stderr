@@ -1,0 +1,19 @@
+crates/sky-types/tests/ui/err_function_scope.sky:4:12: error: cannot find `later` in this scope
+  |
+4 |     return later
+  |            ^^^^^ not defined
+  = help: a function body sees only names defined above its `def`
+
+crates/sky-types/tests/ui/err_function_scope.sky:12:5: error: cannot find `inner` in this scope
+   |
+12 | x = inner
+   |     ^^^^^ not defined
+
+crates/sky-types/tests/ui/err_function_scope.sky:15:14: error: cannot add length and time
+   |
+15 |     return p + 1 s
+   |              ^ mismatched dimensions
+   |            - length
+   |                --- time
+   = note: both operands of `+` must have the same dimension
+   = help: convert one side, or fix the unit

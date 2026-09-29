@@ -1,0 +1,6 @@
+if a:
+    x = 1
+else if b:
+    x = 2
+else:
+    x = 3

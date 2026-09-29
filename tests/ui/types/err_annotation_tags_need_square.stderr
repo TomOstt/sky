@@ -1,0 +1,23 @@
+tests/ui/types/err_annotation_tags_need_square.sky:2:4: error: matrix property tags {Symmetric} need a square matrix, found Matrix[3,4]
+  |
+2 | A: Symmetric Matrix[3, 4]
+  |    ^^^^^^^^^^^^^^^^^^^^^^ matrix properties apply to square matrices only
+  = help: declare a square matrix, e.g. `Symmetric Matrix[N, N]` or `Diagonal Matrix[3, 3]`
+
+tests/ui/types/err_annotation_tags_need_square.sky:3:4: error: matrix property tags {Symmetric, Diagonal} need a square matrix, found Vector[3]
+  |
+3 | v: Diagonal Vector[3]
+  |    ^^^^^^^^^^^^^^^^^^ matrix properties apply to square matrices only
+  = help: declare a square matrix, e.g. `Symmetric Matrix[N, N]` or `Diagonal Matrix[3, 3]`
+
+tests/ui/types/err_annotation_tags_need_square.sky:4:4: error: matrix property tags {Symmetric, PositiveDefinite} need a square matrix, found Scalar
+  |
+4 | x: PositiveDefinite Scalar
+  |    ^^^^^^^^^^^^^^^^^^^^^^^ matrix properties apply to square matrices only
+  = help: declare a square matrix, e.g. `Symmetric Matrix[N, N]` or `Diagonal Matrix[3, 3]`
+
+tests/ui/types/err_annotation_tags_need_square.sky:5:4: error: matrix property tags {Symmetric} need a square matrix, found Scalar
+  |
+5 | y: Symmetric m
+  |    ^^^^^^^^^^^ matrix properties apply to square matrices only
+  = help: declare a square matrix, e.g. `Symmetric Matrix[N, N]` or `Diagonal Matrix[3, 3]`

@@ -9,3 +9,7 @@ publish.workspace = true
 
 [dependencies]
 sky-ast = { path = "../sky-ast" }
+sky-diag = { path = "../sky-diag" }
+sky-syntax = { path = "../sky-syntax" }
+sky-types = { path = "../sky-types" }
+sky-units = { path = "../sky-units" }

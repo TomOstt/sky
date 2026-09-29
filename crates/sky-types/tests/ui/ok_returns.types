@@ -1,0 +1,9 @@
+a: Scalar [1]
+b: ?
+c: ?
+d: Scalar [1]
+fact: function `fact`
+forever: function `forever`
+inferred: function `inferred`
+shout: function `shout`
+sign: function `sign`

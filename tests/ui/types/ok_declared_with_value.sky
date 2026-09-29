@@ -1,0 +1,14 @@
+# With a value, the value must agree with the declaration: the shape, the
+# unit (if one is declared), and the properties (if any are declared).
+A: PositiveDefinite Matrix[3, 3]
+B: Symmetric Matrix[3, 3] = A
+C: Matrix[3, 3] = A
+m: kg = 2 kg
+k: Scalar = 3
+v: Vector[3] m/s
+w: Vector[3] m/s = v
+u: Vector[3] = 2 * v
+D: Diagonal Matrix[3, 3]
+E: Symmetric Matrix[3, 3] = 2 * D
+p = 2 * A
+F: Symmetric Matrix[3, 3] = p

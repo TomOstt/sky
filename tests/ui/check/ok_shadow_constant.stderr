@@ -1,0 +1,6 @@
+tests/ui/check/ok_shadow_constant.sky:2:1: warning: `h` shadows the Planck constant
+  |
+2 | h = 0.1 s
+  | ^ shadows a predefined constant
+  = note: `h` is predefined by Sky: the Planck constant (L²·M·T⁻¹, 6.62607015e-34 in SI units, CODATA 2018), defined in the sky-units constants table
+  = help: rename your variable to keep using the constant, e.g. `my_h = …`

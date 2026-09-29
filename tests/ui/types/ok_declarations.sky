@@ -1,0 +1,11 @@
+# Annotations declare shape, matrix properties, and the unit of the
+# elements. Without a value the name is an input, taken on trust.
+t: s
+v: Vector[3] m/s
+A: PositiveDefinite Matrix[N, N]
+K: Symmetric Diagonal Matrix[3, 3] N/m
+x: Scalar
+M: Tensor[B, T, D] kg
+f: N
+temp: K
+Q: Orthogonal Matrix[3, 3]

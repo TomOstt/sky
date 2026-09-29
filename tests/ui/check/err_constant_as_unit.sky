@@ -1,0 +1,2 @@
+# A constant is a value, not a unit: multiply, `2 * c`.
+E = 2 c

@@ -5,12 +5,15 @@
 //! Script_Extensions based mixed-script detection, restriction levels, and
 //! comparing skeletons *across* identifiers in a program) is follow-up work.
 //!
-//! Rules, checked per identifier, at most one warning each:
+//! Rules, checked per identifier, at most one warning each (rule 1 is a
+//! numbering gap kept so the spec and tests can cite rules 2 and 3):
 //!
-//! 1. **Letter variants**: compatibility look-alikes of letters that
-//!    scientific code uses, e.g. MICRO SIGN `µ` vs Greek `μ`, KELVIN SIGN
-//!    vs `K`, OHM SIGN vs `Ω`, fullwidth and mathematical alphanumeric
-//!    Latin letters (`ｘ`, `𝑥`).
+//! 1. **Compatibility variants** (MICRO SIGN `µ`, KELVIN SIGN, OHM SIGN,
+//!    fullwidth and mathematical letters) are *not* checked here: none is in
+//!    NFKC, so the lexer rejects them as errors before this check runs (a
+//!    warning rule for them could never fire). The table of the ones that
+//!    have an intended letter, [`INTENDED_LETTERS`], lives here and feeds the
+//!    help of that error.
 //! 2. **Look-alike letters**: a Cyrillic/Greek/Armenian letter from
 //!    small curated table that renders like a Latin letter, when the identifier
 //!    also contains Latin letters (`pаth` with Cyrillic `а`), or when every
@@ -124,24 +127,42 @@ const LOOKALIKES: &[(char, char, Script, bool)] = &[
     ('հ', 'h', Script::Armenian, true),
 ];
 
-/// Single-character compatibility variants: `(char, name, preferred)`.
-const VARIANTS: &[(char, &str, char)] = &[
-    ('\u{00B5}', "MICRO SIGN", 'μ'),
-    ('\u{2126}', "OHM SIGN", 'Ω'),
-    ('\u{212A}', "KELVIN SIGN", 'K'),
-    ('\u{212B}', "ANGSTROM SIGN", 'Å'),
-    ('\u{210F}', "PLANCK CONSTANT OVER TWO PI", 'ħ'),
-    ('\u{210E}', "PLANCK CONSTANT", 'h'),
+/// Compatibility characters whose NFKC form is a different, specific letter
+/// that scientific code means: `(char, its name, intended char, its name)`.
+/// The single source of truth for the "use X instead" help on the non-NFKC
+/// identifier error (`lexer.rs`). They never reach [`check_identifier`],
+/// because the NFKC check rejects them first.
+pub(crate) const INTENDED_LETTERS: &[(char, &str, char, &str)] = &[
+    (
+        '\u{00B5}',
+        "MICRO SIGN",
+        '\u{03BC}',
+        "GREEK SMALL LETTER MU",
+    ),
+    ('\u{212A}', "KELVIN SIGN", 'K', "LATIN CAPITAL LETTER K"),
+    (
+        '\u{210F}',
+        "PLANCK CONSTANT OVER TWO PI",
+        '\u{0127}',
+        "LATIN SMALL LETTER H WITH STROKE",
+    ),
+    (
+        '\u{2126}',
+        "OHM SIGN",
+        '\u{03A9}',
+        "GREEK CAPITAL LETTER OMEGA",
+    ),
+    (
+        '\u{212B}',
+        "ANGSTROM SIGN",
+        '\u{00C5}',
+        "LATIN CAPITAL LETTER A WITH RING ABOVE",
+    ),
+    ('\u{210E}', "PLANCK CONSTANT", 'h', "LATIN SMALL LETTER H"),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Confusable {
-    /// A compatibility variant of a letter, e.g. MICRO SIGN for `μ`.
-    Variant {
-        ch: char,
-        name: &'static str,
-        preferred: Option<char>,
-    },
     /// A letter that looks like a Latin letter.
     Lookalike {
         ch: char,
@@ -155,24 +176,6 @@ pub enum Confusable {
 impl fmt::Display for Confusable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Confusable::Variant {
-                ch,
-                name,
-                preferred: Some(p),
-            } => write!(
-                f,
-                "contains {name} U+{:04X}, which looks like '{p}' (U+{:04X}); use '{p}' instead",
-                ch as u32, p as u32
-            ),
-            Confusable::Variant {
-                ch,
-                name,
-                preferred: None,
-            } => write!(
-                f,
-                "contains '{ch}' (U+{:04X}), a {name} variant of a Latin letter",
-                ch as u32
-            ),
             Confusable::Lookalike {
                 ch,
                 script,
@@ -196,35 +199,11 @@ fn lookalike(c: char) -> Option<(char, Script, bool)> {
         .map(|&(_, latin, script, strong)| (latin, script, strong))
 }
 
-fn variant(c: char) -> Option<Confusable> {
-    if let Some(&(ch, name, preferred)) = VARIANTS.iter().find(|(ch, ..)| *ch == c) {
-        return Some(Confusable::Variant {
-            ch,
-            name,
-            preferred: Some(preferred),
-        });
-    }
-    let name = match c as u32 {
-        0xFF21..=0xFF3A | 0xFF41..=0xFF5A => "fullwidth",
-        0x1D400..=0x1D6A5 => "mathematical",
-        _ => return None,
-    };
-    Some(Confusable::Variant {
-        ch: c,
-        name,
-        preferred: None,
-    })
-}
-
 /// Checks one identifier. Returns the most specific finding, if any.
 pub fn check_identifier(ident: &str) -> Option<Confusable> {
     if ident.is_ascii() {
         return None;
     }
-    if let Some(v) = ident.chars().find_map(variant) {
-        return Some(v);
-    }
-
     let has_latin = ident.chars().any(|c| script(c) == Some(Script::Latin));
     let mut letters = ident
         .chars()
@@ -357,17 +336,10 @@ mod tests {
     }
 
     #[test]
-    fn compatibility_variants() {
-        assert!(matches!(
-            check_identifier("\u{00B5}m"),
-            Some(Confusable::Variant {
-                preferred: Some('μ'),
-                ..
-            })
-        ));
-        assert!(warns("\u{212A}"));
-        assert!(warns("\u{210F}"));
-        assert!(warns("ｘ"));
-        assert!(warns("\u{1D465}"));
+    fn compatibility_variants_are_the_lexers_business() {
+        // Not NFKC, so an error before this check; nothing to warn about.
+        for c in ["\u{00B5}m", "\u{212A}", "\u{210F}", "ｘ", "\u{1D465}"] {
+            assert_eq!(check_identifier(c), None, "{c}");
+        }
     }
 }

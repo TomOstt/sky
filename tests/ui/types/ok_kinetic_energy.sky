@@ -1,0 +1,8 @@
+# Physics: scalar times vector, and the squared magnitude via `@`.
+v: Vector[3] m/s
+m = 2 kg
+p = m * v
+half = 0.5 * m * v
+energy = 0.5 * m * (v @ v)
+speed = 3 m/s
+e_scalar = 0.5 * m * speed^2

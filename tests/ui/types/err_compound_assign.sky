@@ -1,0 +1,10 @@
+K: PositiveDefinite Matrix[3, 3]
+B: Matrix[3, 3]
+v: Vector[3] m
+x = 5 m
+x += 2 m
+x += 3 s
+x *= 2 m
+K @= B
+v @= K
+y += 1

@@ -1,0 +1,8 @@
+# Shapes must agree after a merge; tags are joined (only what both branches
+# guarantee survives).
+S: Symmetric Matrix[3, 3]
+P: PositiveDefinite Matrix[3, 3]
+if true:
+    M = S
+else:
+    M = P

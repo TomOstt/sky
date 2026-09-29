@@ -1,0 +1,2 @@
+(= i 0)
+(while (< i 3) (block (+= i 1) (if (== i 2) (block (continue))) (if (== i 5) (block (break)))))

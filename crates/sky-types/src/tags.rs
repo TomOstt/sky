@@ -242,6 +242,14 @@ pub fn matmul_tags(a: TagSet, b: TagSet) -> TagSet {
 mod tests {
     use super::*;
 
+    #[test]
+    fn parser_knows_exactly_the_tag_names() {
+        // sky-ast keeps its own copy of the property words (it sits below
+        // sky-types); it must match the lattice's tags exactly.
+        let ours: Vec<&str> = Tag::ALL.iter().map(|t| t.name()).collect();
+        assert_eq!(ours, sky_ast::TAG_NAMES.to_vec());
+    }
+
     fn set(tags: &[Tag]) -> TagSet {
         TagSet::from_tags(tags.iter().copied())
     }

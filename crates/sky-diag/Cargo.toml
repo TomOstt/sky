@@ -8,3 +8,5 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# Combining-mark detection for `display_capped` (already used by sky-syntax).
+unicode-ident = "1"

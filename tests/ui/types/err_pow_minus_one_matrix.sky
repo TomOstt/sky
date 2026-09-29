@@ -1,0 +1,4 @@
+# `A^-1` is a power, not the inverse operator: an error, and no rewrite.
+A: PositiveDefinite Matrix[3, 3]
+b: Vector[3]
+x = A^-1 @ b

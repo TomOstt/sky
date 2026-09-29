@@ -1,0 +1,30 @@
+crates/sky-ast/tests/ui/err_shape_words.sky:2:4: error: `Matrix` needs dimensions in brackets
+  |
+2 | a: Matrix
+  |    ^^^^^^
+  = help: write it like `Matrix[3, 3]`
+
+crates/sky-ast/tests/ui/err_shape_words.sky:3:4: error: `Vector` needs dimensions in brackets
+  |
+3 | b: Vector m
+  |    ^^^^^^
+  = help: write it like `Vector[3]`
+
+crates/sky-ast/tests/ui/err_shape_words.sky:4:10: error: `Scalar` takes no dimensions
+  |
+4 | c: Scalar[3]
+  |          ^
+  = help: a scalar is just `Scalar`; for an array write `Vector[n]` or `Matrix[m, n]`
+
+crates/sky-ast/tests/ui/err_shape_words.sky:5:11: error: a unit cannot follow `Scalar`
+  |
+5 | d: Scalar m
+  |           ^
+  |    ------ `Scalar` is dimensionless
+  = help: a scalar with a unit is written as the unit alone: `m`
+
+crates/sky-ast/tests/ui/err_shape_words.sky:6:4: error: unknown shape `List`
+  |
+6 | e: List[int]
+  |    ^^^^
+  = help: shapes are `Vector[n]`, `Matrix[m, n]`, and `Tensor[d1, d2, ...]`; a bare unit like `m/s` is a scalar

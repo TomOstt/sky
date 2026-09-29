@@ -4,23 +4,30 @@
 //! number literals with units, names and their bindings, the arithmetic and
 //! comparison operators, `@`, postfix `⁻¹` (and `inv(x)`), `^`, the Bool
 //! literals `true`/`false`, and `and`/`or`/`not` (strict Bool operands, no
-//! truthiness, per the spec's "Booleans and conditions"). Anything
-//! else (strings, other calls, indexing, attributes, `∂`, `∇`) is typed as
+//! truthiness, per the spec's "Booleans and conditions"), the builtin
+//! `print(...)` call, and calls to user functions. Anything else (strings,
+//! indexing, attributes, `∂`, `∇`, calls to names that are not functions) is typed as
 //! [`Ty::Unknown`] without a diagnostic, and an operator with an unknown
 //! operand is unknown too, so one error never cascades.
+//!
+//! Blocks, control flow, and functions (`if`/`while`/`def`, scoping, calls to
+//! user functions) live in [`crate::flow`]; the rules are in the spec's
+//! "Blocks and control flow".
 //!
 //! # Types
 //!
 //! Every numeric value is a [`ValueTy`]: an element [`Dimension`] plus a
 //! [`TensorType`] (shape and property tags). A scalar is the rank-0 case.
 //!
-//! # Declaring shapes and tags
+//! # Declaring shapes, tags, and units
 //!
-//! The only shape syntax the parser accepts today is a binding annotation,
-//! `A: Matrix[N, N]` (parsed as an index expression), which this walk reads
-//! as a shape. There is no syntax for property tags or for the element unit
-//! of an array. Tests and future front ends seed those through [`Env`] and
-//! [`check_module_with`].
+//! A binding annotation is a [`TypeExpr`]: `A: PositiveDefinite Matrix[N, N]
+//! kg` declares a positive-definite square matrix of kilograms. Without a
+//! value the name is an input, and its tags are taken on trust (this is how a
+//! program gets a positive-definite matrix). With a value, the value must
+//! have the declared shape, dimension (if a unit is declared), and tags (the
+//! value's closed tag set must include them). Tests and other front ends can
+//! also seed names through [`Env`] and [`check_module_with`].
 //!
 //! # Purity
 //!
@@ -42,24 +49,25 @@
 //! the parser (see the crate's `deep_nesting` test).
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
 use sky_ast::ast::span_text;
 use sky_ast::{
-    AssignTarget, BinaryOp, CompoundOp, Expr, ExprKind, Ident, IndexItem, Literal, Module,
-    StmtKind, UnaryOp, UnitExpr,
+    AssignTarget, BinaryOp, CompoundOp, DimExpr, Expr, ExprKind, Ident, IndexItem, Literal, Module,
+    ShapeKind, Stmt, StmtKind, TypeExpr, UnaryOp, UnitExpr,
 };
 use sky_diag::{Diagnostic, Severity, Span};
-use sky_units::{lookup, Dimension, Rational};
+use sky_units::{lookup, lookup_constant, suggest_unit, Dimension, Rational, CONSTANTS};
 
-use crate::quote::quote;
+use crate::flow::{FnCtx, FuncSig, LoopFrame};
 use crate::rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 use crate::rules::{elementwise, inverse, matmul, TensorType};
 use crate::scale::{negated_tags, scaled_tags};
 use crate::shape::{Shape, ShapeDim, ShapeError, ShapeUnifier, ShapeVar};
-use crate::tags::TagSet;
+use crate::tags::{Tag, TagSet};
+use sky_diag::display_capped as quote;
 
 /// The type of a numeric value: element dimension plus shape and tags.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -92,6 +100,8 @@ pub enum Ty {
     Value(ValueTy),
     /// The result of a comparison.
     Bool,
+    /// A function defined with `def`: its signature, for checking calls.
+    Func(Arc<FuncSig>),
     /// Not typed in this slice, or the result of an error already reported.
     Unknown,
 }
@@ -120,6 +130,7 @@ impl fmt::Display for Ty {
         match self {
             Ty::Value(v) => v.fmt(f),
             Ty::Bool => f.write_str("Bool"),
+            Ty::Func(sig) => write!(f, "function `{}`", sig.name()),
             Ty::Unknown => f.write_str("?"),
         }
     }
@@ -133,14 +144,56 @@ impl fmt::Display for Ty {
 #[derive(Clone, Debug, Default)]
 pub struct Env {
     names: BTreeMap<String, Ty>,
-    shape_vars: BTreeMap<String, ShapeVar>,
-    shapes: ShapeUnifier,
+    /// Names still bound to a predefined constant (see [`Env::with_prelude`]).
+    /// A name leaves the set when the program rebinds it, which is when the
+    /// checker warns once.
+    prelude: BTreeSet<String>,
+    pub(crate) shape_vars: BTreeMap<String, ShapeVar>,
+    pub(crate) shapes: ShapeUnifier,
+    /// Where each name was last bound in the source, for labels. Names
+    /// seeded through [`Env::bind`] have none.
+    pub(crate) origins: BTreeMap<String, Span>,
+    /// Names bound on some paths through the code so far but not all
+    /// (after an `if` without `else`, say), mapped to one of the bindings
+    /// and whether the paths were those of a loop. Such a name is not in
+    /// `names`: using it is an error.
+    pub(crate) maybe: BTreeMap<String, (Span, bool)>,
+}
+
+/// The name-binding part of an [`Env`] at one point of the walk: what an
+/// `if` branch or loop body starts from and ends with, and what merges
+/// combine. The shape unifier and shape-variable names are deliberately not
+/// part of it (see [`crate::flow`]).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Scope {
+    pub(crate) names: BTreeMap<String, Ty>,
+    pub(crate) origins: BTreeMap<String, Span>,
+    pub(crate) maybe: BTreeMap<String, (Span, bool)>,
 }
 
 impl Env {
     /// An empty environment.
     pub fn new() -> Self {
         Env::default()
+    }
+
+    /// An environment with every physical constant bound as a scalar of its
+    /// dimension, under both its Unicode and its ASCII spelling (`ħ` and
+    /// `hbar`), so `E = m * c^2` is energy when `m` is a mass. This is what
+    /// [`check_module`] (and so `sky check`) starts from; [`Env::new`] and
+    /// [`check_module_with`] do not add the prelude on their own.
+    ///
+    /// A program may rebind a constant; the checker then warns once, because
+    /// `c` and `h` are also common variable names.
+    pub fn with_prelude() -> Self {
+        let mut env = Env::new();
+        for c in CONSTANTS {
+            for name in [Some(c.name), c.ascii].into_iter().flatten() {
+                env.names.insert(name.to_string(), Ty::scalar(c.dim));
+                env.prelude.insert(name.to_string());
+            }
+        }
+        env
     }
 
     /// The shape variable called `name`, created on first use.
@@ -157,7 +210,32 @@ impl Env {
 
     /// Binds `name` to `ty`, replacing any earlier binding.
     pub fn bind(&mut self, name: impl Into<String>, ty: Ty) {
-        self.names.insert(name.into(), ty);
+        let name = name.into();
+        self.prelude.remove(&name);
+        self.origins.remove(&name);
+        self.maybe.remove(&name);
+        self.names.insert(name, ty);
+    }
+
+    /// The current bindings, to restore later or merge with others.
+    pub(crate) fn snapshot(&self) -> Scope {
+        Scope {
+            names: self.names.clone(),
+            origins: self.origins.clone(),
+            maybe: self.maybe.clone(),
+        }
+    }
+
+    /// Replaces the bindings with `scope`.
+    pub(crate) fn restore(&mut self, scope: Scope) {
+        self.names = scope.names;
+        self.origins = scope.origins;
+        self.maybe = scope.maybe;
+    }
+
+    /// Whether `name` is bound (not merely maybe-bound).
+    pub(crate) fn is_bound(&self, name: &str) -> bool {
+        self.names.contains_key(name)
     }
 
     /// Binds `name` to an array with element dimension `dim`. Fails if
@@ -255,14 +333,14 @@ impl Checked {
     }
 }
 
-/// Checks `module` (parsed from `source`) in an empty environment.
+/// Checks `module` (parsed from `source`) in an environment holding only the
+/// predefined physical constants ([`Env::with_prelude`]).
 pub fn check_module(module: &Module, source: &str) -> Checked {
-    check_module_with(module, source, Env::new())
+    check_module_with(module, source, Env::with_prelude())
 }
 
 /// Checks `module` (parsed from `source`) starting from `env`, which can
-/// seed names with shapes, tags, and element units that the language can't
-/// declare yet.
+/// seed names with shapes, tags, and element units without source text.
 pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
     let mut c = Checker {
         src: source,
@@ -271,9 +349,12 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         diagnostics: Vec::new(),
         rewrites: Vec::new(),
         rewrites_omitted: 0,
+        fns: Vec::new(),
+        loops: Vec::new(),
+        diverged: false,
     };
     for stmt in &module.stmts {
-        c.stmt(&stmt.kind);
+        c.stmt(stmt);
     }
     Checked {
         diagnostics: c.diagnostics,
@@ -283,24 +364,63 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
     }
 }
 
-struct Checker<'s> {
-    src: &'s str,
+/// A type annotation once read: what the name is declared to be.
+pub(crate) struct Declared {
+    /// Shape and closed tags.
+    pub(crate) ty: TensorType,
+    /// The declared element dimension, or `None` if the annotation names no
+    /// unit (then the value's dimension is used, or dimensionless).
+    pub(crate) dim: Option<Dimension>,
+    /// The tags as written, before closure.
+    written: TagSet,
+    unit_span: Option<Span>,
+}
+
+pub(crate) struct Checker<'s> {
+    pub(crate) src: &'s str,
     /// Size-variable names already reported as shadowing a value in the
     /// annotation being read.
     shadow_reported: Vec<String>,
-    env: Env,
+    pub(crate) env: Env,
     diagnostics: Vec<Diagnostic>,
     rewrites: Vec<RewriteSite>,
     rewrites_omitted: usize,
+    /// The `def`s being checked, innermost last.
+    pub(crate) fns: Vec<FnCtx>,
+    /// The `while` loops around the current statement within the current
+    /// function (or the module), innermost last.
+    pub(crate) loops: Vec<LoopFrame>,
+    /// Whether the statement just checked cannot fall through: it ended in
+    /// `return`, `break`, or `continue`, or every branch of an `if` did.
+    pub(crate) diverged: bool,
 }
 
 /// Human wording for a dimension in error text: its name if it has one
 /// (`length`), otherwise its formula (`L·M`).
-fn describe(d: &Dimension) -> String {
+pub(crate) fn describe(d: &Dimension) -> String {
     match d.name() {
         Some(n) => n.to_string(),
         None => d.to_string(),
     }
+}
+
+/// The exact value of a decimal literal's source text, `INT.FRAC`, as a
+/// reduced [`Rational`]: `0.5` is 1/2, `1.5` is 3/2, `2.0` is 2. Never goes
+/// through `f64`, so `0.1` is exactly 1/10. `None` for an exponent form
+/// (`1e-1`), separators, or a numerator or denominator that does not fit in
+/// `i64`: the caller reports "must be a constant number".
+fn exact_decimal(text: &str) -> Option<Rational> {
+    let (int, frac) = text.split_once('.')?;
+    // Trailing zeros carry no value (`2.500` is `2.5`), and dropping them
+    // keeps a long but harmless literal from overflowing the denominator.
+    let frac = frac.trim_end_matches('0');
+    let all_numeric = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
+    if int.is_empty() || !all_numeric(int) || !all_numeric(frac) {
+        return None;
+    }
+    let num: i64 = format!("{int}{frac}").parse().ok()?;
+    let den = 10i64.checked_pow(u32::try_from(frac.len()).ok()?)?;
+    Rational::checked_new(num, den).ok()
 }
 
 fn rank_noun(rank: usize) -> String {
@@ -312,34 +432,76 @@ fn rank_noun(rank: usize) -> String {
     }
 }
 
-fn strip_parens(mut e: &Expr) -> &Expr {
+pub(crate) fn strip_parens(mut e: &Expr) -> &Expr {
     while let ExprKind::Paren(inner) = &e.kind {
         e = inner;
     }
     e
 }
 
+/// A constant exponent: an integer or decimal literal, possibly negated or
+/// parenthesized, or a quotient of two such (`(1/2)`). A decimal literal is
+/// read from its source text as the exact fraction it spells (`0.5` is 1/2);
+/// see [`exact_decimal`].
+///
+/// The single definition shared by the checker (for dimensions) and the
+/// interpreter (for values), so the two can never disagree about which
+/// exponents are constant.
+pub fn const_exponent(src: &str, e: &Expr) -> Option<Rational> {
+    let text = |span: Span| span_text(src, span);
+    match &e.kind {
+        ExprKind::Literal(Literal::Float(span)) => exact_decimal(text(*span)?),
+        ExprKind::Literal(Literal::Int(span)) => {
+            text(*span)?.parse::<i64>().ok().map(Rational::integer)
+        }
+        ExprKind::Paren(inner) => const_exponent(src, inner),
+        ExprKind::Unary {
+            op: UnaryOp::Neg,
+            operand,
+            ..
+        } => const_exponent(src, operand)?.checked_neg().ok(),
+        ExprKind::Unary {
+            op: UnaryOp::Pos,
+            operand,
+            ..
+        } => const_exponent(src, operand),
+        ExprKind::Binary {
+            op: BinaryOp::Div,
+            lhs,
+            rhs,
+            ..
+        } => {
+            let (a, b) = (const_exponent(src, lhs)?, const_exponent(src, rhs)?);
+            if b.is_zero() {
+                return None;
+            }
+            a.checked_div(b).ok()
+        }
+        _ => None,
+    }
+}
+
 impl<'s> Checker<'s> {
-    fn text(&self, span: Span) -> &'s str {
+    pub(crate) fn text(&self, span: Span) -> &'s str {
         span_text(self.src, span).unwrap_or("…")
     }
 
-    fn ident(&self, id: &Ident) -> &'s str {
+    pub(crate) fn ident(&self, id: &Ident) -> &'s str {
         self.text(id.span)
     }
 
     /// Source text for a diagnostic: [`quote`]d (capped and escaped). Use
     /// this, never [`Self::text`], for any text shown to the user.
-    fn quoted(&self, span: Span) -> Cow<'s, str> {
+    pub(crate) fn quoted(&self, span: Span) -> Cow<'s, str> {
         quote(self.text(span))
     }
 
-    fn error(&mut self, d: Diagnostic) {
+    pub(crate) fn error(&mut self, d: Diagnostic) {
         self.diagnostics.push(d);
     }
 
     /// `this is Matrix[3,3] [1]` for secondary labels.
-    fn this_is(&self, v: &ValueTy) -> String {
+    pub(crate) fn this_is(&self, v: &ValueTy) -> String {
         format!(
             "this is {}",
             ValueTy {
@@ -390,19 +552,44 @@ impl<'s> Checker<'s> {
     /// Bool. Numbers and tensors are errors (no truthiness), on the
     /// operand's span.
     fn bool_operand(&mut self, kw: &str, e: &Expr, t: Ty) {
-        let Ty::Value(v) = t else {
-            return; // Bool, or unknown (already reported).
+        self.bool_needed(kw, "operand", e, t);
+    }
+
+    /// Checks the condition of `if`, `elif`, `while`, or a conditional
+    /// expression (`kw`, without backticks): a Bool of shape `()`, the same
+    /// rule and help as the operands of `and`/`or`/`not`.
+    pub(crate) fn condition(&mut self, kw: &str, e: &Expr, t: Ty) {
+        self.bool_needed(kw, "condition", e, t);
+    }
+
+    /// The shared check behind [`Self::bool_operand`] and
+    /// [`Self::condition`]; `noun` is "operand" or "condition".
+    fn bool_needed(&mut self, kw: &str, noun: &str, e: &Expr, t: Ty) {
+        let v = match t {
+            Ty::Value(v) => v,
+            Ty::Func(sig) => {
+                self.error(
+                    Diagnostic::error(
+                        format!(
+                            "`{kw}` needs a Bool {noun}, found function `{}`",
+                            quote(sig.name())
+                        ),
+                        e.span,
+                    )
+                    .with_label("not a Bool")
+                    .with_help("call it to get a value, then compare that value"),
+                );
+                return;
+            }
+            _ => return, // Bool, or unknown (already reported).
         };
         let found = ValueTy {
             dim: v.dim,
             ty: self.env.shapes.apply_type(&v.ty),
         };
-        let mut d = Diagnostic::error(
-            format!("`{kw}` needs a Bool operand, found {found}"),
-            e.span,
-        )
-        .with_label("not a Bool")
-        .with_note("v0.1 has no truthiness");
+        let mut d = Diagnostic::error(format!("`{kw}` needs a Bool {noun}, found {found}"), e.span)
+            .with_label("not a Bool")
+            .with_note("v0.1 has no truthiness");
         if v.is_scalar() {
             let text = self.operand_text(e);
             d = match zero_of(&v.dim) {
@@ -415,8 +602,51 @@ impl<'s> Checker<'s> {
         self.error(d);
     }
 
-    fn stmt(&mut self, kind: &StmtKind) {
-        match kind {
+    /// Binds the name `id` to `ty`. The first time a program rebinds a
+    /// predefined constant, warns that it shadows it: allowed (like a Python
+    /// builtin), but `c = 3` or `h = 0.1` silently losing the constant is
+    /// exactly the surprise this is meant to prevent.
+    fn bind_name(&mut self, id: &Ident, ty: Ty) {
+        self.warn_if_shadowing(id);
+        let name = self.ident(id);
+        self.bind_at(name, ty, id.span);
+    }
+
+    fn warn_if_shadowing(&mut self, id: &Ident) {
+        let name = self.ident(id);
+        if !self.env.prelude.contains(name) {
+            return;
+        }
+        let Some(c) = lookup_constant(name) else {
+            return;
+        };
+        let q = self.quoted(id.span);
+        let d = Diagnostic::warning(format!("`{q}` shadows {}", c.description), id.span)
+            .with_label("shadows a predefined constant")
+            .with_note(format!(
+                "`{q}` is predefined by Sky: {} ({}, {:e} in SI units, CODATA 2018), defined in the sky-units constants table",
+                c.description,
+                describe(&c.dim),
+                c.value
+            ))
+            .with_help(format!(
+                "rename your variable to keep using the constant, e.g. `my_{q} = …`"
+            ));
+        self.diagnostics.push(d);
+    }
+
+    /// Binds `name` at `span` (its origin, for labels), as a local of the
+    /// function being checked if there is one.
+    pub(crate) fn bind_at(&mut self, name: &str, ty: Ty, span: Span) {
+        self.env.bind(name, ty);
+        self.env.origins.insert(name.to_string(), span);
+        if let Some(ctx) = self.fns.last_mut() {
+            ctx.locals.insert(name.to_string());
+        }
+    }
+
+    pub(crate) fn stmt(&mut self, stmt: &Stmt) {
+        match &stmt.kind {
             StmtKind::Expr(e) => {
                 self.expr(e);
             }
@@ -424,8 +654,7 @@ impl<'s> Checker<'s> {
                 let t = self.expr(value);
                 match target {
                     AssignTarget::Name(id) => {
-                        let name = self.ident(id);
-                        self.env.bind(name, t);
+                        self.bind_name(id, t);
                     }
                     _ => self.reject_write(target, "="),
                 }
@@ -445,27 +674,54 @@ impl<'s> Checker<'s> {
             StmtKind::Binding { name, ty, value } => {
                 let declared = self.annotation(ty);
                 let found = value.as_ref().map(|v| (v, self.expr(v)));
-                let bound = self.binding_type(ty.span, declared, found);
-                let name = self.ident(name);
-                self.env.bind(name, bound);
+                let bound = self.binding_type(ty, declared, found);
+                self.bind_name(name, bound);
             }
+            StmtKind::If {
+                branches,
+                else_block,
+            } => self.if_stmt(stmt.span, branches, else_block.as_ref()),
+            StmtKind::While { cond, body } => self.while_stmt(stmt.span, cond, body),
+            StmtKind::Def {
+                name,
+                params,
+                ret,
+                body,
+            } => self.def_stmt(name, params, ret.as_ref(), body),
+            StmtKind::Return(value) => self.return_stmt(stmt.span, value.as_ref()),
+            StmtKind::Pass => {}
+            StmtKind::Break => self.break_stmt(stmt.span),
+            StmtKind::Continue => self.continue_stmt(stmt.span),
         }
     }
 
-    /// The type a binding gives its name. The annotation fixes the shape;
-    /// the element dimension comes from the value (annotations can't state
-    /// units yet), or is dimensionless without a value.
+    /// The type a binding gives its name. The declaration wins: its shape,
+    /// its tags, and (if it names one) its unit. A value must agree with all
+    /// three, and only fills in what the declaration leaves open, which is
+    /// the unit: without a declared unit the dimension comes from the value,
+    /// or is dimensionless when there is no value.
+    ///
+    /// Tags are a promise the checker must be able to keep: the value's
+    /// closed tag set has to include the declared ones. A declaration with
+    /// no value is an input, and its tags are taken on trust.
     fn binding_type(
         &mut self,
-        ann_span: Span,
-        declared: Option<TensorType>,
+        ty: &TypeExpr,
+        declared: Option<Declared>,
         found: Option<(&Expr, Ty)>,
     ) -> Ty {
         let Some(declared) = declared else {
             return found.map_or(Ty::Unknown, |(_, t)| t);
         };
+        let Declared {
+            ty: tensor,
+            dim,
+            written,
+            unit_span,
+        } = declared;
+        let declared_dim = dim.unwrap_or(Dimension::DIMENSIONLESS);
         let Some((value, found)) = found else {
-            return Ty::value(Dimension::DIMENSIONLESS, declared);
+            return Ty::value(declared_dim, tensor);
         };
         let v = match found {
             Ty::Value(v) => v,
@@ -473,25 +729,78 @@ impl<'s> Checker<'s> {
                 self.error(
                     Diagnostic::error("expected a number, found Bool", value.span)
                         .with_label("this is Bool")
-                        .with_secondary(ann_span, "expected because of this annotation")
+                        .with_secondary(ty.span, "expected because of this annotation")
                         .with_note("v0.1 has no truthiness: a Bool is never a number"),
                 );
-                return Ty::value(Dimension::DIMENSIONLESS, declared);
+                return Ty::value(declared_dim, tensor);
             }
-            Ty::Unknown => return Ty::value(Dimension::DIMENSIONLESS, declared),
-        };
-        match self.env.shapes.unify(declared.shape(), v.ty.shape()) {
-            Ok(()) => Ty::value(v.dim, declared),
-            Err(e) => {
-                let label = self.this_is(&v);
+            Ty::Func(sig) => {
                 self.error(
-                    Diagnostic::error(format!("mismatched shapes: {e}"), value.span)
-                        .with_label(label)
-                        .with_secondary(ann_span, "expected because of this annotation"),
+                    Diagnostic::error(
+                        format!("expected a number, found function `{}`", quote(sig.name())),
+                        value.span,
+                    )
+                    .with_label("this is a function")
+                    .with_secondary(ty.span, "expected because of this annotation"),
                 );
-                Ty::value(v.dim, declared)
+                return Ty::value(declared_dim, tensor);
+            }
+            Ty::Unknown => return Ty::value(declared_dim, tensor),
+        };
+        if let Err(e) = self.env.shapes.unify(tensor.shape(), v.ty.shape()) {
+            let label = self.this_is(&v);
+            self.error(
+                Diagnostic::error(format!("mismatched shapes: {e}"), value.span)
+                    .with_label(label)
+                    .with_secondary(ty.span, "expected because of this annotation"),
+            );
+        }
+        if let (Some(want), Some(unit)) = (dim, unit_span) {
+            if want != v.dim {
+                self.error(
+                    Diagnostic::error(
+                        format!("expected {}, found {}", describe(&want), describe(&v.dim)),
+                        value.span,
+                    )
+                    .with_label(format!("this is {}", describe(&v.dim)))
+                    .with_secondary(
+                        unit,
+                        format!("expected {} because of this unit", describe(&want)),
+                    ),
+                );
             }
         }
+        // The first property the user wrote that the value isn't known to
+        // have (the closure adds implied ones, which they didn't write).
+        let missing = written.iter().find(|t| !v.ty.tags().closure().contains(*t));
+        if let Some(tag) = missing {
+            let label = self.this_is(&v);
+            let subject = self.quoted(value.span);
+            let mut d = Diagnostic::error(
+                format!("`{subject}` is not known to be {}", tag.name()),
+                value.span,
+            )
+            .with_label(label)
+            .with_secondary(ty.span, "expected because of this annotation")
+            .with_note(
+                "the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it",
+            );
+            d = match &value.kind {
+                ExprKind::Name(_) => {
+                    let shape = self.env.shapes.apply(v.ty.shape());
+                    d.with_help(format!(
+                        "if `{subject}` is an input with this property, declare it that way where it is defined: `{subject}: {} {shape}`",
+                        tag.name()
+                    ))
+                }
+                _ => d.with_help(format!(
+                    "declare the {} property on an input the value is computed from",
+                    tag.name()
+                )),
+            };
+            self.error(d);
+        }
+        Ty::value(dim.unwrap_or(v.dim), tensor)
     }
 
     /// Types every expression inside `[...]`, slice bounds included.
@@ -546,10 +855,15 @@ impl<'s> Checker<'s> {
     /// requires the result to keep `x`'s type (dimension, shape, and tags).
     /// `x` keeps its type either way.
     fn compound_assign(&mut self, id: &Ident, op: CompoundOp, op_span: Span, value: &Expr) {
+        if self.reject_captured_update(id, op, op_span) {
+            self.expr(value);
+            return;
+        }
         let name_expr = Expr {
             kind: ExprKind::Name(*id),
             span: id.span,
         };
+        self.warn_if_shadowing(id);
         // Silent lookup: typing `whole` below reports an undefined name once.
         let declared = self.env.get(self.ident(id)).unwrap_or(Ty::Unknown);
         let whole = Expr {
@@ -627,77 +941,168 @@ impl<'s> Checker<'s> {
         }
     }
 
-    /// Reads a shape annotation: `Vector[n]`, `Matrix[m, n]`, or
-    /// `Tensor[d1, d2, ...]`, where each dimension is an integer literal or
-    /// a name (a shape variable).
-    fn annotation(&mut self, ty: &Expr) -> Option<TensorType> {
+    /// Reads a type annotation (`PositiveDefinite Matrix[N, N] kg`): the
+    /// shape, the tags (validated here, the parser only knows they are
+    /// names), and the element unit. Reports every error it finds and
+    /// returns `None` if there was one, so a bad annotation never cascades.
+    pub(crate) fn annotation(&mut self, ty: &TypeExpr) -> Option<Declared> {
         self.shadow_reported.clear();
-        const NOTE: &str =
-            "v0.1 annotations are `Vector[n]`, `Matrix[m, n]`, and `Tensor[d1, d2, ...]`";
-        let ExprKind::Index { base, items } = &ty.kind else {
-            self.error(
-                Diagnostic::error(
-                    format!("unsupported type annotation `{}`", self.quoted(ty.span)),
-                    ty.span,
-                )
-                .with_note(NOTE),
-            );
-            return None;
-        };
-        let kind = match &base.kind {
-            ExprKind::Name(id) => self.ident(id),
-            _ => "",
-        };
-        let want = match kind {
-            "Vector" => Some(1),
-            "Matrix" => Some(2),
-            "Tensor" => None,
-            _ => {
-                self.error(
-                    Diagnostic::error(
-                        format!("unsupported type annotation `{}`", self.quoted(ty.span)),
-                        base.span,
-                    )
-                    .with_note(NOTE),
-                );
-                return None;
-            }
-        };
-        if let Some(n) = want {
-            if items.len() != n {
-                self.error(Diagnostic::error(
-                    format!(
-                        "`{kind}` takes {n} dimension{}, found {}",
-                        if n == 1 { "" } else { "s" },
-                        items.len()
-                    ),
-                    ty.span,
-                ));
-                return None;
-            }
-        }
-        let mut dims = Vec::with_capacity(items.len());
         let mut ok = true;
-        for item in items {
-            let Some(ix) = item.as_expr() else {
-                self.error(
-                    Diagnostic::error("a shape dimension cannot be a slice", item.span())
-                        .with_note(NOTE),
-                );
-                ok = false;
-                continue;
-            };
-            match self.shape_dim(ix) {
-                Some(d) => dims.push(d),
-                None => ok = false,
+        let shape = match &ty.shape {
+            None => Shape::scalar(),
+            Some(ann) => {
+                let want = match ann.kind {
+                    ShapeKind::Scalar => Some(0),
+                    ShapeKind::Vector => Some(1),
+                    ShapeKind::Matrix => Some(2),
+                    ShapeKind::Tensor => None,
+                };
+                if want.is_some_and(|n| n != ann.dims.len()) {
+                    let (kind, n) = (ann.kind.name(), want.unwrap_or(0));
+                    self.error(Diagnostic::error(
+                        format!(
+                            "`{kind}` takes {n} dimension{}, found {}",
+                            if n == 1 { "" } else { "s" },
+                            ann.dims.len()
+                        ),
+                        ann.span,
+                    ));
+                    ok = false;
+                }
+                let mut dims = Vec::with_capacity(ann.dims.len());
+                for d in &ann.dims {
+                    match self.shape_dim(d) {
+                        Some(d) => dims.push(d),
+                        None => ok = false,
+                    }
+                }
+                Shape::new(dims)
+            }
+        };
+        let mut tags = TagSet::EMPTY;
+        for id in &ty.tags {
+            match Tag::from_name(self.ident(id)) {
+                Some(t) => tags = tags.with(t),
+                None => {
+                    self.unknown_tag(id, ty);
+                    ok = false;
+                }
             }
         }
-        ok.then(|| TensorType::untagged(Shape::new(dims)))
+        let dim = match &ty.unit {
+            Some(u) => {
+                let d = self.annotation_unit(u, ty);
+                ok &= d.is_some();
+                d
+            }
+            None => None,
+        };
+        if !ok {
+            return None;
+        }
+        match TensorType::tagged(&mut self.env.shapes, shape, tags) {
+            Ok(t) => Some(Declared {
+                ty: t,
+                dim,
+                written: tags,
+                unit_span: ty.unit.as_ref().map(UnitExpr::span),
+            }),
+            Err(e) => {
+                self.error(
+                    Diagnostic::error(e.to_string(), ty.span)
+                        .with_label("matrix properties apply to square matrices only")
+                        .with_help(
+                            "declare a square matrix, e.g. `Symmetric Matrix[N, N]` or `Diagonal Matrix[3, 3]`",
+                        ),
+                );
+                None
+            }
+        }
     }
 
-    fn shape_dim(&mut self, ix: &Expr) -> Option<ShapeDim> {
-        match &strip_parens(ix).kind {
-            ExprKind::Literal(Literal::Int(span)) => match self.text(*span).parse::<u64>() {
+    /// `PositveDefinite Matrix[3, 3]`: a capitalized name before the shape
+    /// that is not a matrix property.
+    fn unknown_tag(&mut self, id: &Ident, ty: &TypeExpr) {
+        let name = self.ident(id);
+        let mut d = Diagnostic::error(
+            format!("unknown matrix property `{}`", quote(name)),
+            id.span,
+        )
+        .with_label("not a matrix property");
+        let known = || Tag::ALL.map(|t| t.name()).join(", ");
+        match suggest_tag(name) {
+            Some(t) => d = d.with_help(format!("did you mean `{}`?", t.name())),
+            // `x: N m`, `x: Pa s`: the parser reads a capitalized name
+            // followed by another name as a matrix property, so a unit
+            // written with a space lands here.
+            None if lookup(name).is_some() && ty.shape.is_none() => {
+                let rest = ty
+                    .unit
+                    .as_ref()
+                    .map_or(Cow::Borrowed("…"), |u| self.quoted(u.span()));
+                d = d.with_help(format!(
+                    "`{}` is a unit; compound units are written with `*` and no spaces: `{}*{rest}`",
+                    quote(name),
+                    quote(name),
+                ));
+            }
+            None => d = d.with_help(format!("the matrix properties are {}", known())),
+        }
+        self.error(d);
+    }
+
+    /// The unit of an annotation. A capitalized name that is not a unit but
+    /// is (or is close to) a matrix property is a property written after
+    /// the shape (`Matrix[3, 3] PositiveDefinite`): the parser can't tell,
+    /// having no tag table, so the explanation is here.
+    fn annotation_unit(&mut self, u: &UnitExpr, ty: &TypeExpr) -> Option<Dimension> {
+        if let UnitExpr::Name(id) = u {
+            let name = self.ident(id);
+            let exact = Tag::from_name(name);
+            if lookup(name).is_none() && (exact.is_some() || suggest_tag(name).is_some()) {
+                let tag = exact.or_else(|| suggest_tag(name)).map_or("", Tag::name);
+                let mut written: Vec<Cow<'_, str>> =
+                    ty.tags.iter().map(|t| self.quoted(t.span)).collect();
+                written.push(Cow::Borrowed(tag));
+                let words = written.join(" ");
+                let (message, help) = match &ty.shape {
+                    Some(shape) if shape.kind != ShapeKind::Scalar => (
+                        if exact.is_some() {
+                            format!(
+                                "matrix property `{}` must come before the shape",
+                                quote(name)
+                            )
+                        } else {
+                            format!("unknown matrix property `{}`", quote(name))
+                        },
+                        format!(
+                            "put matrix properties before the shape: `{words} {}`",
+                            self.quoted(shape.span)
+                        ),
+                    ),
+                    _ => (
+                        if exact.is_some() {
+                            format!("matrix property `{}` needs a shape", quote(name))
+                        } else {
+                            format!("unknown matrix property `{}`", quote(name))
+                        },
+                        format!("write a square matrix type: `{words} Matrix[N, N]`"),
+                    ),
+                };
+                let mut d = Diagnostic::error(message, id.span).with_help(help);
+                if let Some(shape) = &ty.shape {
+                    d = d.with_secondary(shape.span, "the shape");
+                }
+                self.error(d);
+                return None;
+            }
+        }
+        self.unit(u)
+    }
+
+    fn shape_dim(&mut self, dim: &DimExpr) -> Option<ShapeDim> {
+        match dim {
+            DimExpr::Int(span) => match self.text(*span).parse::<u64>() {
                 Ok(n) => Some(ShapeDim::Known(n)),
                 Err(_) => {
                     self.error(Diagnostic::error(
@@ -707,9 +1112,11 @@ impl<'s> Checker<'s> {
                     None
                 }
             },
-            ExprKind::Name(id) => {
+            DimExpr::Name(id) => {
                 let name = self.ident(id);
-                if self.env.names.contains_key(name) {
+                // A predefined constant nobody has rebound is not a value the
+                // program wrote, so `Matrix[G, G]` still means a size variable.
+                if self.env.names.contains_key(name) && !self.env.prelude.contains(name) {
                     if self.shadow_reported.iter().any(|n| n == name) {
                         return None; // one error per name per annotation
                     }
@@ -731,36 +1138,10 @@ impl<'s> Checker<'s> {
                 }
                 Some(ShapeDim::Var(self.env.shape_var(name)))
             }
-            ExprKind::Binary {
-                op: BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Pow,
-                ..
-            } => {
-                self.error(
-                    Diagnostic::error(
-                        format!(
-                            "shape arithmetic like `{}` is not supported in v0.1",
-                            self.quoted(ix.span)
-                        ),
-                        ix.span,
-                    )
-                    .with_note("v0.1 shapes are equality constraints only"),
-                );
-                None
-            }
-            _ => {
-                self.error(Diagnostic::error(
-                    format!(
-                        "a shape dimension must be a non-negative integer or a name, found `{}`",
-                        self.quoted(ix.span)
-                    ),
-                    ix.span,
-                ));
-                None
-            }
         }
     }
 
-    fn expr(&mut self, e: &Expr) -> Ty {
+    pub(crate) fn expr(&mut self, e: &Expr) -> Ty {
         match &e.kind {
             ExprKind::Literal(lit) => match lit {
                 Literal::Int(_) | Literal::Float(_) => Ty::scalar(Dimension::DIMENSIONLESS),
@@ -783,18 +1164,7 @@ impl<'s> Checker<'s> {
                 let name = self.ident(id);
                 match self.env.get(name) {
                     Some(t) => t,
-                    None => {
-                        let mut d = Diagnostic::error(
-                            format!("cannot find `{}` in this scope", quote(name)),
-                            id.span,
-                        )
-                        .with_label("not defined");
-                        if matches!(name, "True" | "False") {
-                            d = d.with_help("Sky writes booleans as `true`/`false`");
-                        }
-                        self.error(d);
-                        Ty::Unknown
-                    }
+                    None => self.undefined_name(name, id.span),
                 }
             }
             ExprKind::Paren(inner) => self.expr(inner),
@@ -831,11 +1201,15 @@ impl<'s> Checker<'s> {
                     let t = self.expr(arg);
                     return self.invert(t, callee.span, arg.span);
                 }
-                self.expr(callee);
-                for a in args {
-                    self.expr(a);
+                if self.is_print(callee) {
+                    // The builtin: any arguments, no result to use.
+                    for a in args {
+                        self.expr(a);
+                    }
+                    return Ty::Unknown;
                 }
-                Ty::Unknown
+                let callee_ty = self.expr(callee);
+                self.call(callee_ty, callee, args, e.span)
             }
             ExprKind::Index { base, items } => {
                 self.expr(base);
@@ -846,6 +1220,7 @@ impl<'s> Checker<'s> {
                 self.expr(base);
                 Ty::Unknown
             }
+            ExprKind::IfElse { then, cond, else_ } => self.if_else(then, cond, else_),
             ExprKind::Binary {
                 op,
                 op_span,
@@ -875,6 +1250,14 @@ impl<'s> Checker<'s> {
         }
     }
 
+    /// The builtin `print(...)`: callee `print` while the program has not
+    /// bound that name itself (a user's own `print` shadows it, as with
+    /// `inv`). Without this the callee would be an undefined name.
+    fn is_print(&self, callee: &Expr) -> bool {
+        matches!(&callee.kind, ExprKind::Name(id)
+            if self.ident(id) == "print" && self.env.get("print").is_none())
+    }
+
     fn unit(&mut self, u: &UnitExpr) -> Option<Dimension> {
         let r = match u {
             UnitExpr::Name(id) => {
@@ -884,8 +1267,14 @@ impl<'s> Checker<'s> {
                     None => {
                         let mut d =
                             Diagnostic::error(format!("unknown unit `{}`", quote(name)), id.span);
-                        if let Some(s) = unit_suggestion(name) {
-                            d = d.with_help(format!("did you mean `{s}`?"));
+                        if lookup_constant(name).is_some() {
+                            // `10 c`: a constant is a value, so it multiplies.
+                            let q = quote(name);
+                            d = d.with_help(format!(
+                                "`{q}` is a physical constant, not a unit; multiply by it: `x * {q}`"
+                            ));
+                        } else if let Some(s) = suggest_unit(name) {
+                            d = d.with_help(format!("did you mean `{}`?", quote(&s)));
                         }
                         self.error(d);
                         None
@@ -1041,38 +1430,8 @@ impl<'s> Checker<'s> {
         }
     }
 
-    /// A constant exponent: an integer literal, possibly negated or
-    /// parenthesized, or a quotient of two such (`(1/2)`).
     fn const_exponent(&self, e: &Expr) -> Option<Rational> {
-        match &e.kind {
-            ExprKind::Literal(Literal::Int(span)) => {
-                self.text(*span).parse::<i64>().ok().map(Rational::integer)
-            }
-            ExprKind::Paren(inner) => self.const_exponent(inner),
-            ExprKind::Unary {
-                op: UnaryOp::Neg,
-                operand,
-                ..
-            } => self.const_exponent(operand)?.checked_neg().ok(),
-            ExprKind::Unary {
-                op: UnaryOp::Pos,
-                operand,
-                ..
-            } => self.const_exponent(operand),
-            ExprKind::Binary {
-                op: BinaryOp::Div,
-                lhs,
-                rhs,
-                ..
-            } => {
-                let (a, b) = (self.const_exponent(lhs)?, self.const_exponent(rhs)?);
-                if b.is_zero() {
-                    return None;
-                }
-                a.checked_div(b).ok()
-            }
-            _ => None,
-        }
+        const_exponent(self.src, e)
     }
 
     fn pow(&mut self, op_span: Span, base: &Expr, exp: &Expr) -> Ty {
@@ -1241,7 +1600,18 @@ impl<'s> Checker<'s> {
         match (lv.is_scalar(), rv.is_scalar()) {
             (true, true) => {}
             (false, false) => {
-                if let Err(e) = elementwise(&mut self.env.shapes, &lv.ty, &rv.ty) {
+                // Shape variables are solved only if the whole operation
+                // type-checks. When the dimensions differ the operation fails
+                // below (after the shape error, which has priority), so probe
+                // on a copy then; otherwise commit.
+                let mut probe;
+                let shapes = if lv.dim == rv.dim {
+                    &mut self.env.shapes
+                } else {
+                    probe = self.env.shapes.clone();
+                    &mut probe
+                };
+                if let Err(e) = elementwise(shapes, &lv.ty, &rv.ty) {
                     let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
                     self.error(
                         Diagnostic::error(e.to_string(), op_span)
@@ -1387,8 +1757,8 @@ fn op_sym(op: UnaryOp) -> &'static str {
 
 /// A zero of dimension `d` written as Sky source (`0`, `0 m`, `0 kg*m/s^2`),
 /// for help text. Uses a coherent table unit when one has exactly this
-/// dimension, otherwise composes m, kg, s and K. `None` if `d` involves a
-/// base dimension without a table unit (current, amount, luminosity).
+/// dimension, otherwise composes the SI base units (m, kg, s, A, K, mol, cd).
+/// `None` only if an exponent cannot be negated.
 fn zero_of(d: &Dimension) -> Option<String> {
     use sky_units::{BaseDim, UNITS};
     if d.is_dimensionless() {
@@ -1398,11 +1768,13 @@ fn zero_of(d: &Dimension) -> Option<String> {
         return Some(format!("0 {}", u.name));
     }
     let symbol = |b: BaseDim| match b {
-        BaseDim::Length => Some("m"),
-        BaseDim::Mass => Some("kg"),
-        BaseDim::Time => Some("s"),
-        BaseDim::Temperature => Some("K"),
-        _ => None,
+        BaseDim::Length => "m",
+        BaseDim::Mass => "kg",
+        BaseDim::Time => "s",
+        BaseDim::Temperature => "K",
+        BaseDim::Current => "A",
+        BaseDim::Amount => "mol",
+        BaseDim::Luminosity => "cd",
     };
     let power = |sym: &str, e: Rational| {
         if e == Rational::ONE {
@@ -1429,7 +1801,7 @@ fn zero_of(d: &Dimension) -> Option<String> {
         if e.is_zero() {
             continue;
         }
-        let sym = symbol(b)?;
+        let sym = symbol(b);
         if e.numer() > 0 {
             pos.push(power(sym, e));
         } else {
@@ -1452,22 +1824,43 @@ fn zero_of(d: &Dimension) -> Option<String> {
     Some(format!("0 {unit}"))
 }
 
-/// Full names people are likely to write, mapped to the table symbol. Only
-/// used for `help:` text; the unit table itself has no aliases in v0.1.
-fn unit_suggestion(name: &str) -> Option<&'static str> {
-    Some(match name {
-        "meter" | "meters" | "metre" | "metres" => "m",
-        "kilometer" | "kilometers" | "kilometre" | "kilometres" => "km",
-        "second" | "seconds" | "sec" => "s",
-        "minute" | "minutes" => "min",
-        "hour" | "hours" | "hr" => "h",
-        "kilogram" | "kilograms" => "kg",
-        "kelvin" => "K",
-        "joule" | "joules" => "J",
-        "parsec" | "parsecs" => "pc",
-        "radian" | "radians" => "rad",
-        _ => return None,
-    })
+/// The matrix property `name` is probably a misspelling or abbreviation of: within two
+/// edits (and a third of its length, so short unit names like `Pa` never
+/// match), ignoring case.
+fn suggest_tag(name: &str) -> Option<Tag> {
+    let lower: Vec<char> = name.chars().flat_map(char::to_lowercase).collect();
+    if lower.len() > 32 {
+        return None;
+    }
+    Tag::ALL
+        .into_iter()
+        .map(|t| {
+            let want: Vec<char> = t.name().chars().flat_map(char::to_lowercase).collect();
+            // `Positive` for `PositiveDefinite`: an abbreviation counts as
+            // an exact hit, however many letters are missing.
+            if lower.len() >= 4 && want.starts_with(&lower) {
+                return (0, t);
+            }
+            (edit_distance(&lower, &want), t)
+        })
+        .filter(|&(d, _)| d <= 2 && d <= lower.len() / 3)
+        .min_by_key(|&(d, _)| d)
+        .map(|(_, t)| t)
+}
+
+/// Levenshtein distance between two short strings.
+fn edit_distance(a: &[char], b: &[char]) -> usize {
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut diag = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let up = row[j + 1];
+            row[j + 1] = (diag + usize::from(ca != cb)).min(up + 1).min(row[j] + 1);
+            diag = up;
+        }
+    }
+    row[b.len()]
 }
 
 #[cfg(test)]
@@ -1504,6 +1897,56 @@ mod tests {
         env.bind_array("b", Shape::vector(3u64), TagSet::EMPTY, Dimension::LENGTH)
             .unwrap();
         env
+    }
+
+    #[test]
+    fn decimal_exponents_are_exact_fractions() {
+        for (text, num, den) in [
+            ("0.5", 1, 2),
+            ("1.5", 3, 2),
+            ("0.25", 1, 4),
+            ("2.0", 2, 1),
+            ("2.500", 5, 2),
+            ("0.1", 1, 10),
+            ("10.0", 10, 1),
+            ("0.0", 0, 1),
+            ("9223372036854775807.0", i64::MAX, 1),
+            ("0.000000000000000000", 0, 1),
+        ] {
+            assert_eq!(exact_decimal(text), Some(Rational::new(num, den)), "{text}");
+        }
+        for text in [
+            "1e-1",
+            "1.5e3",
+            "1e5",
+            "1_0.5",
+            "0.5_5",
+            "9223372036854775808.0", // does not fit i64
+            "0.0000000000000000001", // denominator 10^19 does not fit i64
+            "1.0000000000000000001",
+            "5",
+            ".5",
+            "-0.5",
+        ] {
+            assert_eq!(exact_decimal(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn decimal_exponent_powers_a_unit() {
+        let c = check_src("x = (9 m)^0.5\ny = (8 m)^1e-1\n", Env::new());
+        let msgs: Vec<_> = c.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(
+            msgs,
+            ["the exponent must be a constant number when the base has a unit"]
+        );
+        let Some(Ty::Value(x)) = c.env.get("x") else {
+            panic!("x is a value");
+        };
+        assert_eq!(
+            x.dim,
+            Dimension::LENGTH.pow_rat(Rational::new(1, 2)).unwrap()
+        );
     }
 
     #[test]
@@ -1702,6 +2145,41 @@ mod tests {
         assert_eq!(c.diagnostics[0].primary.span, span_of(src, "B"));
         // The annotation wins for the shape; the value gives the unit.
         assert_eq!(c.env.get("A").unwrap().to_string(), "Matrix[3,4] [M]");
+    }
+
+    #[test]
+    fn a_declaration_without_a_value_binds_tags_shape_and_unit() {
+        let c = check_src("A: PositiveDefinite Matrix[N, N] kg\n", Env::new());
+        assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
+        assert_eq!(
+            c.env.get("A").unwrap().to_string(),
+            "Matrix[N,N] {Symmetric, PositiveDefinite} [M]"
+        );
+    }
+
+    #[test]
+    fn a_declared_unit_wins_over_the_value_and_a_mismatch_is_reported() {
+        let src = "m: kg = 3 s\n";
+        let c = check_src(src, Env::new());
+        assert_eq!(c.diagnostics.len(), 1, "{:#?}", c.diagnostics);
+        assert_eq!(c.diagnostics[0].message, "expected mass, found time");
+        assert_eq!(c.diagnostics[0].primary.span, span_of(src, "3 s"));
+        assert_eq!(c.env.get("m").unwrap().to_string(), "Scalar [M]");
+    }
+
+    #[test]
+    fn tag_suggestions_cover_typos_and_abbreviations_but_not_short_units() {
+        for (typo, tag) in [
+            ("PositveDefinite", Tag::PositiveDefinite),
+            ("Symetric", Tag::Symmetric),
+            ("Positive", Tag::PositiveDefinite),
+            ("Diagonal", Tag::Diagonal),
+        ] {
+            assert_eq!(suggest_tag(typo), Some(tag), "{typo}");
+        }
+        for name in ["N", "Pa", "Hz", "Foo", "Matrix", ""] {
+            assert_eq!(suggest_tag(name), None, "{name}");
+        }
     }
 
     #[test]

@@ -1,0 +1,36 @@
+# `return` and the function's return type.
+return 1
+
+def mixed(x):
+    if x > 0 m:
+        return 1 m
+    return 2 s
+
+def bare_and_value(x):
+    if x > 0 m:
+        return
+    return 1 m
+
+def value_and_bare(x):
+    if x > 0 m:
+        return 1 m
+    return
+
+def falls_off(x):
+    if x > 0 m:
+        return 1 m
+
+def declared(x) -> Vector[3]:
+    return x
+
+def declared_bad(x: Vector[3]) -> Vector[4]:
+    return x
+
+def declared_bool(x: Vector[3]) -> Vector[3]:
+    return true
+
+def declared_bare() -> Vector[3]:
+    return
+
+def declared_falls_off() -> Vector[3]:
+    pass

@@ -1,0 +1,18 @@
+crates/sky-ast/tests/ui/err_stmt_trailing.sky:2:14: error: unexpected integer literal `2` after an expression; expected end of line
+  |
+2 |     return 1 2
+  |              ^
+  |     -------- previous expression
+  = help: two expressions cannot be written side by side; is an operator missing?
+
+crates/sky-ast/tests/ui/err_stmt_trailing.sky:3:10: error: expected end of line after `pass`, found name `x`
+  |
+3 |     pass x
+  |          ^
+  |     ---- this statement takes no value
+
+crates/sky-ast/tests/ui/err_stmt_trailing.sky:4:11: error: expected end of line after `break`, found name `y`
+  |
+4 |     break y
+  |           ^
+  |     ----- this statement takes no value

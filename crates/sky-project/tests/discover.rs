@@ -2,7 +2,8 @@
 
 mod common;
 
-use std::os::unix::fs::symlink;
+use std::fs;
+use std::os::unix::fs::{symlink, PermissionsExt};
 
 use common::{me, my_uid, FakeIdentity, TempDir};
 use sky_project::{discover, discover_opened, open_entry_file, DiscoverError, Project};
@@ -314,4 +315,97 @@ fn display_escapes_terminal_unsafe_characters_in_paths() {
     let shown = discover(&f, &id).unwrap_err().to_string();
     assert!(!shown.contains('\u{1b}'), "{shown:?}");
     assert!(shown.contains("\\u{001B}"), "{shown:?}");
+}
+
+fn chmod(p: &std::path::Path, mode: u32) {
+    fs::set_permissions(p, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+fn home_id(t: &TempDir) -> FakeIdentity {
+    FakeIdentity {
+        home: Some(t.path().join("home")),
+        ..me(t)
+    }
+}
+
+#[test]
+fn world_writable_sky_toml_is_refused() {
+    let t = TempDir::new("ww-manifest");
+    let manifest = t.file("home/proj/sky.toml", "");
+    let f = t.file("home/proj/main.sky", "");
+    chmod(&manifest, 0o666);
+    let err = discover(&f, &home_id(&t)).unwrap_err();
+    match &err {
+        DiscoverError::WorldWritable {
+            manifest: m,
+            path,
+            mode,
+        } => {
+            assert_eq!(m, &manifest);
+            assert_eq!(path, &manifest);
+            assert_eq!(*mode, 0o666);
+        }
+        other => panic!("expected WorldWritable, got {other:?}"),
+    }
+    let m = manifest.display();
+    let expected = format!(
+        "\
+{m}:1:1: error: refusing to use project root: {m} is writable by every user (mode 0666)
+  |
+1 |
+  | ^
+  = note: any user could replace a world-writable sky.toml, or add one to a world-writable directory without the sticky bit, and redirect imports to code you did not write
+  = help: remove write permission for others: chmod o-w {m}
+"
+    );
+    assert_eq!(
+        err.to_diagnostic().render_to_string(&err.source_file()),
+        expected
+    );
+}
+
+#[test]
+fn a_sticky_bit_does_not_excuse_a_world_writable_sky_toml() {
+    let t = TempDir::new("ww-manifest-sticky");
+    let manifest = t.file("home/proj/sky.toml", "");
+    let f = t.file("home/proj/main.sky", "");
+    chmod(&manifest, 0o1666);
+    let r = discover(&f, &home_id(&t));
+    assert!(
+        matches!(r, Err(DiscoverError::WorldWritable { .. })),
+        "{r:?}"
+    );
+}
+
+#[test]
+fn world_writable_root_directory_is_refused() {
+    let t = TempDir::new("ww-root");
+    t.file("home/proj/sky.toml", "");
+    let f = t.file("home/proj/main.sky", "");
+    let root = t.path().join("home/proj");
+    chmod(&root, 0o777);
+    let r = discover(&f, &home_id(&t));
+    chmod(&root, 0o755);
+    match r {
+        Err(DiscoverError::WorldWritable { path, mode, .. }) => {
+            assert_eq!(path, root);
+            assert_eq!(mode, 0o777);
+        }
+        other => panic!("expected WorldWritable, got {other:?}"),
+    }
+}
+
+#[test]
+fn sticky_world_writable_root_and_group_writable_files_are_fine() {
+    let t = TempDir::new("ww-ok");
+    let manifest = t.file("home/proj/sky.toml", "");
+    let f = t.file("home/proj/main.sky", "");
+    let root = t.path().join("home/proj");
+    // Same rule as the import walk: sticky directories and group-writable
+    // entries are allowed.
+    chmod(&root, 0o1777);
+    chmod(&manifest, 0o664);
+    let r = discover(&f, &home_id(&t));
+    chmod(&root, 0o755);
+    assert_eq!(r.unwrap().project, rooted(&root));
 }

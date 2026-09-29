@@ -1,0 +1,6 @@
+tests/ui/types/ok_cholesky_declared.sky:5:5: note: `A⁻¹ @ b` is rewritten to a Cholesky solve
+  |
+5 | x = A⁻¹ @ b
+  |     ^^^^^^^
+  |     - positive definite
+  = note: rewrite `A⁻¹ @ b` to a Cholesky solve: A is Matrix[3,3] and PositiveDefinite, b is Vector[3]. Factor A = L·Lᵀ (L lower-triangular), solve L·y = b, then Lᵀ·x = y. x = A⁻¹·b is Vector[3], and A⁻¹ is never formed.

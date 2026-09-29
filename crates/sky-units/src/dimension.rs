@@ -127,6 +127,24 @@ impl Dimension {
     pub const PRESSURE: Dimension = Dimension::from_ints([-1, 1, -2, 0, 0, 0, 0]);
     /// L²·M·T⁻³ (the watt, `W`).
     pub const POWER: Dimension = Dimension::from_ints([2, 1, -3, 0, 0, 0, 0]);
+    /// L³ (the litre, `L`, is a volume; not the base dimension L, length).
+    pub const VOLUME: Dimension = Dimension::from_ints([3, 0, 0, 0, 0, 0, 0]);
+    /// T·I (the coulomb, `C`).
+    pub const CHARGE: Dimension = Dimension::from_ints([0, 0, 1, 1, 0, 0, 0]);
+    /// L²·M·T⁻³·I⁻¹ (the volt, `V`).
+    pub const VOLTAGE: Dimension = Dimension::from_ints([2, 1, -3, -1, 0, 0, 0]);
+    /// L²·M·T⁻³·I⁻² (the ohm, `Ω`).
+    pub const RESISTANCE: Dimension = Dimension::from_ints([2, 1, -3, -2, 0, 0, 0]);
+    /// L⁻²·M⁻¹·T³·I² (the siemens, `S`).
+    pub const CONDUCTANCE: Dimension = Dimension::from_ints([-2, -1, 3, 2, 0, 0, 0]);
+    /// L⁻²·M⁻¹·T⁴·I² (the farad, `F`).
+    pub const CAPACITANCE: Dimension = Dimension::from_ints([-2, -1, 4, 2, 0, 0, 0]);
+    /// L²·M·T⁻²·I⁻¹ (the weber, `Wb`).
+    pub const MAGNETIC_FLUX: Dimension = Dimension::from_ints([2, 1, -2, -1, 0, 0, 0]);
+    /// M·T⁻²·I⁻¹ (the tesla, `T`; not the base dimension T, time).
+    pub const MAGNETIC_FLUX_DENSITY: Dimension = Dimension::from_ints([0, 1, -2, -1, 0, 0, 0]);
+    /// L²·M·T⁻²·I⁻² (the henry, `H`).
+    pub const INDUCTANCE: Dimension = Dimension::from_ints([2, 1, -2, -2, 0, 0, 0]);
 
     /// A dimension with integer exponents, in [`BaseDim::ALL`] order.
     pub const fn from_ints(exps: [i64; 7]) -> Self {
@@ -224,6 +242,15 @@ static NAMES: &[(Dimension, &str)] = &[
     (Dimension::FORCE, "force"),
     (Dimension::PRESSURE, "pressure"),
     (Dimension::POWER, "power"),
+    (Dimension::VOLUME, "volume"),
+    (Dimension::CHARGE, "electric charge"),
+    (Dimension::VOLTAGE, "voltage"),
+    (Dimension::RESISTANCE, "electrical resistance"),
+    (Dimension::CONDUCTANCE, "electrical conductance"),
+    (Dimension::CAPACITANCE, "capacitance"),
+    (Dimension::MAGNETIC_FLUX, "magnetic flux"),
+    (Dimension::MAGNETIC_FLUX_DENSITY, "magnetic flux density"),
+    (Dimension::INDUCTANCE, "inductance"),
 ];
 
 fn expect_exp(r: Result<Dimension, DimError>) -> Dimension {

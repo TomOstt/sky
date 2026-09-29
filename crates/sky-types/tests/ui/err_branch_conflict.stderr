@@ -1,0 +1,15 @@
+crates/sky-types/tests/ui/err_branch_conflict.sky:7:5: error: `t` is a length here but a time in the other branch
+  |
+7 |     t = 2 m
+  |     ^ this binding has a different type
+5 |     t = 1 s
+  |     - `t` is a time here
+  = help: give both bindings the same type, or use different names
+
+crates/sky-types/tests/ui/err_branch_conflict.sky:11:5: error: `ok` is a dimensionless number here but a Bool in the other branch
+   |
+11 |     ok = 1
+   |     ^^ this binding has a different type
+ 9 |     ok = true
+   |     -- `ok` is a Bool here
+   = help: give both bindings the same type, or use different names

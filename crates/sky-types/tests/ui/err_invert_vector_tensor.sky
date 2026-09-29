@@ -1,4 +1,0 @@
-# env: v: Vector[3]
-# env: T: Tensor[2,2,2]
-w = v⁻¹
-u = T⁻¹

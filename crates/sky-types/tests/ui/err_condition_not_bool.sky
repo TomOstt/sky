@@ -1,0 +1,12 @@
+# Conditions must be a Bool of shape `()`: no truthiness, same help as
+# `and`/`or`/`not`.
+v: Vector[3] m/s
+x = 2 m
+if x:
+    pass
+elif 3:
+    pass
+while v:
+    pass
+y = 1 if x else 2
+z = 1 if x > 0 m else 2

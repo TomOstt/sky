@@ -4,6 +4,7 @@
 //!
 //! | level | operators                      | assoc |
 //! |-------|--------------------------------|-------|
+//! | 0     | `a if c else b`                | right (in the `else` arm); `c` is an `or` expression |
 //! | 1     | `or`                           | left (one flat `BoolOp` node per run) |
 //! | 2     | `and`                          | left (one flat `BoolOp` node per run) |
 //! | 3     | prefix `not`                   | prefix; not allowed as an operand of a tighter operator (`-not x`) |
@@ -25,6 +26,17 @@ use crate::ast::{BinaryOp, BoolOp, UnaryOp};
 use sky_syntax::{Kw, TokenKind};
 
 /// `and` and `or`, parsed as flat runs (see `ExprKind::BoolOp`).
+/// Binding power of the conditional expression `a if c else b` (level 0):
+/// looser than `or` (2). Only an operand parsed at `min_bp <= CONDITIONAL_BP`
+/// may continue with `if`, so it never appears under any operator. Its
+/// condition is parsed at [`CONDITIONAL_COND_BP`] (an `or` expression, no
+/// nested conditional without parentheses) and its `else` arm at
+/// `CONDITIONAL_BP` again, which makes it right-associative.
+pub const CONDITIONAL_BP: u8 = 1;
+
+/// Minimum binding power of a conditional's condition: `or` and tighter.
+pub const CONDITIONAL_COND_BP: u8 = 2;
+
 pub const BOOL: &[(TokenKind, BoolOp, u8, u8)] = &[
     (TokenKind::Keyword(Kw::Or), BoolOp::Or, 2, 3),
     (TokenKind::Keyword(Kw::And), BoolOp::And, 4, 5),
@@ -102,6 +114,7 @@ mod tests {
         let bool_r = |k| bool_binding_power(k).map(|(_, _, r)| r).unwrap_or(0);
         let or = TokenKind::Keyword(Kw::Or);
         let and = TokenKind::Keyword(Kw::And);
+        assert!(CONDITIONAL_BP < bool_l(or) && CONDITIONAL_COND_BP <= bool_l(or));
         assert!(bool_l(or) < bool_l(and));
         // Left-assoc runs: the right operand stops at the same operator.
         assert!(bool_r(or) > bool_l(or) && bool_r(and) > bool_l(and));

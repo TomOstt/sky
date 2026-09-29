@@ -1,0 +1,4 @@
+# Rebinding a constant is allowed, but the first time warns.
+h = 0.1 s
+h = 0.2 s
+dt = h * 2

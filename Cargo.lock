@@ -153,6 +153,7 @@ version = "0.0.1"
 dependencies = [
  "sky-ast",
  "sky-diag",
+ "sky-interp",
  "sky-project",
  "sky-syntax",
  "sky-types",
@@ -161,12 +162,19 @@ dependencies = [
 [[package]]
 name = "sky-diag"
 version = "0.0.1"
+dependencies = [
+ "unicode-ident",
+]
 
 [[package]]
 name = "sky-interp"
 version = "0.0.1"
 dependencies = [
  "sky-ast",
+ "sky-diag",
+ "sky-syntax",
+ "sky-types",
+ "sky-units",
 ]
 
 [[package]]

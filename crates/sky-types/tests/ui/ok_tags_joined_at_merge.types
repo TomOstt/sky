@@ -1,0 +1,3 @@
+M: Matrix[3,3] {Symmetric} [1]
+P: Matrix[3,3] {Symmetric, PositiveDefinite} [1]
+S: Matrix[3,3] {Symmetric} [1]

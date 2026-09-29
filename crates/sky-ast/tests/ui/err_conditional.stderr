@@ -1,0 +1,12 @@
+crates/sky-ast/tests/ui/err_conditional.sky:1:11: error: expected `else` in the conditional expression, found end of line
+  |
+1 | x = 1 if c
+  |           ^
+  |       -- this `if` needs an `else`
+  = help: a conditional expression has two arms: `1 if c else ...`
+
+crates/sky-ast/tests/ui/err_conditional.sky:3:5: error: expected an expression, found keyword `if`
+  |
+3 | z = if c: 1
+  |     ^^
+  = help: for a value that depends on a condition, write `a if cond else b`

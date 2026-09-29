@@ -1,0 +1,8 @@
+crates/sky-types/tests/ui/err_constant_dimension_mismatch.sky:3:7: error: cannot add energy and mass
+  |
+3 | x = E + 1 kg
+  |       ^ mismatched dimensions
+  |     - energy
+  |         ---- mass
+  = note: both operands of `+` must have the same dimension
+  = help: convert one side, or fix the unit

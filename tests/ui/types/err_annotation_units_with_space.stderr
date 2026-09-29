@@ -1,0 +1,13 @@
+tests/ui/types/err_annotation_units_with_space.sky:3:6: error: unexpected name `m` after the unit `N`
+  |
+3 | a: N m
+  |      ^
+  |    - unit
+  = help: compound units are written with `*` and no spaces: `N*m`
+
+tests/ui/types/err_annotation_units_with_space.sky:4:7: error: unexpected name `s` after the unit `Pa`
+  |
+4 | b: Pa s
+  |       ^
+  |    -- unit
+  = help: compound units are written with `*` and no spaces: `Pa*s`

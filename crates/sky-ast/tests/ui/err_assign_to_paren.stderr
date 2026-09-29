@@ -1,0 +1,6 @@
+crates/sky-ast/tests/ui/err_assign_to_paren.sky:1:1: error: cannot assign to a parenthesized expression `(x)`
+  |
+1 | (x) = 1
+  | ^^^
+  |     - because of this
+  = help: remove the parentheses; only a name (`x`), an index (`A[i]`), or an attribute (`a.b`) can be assigned to

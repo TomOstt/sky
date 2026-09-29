@@ -1,0 +1,4 @@
+tests/ui/lexer/err_plus_space_equals.sky:3:4: error: expected an expression, found `=`
+  |
+3 | a+ =b
+  |    ^

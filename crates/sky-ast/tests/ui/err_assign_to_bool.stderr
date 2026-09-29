@@ -18,3 +18,10 @@ crates/sky-ast/tests/ui/err_assign_to_bool.sky:4:1: error: cannot annotate `true
   | ^^^^
   |     - because of this
   = help: `true` and `false` are Bool literals, not names
+
+crates/sky-ast/tests/ui/err_assign_to_bool.sky:5:1: error: cannot assign to `true`
+  |
+5 | true += 1
+  | ^^^^
+  |      -- because of this
+  = help: `true` and `false` are Bool literals, not names

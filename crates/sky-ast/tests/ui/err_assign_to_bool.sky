@@ -2,3 +2,4 @@
 true = 1
 false = 0
 true: Bool = 1
+true += 1

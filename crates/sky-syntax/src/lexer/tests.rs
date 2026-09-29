@@ -552,6 +552,38 @@ fn operators_without_spaces_use_longest_match() {
 }
 
 #[test]
+fn compound_assignment_operators() {
+    assert_eq!(
+        texts("+= -= *= /= ^= @=\n"),
+        [
+            (PlusAssign, "+="),
+            (MinusAssign, "-="),
+            (StarAssign, "*="),
+            (SlashAssign, "/="),
+            (CaretAssign, "^="),
+            (AtAssign, "@="),
+            (Newline, "\n"),
+            (Eof, ""),
+        ]
+    );
+    // Greedy: the two characters must touch.
+    assert_eq!(line("x+=1\n"), [Ident, PlusAssign, Int]);
+    assert_eq!(line("x^=2\n"), [Ident, CaretAssign, Int]);
+    assert_eq!(line("A@=B\n"), [Ident, AtAssign, Ident]);
+    assert_eq!(line("a+ =b\n"), [Ident, Plus, Assign, Ident]);
+    assert_eq!(line("a + = b\n"), [Ident, Plus, Assign, Ident]);
+    // `=` binds to the operator before it, never to a following `=`.
+    assert_eq!(line("a+==b\n"), [Ident, PlusAssign, Assign, Ident]);
+    assert_eq!(line("a=+b\n"), [Ident, Assign, Plus, Ident]);
+    assert_eq!(line("a==-b\n"), [Ident, Eq, Minus, Ident]);
+    // `->` still wins over `-=` where both could start.
+    assert_eq!(line("f(x)->y\n")[4], Arrow);
+    assert_eq!(line("a-=-b\n"), [Ident, MinusAssign, Minus, Ident]);
+    // `**=` is `*` then `*=`; the parser reports it like `**`.
+    assert_eq!(line("x**=2\n"), [Ident, Star, StarAssign, Int]);
+}
+
+#[test]
 fn glyph_comparisons_map_to_ascii_kinds() {
     assert_eq!(line("a ≤ b"), line("a <= b"));
     assert_eq!(line("a ≥ b"), line("a >= b"));

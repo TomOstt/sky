@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_chained_binding_compound.sky:1:10: error: chained assignment (`=` then `+=`) is not supported
+  |
+1 | x: T = 1 += 2
+  |          ^^
+  |      - first assignment

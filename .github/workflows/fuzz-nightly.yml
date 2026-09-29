@@ -1,0 +1,105 @@
+name: Fuzz nightly
+on:
+  schedule:
+    - cron: "17 1 * * *" # 01:17 UTC, off-peak and not on the hour
+  workflow_dispatch:
+permissions:
+  contents: read
+# Never run two nightly fuzz runs at once; a new one waits for the old one.
+concurrency:
+  group: fuzz-nightly
+  cancel-in-progress: false
+env:
+  # Seconds of fuzzing per target (-max_total_time). Duration is Eng Lead's
+  # call (Tom delegated it); 300 s fits the GitHub Free 2,000-minute budget.
+  # Changing to 600 is this one line.
+  FUZZ_SECONDS: 300
+jobs:
+  # Skip the scheduled run when main hasn't moved since the last successful
+  # scheduled run: fuzzing the same commit again mostly re-covers ground.
+  # Only a *successful* previous run counts, so after a failed or cancelled
+  # night (e.g. a crash) the same commit is fuzzed again the next night.
+  # workflow_dispatch never skips.
+  changed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          skip=false
+          if [ "$EVENT" = schedule ]; then
+            last=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow fuzz-nightly.yml \
+              --branch main --status success --event schedule --limit 1 \
+              --json headSha --jq '.[0].headSha // ""')
+            echo "last successful nightly: ${last:-none}, main: $SHA"
+            if [ "$last" = "$SHA" ]; then skip=true; fi
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    needs: changed
+    if: needs.changed.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every [[bin]] in fuzz/Cargo.toml (`cargo fuzz list`); add new targets here.
+        target: [lex, parse_module]
+    steps:
+      # Same pinned actions, toolchain, and cargo-fuzz version as the `fuzz`
+      # job in ci.yml; keep the two in sync.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: nightly
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        with:
+          tool: cargo-fuzz@0.13.2
+      # The corpus grown on earlier nights lives in its own directory, so the
+      # checked-in seeds in fuzz/corpus/<target> are never overwritten by a
+      # stale cached copy. Each night saves under a new key and restores the
+      # latest one for its target.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: fuzz/nightly-corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+      # Keep ASan. Without it a stack overflow on the worker thread dies with
+      # SIGSEGV and libFuzzer writes no crash file, because libFuzzer supplies
+      # main and Rust's overflow handler is never installed.
+      # --target is explicit because the prebuilt cargo-fuzz is a musl binary
+      # and would otherwise default to the musl target, which ASan rejects.
+      # New inputs go to the first corpus dir (the cached one); the seeds in
+      # the second are read too.
+      # Per-input timeout well under the job limit, so a hang is saved as a timeout-* artifact instead of the job being killed.
+      - env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p "fuzz/nightly-corpus/$TARGET"
+          cargo +nightly fuzz run "$TARGET" --target x86_64-unknown-linux-gnu \
+            "fuzz/nightly-corpus/$TARGET" "fuzz/corpus/$TARGET" \
+            -- -max_total_time="$FUZZ_SECONDS" -timeout=10
+      # Save the grown corpus even when a crash failed the run.
+      - if: always()
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: fuzz/nightly-corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+      # Crash, leak, and timeout inputs; the fuzz step's failure fails the job.
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/

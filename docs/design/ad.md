@@ -8,7 +8,7 @@ AD on SIR sees what an operator-overloading library or a tree-walker cannot: the
 
 ## Forward mode (implemented)
 
-`derivative(m, f, wrt)` builds `df/dx(params...) -> (value, ∂f/∂x)`. Each value `v` gets a tangent `tv = dv/dx` emitted next to it (a dual number spelled out as ops). Tangents that are structurally zero are `None` and cost nothing. An activity analysis (a fixpoint over the function) finds which values depend on `x`, so loop counters and flags carry no tangents.
+`derivative(m, f, wrt)` builds `df/dx(params...) -> (value, ∂f/∂x)`; a function with several results returns its values and then their tangents, so a derivative function (which has two results) can itself be differentiated and higher derivatives work. Each value `v` gets a tangent `tv = dv/dx` emitted next to it (a dual number spelled out as ops). Tangents that are structurally zero are `None` and cost nothing. An activity analysis (a fixpoint over the function) finds which values depend on `x`, so loop counters and flags carry no tangents.
 
 * `if`: both arms are differentiated and yield tangents; the condition does not flow.
 * `while`: a tangent slot beside each active loop-carried value, threaded through `before`, `condition`, `after`, `yield` and the results. No tape is needed: the tangent is computed in the same iteration as the value.

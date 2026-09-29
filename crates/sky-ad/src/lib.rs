@@ -23,7 +23,11 @@
 //! * Functions of any number of parameters; `wrt` picks one. The other
 //!   parameters may be numbers (constants for this derivative) or anything
 //!   else (a Bool flag, say), and are passed through.
-//! * Exactly one result, a scalar number.
+//! * One or more results, each a scalar number. With one result `r` the
+//!   derivative function returns `(r, ∂r/∂x)`; with several it returns
+//!   the values, then their tangents (`(r0, r1, ∂r0/∂x, ∂r1/∂x)`), which
+//!   is what lets a derivative function be differentiated again (a second
+//!   derivative is the derivative of a function that calls `df/dx`).
 //! * Every scalar operation of SIR v1, `if`, `while` and `call`. Array
 //!   operations (`matmul`, `transpose`, `solve`, `array.literal`, `index`,
 //!   `slice`, `zeros`, `identity`, `len`, non-scalar shapes) are errors

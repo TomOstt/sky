@@ -86,6 +86,21 @@ fn recursion_and_calls_between_functions() {
 }
 
 #[test]
+fn a_second_derivative_differentiates_the_function_that_calls_the_first() {
+    // a(t) = d/dt (d/dt 5 m/s^2 t^2) = 10 m/s^2
+    let src = format!(
+        "{POSITION}def v(t: s) -> m/s:\n    return derivative(x, t)(t)\n\
+         print(derivative(v, t)(2 s))\n"
+    );
+    let m = lower_ok(&src);
+    assert_eq!(
+        names(&m),
+        ["<main>", "x", "v", "dx/dt", "dv/dt", "ddx/dt/dt"]
+    );
+    assert_eq!(run(&src), "10 m/s^2\n");
+}
+
+#[test]
 fn a_function_the_ad_pass_cannot_differentiate_is_a_lowering_error() {
     // `g` has an unannotated parameter, so the derivative flowing through
     // it has no unit: rejected before anything runs.

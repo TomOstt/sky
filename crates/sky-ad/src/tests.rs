@@ -804,6 +804,59 @@ fn every_tangent_is_typed_dim_over_dim_x() {
     assert_eq!(dim_of_value(&out[1]), accel);
 }
 
+// ----- several results, and derivatives of derivatives -----
+
+#[test]
+fn a_function_with_several_results_returns_values_then_tangents() {
+    // f(x) = (x^2, 3x): derivative results (x^2, 3x, 2x, 3).
+    let mut b = FunctionBuilder::new("f", vec![num()], vec![num(), num()], sp());
+    let x = b.params()[0];
+    let sq = b.op1(
+        OpKind::PowConst {
+            exponent: Rational::integer(2),
+        },
+        vec![x],
+        num(),
+        sp(),
+    );
+    let three = b.op1(
+        OpKind::ConstFloat {
+            bits: 3.0f64.to_bits(),
+        },
+        vec![],
+        num(),
+        sp(),
+    );
+    let tx = b.op1(OpKind::Mul, vec![three, x], num(), sp());
+    b.op(OpKind::Return, vec![sq, tx], vec![], sp());
+    let mut m = module(vec![b.finish()]);
+    let name = differentiate_into(&mut m, "f", 0).unwrap();
+    let out = run(&m, &name, &[5.0]);
+    let got: Vec<f64> = out.iter().map(number).collect();
+    assert_eq!(got, [25.0, 15.0, 10.0, 3.0]);
+}
+
+#[test]
+fn a_call_of_a_derivative_function_differentiates_again() {
+    // g(x) = x^3; h(x) = the second result of dg/dx(x) = 3x^2, so
+    // dh/dx = 6x. h calls a function with two results.
+    let mut m = module(vec![cube()]);
+    let d = differentiate_into(&mut m, "cube", 0).unwrap();
+    let mut b = B::new("h", vec![num()]);
+    let x = b.param(0);
+    let (_, res) = b.b.op(
+        OpKind::Call { callee: d },
+        vec![x],
+        vec![num(), num()],
+        sp(),
+    );
+    let f = b.ret(res[1]);
+    m.functions.push(f);
+    check(&m, "h", 0, &[2.0], 12.0);
+    // the second derivative also runs on the first: h itself is 3x^2
+    assert_eq!(number(&run(&m, "h", &[2.0])[0]), 12.0);
+}
+
 // ----- errors -----
 
 #[test]
@@ -878,12 +931,11 @@ fn unknown_types_are_rejected_when_the_derivative_flows_through_them() {
 
 #[test]
 fn bad_results_and_arrays() {
-    let mut b = FunctionBuilder::new("two", vec![num()], vec![num(), num()], sp());
-    let x = b.params()[0];
-    b.op(OpKind::Return, vec![x, x], vec![], sp());
+    let mut b = FunctionBuilder::new("none", vec![num()], vec![], sp());
+    b.op(OpKind::Return, vec![], vec![], sp());
     let m = module(vec![b.finish()]);
     assert!(matches!(
-        derivative(&m, "two", 0),
+        derivative(&m, "none", 0),
         Err(AdError::BadResult { .. })
     ));
 

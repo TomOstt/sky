@@ -1,6 +1,6 @@
 use std::process::ExitCode;
 
-use sky_diag::{Diagnostic, SourceFile};
+use sky_diag::{display_safe, Diagnostic, SourceFile};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -13,7 +13,9 @@ fn main() -> ExitCode {
             let src = match std::fs::read_to_string(path) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("error: cannot read {path}: {e}");
+                    // The path is untrusted text: escape it like the renderer
+                    // does, so an ESC or bidi control can't reach the terminal.
+                    eprintln!("error: cannot read {}: {e}", display_safe(path));
                     return ExitCode::from(2);
                 }
             };
@@ -38,13 +40,13 @@ fn check(path: &str, src: &str) -> ExitCode {
         Ok(lexed) => (lexed.warnings.iter().collect(), true),
         Err(e) => (e.diagnostics().collect(), false),
     };
-    // Snippets echo source lines; never echo bidi or control characters to
-    // the terminal. Offsets and columns are unchanged by the replacement.
-    let file = SourceFile::new(path, sky_syntax::source::display_safe(src));
+    // Pass the source unchanged: spans are byte offsets into it, and the
+    // renderer escapes terminal-unsafe characters itself (spec/diagnostics.md).
+    let file = SourceFile::new(path, src);
     let rendered: Vec<String> = diagnostics.iter().map(|d| d.render_to_string(&file)).collect();
     eprint!("{}", rendered.join("\n"));
     if ok {
-        println!("{path}: ok");
+        println!("{}: ok", display_safe(path));
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE

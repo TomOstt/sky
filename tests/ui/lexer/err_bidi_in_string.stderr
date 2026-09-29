@@ -1,5 +1,5 @@
 tests/ui/lexer/err_bidi_in_string.sky:1:13: error: bidirectional control character U+2066 is not allowed
   |
-1 | label = "abc�def"
-  |             ^ invisible bidi control here
+1 | label = "abc\u{2066}def"
+  |             ^^^^^^^^ invisible bidi control here
   = note: bidi controls can make source display differently from how it is parsed

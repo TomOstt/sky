@@ -596,6 +596,21 @@ fn bidi_controls_are_rejected_everywhere() {
 }
 
 #[test]
+fn size_limit_is_checked_before_bidi_scan() {
+    // `lex` uses `u32::MAX`; a tiny limit exercises the same order without a
+    // 4 GiB input. The bidi control lies past the limit, where a `u32` span
+    // would be truncated, so the file must be rejected for its size.
+    let src = "x = 1 # \u{202E}\n";
+    let e = check_whole_file(src, 8).unwrap_err();
+    assert_eq!(e.kind, LexErrorKind::SourceTooLarge);
+    assert_eq!(e.diagnostic.primary.span, Span::point(0));
+    // At or under the limit, the bidi check still runs.
+    let e = check_whole_file(src, src.len()).unwrap_err();
+    assert_eq!(e.kind, LexErrorKind::BidiControl);
+    assert!(check_whole_file("x = 1\n", 6).is_ok());
+}
+
+#[test]
 fn confusable_identifier_warns_once_per_name() {
     // Cyrillic 'а' (U+0430) in a Latin word.
     let src = "pаth = 1\ny = pаth\n";

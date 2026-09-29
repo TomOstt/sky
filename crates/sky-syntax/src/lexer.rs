@@ -55,10 +55,13 @@ pub struct Lexed {
 }
 
 /// The error that stopped lexing.
+///
+/// The diagnostic is boxed so that `Result<_, LexError>` stays small on the
+/// happy path; field access (`e.diagnostic.message`) works through `Deref`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LexError {
     pub kind: LexErrorKind,
-    pub diagnostic: Diagnostic,
+    pub diagnostic: Box<Diagnostic>,
     /// Warnings found before the error, in source order.
     pub warnings: Vec<Diagnostic>,
 }
@@ -66,7 +69,7 @@ pub struct LexError {
 impl LexError {
     /// Warnings, then the error: the order `sky check` prints them in.
     pub fn diagnostics(&self) -> impl Iterator<Item = &Diagnostic> {
-        self.warnings.iter().chain(std::iter::once(&self.diagnostic))
+        self.warnings.iter().chain(std::iter::once(&*self.diagnostic))
     }
 }
 
@@ -90,6 +93,37 @@ pub enum LexErrorKind {
 
 /// Lexes a whole source file. See the [module docs](self) for the rules.
 pub fn lex(src: &str) -> Result<Lexed, LexError> {
+    check_whole_file(src, u32::MAX as usize)?;
+    let mut lexer = Lexer::new(src);
+    match lexer.run() {
+        Ok(()) => Ok(Lexed {
+            tokens: lexer.tokens,
+            warnings: lexer.warnings,
+        }),
+        Err((kind, diagnostic)) => Err(LexError {
+            kind,
+            diagnostic,
+            warnings: lexer.warnings,
+        }),
+    }
+}
+
+/// Checks that apply to the whole file before tokenizing: first that it is
+/// at most `max_len` bytes (`u32::MAX` in [`lex`]), then that it contains no
+/// bidi control. The size check must come first: spans are `u32`, so a bidi
+/// control found past 4 GiB would get a truncated span. `max_len` is a
+/// parameter only so tests can check this order without a 4 GiB input.
+fn check_whole_file(src: &str, max_len: usize) -> Result<(), LexError> {
+    if src.len() > max_len {
+        return Err(LexError {
+            kind: LexErrorKind::SourceTooLarge,
+            diagnostic: Box::new(Diagnostic::error(
+                "source file is larger than 4 GiB",
+                Span::point(0),
+            )),
+            warnings: Vec::new(),
+        });
+    }
     if let Some(b) = find_bidi_control(src) {
         let start = b.byte_offset as u32;
         let span = Span::new(start, start + b.ch.len_utf8() as u32);
@@ -104,29 +138,11 @@ pub fn lex(src: &str) -> Result<Lexed, LexError> {
         .with_note("bidi controls can make source display differently from how it is parsed");
         return Err(LexError {
             kind: LexErrorKind::BidiControl,
-            diagnostic: diag,
+            diagnostic: Box::new(diag),
             warnings: Vec::new(),
         });
     }
-    if u32::try_from(src.len()).is_err() {
-        return Err(LexError {
-            kind: LexErrorKind::SourceTooLarge,
-            diagnostic: Diagnostic::error("source file is larger than 4 GiB", Span::point(0)),
-            warnings: Vec::new(),
-        });
-    }
-    let mut lexer = Lexer::new(src);
-    match lexer.run() {
-        Ok(()) => Ok(Lexed {
-            tokens: lexer.tokens,
-            warnings: lexer.warnings,
-        }),
-        Err((kind, diagnostic)) => Err(LexError {
-            kind,
-            diagnostic,
-            warnings: lexer.warnings,
-        }),
-    }
+    Ok(())
 }
 
 /// Decodes the escapes in a [`TokenKind::Str`] token's text (quotes
@@ -214,10 +230,13 @@ fn unexpected_char_help(c: char) -> Option<&'static str> {
     })
 }
 
-type LexResult<T> = Result<T, (LexErrorKind, Diagnostic)>;
+/// The diagnostic is boxed for the same reason as in [`LexError`]: every
+/// helper returns this, and an unboxed `Diagnostic` would make each `Ok`
+/// carry the size of the error.
+type LexResult<T> = Result<T, (LexErrorKind, Box<Diagnostic>)>;
 
 fn err<T>(kind: LexErrorKind, diagnostic: Diagnostic) -> LexResult<T> {
-    Err((kind, diagnostic))
+    Err((kind, Box::new(diagnostic)))
 }
 
 struct Lexer<'a> {

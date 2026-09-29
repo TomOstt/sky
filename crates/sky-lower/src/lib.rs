@@ -58,9 +58,45 @@
 //!   before the loop) are the **loop-carried** values, block arguments of
 //!   `before` and `after` and results of the loop. `before` computes the
 //!   condition; `after` is the body and yields the next values.
-//! * `and`/`or` are nested `if`s, so the right operand runs only when the
-//!   left does not decide the result; `a if c else b` is an `if` with a
-//!   result.
+//! * an `elif` chain is **flat**: a `done` flag and one sibling `if` per
+//!   arm (below).
+//! * `and`/`or` are a running Bool updated by sibling `if`s, one per
+//!   operand (below); `a if c else b` is an `if` with a result.
+//!
+//! # Flat chains
+//!
+//! Regions nest, and the verifier caps their depth
+//! (`sky_ir::MAX_REGION_DEPTH`), so anything a *chain* of a source construct
+//! produces must be siblings, never nested:
+//!
+//! * `a and b and c`: `t = a; t = if t { b } else { false };
+//!   t = if t { c } else { false }` (`or`: `if t { true } else { b }`).
+//!   Operand `k` is evaluated only in the arm that runs while `t` has not
+//!   decided the result, so short-circuiting is exact.
+//! * `if c1 { A } elif c2 { B } else { E }`: `done = false;
+//!   if c1 { A; done = true }; g = if done { false } else { c2 };
+//!   if g { B; done = true }; if not done { E }`. A condition is evaluated
+//!   only if no earlier arm was taken, in order, as the interpreter does.
+//!   Each arm's `if` merges its own variables (a name bound first in the
+//!   chain is kept when every arm reaching the code after assigns it, with
+//!   a stand-in where the arm did not run); a plain `if`/`else` is one `if`.
+//! * early exits: see the next section; each statement after a possible
+//!   exit is guarded by its own `if not flag`.
+//!
+//! # Region depth
+//!
+//! **The IR's region nesting is at most `2 * D + 4`**, where `D` is the
+//! source depth: the deepest point of block nesting (the bodies of `def`,
+//! `if`/`elif`/`else` and `while`, the top of the file being 0) plus
+//! short-circuit nesting in expressions (an `and`/`or` operand or ternary
+//! inside another). It does not depend on the length of any chain: an
+//! `elif` chain, an `and`/`or` chain or a run of early exits adds a
+//! constant. Each level of source nesting costs at most two IR levels: the
+//! arm of its `if`/`while`, and the guard around the statement (below); the
+//! constant covers the guard of a function's last `return`, and the `if`
+//! that gates a loop's condition or an `elif` condition. `tests/depth.rs`
+//! checks the bound on generated programs, and the chain tests in
+//! `tests/robustness.rs` lower chains of thousands.
 //!
 //! # `break`, `continue` and early `return`
 //!
@@ -77,10 +113,15 @@
 //!   each iteration. `break` sets both, `continue` sets `<skipN>`, and
 //!   `return` sets `<ret>`, `<retval>` and both flags of **every**
 //!   enclosing loop (so each loop stops and the code after each is skipped).
-//! * After a statement that may have set a flag, the rest of its block is a
-//!   **guard**: `if not <flag> { rest }` (`<skipN>` inside a loop, `<ret>`
-//!   outside), so nothing after an exit runs. Code after a statement that
-//!   always exits is dropped.
+//! * After a statement that may have set a flag, every statement after it
+//!   in the block is a **guard**: `if not <flag> { stmt }` (`<skipN>` inside
+//!   a loop, `<ret>` outside), so nothing after an exit runs. A statement
+//!   that may itself exit gets its own guard; a maximal run of statements
+//!   that cannot exit shares one. Guards are siblings, so a block adds one
+//!   level of nesting for them however many exits it has. A guarded group
+//!   passes its values on through the `if`'s results: every name it assigns
+//!   is a result, with a stand-in on the skipping path. Code after a
+//!   statement that always exits is dropped.
 //! * A loop whose body can `break` or `return` evaluates its condition only
 //!   while `<brkN>` is false: `if not <brkN> { cond } else { false }`.
 //! * At the end of the function, `return <retval>`. A function whose only

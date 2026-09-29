@@ -68,26 +68,38 @@ fn an_if_without_else_that_reassigns_yields_the_old_value_on_the_other_path() {
 }
 
 #[test]
-fn elif_chains_nest_in_the_else_arm() {
+fn elif_chains_are_flat_ifs_guarded_by_a_done_flag() {
     let m = lower_ok(
         "s = 3 m/s\nl = 10 m/s\nif s > l:\n    label = 1\nelif s == l:\n    label = 2\nelif s < l:\n    label = 3\nelse:\n    label = 4\n",
     );
     let f = main_fn(&m);
-    // if / elif / elif are three ifs, each inside the previous one's else.
-    assert_eq!(count(f, "if"), 3);
-    assert_eq!(top_ops(f, "if").len(), 1);
-    let outer = top_op(f, "if");
-    let else_b = arms(f, outer)[1];
+    // if, then per `elif` a condition-if and an arm-if, then `if not done`
+    // for the `else`: six ifs, all siblings in the entry block.
+    assert_eq!(count(f, "if"), 6);
+    assert_eq!(top_ops(f, "if").len(), 6);
+    assert_eq!(region_depth(f), 1, "a chain is one level, not one per arm");
+    // The second condition is evaluated inside an `if done { false } else
+    // { cond }`, not in the entry block.
     assert!(
-        block_kinds(f, else_b).contains(&"cmp.eq"),
-        "the elif condition is evaluated in the else arm"
+        !top_kinds(f).contains(&"cmp.eq"),
+        "an elif condition is not evaluated unless no earlier arm ran"
     );
-    // One result named label, at every level.
-    assert!(f
+    let cond_if = top_ops(f, "if")[1];
+    let [taken, open] = arms(f, cond_if)[..] else {
+        panic!("two arms")
+    };
+    assert_eq!(block_kinds(f, taken), ["const.bool", "yield"]);
+    assert!(block_kinds(f, open).contains(&"cmp.eq"));
+    // Each arm that another follows (and the last, before an `else`) sets
+    // the flag, so it yields it besides `label`: three arm-ifs with two
+    // results; the condition-ifs and the `else` have one.
+    let two = f
         .ops
         .iter()
-        .filter(|o| o.kind == OpKind::If)
-        .all(|o| o.results.len() == 1));
+        .filter(|o| o.kind == OpKind::If && o.results.len() == 2)
+        .count();
+    assert_eq!(two, 3);
+    // `label` is a number of one dimension throughout.
     assert_eq!(
         f.ty(named(f, "label")).as_number().expect("number").dim,
         Dimension::DIMENSIONLESS

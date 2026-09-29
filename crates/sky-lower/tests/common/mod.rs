@@ -258,6 +258,27 @@ pub fn count(f: &Function, mnemonic: &str) -> usize {
         .count()
 }
 
+/// How deeply regions nest in `f`: 0 for a function with no control flow,
+/// otherwise the number of regions on the longest path from the body down to
+/// an operation (the verifier's `MAX_REGION_DEPTH` bounds this). Iterative:
+/// the IR it measures may be thousands of levels deep.
+pub fn region_depth(f: &Function) -> usize {
+    // A block's depth is its owner's block depth plus one; blocks are
+    // created after the operation that owns their region, so one pass over
+    // the arena in index order sees every owner first.
+    let mut depth = vec![0usize; f.blocks.len()];
+    let mut deepest = 0;
+    for b in 0..f.blocks.len() {
+        let region = f.blocks[b].parent.expect("a block has a region");
+        depth[b] = match f.regions[region.index()].parent {
+            None => 0,
+            Some(owner) => depth[f.ops[owner.index()].parent.index()] + 1,
+        };
+        deepest = deepest.max(depth[b]);
+    }
+    deepest
+}
+
 /// The operations of the entry block with this mnemonic.
 pub fn top_ops(f: &Function, mnemonic: &str) -> Vec<OpId> {
     f.block(f.entry())

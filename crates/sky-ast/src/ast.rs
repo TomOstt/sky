@@ -91,6 +91,23 @@ impl BinaryOp {
     }
 }
 
+/// `and` / `or`: short-circuiting, so a separate node from [`BinaryOp`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BoolOp {
+    And,
+    Or,
+}
+
+impl BoolOp {
+    /// The keyword, also used by the S-expression printer.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            BoolOp::And => "and",
+            BoolOp::Or => "or",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UnaryOp {
     /// `-x`
@@ -101,6 +118,9 @@ pub enum UnaryOp {
     Partial,
     /// `∇x` (a plain prefix node)
     Nabla,
+    /// `not x`. It binds more loosely than comparisons (`not a < b` is
+    /// `not (a < b)`) and more tightly than `and`/`or`.
+    Not,
 }
 
 impl UnaryOp {
@@ -111,6 +131,7 @@ impl UnaryOp {
             UnaryOp::Pos => "pos",
             UnaryOp::Partial => "partial",
             UnaryOp::Nabla => "nabla",
+            UnaryOp::Not => "not",
         }
     }
 }
@@ -184,6 +205,21 @@ pub enum ExprKind {
         op_span: Span,
         lhs: Box<Expr>,
         rhs: Box<Expr>,
+    },
+    /// `a and b and c` or `a or b`: a run of one short-circuiting operator
+    /// at one level, as a single node. Evaluation is left to right and
+    /// stops at the first operand that decides the result, which is the
+    /// same as left-associative `((a and b) and c)`. Mixed runs nest:
+    /// `a and b or c` is `Or[And[a, b], c]`.
+    ///
+    /// Flat rather than binary so a long chain doesn't make the tree (and
+    /// every recursive pass over it) as deep as the chain is long.
+    BoolOp {
+        op: BoolOp,
+        /// Two or more operands, in source order.
+        operands: Vec<Expr>,
+        /// The `and`/`or` keywords: `operands.len() - 1` spans.
+        op_spans: Vec<Span>,
     },
     /// Postfix `⁻¹`. Its own node (not `x ^ -1`) because the type checker
     /// rewrites `A⁻¹ @ b` with a positive-definite `A` into a Cholesky solve.

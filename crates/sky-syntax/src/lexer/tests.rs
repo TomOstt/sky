@@ -635,6 +635,48 @@ fn lone_superscript_minus_and_bang_are_errors() {
 }
 
 #[test]
+fn c_style_logical_operators_suggest_keywords() {
+    for (src, at, word) in [
+        ("x = !a\n", "!", "`not`"),
+        ("x = a && b\n", "&", "`and`"),
+        ("x = a || b\n", "|", "`or`"),
+        ("x = a & b\n", "&", "`and`"),
+        ("x = a | b\n", "|", "`or`"),
+    ] {
+        let e = assert_err(src, LexErrorKind::UnexpectedChar, at);
+        assert!(
+            e.diagnostic.help[0].contains(word),
+            "{src:?}: {:?}",
+            e.diagnostic.help
+        );
+    }
+    // `!=` is still "not equal".
+    assert_eq!(line("x = a != b\n"), [Ident, Assign, Ident, Ne, Ident]);
+}
+
+#[test]
+fn logical_keywords_are_whole_words_only() {
+    assert_eq!(
+        line("x = a and not b or c\n"),
+        [
+            Ident,
+            Assign,
+            Ident,
+            Keyword(Kw::And),
+            Keyword(Kw::Not),
+            Ident,
+            Keyword(Kw::Or),
+            Ident,
+        ]
+    );
+    // Longer identifiers that start with a keyword stay identifiers.
+    assert_eq!(
+        line("android = order + nothing + and_x\n"),
+        [Ident, Assign, Ident, Plus, Ident, Plus, Ident]
+    );
+}
+
+#[test]
 fn unicode_lookalike_operators_get_help() {
     let e = assert_err("a − b\n", LexErrorKind::UnexpectedChar, "\u{2212}");
     assert!(e.diagnostic.help[0].contains('-'));
@@ -653,7 +695,7 @@ fn unicode_lookalike_operators_get_help() {
 
 #[test]
 fn keywords() {
-    let src = "def return if else for in import equation solve field\n";
+    let src = "def return if else for in import equation solve field and or not\n";
     let expected: Vec<_> = [
         Kw::Def,
         Kw::Return,
@@ -665,6 +707,9 @@ fn keywords() {
         Kw::Equation,
         Kw::Solve,
         Kw::Field,
+        Kw::And,
+        Kw::Or,
+        Kw::Not,
     ]
     .into_iter()
     .map(Keyword)

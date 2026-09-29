@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_c_style_and.sky:2:8: error: unexpected character '&' (U+0026)
+  |
+2 | ok = a && b
+  |        ^
+  = help: for logical and, use `and`

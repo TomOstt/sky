@@ -1,0 +1,20 @@
+crates/sky-ast/tests/ui/err_not_operand.sky:2:6: error: `not` binds more loosely than `-`, so it needs parentheses here
+  |
+2 | a = -not x
+  |      ^^^
+  |     - this operator binds more tightly than `not`
+  = help: write `(not x)`
+
+crates/sky-ast/tests/ui/err_not_operand.sky:3:9: error: `not` binds more loosely than `<`, so it needs parentheses here
+  |
+3 | b = x < not y
+  |         ^^^
+  |       - this operator binds more tightly than `not`
+  = help: write `(not y)`
+
+crates/sky-ast/tests/ui/err_not_operand.sky:4:7: error: `not` binds more loosely than `^`, so it needs parentheses here
+  |
+4 | c = 2^not x
+  |       ^^^
+  |      - this operator binds more tightly than `not`
+  = help: write `(not x)`

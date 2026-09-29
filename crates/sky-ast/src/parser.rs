@@ -20,18 +20,24 @@
 )]
 
 use sky_diag::{Diagnostic, Label};
-use sky_syntax::{Span, Token, TokenKind};
+use sky_syntax::{Kw, Span, Token, TokenKind};
 
 use crate::ast::{
-    span_text, BinaryOp, Expr, ExprKind, Ident, Literal, Module, Stmt, StmtKind, UnaryOp, UnitExpr,
+    span_text, BinaryOp, BoolOp, Expr, ExprKind, Ident, Literal, Module, Stmt, StmtKind, UnaryOp,
+    UnitExpr,
 };
-use crate::precedence::{infix_binding_power, is_postfix_start, prefix_binding_power, POSTFIX_BP};
+use crate::precedence::{
+    bool_binding_power, infix_binding_power, is_postfix_start, prefix_binding_power, NOT_BP,
+    POSTFIX_BP,
+};
 
 /// Maximum nesting depth. Each level counts once: a `(`...`)` group, a prefix
-/// operator, a call, an index, an attribute, a `⁻¹`, and each infix operator
-/// folded into an operand. `x` uses 0, `(((x)))` 3, `f(g(x))` 2, `a^b^c` 2,
-/// and `a + b + c` 2. The count bounds both recursion and AST height (which
-/// keeps recursive `Drop` and printing safe).
+/// operator (including `not`), a call, an index, an attribute, a `⁻¹`, each
+/// infix operator folded into an operand, and each `and`/`or` run (however
+/// long: a run is one flat node). `x` uses 0, `(((x)))` 3, `f(g(x))` 2,
+/// `a^b^c` 2, `a + b + c` 2, `not not x` 2, and `a and b and c` 1. The count
+/// bounds both recursion and AST height (which keeps recursive `Drop` and
+/// printing safe).
 pub const MAX_DEPTH: u32 = 256;
 
 /// Maximum number of unit names in one unit literal (`kg*m/s^2` has 3).
@@ -350,7 +356,7 @@ impl<'t, 's> Parser<'t, 's> {
     /// node building live in non-inlined helpers, so a nesting level costs
     /// little stack even in debug builds.
     fn expr_bp_inner(&mut self, min_bp: u8) -> Option<Expr> {
-        let mut lhs = self.parse_operand()?;
+        let mut lhs = self.parse_operand(min_bp)?;
         // A comparison already folded at this level: comparisons are
         // non-associative, so a second one is an error.
         let mut prev_comparison: Option<Span> = None;
@@ -359,6 +365,12 @@ impl<'t, 's> Parser<'t, 's> {
                 Step::Done => return Some(lhs),
                 Step::Infix { op, op_span, r_bp } => {
                     self.parse_infix_rhs(lhs, op, op_span, r_bp)?
+                }
+                Step::Bool { op, op_span, r_bp } => {
+                    // A comparison can't follow a run at this level (the
+                    // run's operands took it), so start afresh.
+                    prev_comparison = None;
+                    self.parse_bool_run(lhs, op, op_span, r_bp)?
                 }
                 Step::Inverse(op_span) => inverse(lhs, op_span),
                 Step::Attribute(name) => attribute(lhs, name),
@@ -377,6 +389,26 @@ impl<'t, 's> Parser<'t, 's> {
     ) -> Option<Expr> {
         let rhs = self.expr_bp(r_bp)?;
         Some(binary(op, op_span, lhs, rhs))
+    }
+
+    /// `lhs op x op y ...` for one `and`/`or`, with the first `op` consumed.
+    /// A loop, not a recursion per operand: the run becomes one flat node,
+    /// so a 10k-operand chain uses one nesting level.
+    fn parse_bool_run(&mut self, lhs: Expr, op: BoolOp, first_op: Span, r_bp: u8) -> Option<Expr> {
+        let mut operands = vec![lhs];
+        let mut op_spans = vec![first_op];
+        loop {
+            operands.push(self.expr_bp(r_bp)?);
+            let tok = self.current();
+            match bool_binding_power(tok.kind) {
+                Some((next, _, _)) if next == op => {
+                    self.bump();
+                    op_spans.push(tok.span);
+                }
+                _ => break,
+            }
+        }
+        Some(bool_op(op, operands, op_spans))
     }
 
     fn parse_call(&mut self, callee: Expr, open: Span) -> Option<Expr> {
@@ -420,6 +452,18 @@ impl<'t, 's> Parser<'t, 's> {
                 _ => self.fail_expected_expression(tok),
             };
         }
+        if let Some((op, l_bp, r_bp)) = bool_binding_power(tok.kind) {
+            if l_bp < min_bp {
+                return Some(Step::Done);
+            }
+            self.bump();
+            self.enter(tok.span)?;
+            return Some(Step::Bool {
+                op,
+                op_span: tok.span,
+                r_bp,
+            });
+        }
         let Some((op, l_bp, r_bp)) = infix_binding_power(tok.kind) else {
             return Some(Step::Done);
         };
@@ -447,7 +491,10 @@ impl<'t, 's> Parser<'t, 's> {
     }
 
     /// A prefix operator applied to an operand, a group, or an atom.
-    fn parse_operand(&mut self) -> Option<Expr> {
+    /// `min_bp` is what the enclosing operator requires: `not` binds more
+    /// loosely than every operator except `and`/`or`, so `-not x` and
+    /// `a < not b` are errors.
+    fn parse_operand(&mut self, min_bp: u8) -> Option<Expr> {
         let tok = self.current();
         if tok.kind == TokenKind::LParen {
             return self.parse_paren();
@@ -455,6 +502,9 @@ impl<'t, 's> Parser<'t, 's> {
         let Some((op, r_bp)) = prefix_binding_power(tok.kind) else {
             return self.parse_atom();
         };
+        if op == UnaryOp::Not && min_bp > NOT_BP {
+            return self.fail_not_operand();
+        }
         self.bump();
         self.enter(tok.span)?;
         let operand = self.expr_bp(r_bp)?;
@@ -584,10 +634,48 @@ impl<'t, 's> Parser<'t, 's> {
         );
     }
 
+    /// `not` (current) where a tighter operator needs its operand, as in
+    /// `-not x`. Parses the `not` expression anyway, to show it in the help.
+    #[cold]
+    #[inline(never)]
+    fn fail_not_operand<T>(&mut self) -> Option<T> {
+        let before = self.prev_span();
+        let not = self.bump();
+        self.enter(not.span)?;
+        let operand = self.expr_bp(NOT_BP);
+        let before_text = match before {
+            Some(span) => format!("`{}`", self.text(span)),
+            None => "the operator before it".to_string(),
+        };
+        let mut err = ParseError::new(
+            format!("`not` binds more loosely than {before_text}, so it needs parentheses here"),
+            not.span,
+        );
+        if let Some(span) = before {
+            err = err.with_secondary(span, "this operator binds more tightly than `not`");
+        }
+        let written = operand
+            .as_ref()
+            .map(|e| not.span.join(e.span))
+            .filter(|span| span.len() <= 40)
+            .and_then(|span| span_text(self.src, span))
+            .filter(|text| !text.contains('\n'));
+        let help = match written {
+            Some(text) => format!("write `({text})`"),
+            None => "put the `not` expression in parentheses".to_string(),
+        };
+        self.errors.push(err.with_help(help));
+        None
+    }
+
     #[cold]
     #[inline(never)]
     fn fail_expected_expression<T>(&mut self, tok: Token) -> Option<T> {
         let message = match tok.kind {
+            TokenKind::Keyword(kw @ (Kw::And | Kw::Or)) => format!(
+                "expected an expression, found keyword `{}`",
+                kw.as_str()
+            ),
             TokenKind::Keyword(kw) => format!(
                 "expected an expression, found keyword `{}`; statements and blocks are not supported by the parser yet",
                 kw.as_str()
@@ -974,6 +1062,12 @@ impl<'t, 's> Parser<'t, 's> {
 /// What extends an operand; see `Parser::next_step`.
 enum Step {
     Done,
+    /// The first `and`/`or` of a run, already consumed.
+    Bool {
+        op: BoolOp,
+        op_span: Span,
+        r_bp: u8,
+    },
     Infix {
         op: BinaryOp,
         op_span: Span,
@@ -997,6 +1091,24 @@ fn binary(op: BinaryOp, op_span: Span, lhs: Expr, rhs: Expr) -> Expr {
             op_span,
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
+        },
+    }
+}
+
+#[inline(never)]
+fn bool_op(op: BoolOp, operands: Vec<Expr>, op_spans: Vec<Span>) -> Expr {
+    // A run always has two or more operands; fall back to the first
+    // keyword's span rather than panicking.
+    let span = match (operands.first(), operands.last()) {
+        (Some(a), Some(b)) => a.span.join(b.span),
+        _ => op_spans.first().copied().unwrap_or(Span::point(0)),
+    };
+    Expr {
+        span,
+        kind: ExprKind::BoolOp {
+            op,
+            operands,
+            op_spans,
         },
     }
 }

@@ -58,7 +58,7 @@ use crate::builder::FunctionBuilder;
 use crate::ir::{
     Edition, Effect, EffectSet, Module, NumberType, OpId, RegionId, Repr, Type, ValueId,
 };
-use crate::op::{BoolContext, CmpOp, MathFn, OpKind, SliceAxis, SolveMethod};
+use crate::op::{BoolContext, CmpOp, LiteralError, MathFn, OpKind, SliceAxis, SolveMethod};
 use crate::verify::MAX_REGION_DEPTH;
 
 /// A syntax error and where it is (byte offsets into the text).
@@ -695,6 +695,21 @@ impl<'a> Parser<'a> {
             }
             "const.str" => OpKind::ConstStr(self.string()?),
             "const.nothing" => OpKind::ConstNothing,
+            "literal.error" => {
+                self.expect('[')?;
+                self.skip_inline();
+                let at = self.pos;
+                let word = self.word();
+                let Some(error) = LiteralError::ALL.into_iter().find(|e| e.text() == word) else {
+                    return self.err_at(
+                        at,
+                        self.pos.max(at + 1),
+                        "expected `too_large` or `overflow`",
+                    );
+                };
+                self.expect(']')?;
+                OpKind::LiteralError { error }
+            }
             "input" => {
                 self.skip_inline();
                 OpKind::Input {

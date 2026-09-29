@@ -7,12 +7,11 @@
 //! error (or success) must be identical, the lowered SIR must verify, and the
 //! SIR text format must round-trip (see the harness for the details).
 //!
-//! The `#[ignore]`d tests at the end are the bugs this fuzzer found, each
-//! reduced to a few lines. Run them with `cargo test -p sky-ir-interp --test
-//! fuzz_differential -- --ignored`; each fails until its bug is fixed. The
-//! generator steers around the open ones (the `GATE_*` constants in the
-//! harness), so the main test stays green and the fuzzer keeps looking for
-//! new bugs.
+//! The tests at the end are the bugs this fuzzer found, each reduced to a few
+//! lines; all are fixed (two are design limits of lowering, which the tests
+//! pin). A bug found later is added there as an `#[ignore]`d test, and the
+//! generator steers around it (a `GATE_*` constant in the harness) so the
+//! main test stays green and the fuzzer keeps looking for new bugs.
 //!
 //! Tools for a fuzzing session (each does nothing unless its variable is
 //! set): `SKY_SEED=n` prints the program for seed `n`; `SKY_FILE=x.sky` runs
@@ -549,35 +548,72 @@ fn lowering_binds_a_call_to_the_definition_seen_at_check_time() {
     assert_agree("def f(x):\n    return x + 1\ndef g(x):\n    return f(x)\nf = 5\nprint(g(1))\n");
 }
 
-/// Lowering refuses the whole program ("`f` is not a function known at
-/// compile time") although `sky run` runs it, because `f` is defined in
-/// both arms of an `if`. (sky-lower documents that it rejects a call it
-/// cannot resolve; this is a program `sky run` accepts.)
-#[test]
-#[ignore = "limitation: lowering rejects a function defined in an if/else"]
-fn lowering_rejects_a_function_defined_in_both_arms_of_an_if() {
-    assert_agree("x = 1\nif x > 0:\n    def f(a):\n        return a + 1\nelse:\n    def f(a):\n        return a + 2\nprint(f(1))\n");
+/// What `sky run` does with `src`: its output and the error that stopped it.
+fn run_in_the_tree_walker(src: &str) -> (String, Option<String>) {
+    let lexed = sky_syntax::lex(src).expect("lexes");
+    let (ast, errors) = sky_ast::parse_module(&lexed.tokens, src);
+    assert!(errors.is_empty(), "{errors:?}");
+    let checked = sky_types::check_module(&ast, src);
+    assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+    sky_ast::with_deep_stack(|| {
+        let mut env = sky_interp::RuntimeEnv::with_prelude();
+        let mut out = Vec::new();
+        let r = sky_interp::run_module(&ast, src, &mut env, &mut out);
+        (
+            String::from_utf8_lossy(&out).into_owned(),
+            r.err().map(|e| e.message.clone()),
+        )
+    })
 }
 
-/// A nested `def` reads its enclosing function's local. `sky run` fails only
-/// if the inner function runs ("cannot find `a`"); lowering fails the whole
-/// program, also when it never does (here `f(0)` returns first).
+/// Design limit, not a bug: lowering refuses the whole program ("`f` is not a
+/// function known at compile time") although `sky run` runs it, because `f`
+/// is defined in both arms of an `if`: SIR calls name one function, fixed at
+/// compile time, and SIR has no function values to pick one at run time.
+/// Documented in sky-lower and in the spec ("Functions"); `sky run` falls back
+/// to the tree-walker on a lowering error.
 #[test]
-#[ignore = "limitation: lowering rejects a nested def that reads its enclosing function's local"]
-fn lowering_rejects_a_nested_def_that_reads_an_enclosing_local() {
-    assert_agree(
-        "def f(a):\n    if a > 1:\n        def h(b):\n            return b + a\n        return h(1)\n    return 0\nprint(f(0))\n",
+fn lowering_rejects_a_function_defined_in_both_arms_of_an_if() {
+    let src = "x = 1\nif x > 0:\n    def f(a):\n        return a + 1\nelse:\n    def f(a):\n        return a + 2\nprint(f(1))\n";
+    assert_eq!(run_in_the_tree_walker(src), ("2\n".to_string(), None));
+    let e = sky_lower::lower_source(src).expect_err("a design limit");
+    assert!(
+        e.contains("`f` is not a function known at compile time"),
+        "{e}"
     );
 }
 
-/// A number literal too large for f64 (also once its unit is applied) is a
-/// run-time error in `sky run`, only if evaluated; lowering rejects the
-/// program. Documented in sky-lower; the harness tolerates it (see `KNOWN`).
+/// Design limit, not a bug: a nested `def` reads its enclosing function's
+/// local. `sky run` fails only if the inner function runs ("cannot find `a`",
+/// its frame is not the enclosing one: there are no closures); lowering fails
+/// the whole program, also when it never runs (here `f(0)` returns first),
+/// because SIR functions have no access to another function's values.
 #[test]
-#[ignore = "limitation: lowering rejects a literal too large for f64 even if it is never evaluated"]
-fn lowering_rejects_a_literal_too_large_even_if_never_evaluated() {
+fn lowering_rejects_a_nested_def_that_reads_an_enclosing_local() {
+    let src = "def f(a):\n    if a > 1:\n        def h(b):\n            return b + a\n        return h(1)\n    return 0\nprint(f(0))\n";
+    assert_eq!(run_in_the_tree_walker(src), ("0\n".to_string(), None));
+    let e = sky_lower::lower_source(src).expect_err("a design limit");
+    assert!(e.contains("cannot find `a` in this scope"), "{e}");
+    // The same program does fail in `sky run` once the inner function runs.
+    let src = src.replace("print(f(0))", "print(f(2))");
+    let (out, err) = run_in_the_tree_walker(&src);
+    assert_eq!(out, "");
+    assert_eq!(err.as_deref(), Some("cannot find `a` in this scope"));
+}
+
+/// A number literal too large for f64 (also once its unit is applied) is a
+/// run-time error in `sky run`, only if evaluated; lowering used to reject the
+/// program. It lowers to `literal.error` now, which fails when it runs.
+#[test]
+fn a_literal_too_large_is_an_error_only_where_it_is_evaluated() {
     assert_agree("print(1)\nif false:\n    x = 1e999\nprint(2)\n");
+    assert_agree("print(1)\nif false:\n    x = 1e300 ms/nm^2/μg\nprint(2)\n");
     assert_agree("print(1)\nx = 1e300 ms/nm^2/μg\nprint(2)\n");
+    assert_agree("print(1)\nx = 1e999\nprint(2)\n");
+    assert_agree("print(1)\nx = 1e999 m\nprint(2)\n");
+    assert_agree("def f(a):\n    return a * 1e999\nprint(1)\nprint(f(2))\n");
+    // Not evaluated: a function that is never called, a short-circuited operand.
+    assert_agree("def f(a):\n    return a * 1e999\nprint(1)\nprint(true or 1e999 > 1)\n");
 }
 
 /// A declaration without a value used to be a parameter of `<main>`: the SIR

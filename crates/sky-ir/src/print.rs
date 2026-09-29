@@ -236,6 +236,9 @@ impl Printer<'_> {
             OpKind::Solve { method } => {
                 let _ = write!(self.out, "[{}]", method.mnemonic());
             }
+            OpKind::LiteralError { error } => {
+                let _ = write!(self.out, "[{}]", error.text());
+            }
             OpKind::ExpectBool { context } => {
                 let _ = write!(self.out, "[{}]", context.keyword());
             }

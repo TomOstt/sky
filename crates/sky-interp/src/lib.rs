@@ -63,7 +63,7 @@ pub use derivative::{DerivativeHook, DerivativeRequest};
 pub use env::RuntimeEnv;
 pub use error::{ErrorDetails, RuntimeError};
 pub use eval::{run_module, run_module_with, run_module_with_derivatives};
-pub use literal::{number_literal, unit_literal_si};
+pub use literal::{number_literal, number_too_large, unit_literal_si};
 pub use show::{show_unit_text, show_value};
 /// The dense numerics, shared with the checker (see `sky_types::linalg`).
 pub use sky_types::linalg;

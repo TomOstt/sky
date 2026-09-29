@@ -135,6 +135,28 @@ impl BoolContext {
     }
 }
 
+/// Why a literal has no value, for [`OpKind::LiteralError`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum LiteralError {
+    /// The number does not fit in an `f64` ("number too large").
+    TooLarge,
+    /// The number fits, but its value in SI (the unit's factors applied)
+    /// does not: "arithmetic overflow".
+    Overflow,
+}
+
+impl LiteralError {
+    pub const ALL: [LiteralError; 2] = [LiteralError::TooLarge, LiteralError::Overflow];
+
+    /// The text format's attribute.
+    pub fn text(self) -> &'static str {
+        match self {
+            LiteralError::TooLarge => "too_large",
+            LiteralError::Overflow => "overflow",
+        }
+    }
+}
+
 /// The math functions (`sqrt`, `exp`, `sin`, ...): the one list, with each
 /// function's arity, dimension rule and failure behaviour, lives in
 /// sky-units and is shared by the checker, both interpreters and SIR.
@@ -160,6 +182,17 @@ pub enum OpKind {
     /// The value of `print(...)` or a call to a function without a return
     /// value, when a program uses it. Result type `Nothing`.
     ConstNothing,
+    /// `literal.error[too_large]`, `literal.error[overflow]`: no operands,
+    /// one result, typed as the literal it stands for. A number literal
+    /// (`1e999`) or a unit literal whose SI value (`1e300 ms/nm^2/μg`) is
+    /// not a finite `f64` has no value, and `sky run` reports that only if the
+    /// literal is evaluated; a `const.float` cannot hold it, so lowering
+    /// writes this instead, and it fails when it runs with `sky run`'s error
+    /// ("number too large", "arithmetic overflow") at the operation's span,
+    /// which lowering sets to the span `sky run` reports. Effect `Fail`.
+    LiteralError {
+        error: LiteralError,
+    },
     /// `input "A"`: no operands, one result, of the type the program
     /// declared for the name (a value-less declaration such as
     /// `A: PositiveDefinite Matrix[N, N]`; the checker takes its shape, tags
@@ -390,6 +423,7 @@ impl OpKind {
             OpKind::ConstBool(_) => "const.bool",
             OpKind::ConstStr(_) => "const.str",
             OpKind::ConstNothing => "const.nothing",
+            OpKind::LiteralError { .. } => "literal.error",
             OpKind::Input { .. } => "input",
             OpKind::Add => "add",
             OpKind::Sub => "sub",
@@ -453,8 +487,8 @@ impl OpKind {
                 let e = if f.can_fail() { fail } else { EffectSet::PURE };
                 (e, false, f.commutative(), false)
             }
-            // Fails always: nothing supplies an input.
-            OpKind::Input { .. } => (fail, false, false, false),
+            // Fail always: the literal has no value, nothing supplies an input.
+            OpKind::Input { .. } | OpKind::LiteralError { .. } => (fail, false, false, false),
             // Converting to a tiny unit can overflow.
             OpKind::Show { .. } => (fail, false, false, false),
             // A value that is not a Bool fails.

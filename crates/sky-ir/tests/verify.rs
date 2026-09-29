@@ -1107,6 +1107,17 @@ fn not_needs_a_bool() {
 #[test]
 fn an_input_has_no_operands_and_one_result_of_any_type() {
     let input = |ty: Type| binary_or_unary(OpKind::Input { name: "A".into() }, vec![], ty);
+    for error in sky_ir::LiteralError::ALL {
+        accepts(&binary_or_unary(
+            OpKind::LiteralError { error },
+            vec![],
+            len(),
+        ));
+        rejects(
+            &binary_or_unary(OpKind::LiteralError { error }, vec![len()], len()),
+            "takes 0 operand(s)",
+        );
+    }
     accepts(&input(Type::Bool));
     accepts(&input(len()));
     accepts(&input(Type::Unknown));

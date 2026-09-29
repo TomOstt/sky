@@ -216,6 +216,27 @@ fn comparisons_and_not() {
 }
 
 #[test]
+fn a_literal_error_fails_with_the_literals_error() {
+    use sky_ir::LiteralError;
+    let e = apply(
+        OpKind::LiteralError {
+            error: LiteralError::TooLarge,
+        },
+        vec![],
+    )
+    .expect_err("no value");
+    assert_eq!(msg(&e), "number too large");
+    let e = apply(
+        OpKind::LiteralError {
+            error: LiteralError::Overflow,
+        },
+        vec![],
+    )
+    .expect_err("no value");
+    assert_eq!(msg(&e), "arithmetic overflow");
+}
+
+#[test]
 fn an_input_always_fails_with_the_declaration_error() {
     let e = apply(OpKind::Input { name: "A".into() }, vec![]).expect_err("nothing supplies it");
     assert_eq!(msg(&e), "`A` is declared but has no value");

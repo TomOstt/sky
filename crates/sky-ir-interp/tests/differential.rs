@@ -631,6 +631,30 @@ fn a_matrix_declared_without_a_value_is_an_input_nothing_supplies() {
     assert_eq!(o.error.as_deref(), Some("`A` is declared but has no value"));
 }
 
+/// A literal too large for an `f64` fails where it is evaluated, with
+/// `sky run`'s error on `sky run`'s span, in the SIR interpreter too.
+#[test]
+fn a_literal_too_large_fails_with_the_same_error_on_the_same_span() {
+    for (src, message) in [
+        ("print(1)\nx = 1e999\nprint(2)\n", "number too large"),
+        ("print(1)\nx = 1e999 m\nprint(2)\n", "number too large"),
+        ("print(1)\nx = 1e306 km\nprint(2)\n", "arithmetic overflow"),
+        ("if 1 > 0:\n    y = 2e400\n", "number too large"),
+    ] {
+        let (walker, sir) = located_errors(src);
+        assert_eq!(
+            walker.as_ref().map(|w| w.0.as_str()),
+            Some(message),
+            "{src}"
+        );
+        assert_eq!(sir, walker, "{src}");
+        let o = assert_same(src);
+        assert_eq!(o.error.as_deref(), Some(message));
+    }
+    let o = assert_same("print(1)\nif false:\n    x = 1e999\nprint(2)\n");
+    assert_eq!((o.stdout.as_str(), o.error), ("1\n2\n", None));
+}
+
 /// The declaration is where the run stops: what is printed before it stays,
 /// and the error points at the declaration, as in `sky run`.
 #[test]
@@ -730,9 +754,12 @@ fn a_derivative_that_fails_fails_the_same_way() {
     assert_eq!(o.error.as_deref(), Some("division by zero"));
 }
 
+/// A run-time error's message and span, if the run failed.
+type Located = Option<(String, Span)>;
+
 /// The error of the tree-walker and of the SIR interpreter on `src`, with
 /// the span: they must be the same, including where they point.
-fn located_errors(src: &str) -> (Option<(String, Span)>, Option<(String, Span)>) {
+fn located_errors(src: &str) -> (Located, Located) {
     let (module, solves) = parse_checked(src);
     let walker = sky_ast::with_deep_stack(|| {
         let mut out = Vec::new();

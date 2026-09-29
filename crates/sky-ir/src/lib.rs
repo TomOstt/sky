@@ -38,7 +38,9 @@ pub use ir::{
     BlockData, BlockId, Edition, Effect, EffectSet, Function, Module, NumberType, OpData, OpId,
     RegionData, RegionId, Repr, Type, ValueData, ValueDef, ValueId,
 };
-pub use op::{BoolContext, CmpOp, MathFn, OpKind, OpProperties, SliceAxis, SolveMethod};
+pub use op::{
+    BoolContext, CmpOp, LiteralError, MathFn, OpKind, OpProperties, SliceAxis, SolveMethod,
+};
 pub use parse::{parse, ParseError};
 pub use pass::{
     Changed, Explanation, Pass, PassCx, PassError, PassManager, PipelineReport, RuleId,

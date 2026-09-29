@@ -599,6 +599,7 @@ impl<'a> FnVerifier<'a> {
             | OpKind::ConstBool(_)
             | OpKind::ConstStr(_)
             | OpKind::ConstNothing
+            | OpKind::LiteralError { .. }
             | OpKind::Input { .. } => (Some(0), Some(1)),
             OpKind::Add
             | OpKind::Sub
@@ -659,8 +660,9 @@ impl<'a> FnVerifier<'a> {
             OpKind::ConstBool(_) => self.expect_exact(o, op, &Type::Bool),
             OpKind::ConstStr(_) => self.expect_exact(o, op, &Type::Str),
             OpKind::ConstNothing => self.expect_exact(o, op, &Type::Nothing),
-            // Any type: the one the program declared for the name.
-            OpKind::Input { .. } => {}
+            // Any type: the one the program declared for the name, or the
+            // literal's.
+            OpKind::Input { .. } | OpKind::LiteralError { .. } => {}
             OpKind::Add | OpKind::Sub => self.check_additive(o, op),
             OpKind::Mul | OpKind::Div => self.check_multiplicative(o, op),
             OpKind::Neg => {

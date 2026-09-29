@@ -179,8 +179,22 @@
 //! but the top level of the file; and anything SIR v1 has no
 //! representation for: a function used as a value (passed, stored,
 //! returned), calling anything that is not a function defined with `def`.
-//! Also number literals that overflow `f64`, which the interpreter reports
-//! when it evaluates them.
+//!
+//! Two programs `sky run` runs are refused for that reason, by design: a
+//! function defined in more than one arm of an `if` and called afterwards
+//! (a SIR call names one function, fixed at compile time: "`f` is not a
+//! function known at compile time"), and a nested `def` that reads a local
+//! of its enclosing function (a SIR function sees only its own values and
+//! the module's names, which lowering passes; "cannot find `a` in this
+//! scope", even when the inner function is never called, where `sky run`
+//! fails only if it is). `sky run` falls back to the tree-walker on a
+//! [`LowerError`]. The spec's "Functions" lists both.
+//!
+//! Not rejected, though `sky run` reports it only when it evaluates the
+//! literal: a number literal too large for an `f64` (or whose SI value is).
+//! It is a `literal.error` operation that fails when it runs, with
+//! `sky run`'s error on `sky run`'s span, so a literal in a branch that never
+//! runs is harmless.
 //!
 //! # Effects
 //!

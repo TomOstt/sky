@@ -615,6 +615,11 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             let b = expect_bool("not", act.get(a, s)?, s)?;
             act.define(op, vec![Value::Bool(!b)])
         }
+        OpKind::LiteralError { error } => Err(match error {
+            sky_ir::LiteralError::TooLarge => sky_interp::number_too_large(s),
+            sky_ir::LiteralError::Overflow => sky_interp::arith::overflow(s),
+        }
+        .into()),
         OpKind::Input { name } => Err(sky_interp::arith::declared_without_value(name, s).into()),
         OpKind::ExpectBool { context } => {
             let [a] = fixed(op)?;

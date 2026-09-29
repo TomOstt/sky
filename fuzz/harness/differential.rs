@@ -29,10 +29,12 @@
 //!    The two resource-limit errors compare as one, exactly as in the
 //!    hand-written differential tests.
 //!
-//! Bugs this fuzzer already found are reported, not repeated: the generator
-//! steers around most (the `GATE_*` constants) and [`KNOWN`] lets a lenient
-//! run tolerate the rest, so a failure of the target or the test is a new
-//! one. Each has an `#[ignore]`d regression test in the sky-ir-interp test.
+//! Bugs this fuzzer found are fixed and each has a regression test in the
+//! sky-ir-interp test. A bug found later that is not fixed at once is
+//! reported, not repeated: the generator steers around it (a `GATE_*`
+//! constant, `true` while the bug is open) and [`KNOWN`] lets a lenient run
+//! tolerate it, so a failure of the target or the test is a new one. Both are
+//! empty or off now.
 //!
 //! The file depends only on `std` and the sky crates (path dependencies of
 //! the fuzz crate; sky-ir-interp's tests have them all).
@@ -380,10 +382,10 @@ struct Gen<'a> {
 /// gate to `false` when the bug is fixed.
 ///
 /// Some reported differences the generator never produces, by construction
-/// (see the tests of the same file): a conditionally defined function, a
-/// nested `def`, and a literal that overflows `f64` in a program that must
-/// run (huge numbers get plain SI units). An input declaration is generated
-/// (rarely: the run ends at it). A function may
+/// (see the tests of the same file): a conditionally defined function and a
+/// nested `def` (lowering refuses them, `sky run` runs them). An input
+/// declaration is generated (rarely: the run ends at it), and so is a literal
+/// too large for an `f64` (a run-time error where it is evaluated). A function may
 /// be defined again, and a `def` may shadow a builtin, after functions that
 /// call the name (calls bind where the caller is defined,
 /// `lowering_binds_a_call_to_the_definition_seen_at_check_time`).
@@ -614,10 +616,9 @@ impl Gen<'_> {
             }
             return atom(n);
         }
-        // A literal whose conversion to SI overflows is refused by lowering
-        // as a whole (see KNOWN), so huge numbers get plain SI units.
-        let big = n.starts_with("1e") && n.len() > 3 && !n.starts_with("1e-");
-        let u = self.unit_with(d, big);
+        // A huge number with a prefixed unit overflows when converted to SI:
+        // a run-time error where the literal is evaluated, in both engines.
+        let u = self.unit_with(d, false);
         E {
             s: format!("{n} {u}"),
             p: 8,
@@ -2060,15 +2061,7 @@ pub struct Outcome {
 /// for new bugs; a strict run ([`check_source_strict`], used by the ignored
 /// regression tests in `fuzz_differential.rs`) reports it. Delete the entry
 /// when the bug is fixed.
-const KNOWN: &[(&str, &str)] = &[
-    // Documented in sky-lower: a number literal that overflows f64 (here
-    // through its unit's scale) is refused when lowering, while `sky run`
-    // reports it only if the literal is evaluated.
-    (
-        "lowering-literal-overflow",
-        "lowering failed on a checked program: arithmetic overflow",
-    ),
-];
+const KNOWN: &[(&str, &str)] = &[];
 
 fn known_issue(msg: &str) -> Option<&'static str> {
     KNOWN

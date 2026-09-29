@@ -8,7 +8,7 @@
 use sky_ast::{BinaryOp, BoolOp, Expr, ExprKind, Ident, Literal, UnaryOp};
 use sky_diag::Span;
 use sky_interp::{number_literal, unit_literal_si};
-use sky_ir::{BlockId, BoolContext, CmpOp, OpId, OpKind, Type, ValueId};
+use sky_ir::{BlockId, BoolContext, CmpOp, LiteralError, OpId, OpKind, Type, ValueId};
 use sky_syntax::lexer::unescape_str;
 use sky_types::{const_exponent, FuncSig, Ty};
 use sky_units::lookup_constant;
@@ -38,10 +38,11 @@ impl Lower<'_> {
                 let (Literal::Int(vspan) | Literal::Float(vspan)) = value else {
                     return self.err("a unit needs a number", e.span);
                 };
-                let (si, _) =
-                    unit_literal_si(self.src, *vspan, unit, e.span).map_err(LowerError::from)?;
                 let ty = self.ty_of(e)?;
-                Ok(self.const_float(si, ty, e.span))
+                match unit_literal_si(self.src, *vspan, unit, e.span) {
+                    Ok((si, _)) => Ok(self.const_float(si, ty, e.span)),
+                    Err(err) => self.literal_error(err, ty),
+                }
             }
             ExprKind::Paren(inner) => self.expr(inner),
             ExprKind::Unary { op, operand, .. } => self.unary(e, *op, operand),
@@ -93,12 +94,31 @@ impl Lower<'_> {
         )
     }
 
+    /// A literal `sky run` cannot read (too large for an `f64`, or whose SI
+    /// value is): a `sky run` error only if the literal is evaluated, so a
+    /// `literal.error` that fails when it runs, with the same error at the
+    /// same span (a literal in a branch that never runs is no error). What
+    /// the checker cannot have accepted (an unreadable number, an unknown
+    /// unit) stays a lowering error.
+    fn literal_error(&mut self, err: sky_interp::RuntimeError, ty: Type) -> R<ValueId> {
+        let error = if err == sky_interp::number_too_large(err.span) {
+            LiteralError::TooLarge
+        } else if err == sky_interp::arith::overflow(err.span) {
+            LiteralError::Overflow
+        } else {
+            return Err(LowerError::from(err));
+        };
+        Ok(self.op1(OpKind::LiteralError { error }, Vec::new(), ty, err.span))
+    }
+
     fn literal(&mut self, e: &Expr, lit: &Literal) -> R<ValueId> {
         match lit {
             Literal::Int(span) | Literal::Float(span) => {
-                let x = number_literal(self.src, *span).map_err(LowerError::from)?;
                 let ty = self.ty_of(e)?;
-                Ok(self.const_float(x, ty, e.span))
+                match number_literal(self.src, *span) {
+                    Ok(x) => Ok(self.const_float(x, ty, e.span)),
+                    Err(err) => self.literal_error(err, ty),
+                }
             }
             Literal::Str(span) => {
                 let s = unescape_str(self.text(*span));

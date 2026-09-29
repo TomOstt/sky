@@ -80,14 +80,29 @@ fn a_nested_def_does_not_see_its_enclosing_functions_locals() {
     assert_eq!(at, "y");
 }
 
+/// A literal `sky run` cannot read is an error only where it is evaluated,
+/// so lowering does not refuse the program: the literal becomes an operation
+/// that fails when it runs (`literal.error`), at the span `sky run` reports.
 #[test]
-fn literals_the_interpreter_cannot_read_are_rejected() {
-    let (msg, at) = rejected("x = 1e999\n");
-    assert!(msg.contains("number too large"), "{msg}");
-    assert_eq!(at, "1e999");
-    let (msg, at) = rejected("x = 1e306 km\n");
-    assert!(msg.contains("overflow"), "{msg}");
-    assert_eq!(at, "1e306 km");
+fn literals_the_interpreter_cannot_read_lower_to_an_operation_that_fails() {
+    for (src, kind, at) in [
+        ("x = 1e999\n", "literal.error[too_large]", "1e999"),
+        ("x = 1e999 m\n", "literal.error[too_large]", "1e999"),
+        ("x = 1e306 km\n", "literal.error[overflow]", "1e306 km"),
+    ] {
+        let m = lower_ok(src);
+        let f = main_fn(&m);
+        assert_eq!(count(f, "literal.error"), 1, "{src}");
+        let op = f
+            .ops
+            .iter()
+            .find(|o| o.kind.mnemonic() == "literal.error")
+            .expect("the literal");
+        assert_eq!(&src[op.span.range()], at, "{src}");
+        let text = sky_ir::print(&m);
+        assert!(text.contains(kind), "{text}");
+        assert_eq!(sky_ir::print(&sky_ir::parse(&text).expect("parses")), text);
+    }
 }
 
 #[test]

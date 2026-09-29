@@ -119,6 +119,14 @@ pub fn all_ops() -> Module {
         sp(0, 0),
     );
     let c5 = b.op1(OpKind::ConstNothing, vec![], Type::Nothing, sp(0, 0));
+    let _too_big = b.op1(
+        OpKind::LiteralError {
+            error: sky_ir::LiteralError::Overflow,
+        },
+        vec![],
+        len(),
+        sp(0, 0),
+    );
     let input = b.op1(OpKind::Input { name: "in".into() }, vec![], len(), sp(0, 0));
 
     let sum = b.op1(OpKind::Add, vec![x, c1], len(), sp(20, 25));

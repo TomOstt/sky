@@ -73,7 +73,7 @@ Planned extension points, which v1 leaves out: an error bound per value (interva
 
 | Group | Operations |
 |---|---|
-| Constants | `const.rational`, `const.float`, `const.bool`, `const.str`, `const.symbol` (π, e, √2) |
+| Constants | `const.rational`, `const.float`, `const.bool`, `const.str`, `const.symbol` (π, e, √2); `literal.error[too_large\|overflow]`, a literal with no finite `f64` value, which fails when it runs (as `sky run` does, only where it is evaluated) |
 | Arithmetic | `add`, `sub`, `mul`, `div`, `neg`, `pow` (with a constant rational exponent attribute when known), `inverse` |
 | Linear algebra | `matmul`, `transpose`, `solve` (produced by rewrites, never written by users in v1) |
 | Arrays | `array.literal`, `index`, `slice`, `zeros`, `identity`, `len`; `add`, `sub`, `mul` (scaling), `div`, `neg`, `inverse` and `matmul` also work on arrays |

@@ -1,5 +1,5 @@
 /// Unicode bidi controls: LRE, RLE, PDF, LRO, RLO, LRI, RLI, FSI, PDI, LRM, RLM, ALM.
-const BIDI_CONTROLS: &[char] = &[
+pub(crate) const BIDI_CONTROLS: &[char] = &[
     '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}',
     '\u{2069}', '\u{200E}', '\u{200F}', '\u{061C}',
 ];
@@ -10,10 +10,15 @@ pub struct BidiControl {
     pub ch: char,
 }
 
+/// True for the bidi controls [`find_bidi_control`] looks for.
+pub(crate) fn is_bidi_control(c: char) -> bool {
+    BIDI_CONTROLS.contains(&c)
+}
+
 /// Returns the first bidi control character in `src`, if any.
 pub fn find_bidi_control(src: &str) -> Option<BidiControl> {
     src.char_indices()
-        .find(|(_, c)| BIDI_CONTROLS.contains(c))
+        .find(|&(_, c)| is_bidi_control(c))
         .map(|(byte_offset, ch)| BidiControl { byte_offset, ch })
 }
 

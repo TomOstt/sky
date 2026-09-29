@@ -16,7 +16,10 @@ use sky_syntax::{lex, LexErrorKind, Span, TokenKind};
 
 fn check_span(src: &str, span: Span) {
     let (start, end) = (span.start as usize, span.end as usize);
-    assert!(start <= end && end <= src.len(), "span {span:?} out of bounds");
+    assert!(
+        start <= end && end <= src.len(),
+        "span {span:?} out of bounds"
+    );
     assert!(src.is_char_boundary(start) && src.is_char_boundary(end));
 }
 
@@ -41,7 +44,10 @@ fuzz_target!(|data: &[u8]| {
             let mut prev_end = 0;
             for t in &lexed.tokens {
                 check_span(src, t.span);
-                assert!(prev_end <= t.span.start, "tokens overlap or are out of order");
+                assert!(
+                    prev_end <= t.span.start,
+                    "tokens overlap or are out of order"
+                );
                 prev_end = t.span.end;
             }
             for d in &lexed.warnings {

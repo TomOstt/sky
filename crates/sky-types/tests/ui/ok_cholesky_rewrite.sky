@@ -1,0 +1,6 @@
+# `A⁻¹ @ b` with a PositiveDefinite `A` is rewritten to a Cholesky solve;
+# `inv(A) @ b` is the same operator spelled as a call.
+# env: A: Matrix[N,N] PositiveDefinite
+# env: b: Vector[3]
+x = A⁻¹ @ b
+y = inv(A) @ b

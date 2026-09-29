@@ -1,0 +1,26 @@
+crates/sky-types/tests/ui/err_unit_mismatch.sky:2:9: error: cannot add length and temperature
+  |
+2 | x = 5 m + 20 K
+  |         ^ mismatched dimensions
+  |     --- length
+  |           ---- temperature
+  = note: both operands of `+` must have the same dimension
+  = help: convert one side, or fix the unit
+
+crates/sky-types/tests/ui/err_unit_mismatch.sky:3:10: error: cannot subtract time from length
+  |
+3 | y = 3 km - 2 s
+  |          ^ mismatched dimensions
+  |     ---- length
+  |            --- time
+  = note: both operands of `-` must have the same dimension
+  = help: convert one side, or fix the unit
+
+crates/sky-types/tests/ui/err_unit_mismatch.sky:5:9: error: cannot compare length and time
+  |
+5 | w = 1 m < 2 s
+  |         ^ mismatched dimensions
+  |     --- length
+  |           --- time
+  = note: both operands of `<` must have the same dimension
+  = help: convert one side, or fix the unit

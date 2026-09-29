@@ -1,0 +1,5 @@
+f: Scalar [T⁻¹]
+g: Scalar [L⁻¹]
+t: Scalar [T]
+v: Scalar [L·T⁻¹]
+w: Scalar [L⁻¹·T]

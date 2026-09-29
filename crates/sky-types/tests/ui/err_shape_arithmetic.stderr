@@ -1,0 +1,5 @@
+crates/sky-types/tests/ui/err_shape_arithmetic.sky:1:11: error: shape arithmetic like `N+1` is not supported in v0.1
+  |
+1 | A: Matrix[N+1, N]
+  |           ^^^
+  = note: v0.1 shapes are equality constraints only

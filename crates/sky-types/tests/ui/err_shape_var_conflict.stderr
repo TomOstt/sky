@@ -1,0 +1,6 @@
+crates/sky-types/tests/ui/err_shape_var_conflict.sky:4:7: error: shape mismatch at axis 1: expected N = 3, found 4 (Matrix[N,N] vs Matrix[3,4])
+  |
+4 | U = S + T
+  |       ^
+  |     - this is Matrix[N,N] [1]
+  |         - this is Matrix[3,4] [1]

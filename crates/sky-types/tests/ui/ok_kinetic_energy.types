@@ -1,0 +1,7 @@
+e_scalar: Scalar [L²·M·T⁻²]
+energy: Scalar [L²·M·T⁻²]
+half: Vector[3] [L·M·T⁻¹]
+m: Scalar [M]
+p: Vector[3] [L·M·T⁻¹]
+speed: Scalar [L·T⁻¹]
+v: Vector[3] [L·T⁻¹]

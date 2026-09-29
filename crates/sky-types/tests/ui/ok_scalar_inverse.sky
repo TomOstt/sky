@@ -1,0 +1,6 @@
+# Postfix `⁻¹` on a scalar is the reciprocal: it flips the dimension.
+t = 2 s
+f = t⁻¹
+g = (10 km)⁻¹
+v = 10 km / 30 min
+w = inv(v)

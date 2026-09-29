@@ -1,0 +1,6 @@
+crates/sky-types/tests/ui/err_pow_minus_one_matrix.sky:4:6: error: `^-1` does not invert a matrix
+  |
+4 | x = A^-1 @ b
+  |      ^^^ a power, not the inverse operator
+  |     - this is Matrix[3,3] {Symmetric, PositiveDefinite} [1]
+  = help: write `A⁻¹` or `inv(A)`

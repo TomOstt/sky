@@ -1,0 +1,7 @@
+crates/sky-types/tests/ui/err_vector_power.sky:4:16: error: cannot raise a vector to a power
+  |
+4 | k = 0.5 * m * v^2
+  |                ^^
+  |               - this is Vector[3] [L·T⁻¹]
+  = note: `^` needs a scalar base in v0.1
+  = help: for the squared magnitude write `v @ v`

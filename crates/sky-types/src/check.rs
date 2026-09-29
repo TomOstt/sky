@@ -2,7 +2,9 @@
 //!
 //! This is the first slice that consumes the real AST (`sky-ast`). It types
 //! number literals with units, names and their bindings, the arithmetic and
-//! comparison operators, `@`, postfix `⁻¹` (and `inv(x)`), and `^`. Anything
+//! comparison operators, `@`, postfix `⁻¹` (and `inv(x)`), `^`, the Bool
+//! literals `true`/`false`, and `and`/`or`/`not` (strict Bool operands, no
+//! truthiness, per the spec's "Booleans and conditions"). Anything
 //! else (strings, other calls, indexing, attributes, `∂`, `∇`) is typed as
 //! [`Ty::Unknown`] without a diagnostic, and an operator with an unknown
 //! operand is unknown too, so one error never cascades.
@@ -240,6 +242,7 @@ pub fn check_module(module: &Module, source: &str) -> Checked {
 pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
     let mut c = Checker {
         src: source,
+        shadow_reported: Vec::new(),
         env,
         diagnostics: Vec::new(),
         rewrites: Vec::new(),
@@ -256,6 +259,9 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
 
 struct Checker<'s> {
     src: &'s str,
+    /// Size-variable names already reported as shadowing a value in the
+    /// annotation being read.
+    shadow_reported: Vec<String>,
     env: Env,
     diagnostics: Vec<Diagnostic>,
     rewrites: Vec<RewriteSite>,
@@ -333,6 +339,49 @@ impl<'s> Checker<'s> {
         }
     }
 
+    /// If `t` is Bool, reports that `what` needs a number (v0.1 has no
+    /// truthiness in either direction) and returns true.
+    fn reject_bool(&mut self, what: &str, e: &Expr, t: &Ty) -> bool {
+        if *t != Ty::Bool {
+            return false;
+        }
+        self.error(
+            Diagnostic::error(format!("`{what}` needs a number, found Bool"), e.span)
+                .with_label("this is Bool")
+                .with_note("v0.1 has no truthiness: a Bool is never a number"),
+        );
+        true
+    }
+
+    /// Checks one operand of `and`, `or`, or `not` (`kw`): it must be a
+    /// Bool. Numbers and tensors are errors (no truthiness), on the
+    /// operand's span.
+    fn bool_operand(&mut self, kw: &str, e: &Expr, t: Ty) {
+        let Ty::Value(v) = t else {
+            return; // Bool, or unknown (already reported).
+        };
+        let found = ValueTy {
+            dim: v.dim,
+            ty: self.env.shapes.apply_type(&v.ty),
+        };
+        let mut d = Diagnostic::error(
+            format!("`{kw}` needs a Bool operand, found {found}"),
+            e.span,
+        )
+        .with_label("not a Bool")
+        .with_note("v0.1 has no truthiness");
+        if v.is_scalar() {
+            let text = self.operand_text(e);
+            d = match zero_of(&v.dim) {
+                Some(zero) => d.with_help(format!("compare it instead, e.g. `{text} != {zero}`")),
+                None => d.with_help("compare it with a value of the same dimension"),
+            };
+        } else {
+            d = d.with_note("a condition must be a single value");
+        }
+        self.error(d);
+    }
+
     fn stmt(&mut self, kind: &StmtKind) {
         match kind {
             StmtKind::Expr(e) => {
@@ -389,6 +438,7 @@ impl<'s> Checker<'s> {
     /// `Tensor[d1, d2, ...]`, where each dimension is an integer literal or
     /// a name (a shape variable).
     fn annotation(&mut self, ty: &Expr) -> Option<TensorType> {
+        self.shadow_reported.clear();
         const NOTE: &str =
             "v0.1 annotations are `Vector[n]`, `Matrix[m, n]`, and `Tensor[d1, d2, ...]`";
         let ExprKind::Index { base, indices } = &ty.kind else {
@@ -458,6 +508,23 @@ impl<'s> Checker<'s> {
             },
             ExprKind::Name(id) => {
                 let name = self.ident(id);
+                if self.env.names.contains_key(name) {
+                    if self.shadow_reported.iter().any(|n| n == name) {
+                        return None; // one error per name per annotation
+                    }
+                    self.shadow_reported.push(name.to_string());
+                    // `N = 3` then `Matrix[N, N]`: the size variable is not
+                    // the value 3, so reusing the name is an error.
+                    self.error(
+                        Diagnostic::error(
+                            format!("size variable `{name}` has the same name as a value in scope"),
+                            id.span,
+                        )
+                        .with_label("size variable")
+                        .with_help("size variables are separate from values"),
+                    );
+                    return None;
+                }
                 Some(ShapeDim::Var(self.env.shape_var(name)))
             }
             ExprKind::Binary {
@@ -493,8 +560,17 @@ impl<'s> Checker<'s> {
         match &e.kind {
             ExprKind::Literal(lit) => match lit {
                 Literal::Int(_) | Literal::Float(_) => Ty::scalar(Dimension::DIMENSIONLESS),
+                Literal::Bool { .. } => Ty::Bool,
                 Literal::Str(_) => Ty::Unknown,
             },
+            ExprKind::BoolOp { op, operands, .. } => {
+                // Flat: a long chain is a loop here, not recursion.
+                for operand in operands {
+                    let t = self.expr(operand);
+                    self.bool_operand(op.keyword(), operand, t);
+                }
+                Ty::Bool
+            }
             ExprKind::UnitLiteral { unit, .. } => match self.unit(unit) {
                 Some(d) => Ty::scalar(d),
                 None => Ty::Unknown,
@@ -504,13 +580,15 @@ impl<'s> Checker<'s> {
                 match self.env.get(name) {
                     Some(t) => t,
                     None => {
-                        self.error(
-                            Diagnostic::error(
-                                format!("cannot find `{name}` in this scope"),
-                                id.span,
-                            )
-                            .with_label("not defined"),
-                        );
+                        let mut d = Diagnostic::error(
+                            format!("cannot find `{name}` in this scope"),
+                            id.span,
+                        )
+                        .with_label("not defined");
+                        if matches!(name, "True" | "False") {
+                            d = d.with_help("Sky writes booleans as `true`/`false`");
+                        }
+                        self.error(d);
                         Ty::Unknown
                     }
                 }
@@ -522,6 +600,15 @@ impl<'s> Checker<'s> {
                 operand,
             } => {
                 let t = self.expr(operand);
+                if *op == UnaryOp::Not {
+                    self.bool_operand("not", operand, t);
+                    return Ty::Bool;
+                }
+                if matches!(op, UnaryOp::Neg | UnaryOp::Pos)
+                    && self.reject_bool(op_sym(*op), operand, &t)
+                {
+                    return Ty::Unknown;
+                }
                 match (op, t) {
                     (UnaryOp::Pos, t @ Ty::Value(_)) => t,
                     (UnaryOp::Neg, Ty::Value(v)) => self.retag(v, negated_tags),
@@ -530,6 +617,9 @@ impl<'s> Checker<'s> {
             }
             ExprKind::Inverse { operand, op_span } => {
                 let t = self.expr(operand);
+                if self.reject_bool("⁻¹", operand, &t) {
+                    return Ty::Unknown;
+                }
                 self.invert(t, *op_span, operand.span)
             }
             ExprKind::Call { callee, args } => {
@@ -686,6 +776,10 @@ impl<'s> Checker<'s> {
             None => (None, self.expr(lhs)),
         };
         let r = self.expr(rhs);
+        let lb = self.reject_bool("@", lhs, &l);
+        if self.reject_bool("@", rhs, &r) || lb {
+            return Ty::Unknown;
+        }
         let (Ty::Value(lv), Ty::Value(rv)) = (l, r) else {
             return Ty::Unknown;
         };
@@ -777,6 +871,10 @@ impl<'s> Checker<'s> {
     fn pow(&mut self, op_span: Span, base: &Expr, exp: &Expr) -> Ty {
         let b = self.expr(base);
         let x = self.expr(exp);
+        let bb = self.reject_bool("^", base, &b);
+        if self.reject_bool("^", exp, &x) || bb {
+            return Ty::Unknown;
+        }
         let Ty::Value(bv) = b else {
             return Ty::Unknown;
         };
@@ -851,6 +949,20 @@ impl<'s> Checker<'s> {
 
     fn binary(&mut self, op: BinaryOp, op_span: Span, l: (&Expr, Ty), r: (&Expr, Ty)) -> Ty {
         let ((le, lt), (re, rt)) = (l, r);
+        match (&lt, &rt) {
+            (Ty::Bool, Ty::Bool) if matches!(op, BinaryOp::Eq | BinaryOp::Ne) => return Ty::Bool,
+            (Ty::Bool, _) | (_, Ty::Bool) => {
+                // `==`/`!=` between a Bool and an unknown operand may be
+                // fine; stay silent rather than guess.
+                let eq = matches!(op, BinaryOp::Eq | BinaryOp::Ne);
+                if !(eq && (lt == Ty::Unknown || rt == Ty::Unknown)) {
+                    self.reject_bool(op.symbol(), le, &lt);
+                    self.reject_bool(op.symbol(), re, &rt);
+                }
+                return Ty::Unknown;
+            }
+            _ => {}
+        }
         let (Ty::Value(lv), Ty::Value(rv)) = (lt, rt) else {
             return Ty::Unknown;
         };
@@ -1055,6 +1167,84 @@ impl<'s> Checker<'s> {
     }
 }
 
+/// The symbol of a unary arithmetic operator, for messages.
+fn op_sym(op: UnaryOp) -> &'static str {
+    match op {
+        UnaryOp::Neg => "-",
+        UnaryOp::Pos => "+",
+        UnaryOp::Partial => "∂",
+        UnaryOp::Nabla => "∇",
+        UnaryOp::Not => "not",
+    }
+}
+
+/// A zero of dimension `d` written as Sky source (`0`, `0 m`, `0 kg*m/s^2`),
+/// for help text. Uses a coherent table unit when one has exactly this
+/// dimension, otherwise composes m, kg, s and K. `None` if `d` involves a
+/// base dimension without a table unit (current, amount, luminosity).
+fn zero_of(d: &Dimension) -> Option<String> {
+    use sky_units::{BaseDim, UNITS};
+    if d.is_dimensionless() {
+        return Some("0".to_string());
+    }
+    if let Some(u) = UNITS.iter().find(|u| u.dim == *d && u.scale == 1.0) {
+        return Some(format!("0 {}", u.name));
+    }
+    let symbol = |b: BaseDim| match b {
+        BaseDim::Length => Some("m"),
+        BaseDim::Mass => Some("kg"),
+        BaseDim::Time => Some("s"),
+        BaseDim::Temperature => Some("K"),
+        _ => None,
+    };
+    let power = |sym: &str, e: Rational| {
+        if e == Rational::ONE {
+            sym.to_string()
+        } else if e.is_integer() {
+            format!("{sym}^{}", e.numer())
+        } else {
+            format!("{sym}^({}/{})", e.numer(), e.denom())
+        }
+    };
+    let (mut pos, mut neg) = (Vec::new(), Vec::new());
+    // SI order for derived units: kg·m·s⁻²·K.
+    let order = [
+        BaseDim::Mass,
+        BaseDim::Length,
+        BaseDim::Time,
+        BaseDim::Temperature,
+        BaseDim::Current,
+        BaseDim::Amount,
+        BaseDim::Luminosity,
+    ];
+    for b in order {
+        let e = d.exponent(b);
+        if e.is_zero() {
+            continue;
+        }
+        let sym = symbol(b)?;
+        if e.numer() > 0 {
+            pos.push(power(sym, e));
+        } else {
+            neg.push((sym, e));
+        }
+    }
+    let unit = if pos.is_empty() {
+        neg.iter()
+            .map(|&(s, e)| power(s, e))
+            .collect::<Vec<_>>()
+            .join("*")
+    } else {
+        let mut u = pos.join("*");
+        for (s, e) in neg {
+            u.push('/');
+            u.push_str(&power(s, e.checked_neg().ok()?));
+        }
+        u
+    };
+    Some(format!("0 {unit}"))
+}
+
 /// Full names people are likely to write, mapped to the table symbol. Only
 /// used for `help:` text; the unit table itself has no aliases in v0.1.
 fn unit_suggestion(name: &str) -> Option<&'static str> {
@@ -1195,6 +1385,34 @@ mod tests {
                 vec!["write `2 m * ones(b) + b` for every element".to_string()],
             ]
         );
+    }
+
+    #[test]
+    fn size_variable_rule_leaves_the_unit_n_alone() {
+        // `N` as a unit after a number never touches the value or size
+        // variable namespaces, whether or not the unit table has `N` yet.
+        let src = "N = 3 m\nF = 10 N\nA: Matrix[M, M]\n";
+        let c = check_src(src, Env::new());
+        assert!(
+            c.diagnostics
+                .iter()
+                .all(|d| !d.message.contains("size variable")),
+            "{:#?}",
+            c.diagnostics
+        );
+        match sky_units::lookup("N") {
+            Some(newton) => {
+                assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
+                assert_eq!(c.env.get("F"), Some(Ty::scalar(newton.dim)));
+            }
+            None => assert_eq!(c.diagnostics[0].message, "unknown unit `N`"),
+        }
+        // A size variable named like a value is reported once, at the
+        // first use in the annotation.
+        let src = "N = 3\nA: Matrix[N, N]\n";
+        let c = check_src(src, Env::new());
+        assert_eq!(c.diagnostics.len(), 1);
+        assert_eq!(c.diagnostics[0].primary.span, Span::new(16, 17));
     }
 
     #[test]

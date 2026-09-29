@@ -1,0 +1,6 @@
+p: Bool
+q: Bool
+r: Bool
+s: Bool
+t: Scalar [T]
+u: Bool

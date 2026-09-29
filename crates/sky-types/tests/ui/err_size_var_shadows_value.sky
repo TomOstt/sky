@@ -1,0 +1,3 @@
+# A size variable is not the value with the same name.
+N = 3
+A: Matrix[N, N]

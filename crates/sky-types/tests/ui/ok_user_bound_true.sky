@@ -1,0 +1,4 @@
+# A user may bind `True` and `False` themselves: no error, no hint.
+True = 1
+False = 0
+x = True + False

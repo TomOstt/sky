@@ -1,0 +1,7 @@
+# `true`/`false` are Bool; and/or/not take Bool operands and give Bool.
+t = 2 s
+p = true
+q = not p
+r = p and q or false
+s = t < 3 s and not (t > 1 s)
+u = (t < 3 s) == p

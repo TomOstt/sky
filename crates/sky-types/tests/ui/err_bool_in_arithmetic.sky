@@ -1,0 +1,6 @@
+# A Bool is never a number either.
+p = true
+a = p + 1
+b = -p
+c = p == 1
+d = p^2

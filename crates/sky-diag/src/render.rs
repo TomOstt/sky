@@ -1,4 +1,4 @@
-//! Plain-text rendering. See the crate docs for the exact format.
+//! Plain-text rendering. The format is normative in `spec/diagnostics.md`.
 
 use std::fmt::{self, Write};
 
@@ -44,8 +44,8 @@ fn resolve<'a>(file: &SourceFile, label: &'a Label, marker: char) -> Mark<'a> {
 }
 
 impl Diagnostic {
-    /// Writes this diagnostic in the plain-text format described in the crate
-    /// docs. Never panics, whatever the spans are.
+    /// Writes this diagnostic in the plain-text format defined in
+    /// `spec/diagnostics.md`. Never panics, whatever the spans are.
     pub fn render(&self, file: &SourceFile, out: &mut impl Write) -> fmt::Result {
         let primary = resolve(file, &self.primary, '^');
         let mut secondary: Vec<Mark<'_>> = self

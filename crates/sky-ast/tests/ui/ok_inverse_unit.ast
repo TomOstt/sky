@@ -1,0 +1,2 @@
+(= per (inverse (paren (unit 10 km))))
+(= per_km (unit 10 (^ km -1)))

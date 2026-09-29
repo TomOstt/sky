@@ -1,0 +1,2 @@
+# `10 m⁻²` never produces a quantity: the lexer rejects a lone `⁻`.
+density = 10 m⁻²

@@ -1,0 +1,6 @@
+crates/sky-ast/tests/ui/err_inverse_compound_unit.sky:2:12: error: `⁻¹` cannot follow a unit
+  |
+2 | g = 9.8 m/s⁻¹
+  |            ^^
+  |           - unit
+  = help: write `9.8 m/s^-1` to invert `s`, or `(9.8 m/s)⁻¹`

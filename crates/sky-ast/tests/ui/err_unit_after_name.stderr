@@ -1,0 +1,6 @@
+crates/sky-ast/tests/ui/err_unit_after_name.sky:1:7: error: unexpected name `km` after an expression; a unit may only follow a numeric literal
+  |
+1 | y = x km
+  |       ^^
+  |     - this is not a numeric literal
+  = help: write a unit right after a number (`10 km`), or multiply explicitly (`... * km`)

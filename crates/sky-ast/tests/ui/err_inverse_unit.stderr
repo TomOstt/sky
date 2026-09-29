@@ -1,0 +1,6 @@
+crates/sky-ast/tests/ui/err_inverse_unit.sky:2:13: error: `⁻¹` cannot follow a unit
+  |
+2 | rate = 10 km⁻¹
+  |             ^^
+  |           -- unit
+  = help: write `10 km^-1` for per-km, or `(10 km)⁻¹`

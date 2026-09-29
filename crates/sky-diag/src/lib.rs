@@ -32,12 +32,14 @@
 //! ```
 
 mod diagnostic;
+mod display_unsafe_table;
 mod render;
 mod safe;
 mod source;
 mod span;
 
 pub use diagnostic::{Diagnostic, Label, Severity};
-pub use safe::display_safe;
+pub use display_unsafe_table::UNICODE_VERSION as DISPLAY_UNSAFE_UNICODE_VERSION;
+pub use safe::{display_safe, is_display_unsafe};
 pub use source::SourceFile;
 pub use span::Span;

@@ -1,0 +1,2 @@
+# Caught by the lexer, before the parser runs.
+x = (a + b

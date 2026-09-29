@@ -143,6 +143,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "sky-ast"
 version = "0.0.1"
 dependencies = [
+ "sky-diag",
  "sky-syntax",
 ]
 
@@ -151,6 +152,7 @@ name = "sky-cli"
 version = "0.0.1"
 dependencies = [
  "sky-diag",
+ "sky-project",
  "sky-syntax",
 ]
 
@@ -163,6 +165,14 @@ name = "sky-interp"
 version = "0.0.1"
 dependencies = [
  "sky-ast",
+]
+
+[[package]]
+name = "sky-project"
+version = "0.0.1"
+dependencies = [
+ "libc",
+ "sky-diag",
 ]
 
 [[package]]

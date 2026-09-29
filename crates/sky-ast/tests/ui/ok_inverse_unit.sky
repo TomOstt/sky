@@ -1,0 +1,3 @@
+# `⁻¹` of a parenthesized quantity inverts the quantity; `^-1` inverts the unit.
+per = (10 km)⁻¹
+per_km = 10 km^-1

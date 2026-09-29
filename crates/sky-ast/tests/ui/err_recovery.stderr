@@ -1,0 +1,11 @@
+crates/sky-ast/tests/ui/err_recovery.sky:2:8: error: expected an expression, found end of line
+  |
+2 | x = 1 +
+  |        ^
+
+crates/sky-ast/tests/ui/err_recovery.sky:4:7: error: unexpected integer literal `3` after an expression; expected end of line
+  |
+4 | z = 3 3
+  |       ^
+  |     - previous expression
+  = help: two expressions cannot be written side by side; is an operator missing?

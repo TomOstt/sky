@@ -1,0 +1,4 @@
+crates/sky-ast/tests/ui/err_exponent_too_large.sky:1:10: error: unit exponent `99999999999999999999` is not a valid 64-bit integer
+  |
+1 | r = 1 m^(99999999999999999999/2)
+  |          ^^^^^^^^^^^^^^^^^^^^

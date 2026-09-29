@@ -1,0 +1,6 @@
+crates/sky-ast/tests/ui/err_unit_slash_number.sky:1:10: error: expected a unit name after `/` in a unit literal, found integer literal `2`
+  |
+1 | v = 10 m/2
+  |          ^
+  |         - no spaces around this, so it is part of the unit
+  = help: to divide the quantity, put spaces around `/`

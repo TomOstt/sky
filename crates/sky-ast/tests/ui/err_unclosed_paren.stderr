@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_unclosed_paren.sky:2:5: error: unclosed `(`
+  |
+2 | x = (a + b
+  |     ^ this `(` is never closed
+  = help: add a matching `)`

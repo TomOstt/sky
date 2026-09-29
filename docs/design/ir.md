@@ -53,14 +53,17 @@ Value      { id, ty: Type }               -- SSA: defined once
 
 ```text
 Type = Number { dim: Dimension, shape: Shape, tags: TagSet, repr: Repr }
-     | Bool   { shape: Shape }
+     | Bool             -- a scalar condition (v1 has no Bool arrays)
      | Str
-     | Function { params: [Type], results: [Type], effects: EffectSet }
+     | Nothing          -- what `print` and a function without a return value give
+     | Unknown          -- the checker couldn't type it; passes treat it conservatively
 
-Repr = Exact            -- rational or symbolic until approximation is needed (idea 9)
-     | Float(Format)    -- F16 | BF16 | F32 | F64 | F128, chosen by precision passes
-     | Unchosen         -- L1 default: a strategy pass decides
+Repr = Unchosen         -- L1 default: a strategy pass decides
+     | Exact            -- rational or symbolic until approximation is needed (idea 9)
+     | F32 | F64        -- chosen by precision passes (F16, BF16, F128 come with Phase 3)
 ```
+
+Functions are not first-class values in v1: calls name their callee (`call @f`). A function's parameter types are also the types of its entry block's arguments, and the verifier checks that the two agree. `if` and `while` report no effects of their own; a pass computes their effects from their regions.
 
 `Dimension`, `Shape` and `TagSet` are the existing types from sky-units and sky-types, reused as they are. SIR depends on those crates and does not copy them. Tags stay *closed* (implications applied), as the checker already guarantees.
 
@@ -73,7 +76,7 @@ Planned extension points, which v1 leaves out: an error bound per value (interva
 | Constants | `const.rational`, `const.float`, `const.bool`, `const.str`, `const.symbol` (π, e, √2) |
 | Arithmetic | `add`, `sub`, `mul`, `div`, `neg`, `pow` (with a constant rational exponent attribute when known), `inverse` |
 | Linear algebra | `matmul`, `transpose`, `solve` (produced by rewrites, never written by users in v1) |
-| Comparison and logic | `cmp.{eq,ne,lt,le,gt,ge}`, `not`, `and`/`or` (short-circuit, as regions) |
+| Comparison and logic | `cmp.{eq,ne,lt,le,gt,ge}` (on Bools and strings only `eq`/`ne`), `not`; `and`/`or` short-circuit, so they lower to `if` |
 | Control | `if` (regions), `while` (regions), `yield`, `call`, `return` |
 | Environment | `param`, `print` (effectful) |
 

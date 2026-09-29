@@ -203,6 +203,9 @@ fn crlf_newline_covers_both_bytes() {
 fn bare_carriage_return_is_an_error() {
     assert_err("x = 1\ry = 2\n", LexErrorKind::BareCarriageReturn, "\r");
     assert_err("x = 1 # c\r", LexErrorKind::BareCarriageReturn, "\r");
+    // Inside a string too, not "unterminated string".
+    assert_err("s = \"a\rb\"\n", LexErrorKind::BareCarriageReturn, "\r");
+    assert_err("s = \"a\r", LexErrorKind::BareCarriageReturn, "\r");
 }
 
 #[test]

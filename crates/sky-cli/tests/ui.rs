@@ -40,14 +40,29 @@ fn collect_sky_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// True if any diagnostic header in `stderr` has severity `error`.
+/// True if any diagnostic header in `stderr` has severity `error`. A header
+/// is `<file>:<line>:<col>: <severity>: <message>`, and the file name may
+/// itself contain `:`, so look for `:<digits>:<digits>: error:` anywhere.
 fn has_error(stderr: &str) -> bool {
-    stderr.lines().any(|l| {
-        !l.starts_with(' ')
-            && l.splitn(4, ':')
-                .nth(3)
-                .is_some_and(|rest| rest.starts_with(" error:"))
+    stderr.lines().filter(|l| !l.starts_with(' ')).any(|l| {
+        l.match_indices(": error:").any(|(i, _)| {
+            let mut parts = l[..i].rsplitn(3, ':');
+            let (col, line) = (parts.next(), parts.next());
+            let digits = |s: Option<&str>| {
+                s.is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+            };
+            digits(col) && digits(line) && parts.next().is_some()
+        })
     })
+}
+
+#[test]
+fn has_error_reads_headers_with_colons_in_the_path() {
+    assert!(has_error("a.sky:1:2: error: x\n"));
+    assert!(has_error("dir:with:colons/a.sky:10:3: error: x\n"));
+    assert!(!has_error("a.sky:1:2: warning: x\n"));
+    assert!(!has_error("dir: error:/a.sky:1:2: warning: x\n"));
+    assert!(!has_error("  = note: a.sky:1:2: error: quoted\n"));
 }
 
 #[test]

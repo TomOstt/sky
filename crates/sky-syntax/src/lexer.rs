@@ -531,18 +531,23 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
+    /// The error for a CR at `start` (already consumed) without a LF.
+    fn bare_cr<T>(&self, start: usize) -> LexResult<T> {
+        err(
+            LexErrorKind::BareCarriageReturn,
+            Diagnostic::error(
+                "carriage return (U+000D) not followed by a line feed",
+                self.span_from(start),
+            )
+            .with_help("use `\\n` or `\\r\\n` line endings"),
+        )
+    }
+
     /// Consumes `\n` or `\r\n` at `self.pos` and returns its span.
     fn newline(&mut self) -> LexResult<Span> {
         let start = self.pos;
         if self.eat('\r') && !self.eat('\n') {
-            return err(
-                LexErrorKind::BareCarriageReturn,
-                Diagnostic::error(
-                    "carriage return (U+000D) not followed by a line feed",
-                    self.span_from(start),
-                )
-                .with_help("use `\\n` or `\\r\\n` line endings"),
-            );
+            return self.bare_cr(start);
         }
         self.eat('\n');
         Ok(self.span_from(start))
@@ -672,6 +677,11 @@ impl<'a> Lexer<'a> {
         loop {
             let at = self.pos;
             match self.peek() {
+                // A lone CR is the same error inside a string as outside.
+                Some('\r') if !self.src[at + 1..].starts_with('\n') => {
+                    self.pos += 1;
+                    return self.bare_cr(at);
+                }
                 None | Some('\n' | '\r') => {
                     return err(
                         LexErrorKind::UnterminatedString,

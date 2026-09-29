@@ -22,6 +22,7 @@
 #![forbid(unsafe_code)]
 
 pub mod check;
+mod quote;
 pub mod rewrite;
 pub mod rules;
 pub mod scale;
@@ -29,7 +30,10 @@ pub mod shape;
 pub mod tag_ops;
 pub mod tags;
 
-pub use check::{check_module, check_module_with, Checked, Env, RewriteSite, Ty, ValueTy};
+pub use check::{
+    check_module, check_module_with, Checked, Env, RewriteSite, Ty, ValueTy, MAX_STORED_REWRITES,
+};
+pub use quote::QUOTE_MAX_CHARS;
 pub use rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 pub use rules::{elementwise, inverse, matmul, transpose, TensorType};
 pub use scale::{negated_tags, scaled_tags};

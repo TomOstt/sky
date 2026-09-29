@@ -27,12 +27,21 @@
 //! The walk never evaluates user code. The only "values" it looks at are
 //! constant exponents like the `2` in `x^2`, read from the source text.
 //!
+//! # Output size
+//!
+//! Source text quoted in a diagnostic (and in the `--explain` text, and in
+//! shape-variable names shown in types) is capped at
+//! [`crate::QUOTE_MAX_CHARS`] characters; spans still cover the full text.
+//! At most [`MAX_STORED_REWRITES`] rewrite sites are stored, and later ones
+//! are only counted in [`Checked::rewrites_omitted`].
+//!
 //! # Depth
 //!
 //! The walk recurses once per nesting level, and the parser caps nesting at
 //! [`sky_ast::MAX_DEPTH`]. Callers run it on a thread with a deep stack, like
 //! the parser (see the crate's `deep_nesting` test).
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
@@ -42,6 +51,7 @@ use sky_ast::{BinaryOp, Expr, ExprKind, Ident, Literal, Module, StmtKind, UnaryO
 use sky_diag::{Diagnostic, Severity, Span};
 use sky_units::{lookup, Dimension, Rational};
 
+use crate::quote::quote;
 use crate::rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 use crate::rules::{elementwise, inverse, matmul, TensorType};
 use crate::scale::{negated_tags, scaled_tags};
@@ -135,7 +145,9 @@ impl Env {
         if let Some(v) = self.shape_vars.get(name) {
             return v.clone();
         }
-        let v = self.shapes.fresh(Arc::<str>::from(name));
+        // The name is for display only (identity is the id), so store it
+        // capped like any quoted source text.
+        let v = self.shapes.fresh(Arc::<str>::from(quote(name)));
         self.shape_vars.insert(name.to_string(), v.clone());
         v
     }
@@ -201,7 +213,7 @@ impl RewriteSite {
     /// A note diagnostic for `sky check --explain`: points at the rewritten
     /// expression and carries the explanation.
     pub fn to_diagnostic(&self, source: &str) -> Diagnostic {
-        let text = span_text(source, self.span).unwrap_or("A⁻¹ @ b");
+        let text = quote(span_text(source, self.span).unwrap_or("A⁻¹ @ b"));
         Diagnostic::note(
             format!("`{text}` is rewritten to a Cholesky solve"),
             self.span,
@@ -211,13 +223,22 @@ impl RewriteSite {
     }
 }
 
+/// Most [`RewriteSite`]s kept in [`Checked::rewrites`]; later ones are only
+/// counted, in [`Checked::rewrites_omitted`]. The cap never stops the walk
+/// and never affects diagnostics.
+pub const MAX_STORED_REWRITES: usize = 100;
+
 /// The result of checking a module.
 #[derive(Clone, Debug)]
 pub struct Checked {
     /// Errors and warnings, in source order of the walk.
     pub diagnostics: Vec<Diagnostic>,
-    /// Rewrite decisions, in source order.
+    /// Rewrite decisions, in source order: at most [`MAX_STORED_REWRITES`],
+    /// the first ones found. This bounds `sky check --explain` output.
     pub rewrites: Vec<RewriteSite>,
+    /// Rewrite decisions made after [`MAX_STORED_REWRITES`] were stored.
+    /// They are still rewrites; only their explanations are dropped.
+    pub rewrites_omitted: usize,
     /// The environment after the last statement.
     pub env: Env,
 }
@@ -246,6 +267,7 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         env,
         diagnostics: Vec::new(),
         rewrites: Vec::new(),
+        rewrites_omitted: 0,
     };
     for stmt in &module.stmts {
         c.stmt(&stmt.kind);
@@ -253,6 +275,7 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
     Checked {
         diagnostics: c.diagnostics,
         rewrites: c.rewrites,
+        rewrites_omitted: c.rewrites_omitted,
         env: c.env,
     }
 }
@@ -265,6 +288,7 @@ struct Checker<'s> {
     env: Env,
     diagnostics: Vec<Diagnostic>,
     rewrites: Vec<RewriteSite>,
+    rewrites_omitted: usize,
 }
 
 /// Human wording for a dimension in error text: its name if it has one
@@ -301,6 +325,12 @@ impl<'s> Checker<'s> {
         self.text(id.span)
     }
 
+    /// Source text for a diagnostic: [`quote`]d (capped and escaped). Use
+    /// this, never [`Self::text`], for any text shown to the user.
+    fn quoted(&self, span: Span) -> Cow<'s, str> {
+        quote(self.text(span))
+    }
+
     fn error(&mut self, d: Diagnostic) {
         self.diagnostics.push(d);
     }
@@ -330,7 +360,7 @@ impl<'s> Checker<'s> {
     /// expression), so it can be spliced into a larger suggested expression
     /// such as `(K⁻¹)⁻¹` or `(-2) * ones(A)`.
     fn operand_text(&self, e: &Expr) -> String {
-        let text = self.text(e.span);
+        let text = self.quoted(e.span);
         match e.kind {
             ExprKind::Binary { .. } | ExprKind::Unary { .. } | ExprKind::Inverse { .. } => {
                 format!("({text})")
@@ -444,7 +474,7 @@ impl<'s> Checker<'s> {
         let ExprKind::Index { base, indices } = &ty.kind else {
             self.error(
                 Diagnostic::error(
-                    format!("unsupported type annotation `{}`", self.text(ty.span)),
+                    format!("unsupported type annotation `{}`", self.quoted(ty.span)),
                     ty.span,
                 )
                 .with_note(NOTE),
@@ -462,7 +492,7 @@ impl<'s> Checker<'s> {
             _ => {
                 self.error(
                     Diagnostic::error(
-                        format!("unsupported type annotation `{}`", self.text(ty.span)),
+                        format!("unsupported type annotation `{}`", self.quoted(ty.span)),
                         base.span,
                     )
                     .with_note(NOTE),
@@ -500,7 +530,7 @@ impl<'s> Checker<'s> {
                 Ok(n) => Some(ShapeDim::Known(n)),
                 Err(_) => {
                     self.error(Diagnostic::error(
-                        format!("shape dimension `{}` is too large", self.text(*span)),
+                        format!("shape dimension `{}` is too large", self.quoted(*span)),
                         *span,
                     ));
                     None
@@ -517,7 +547,10 @@ impl<'s> Checker<'s> {
                     // the value 3, so reusing the name is an error.
                     self.error(
                         Diagnostic::error(
-                            format!("size variable `{name}` has the same name as a value in scope"),
+                            format!(
+                                "size variable `{}` has the same name as a value in scope",
+                                quote(name)
+                            ),
                             id.span,
                         )
                         .with_label("size variable")
@@ -535,7 +568,7 @@ impl<'s> Checker<'s> {
                     Diagnostic::error(
                         format!(
                             "shape arithmetic like `{}` is not supported in v0.1",
-                            self.text(ix.span)
+                            self.quoted(ix.span)
                         ),
                         ix.span,
                     )
@@ -547,7 +580,7 @@ impl<'s> Checker<'s> {
                 self.error(Diagnostic::error(
                     format!(
                         "a shape dimension must be a non-negative integer or a name, found `{}`",
-                        self.text(ix.span)
+                        self.quoted(ix.span)
                     ),
                     ix.span,
                 ));
@@ -581,7 +614,7 @@ impl<'s> Checker<'s> {
                     Some(t) => t,
                     None => {
                         let mut d = Diagnostic::error(
-                            format!("cannot find `{name}` in this scope"),
+                            format!("cannot find `{}` in this scope", quote(name)),
                             id.span,
                         )
                         .with_label("not defined");
@@ -680,7 +713,8 @@ impl<'s> Checker<'s> {
                 return match lookup(name) {
                     Some(unit) => Some(unit.dim),
                     None => {
-                        let mut d = Diagnostic::error(format!("unknown unit `{name}`"), id.span);
+                        let mut d =
+                            Diagnostic::error(format!("unknown unit `{}`", quote(name)), id.span);
                         if let Some(s) = unit_suggestion(name) {
                             d = d.with_help(format!("did you mean `{s}`?"));
                         }
@@ -791,13 +825,17 @@ impl<'s> Checker<'s> {
             if let Some(rewrite) =
                 cholesky_rewrite(MatmulLhs::Inverse(&av.ty), &rv.ty, &self.env.shapes)
             {
-                let rewrite = self.name_operands(rewrite, operand, rhs);
-                self.rewrites.push(RewriteSite {
-                    span,
-                    matrix: operand.span,
-                    rhs: rhs.span,
-                    rewrite,
-                });
+                if self.rewrites.len() < MAX_STORED_REWRITES {
+                    let rewrite = self.name_operands(rewrite, operand, rhs);
+                    self.rewrites.push(RewriteSite {
+                        span,
+                        matrix: operand.span,
+                        rhs: rhs.span,
+                        rewrite,
+                    });
+                } else {
+                    self.rewrites_omitted += 1;
+                }
             }
         }
         match matmul(&mut self.env.shapes, &lv.ty, &rv.ty) {
@@ -819,7 +857,7 @@ impl<'s> Checker<'s> {
     /// Vector[3]`. In formulas a compound operand is parenthesized.
     fn name_operands(&self, rewrite: Rewrite, matrix: &Expr, rhs: &Expr) -> Rewrite {
         let Rewrite::CholeskySolve { a, b, result, .. } = rewrite;
-        let (a_text, b_text) = (self.text(matrix.span), self.text(rhs.span));
+        let (a_text, b_text) = (self.quoted(matrix.span), self.quoted(rhs.span));
         let (a_f, b_f) = (self.operand_text(matrix), self.operand_text(rhs));
         let explanation = format!(
             "rewrite `{a_f}⁻¹ @ {b_f}` to a Cholesky solve: {a_text} is {a} and PositiveDefinite, \
@@ -881,7 +919,7 @@ impl<'s> Checker<'s> {
         let power_span = op_span.join(exp.span);
         let constant = self.const_exponent(exp);
         if !bv.is_scalar() {
-            let base_text = self.text(base.span);
+            let base_text = self.quoted(base.span);
             let rank = bv.ty.shape().rank();
             let label = self.this_is(&bv);
             let d = if rank == 2 && constant == Some(Rational::integer(-1)) {
@@ -1050,7 +1088,7 @@ impl<'s> Checker<'s> {
                 } else {
                     (&lv, le, re)
                 };
-                let a = self.text(arr_e.span);
+                let a = self.quoted(arr_e.span);
                 let noun = rank_noun(arr.ty.shape().rank());
                 let message = match (op, left_scalar) {
                     (BinaryOp::Add, false) => format!("cannot add a scalar to a {noun}"),
@@ -1130,7 +1168,7 @@ impl<'s> Checker<'s> {
             }
             (false, true) => self.retag(ValueTy { dim, ty: lv.ty }, scaled_tags),
             (true, false) => {
-                let (a, rank) = (self.text(re.span), rv.ty.shape().rank());
+                let (a, rank) = (self.quoted(re.span), rv.ty.shape().rank());
                 let label = self.this_is(&rv);
                 let mut d = Diagnostic::error(
                     format!("cannot divide a scalar by a {}", rank_noun(rank)),

@@ -1,0 +1,4 @@
+A = [[1, 2], [3, 4]]
+G = Aᵀ @ A
+H = transpose(A)ᵀ
+x = sin(30 deg) + erf(0.5)

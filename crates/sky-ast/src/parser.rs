@@ -982,7 +982,7 @@ impl<'t, 's> Parser<'t, 's> {
                 }
                 // `as` ends the expression: no chaining, nothing after it.
                 Step::As(as_span) => return self.parse_as(lhs, as_span),
-                Step::Inverse(op_span) => inverse(lhs, op_span),
+                Step::Glyph { transpose, op_span } => glyph(lhs, op_span, transpose),
                 Step::Attribute(name) => attribute(lhs, name),
                 Step::Call(open) => self.parse_call(lhs, open)?,
                 Step::Index(open) => self.parse_index(lhs, open)?,
@@ -1126,7 +1126,14 @@ impl<'t, 's> Parser<'t, 's> {
             self.enter(tok.span)?;
             self.bump();
             return match tok.kind {
-                TokenKind::Inverse => Some(Step::Inverse(tok.span)),
+                TokenKind::Inverse => Some(Step::Glyph {
+                    transpose: false,
+                    op_span: tok.span,
+                }),
+                TokenKind::Transpose => Some(Step::Glyph {
+                    transpose: true,
+                    op_span: tok.span,
+                }),
                 TokenKind::LParen => Some(Step::Call(tok.span)),
                 TokenKind::LBracket => Some(Step::Index(tok.span)),
                 TokenKind::Dot => {
@@ -2620,7 +2627,12 @@ enum Step {
     Conditional(Span),
     /// The `as` of `v as unit`, already consumed.
     As(Span),
-    Inverse(Span),
+    /// The postfix glyph `⁻¹` or `ᵀ`, already consumed. One variant and one
+    /// builder for both, so the recursive parser frame stays small.
+    Glyph {
+        transpose: bool,
+        op_span: Span,
+    },
     Attribute(Ident),
     /// Holds the span of the opening `(` or `[`, already consumed.
     Call(Span),
@@ -2716,12 +2728,14 @@ fn paren(open: Span, inner: Expr, close: Span) -> Expr {
 }
 
 #[inline(never)]
-fn inverse(operand: Expr, op_span: Span) -> Expr {
+fn glyph(operand: Expr, op_span: Span, transpose: bool) -> Expr {
+    let (operand, op_span) = (Box::new(operand), op_span);
     Expr {
         span: operand.span.join(op_span),
-        kind: ExprKind::Inverse {
-            operand: Box::new(operand),
-            op_span,
+        kind: if transpose {
+            ExprKind::Transpose { operand, op_span }
+        } else {
+            ExprKind::Inverse { operand, op_span }
         },
     }
 }
@@ -2825,6 +2839,7 @@ fn symbol(kind: TokenKind) -> &'static str {
         TokenKind::Caret => "^",
         TokenKind::At => "@",
         TokenKind::Inverse => "⁻¹",
+        TokenKind::Transpose => "ᵀ",
         TokenKind::Partial => "∂",
         TokenKind::Nabla => "∇",
         TokenKind::Eq => "==",

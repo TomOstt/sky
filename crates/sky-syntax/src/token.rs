@@ -60,6 +60,9 @@ pub enum TokenKind {
     At,
     /// The glyph `⁻¹` (ASCII spelling is the stdlib function `inv`).
     Inverse,
+    /// The glyph `ᵀ` (U+1D40 MODIFIER LETTER CAPITAL T; ASCII spelling is the
+    /// stdlib function `transpose`).
+    Transpose,
     /// The glyph `∂` (ASCII spelling is the stdlib function `d`).
     Partial,
     /// The glyph `∇` (ASCII spelling is the stdlib function `grad`).

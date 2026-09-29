@@ -85,7 +85,7 @@ Without a `sky.toml` a file uses the latest edition. An edition newer than the i
 
 Not there yet:
 - `for` loops and `import`
-- transpose (`Aᵀ`), rank-3 tensor literals, negative indices, and array writes (arrays are immutable)
+- rank-3 tensor literals, negative indices, and array writes (arrays are immutable)
 - inputs: a declaration without a value (`K: PositiveDefinite Matrix[N, N]`) is checked but has nothing to read it from at run time
 - multi-line input in the REPL
 - everything in [`ROADMAP.md`](ROADMAP.md) beyond v0.1

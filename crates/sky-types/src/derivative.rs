@@ -94,6 +94,7 @@ fn is_builtin_name(name: &str) -> bool {
         || matches!(
             name,
             "print" | "inv" | "zeros" | "identity" | "len" | "derivative" | "grad"
+            "print" | "inv" | "transpose" | "zeros" | "identity" | "len" | "derivative"
         )
 }
 

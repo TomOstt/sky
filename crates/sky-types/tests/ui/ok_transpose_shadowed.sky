@@ -1,0 +1,4 @@
+# A program's own `transpose` shadows the builtin, as `inv` does.
+def transpose(x: m) -> m:
+    return x
+a = transpose(3 m)

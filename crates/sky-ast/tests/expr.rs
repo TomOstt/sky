@@ -136,6 +136,44 @@ fn inverse_is_its_own_node() {
 }
 
 #[test]
+fn transpose_is_a_postfix_node_as_tight_as_the_inverse() {
+    check(&[
+        ("Aᵀ", "(transpose A)"),
+        ("Aᵀ @ b", "(@ (transpose A) b)"),
+        ("Aᵀ @ A", "(@ (transpose A) A)"),
+        ("Aᵀᵀ", "(transpose (transpose A))"),
+        ("A⁻¹ᵀ", "(transpose (inverse A))"),
+        ("Aᵀ⁻¹", "(inverse (transpose A))"),
+        ("(A @ B)ᵀ", "(transpose (paren (@ A B)))"),
+        ("M[0]ᵀ", "(transpose (index M 0))"),
+        ("f(x)ᵀ", "(transpose (call f x))"),
+        ("-Aᵀ", "(neg (transpose A))"),
+        ("Aᵀ^2", "(^ (transpose A) 2)"),
+        ("A^2ᵀ", "(^ A (transpose 2))"),
+        ("a + Bᵀ * c", "(+ a (* (transpose B) c))"),
+        ("Aᵀ == B", "(== (transpose A) B)"),
+        // The ASCII spelling is an ordinary call, like `inv(A)`.
+        ("transpose(A) @ b", "(@ (call transpose A) b)"),
+    ]);
+}
+
+#[test]
+fn transpose_span_covers_operand_and_glyph() {
+    use sky_ast::{parse_expr, ExprKind};
+
+    let src = "(A @ B)ᵀ";
+    let (expr, errors) = parse_expr(&common::lex(src), src);
+    assert!(errors.is_empty(), "{errors:#?}");
+    let expr = expr.expect("expression");
+    assert_eq!(common::at(src, expr.span), src);
+    let ExprKind::Transpose { operand, op_span } = &expr.kind else {
+        panic!("not a Transpose: {expr:#?}");
+    };
+    assert_eq!(common::at(src, *op_span), "ᵀ");
+    assert_eq!(common::at(src, operand.span), "(A @ B)");
+}
+
+#[test]
 fn calls_indexing_and_attributes() {
     check(&[
         ("f()", "(call f)"),

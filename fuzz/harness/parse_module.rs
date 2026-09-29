@@ -264,7 +264,8 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
                         op_spans.iter().copied().for_each(&mut f);
                         stack.extend(operands.iter().map(Node::Expr));
                     }
-                    ExprKind::Inverse { operand, op_span } => {
+                    ExprKind::Inverse { operand, op_span }
+                    | ExprKind::Transpose { operand, op_span } => {
                         f(*op_span);
                         stack.push(Node::Expr(operand));
                     }
@@ -381,6 +382,7 @@ const KINDS: &[TokenKind] = {
         Caret,
         At,
         Inverse,
+        Transpose,
         Partial,
         Nabla,
         Eq,

@@ -1,0 +1,12 @@
+# Transpose needs a matrix (or a number); a vector has no orientation to swap.
+v: Vector[3]
+A: Matrix[3, 4]
+B: Matrix[3, 4]
+a = vᵀ
+b = transpose(v)
+c = trueᵀ
+d = transpose(A, B)
+e = A @ B
+f = Aᵀ @ B
+g = A @ Bᵀ
+h = A + Bᵀ

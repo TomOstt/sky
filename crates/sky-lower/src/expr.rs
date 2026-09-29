@@ -51,6 +51,11 @@ impl Lower<'_> {
                 let ty = self.ty_of(e)?;
                 Ok(self.op1(OpKind::Inverse, vec![a], ty, e.span))
             }
+            ExprKind::Transpose { operand, .. } => {
+                let a = self.expr(operand)?;
+                let ty = self.ty_of(e)?;
+                Ok(self.op1(OpKind::Transpose, vec![a], ty, e.span))
+            }
             ExprKind::Binary { op, lhs, rhs, .. } => {
                 if *op == BinaryOp::MatMul {
                     if let Some(v) = self.cholesky_site(e, lhs, rhs)? {
@@ -359,6 +364,11 @@ impl Lower<'_> {
                         let a = self.expr(arg)?;
                         let ty = self.ty_of(e)?;
                         return Ok(self.op1(OpKind::Inverse, vec![a], ty, e.span));
+                    }
+                    ("transpose", [arg]) => {
+                        let a = self.expr(arg)?;
+                        let ty = self.ty_of(e)?;
+                        return Ok(self.op1(OpKind::Transpose, vec![a], ty, e.span));
                     }
                     (name @ ("zeros" | "identity" | "len"), _) => {
                         if let Some(v) = self.array_builtin(e, name, args)? {

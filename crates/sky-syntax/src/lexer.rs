@@ -267,8 +267,19 @@ fn is_invisible(c: char) -> bool {
 /// `XID_Continue` (see [`is_ident_start_base`]): invisible characters, and
 /// MIDDLE DOT / GREEK ANO TELEIA, which read as multiplication.
 pub(crate) fn is_banned_in_identifiers(c: char) -> bool {
-    is_invisible(c) || c == '\u{00B7}' || c == '\u{0387}'
+    is_invisible(c) || c == '\u{00B7}' || c == '\u{0387}' || c == TRANSPOSE_GLYPH
 }
+
+/// `ᵀ` U+1D40 MODIFIER LETTER CAPITAL T, the postfix transpose operator.
+///
+/// It is a letter (`Lm`, `XID_Continue`), so without a rule `Aᵀ` would lex as
+/// one identifier. It is also not NFKC-stable (NFKC maps it to `T`), so an
+/// identifier containing it was already an error; banning it from
+/// identifiers, as with MIDDLE DOT, loses nothing and makes it an operator
+/// exactly like `⁻¹`, another compatibility character (not NFKC either). Because a tool that NFKC-normalizes source would turn `Aᵀ` into the
+/// name `AT`, the lexer never normalizes, and the ASCII spelling
+/// `transpose(A)` is always available.
+pub(crate) const TRANSPOSE_GLYPH: char = '\u{1D40}';
 
 /// Identifier start before [`NFKC_NON_IDENTIFIER`] is removed. Some
 /// invisible characters are XID_Start (the Hangul fillers U+115F, U+1160,
@@ -323,6 +334,9 @@ fn unexpected_char_help(c: char) -> Option<&'static str> {
         '÷' => "for division, use `/`",
         '±' => "uncertainty (±) is not supported in v0.1",
         '⁻' => "the inverse operator is the glyph `⁻¹` (or the function `inv`)",
+        '⊤' | '⊺' => {
+            "the transpose operator is the glyph `ᵀ` (U+1D40, MODIFIER LETTER CAPITAL T), or the function `transpose`"
+        }
         '!' => "for logical negation, use `not`; for \"not equal\", use `!=` or `≠`",
         '&' => "for logical and, use `and`",
         '|' => "for logical or, use `or`",
@@ -495,6 +509,7 @@ impl<'a> Lexer<'a> {
                 '∂' => TokenKind::Partial,
                 '∇' => TokenKind::Nabla,
                 '⁻' if self.eat('¹') => TokenKind::Inverse,
+                TRANSPOSE_GLYPH => TokenKind::Transpose,
                 other => {
                     let mut diag = Diagnostic::error(
                         format!("unexpected character {}", describe(other)),

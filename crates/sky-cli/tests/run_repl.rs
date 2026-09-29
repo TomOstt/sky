@@ -219,6 +219,31 @@ fn overflow_and_arrays_are_runtime_errors() {
 }
 
 #[test]
+fn transpose_runs_in_both_spellings_and_a_vector_is_a_check_error() {
+    let o = run_script(
+        "transpose",
+        "A = [[1, 2, 3], [4, 5, 6]]\nprint(Aᵀ)\nprint(transpose(A) @ A)\nprint(sin(30 deg))\n",
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    let printed = out(&o);
+    let mut lines = printed.lines();
+    assert_eq!(lines.next(), Some("[[1, 4], [2, 5], [3, 6]]"));
+    assert_eq!(
+        lines.next(),
+        Some("[[17, 22, 27], [22, 29, 36], [27, 36, 45]]")
+    );
+    assert_eq!(lines.next(), Some("0.49999999999999994"));
+    let o = run_script("transpose_vector", "v = [1, 2, 3]\nprint(vᵀ)\n");
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(out(&o), "");
+    assert!(
+        err(&o).contains("error: cannot transpose Vector[3]: transpose needs a matrix"),
+        "{}",
+        err(&o)
+    );
+}
+
+#[test]
 fn warnings_print_and_the_run_continues() {
     // A Cyrillic `а` in an identifier is a confusable-identifier warning.
     let o = run_script("warning", "аx = 1\nprint(аx)\n");

@@ -193,7 +193,9 @@ impl Checker<'_> {
             }
             match &e.kind {
                 ExprKind::Paren(inner) => stack.push(inner),
-                ExprKind::Unary { operand, .. } | ExprKind::Inverse { operand, .. } => {
+                ExprKind::Unary { operand, .. }
+                | ExprKind::Inverse { operand, .. }
+                | ExprKind::Transpose { operand, .. } => {
                     stack.push(operand);
                 }
                 // An exponent is dimensionless, so only the base matters.
@@ -242,8 +244,10 @@ impl Checker<'_> {
                                 }
                             }
                         }
-                        // `inv(x)` is `x⁻¹`: the argument decides.
-                        None if self.ident(id) == "inv" && args.len() == 1 => {
+                        // `inv(x)` is `x⁻¹` and `transpose(x)` is `xᵀ`: the argument decides.
+                        None if matches!(self.ident(id), "inv" | "transpose")
+                            && args.len() == 1 =>
+                        {
                             stack.push(&args[0]);
                         }
                         _ => {}

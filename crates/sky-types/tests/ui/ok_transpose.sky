@@ -1,0 +1,18 @@
+# Postfix `ᵀ` and `transpose(x)`: shapes swap, tags follow preserved_by_transpose.
+A: Matrix[3, 4] kg
+S: Symmetric Matrix[3, 3]
+P: PositiveDefinite Matrix[3, 3]
+Q: Orthogonal Matrix[3, 3]
+D: Diagonal Matrix[3, 3]
+At = Aᵀ
+St = Sᵀ
+Pt = Pᵀ
+Qt = Qᵀ
+Dt = Dᵀ
+gram = Aᵀ @ A
+outer = A @ Aᵀ
+ascii = transpose(A)
+twice = Aᵀᵀ
+ident = Qᵀ @ Q
+inv_t = (P⁻¹)ᵀ
+one = 5 m ᵀ

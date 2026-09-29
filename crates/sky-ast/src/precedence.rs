@@ -14,7 +14,7 @@
 //! | 6     | `* / @`                        | left  |
 //! | 7     | prefix `- + ∂ ∇`               | prefix |
 //! | 8     | `^`                            | right; its right operand may be prefix (`2^-1`) |
-//! | 9     | postfix `⁻¹`, call, index, `.` | postfix (tightest) |
+//! | 9     | postfix `⁻¹`, `ᵀ`, call, index, `.` | postfix (tightest) |
 //!
 //! Infix entries are `(left_bp, right_bp)`. Left-associative operators use
 //! `right = left + 1`; right-associative `^` uses `right = left - 1`.
@@ -103,7 +103,11 @@ pub fn prefix_binding_power(kind: TokenKind) -> Option<(UnaryOp, u8)> {
 pub fn is_postfix_start(kind: TokenKind) -> bool {
     matches!(
         kind,
-        TokenKind::Inverse | TokenKind::LParen | TokenKind::LBracket | TokenKind::Dot
+        TokenKind::Inverse
+            | TokenKind::Transpose
+            | TokenKind::LParen
+            | TokenKind::LBracket
+            | TokenKind::Dot
     )
 }
 

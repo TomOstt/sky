@@ -449,6 +449,13 @@ impl<'a> Interp<'a> {
                 let v = self.eval(operand)?;
                 self.reciprocal("⁻¹", v, e.span, operand.span)
             }
+            ExprKind::Transpose {
+                operand,
+                op_span: _,
+            } => {
+                let v = self.eval(operand)?;
+                crate::array::transpose(&v, e.span)
+            }
             ExprKind::Call { callee, args } => self.call(e, callee, args),
             ExprKind::Array(elems) => self.array_literal(e, elems),
             ExprKind::Index { base, items } => self.index(e, base, items),
@@ -501,6 +508,7 @@ impl<'a> Interp<'a> {
                 match name {
                     "print" => return self.print(args),
                     "inv" => return self.inv(call, args),
+                    "transpose" => return self.transpose(call, args),
                     "zeros" | "identity" | "len" => return self.array_builtin(name, call, args),
                     _ => {
                         if let Some(f) = MathFn::from_name(name) {
@@ -712,6 +720,18 @@ impl<'a> Interp<'a> {
         };
         let v = self.eval(arg)?;
         self.reciprocal("inv", v, call.span, arg.span)
+    }
+
+    /// `transpose(x)`: the function spelling of `xᵀ`.
+    fn transpose(&mut self, call: &Expr, args: &[Expr]) -> R<Value> {
+        let [arg] = args else {
+            return Err(RuntimeError::new(
+                format!("`transpose` takes 1 argument, found {}", args.len()),
+                call.span,
+            ));
+        };
+        let v = self.eval(arg)?;
+        crate::array::transpose(&v, call.span)
     }
 
     /// `1/x` with the inverse dimension.

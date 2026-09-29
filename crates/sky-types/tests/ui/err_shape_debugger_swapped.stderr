@@ -9,7 +9,7 @@ crates/sky-types/tests/ui/err_shape_debugger_swapped.sky:4:7: error: cannot add 
   = note: right    4  3
   = note: differs  ^
   = note: in a matrix, axis 0 is the rows and axis 1 the columns
-  = help: the shapes would match if the right operand were transposed: Matrix[4,3] would become Matrix[3,4] (there is no transpose syntax yet)
+  = help: the shapes would match if the right operand were transposed: Matrix[4,3] would become Matrix[3,4] (transpose is the postfix `ᵀ` or `transpose(x)`)
 
 crates/sky-types/tests/ui/err_shape_debugger_swapped.sky:6:7: error: cannot multiply Matrix[3,4] by Matrix[5,4]
   |
@@ -19,7 +19,7 @@ crates/sky-types/tests/ui/err_shape_debugger_swapped.sky:6:7: error: cannot mult
   |         - this is Matrix[5,4] [1]
   = note: `@` contracts the last axis of the left operand with the first axis of the right one: [m, k] @ [k, n] -> [m, n]
   = note: here [3, *4*] @ [*5*, 4] needs 4 == 5
-  = help: the shapes would match if the right operand were transposed: Matrix[5,4] would become Matrix[4,5] (there is no transpose syntax yet)
+  = help: the shapes would match if the right operand were transposed: Matrix[5,4] would become Matrix[4,5] (transpose is the postfix `ᵀ` or `transpose(x)`)
 
 crates/sky-types/tests/ui/err_shape_debugger_swapped.sky:7:19: error: declared Matrix[3,4], but the value is Matrix[4,3]
   |
@@ -31,7 +31,7 @@ crates/sky-types/tests/ui/err_shape_debugger_swapped.sky:7:19: error: declared M
   = note: value     4  3
   = note: differs   ^
   = note: in a matrix, axis 0 is the rows and axis 1 the columns
-  = help: the shapes would match if the value were transposed: Matrix[4,3] would become Matrix[3,4] (there is no transpose syntax yet)
+  = help: the shapes would match if the value were transposed: Matrix[4,3] would become Matrix[3,4] (transpose is the postfix `ᵀ` or `transpose(x)`)
 
 crates/sky-types/tests/ui/err_shape_debugger_swapped.sky:9:7: error: cannot add a vector to a matrix
   |

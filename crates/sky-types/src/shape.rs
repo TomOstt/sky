@@ -569,6 +569,10 @@ struct Detail {
     context: Option<ShapeContext>,
 }
 
+/// How to write a transpose, for the help of a shape mismatch a transpose
+/// would fix.
+const TRANSPOSE_SYNTAX: &str = "transpose is the postfix `ᵀ` or `transpose(x)`";
+
 impl ShapeError {
     /// What went wrong.
     pub fn kind(&self) -> &ShapeErrorKind {
@@ -730,9 +734,8 @@ impl ShapeError {
     }
 
     /// A `= help:` line, only when a fix is certain: a transpose that makes
-    /// the shapes agree (there is no transpose syntax yet, so it is phrased
-    /// as a fact about the shapes), or, for a size-variable conflict, which
-    /// variable to look at.
+    /// the shapes agree (with the syntax for it, `xᵀ` or `transpose(x)`), or,
+    /// for a size-variable conflict, which variable to look at.
     pub fn help(&self) -> Option<String> {
         let subject = match &self.0.context {
             Some(ShapeContext::Operator(_)) => "the right operand",
@@ -763,7 +766,7 @@ impl ShapeError {
                 ..
             } => Some(format!(
                 "the shapes would match if {subject} were transposed: {found_shape} would become \
-                 {} (there is no transpose syntax yet)",
+                 {} ({TRANSPOSE_SYNTAX})",
                 swapped(found_shape)
             )),
             ShapeErrorKind::DimMismatch {
@@ -789,10 +792,16 @@ impl ShapeError {
                     Transpose::Either => format!("{left}, or if {right}"),
                 };
                 Some(format!(
-                    "the shapes would match if {which} (there is no transpose syntax yet)"
+                    "the shapes would match if {which} ({TRANSPOSE_SYNTAX})"
                 ))
             }
             ShapeErrorKind::MatmulInner { left, right, .. } => var_help(left, right),
+            ShapeErrorKind::TransposeRank { shape } if shape.rank() == 1 => Some(
+                "vectors have no row or column orientation, so there is nothing to transpose: \
+                 `u @ v` is already the dot product, and a 1 by n or n by 1 matrix is written \
+                 `[[1, 2, 3]]` or `[[1], [2], [3]]`"
+                    .to_string(),
+            ),
             _ => None,
         }
     }

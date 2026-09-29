@@ -441,7 +441,9 @@ impl Lower<'_> {
                 }
             }
             ExprKind::Literal(_) | ExprKind::UnitLiteral { .. } => {}
-            ExprKind::Unary { operand, .. } | ExprKind::Inverse { operand, .. } => {
+            ExprKind::Unary { operand, .. }
+            | ExprKind::Inverse { operand, .. }
+            | ExprKind::Transpose { operand, .. } => {
                 self.scan_expr(operand, defined, direct, callees)
             }
             ExprKind::Paren(inner) => self.scan_expr(inner, defined, direct, callees),

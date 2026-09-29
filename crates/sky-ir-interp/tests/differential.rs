@@ -249,6 +249,52 @@ fn derivatives_of_added_math_functions() {
 }
 
 #[test]
+fn transpose_glyph_and_function_agree() {
+    let o = assert_same(
+        "\
+A = [[1, 2, 3], [4, 5, 6]]
+K = [[2 N/m, 1 N/m], [1 N/m, 3 N/m]]
+print(Aᵀ, transpose(A), Aᵀᵀ)
+print(Aᵀ @ A)
+print(A @ Aᵀ)
+print(Kᵀ, transpose(K), (A @ Aᵀ)⁻¹)
+print(5 m ᵀ, transpose(2 s))
+def gram(M: Matrix[R, C]):
+    return Mᵀ @ M
+def flip(M: Matrix[R, C]):
+    return transpose(M)
+print(gram(A), flip(A), gram(Aᵀ))
+S = Aᵀ @ A
+i = 0
+while i < 3:
+    S = Sᵀ + S
+    i += 1
+print(S)
+",
+    );
+    assert_eq!(o.error, None);
+    assert!(
+        o.stdout.starts_with("[[1, 4], [2, 5], [3, 6]] [[1, 4], [2, 5], [3, 6]] [[1, 2, 3], [4, 5, 6]]\n[[17, 22, 27]"),
+        "{}",
+        o.stdout
+    );
+}
+
+#[test]
+fn transposing_a_vector_is_the_same_error_in_both() {
+    // The checker rejects it, so this goes through the interpreters via a
+    // function whose parameter has no declared shape.
+    let o = assert_same("def flip(x):\n    return xᵀ\nprint(flip([[1, 2], [3, 4]]))\n");
+    assert_eq!(o.stdout, "[[1, 3], [2, 4]]\n");
+    assert_eq!(o.error, None);
+    let o = assert_same("def flip(x):\n    return transpose(x)\nprint(flip([1, 2, 3]))\n");
+    assert_eq!(
+        o.error.as_deref(),
+        Some("cannot transpose Vector[3]: transpose needs a matrix")
+    );
+}
+
+#[test]
 fn for_range_forms_agree() {
     let src = "\
 for i in range(3):

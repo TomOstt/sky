@@ -227,8 +227,8 @@ pub fn matmul(l: &Value, r: &Value, whole: Span, lspan: Span, rspan: Span) -> R<
 /// `Aᵀ`: a number is its own transpose, and an `m` by `n` matrix becomes
 /// `n` by `m`. A vector or anything else is an error (the checker's rule:
 /// v0.1 has no row/column-vector distinction). Entries only move, so the
-/// dimension and every value are unchanged. `sky run` has no syntax for it;
-/// SIR does (`transpose`), and this is its one implementation.
+/// dimension and every value are unchanged. `Aᵀ` and `transpose(A)` in
+/// `sky run` and SIR's `transpose` all call this, its one implementation.
 pub fn transpose(v: &Value, whole: Span) -> R<Value> {
     match v {
         Value::Number { .. } => Ok(v.clone()),

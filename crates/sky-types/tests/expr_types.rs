@@ -38,9 +38,9 @@ impl Walk<'_> {
         }
         match &e.kind {
             ExprKind::Literal(_) | ExprKind::Name(_) | ExprKind::UnitLiteral { .. } => {}
-            ExprKind::Unary { operand, .. } | ExprKind::Inverse { operand, .. } => {
-                self.expr(operand, false)
-            }
+            ExprKind::Unary { operand, .. }
+            | ExprKind::Inverse { operand, .. }
+            | ExprKind::Transpose { operand, .. } => self.expr(operand, false),
             ExprKind::Binary { lhs, rhs, .. } => {
                 self.expr(lhs, false);
                 self.expr(rhs, false);
@@ -60,6 +60,7 @@ impl Walk<'_> {
                 // recognised by name, so their callee is never typed.
                 let builtin = matches!(&callee.kind, ExprKind::Name(id)
                     if matches!(&self.src[id.span.range()], "print" | "inv" | "zeros" | "identity" | "len" | "range" | "derivative" | "grad")
+                    if matches!(&self.src[id.span.range()], "print" | "inv" | "transpose" | "zeros" | "identity" | "len" | "range" | "derivative")
                         || sky_units::MathFn::from_name(&self.src[id.span.range()]).is_some())
                     && !self.checked.expr_types.contains_key(&callee.span);
                 self.expr(callee, builtin);

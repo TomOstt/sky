@@ -1,0 +1,6 @@
+# `Aᵀ` and `transpose(A)` lower to the same `transpose` op.
+A = [[1, 2, 3], [4, 5, 6]]
+gram = Aᵀ @ A
+same = transpose(A)
+print(gram)
+print(same)

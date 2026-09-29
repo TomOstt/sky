@@ -115,7 +115,10 @@ impl Checker<'_> {
     fn piece(&self, e: &Expr) -> Option<String> {
         let raw = self.verbatim(e)?;
         match strip_parens(e).kind {
-            ExprKind::Binary { .. } | ExprKind::Unary { .. } | ExprKind::Inverse { .. }
+            ExprKind::Binary { .. }
+            | ExprKind::Unary { .. }
+            | ExprKind::Inverse { .. }
+            | ExprKind::Transpose { .. }
                 if !matches!(e.kind, ExprKind::Paren(_)) =>
             {
                 Some(format!("({raw})"))

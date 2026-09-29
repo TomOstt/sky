@@ -1,0 +1,4 @@
+# N is solved as 3 on axis 0, then axis 1 would need N = 4.
+let A = Matrix[N,N]
+let B = Matrix[3,4]
+show A + B

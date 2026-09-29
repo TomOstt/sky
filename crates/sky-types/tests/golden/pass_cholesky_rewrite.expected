@@ -1,0 +1,2 @@
+A⁻¹ @ b : Vector[3]
+explain: rewrite `A⁻¹ @ b` to a Cholesky solve: A is Matrix[3,3] and PositiveDefinite, b is Vector[3]. Factor A = L·Lᵀ (L lower-triangular), solve L·y = b, then Lᵀ·x = y. x = A⁻¹·b is Vector[3], and A⁻¹ is never formed.

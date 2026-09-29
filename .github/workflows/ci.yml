@@ -32,6 +32,22 @@ jobs:
           persist-credentials: false
       - run: python3 crates/sky-diag/tools/gen_display_unsafe.py --check
 
+  # Test-only names (hooks, constructors) must never reach release builds.
+  # The script builds sky-project and sky-cli in release mode and scans the
+  # rlibs, their metadata, and the sky binary with strings and nm (binutils
+  # ships with the runner image) for every name in
+  # tools/release-symbol-denylist.txt.
+  release-symbols:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: 1.85.1 # keep in sync with rust-toolchain.toml
+      - run: tools/check_release_symbols.sh
+
   fmt:
     runs-on: ubuntu-latest
     steps:

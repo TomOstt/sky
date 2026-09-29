@@ -265,6 +265,66 @@ fn print_shadowing_and_inv_shadowing() {
 }
 
 #[test]
+fn display_units_print_the_same_in_both() {
+    let out = agree(
+        "v = 90 km/h\nprint(v)\nprint(v as km/h)\nprint(v as m/s, v as km/h, 3)\nprint(1 AU as km, 1 AU as m)\nprint(511 keV as eV, 511 keV as MeV)\nprint(2 kg * 9.8 m/s^2 as N)\nprint(0.1 s + 0.2 s as ms)\nv as km/h\nprint(1 h + 30 min as min, 1 day as h)\n",
+    );
+    assert_eq!(
+        out,
+        "25 m/s\n90 km/h\n25 m/s 90 km/h 3\n149597870.7 km 149597870700 m\n511000 eV 0.511 MeV\n19.6 N\n300.00000000000006 ms\n90 min 24 h\n"
+    );
+}
+
+#[test]
+fn display_units_inside_functions_loops_and_branches() {
+    let out = agree(
+        "def show_speed(v):\n    print(v as km/h)\n    if v > 5 m/s:\n        print(\"fast\", v as mm/s)\n    return v\nx = show_speed(36 km/h)\nn = 0\nwhile n < 3:\n    n += 1\n    print(n * 1 km as m)\n    n * 1 km as km\nprint(x as m/s, (x as km/h))\nprint((1 m if true else 2 m) as cm)\n",
+    );
+    assert!(out.starts_with("36 km/h\nfast 10000 mm/s\n"), "{out}");
+}
+
+#[test]
+fn display_units_fail_the_same_way_in_both() {
+    for src in [
+        // 1e300 m is 1e309 nm.
+        "print(1)\nprint(1e300 m as nm)\nprint(2)\n",
+        "x = 1e300 m\nx as nm\n",
+        "def f(a):\n    print(a as nm)\nf(1e300 m)\n",
+    ] {
+        let m = lower_ok(src);
+        let (want_out, want) = interpret(src);
+        let (got_out, got) = run_main(&m);
+        assert_eq!(want, Err("arithmetic overflow".to_string()), "{src}");
+        assert_eq!(got, want, "{src}");
+        assert_eq!(got_out, want_out, "{src}");
+    }
+    // A wrong dimension is a check error before anything runs.
+    let e = lower_err("print(90 km/h as kg)\n");
+    assert!(e.contains("cannot show a velocity in kg"), "{e}");
+}
+
+#[test]
+fn every_value_and_unit_prints_alike_in_both() {
+    let units = [
+        "m", "km", "mm", "AU", "pc", "ly", "km/h", "m/s", "eV", "MeV", "J", "kW*h", "day", "h",
+        "min", "yr",
+    ];
+    for unit in units {
+        let mut src = String::new();
+        for n in 1..=40u32 {
+            let x = f64::from(n) * 0.75 + 0.125;
+            src.push_str(&format!("print({x} {unit} as {unit}, {x} {unit})\n"));
+        }
+        // Every value reads back as itself.
+        let out = agree(&src);
+        for (n, line) in (1..=40u32).zip(out.lines()) {
+            let x = sky_interp::format_number(f64::from(n) * 0.75 + 0.125);
+            assert!(line.starts_with(&format!("{x} {unit} ")), "{unit}: {line}");
+        }
+    }
+}
+
+#[test]
 fn the_runnable_ui_programs() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for name in [

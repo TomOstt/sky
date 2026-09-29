@@ -429,6 +429,7 @@ impl Lower<'_> {
                     self.scan_expr(x, defined, direct, callees);
                 }
             }
+            ExprKind::As { value, .. } => self.scan_expr(value, defined, direct, callees),
             ExprKind::Array(elements) => {
                 for el in elements {
                     self.scan_expr(el, defined, direct, callees);

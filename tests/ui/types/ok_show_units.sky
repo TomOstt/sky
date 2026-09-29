@@ -12,9 +12,5 @@ E = 511 keV
 print(E as eV, E as MeV, E as J)
 print(E as kg*m^2/s^2)
 print(1 h + 30 min as min)
-u = [0.1 m, 0.2 m]
-print(u as mm)
-M = [[1 m, 2 m], [3 m, 4 m]]
-print(M as cm)
 print((v * 2) as km/h)
 print(v * 2 as km/h)

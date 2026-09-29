@@ -1,0 +1,9 @@
+# Arrays are shown entry by entry in the chosen unit: `[100 mm, 200 mm]`.
+# (`sky run` executes arrays; SIR has no array values yet.)
+u = [0.1 m, 0.2 m]
+print(u as mm)
+M = [[1 m, 2 m], [3 m, 4 m]]
+print(M as cm)
+speeds = [36 km/h, 72 km/h]
+print(speeds as km/h)
+speeds as m/s

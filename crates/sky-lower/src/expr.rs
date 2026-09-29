@@ -62,6 +62,13 @@ impl Lower<'_> {
             ExprKind::BoolOp { op, operands, .. } => self.bool_op(e.span, *op, operands),
             ExprKind::Call { callee, args } => self.call(e, callee, args),
             ExprKind::IfElse { then, cond, else_ } => self.if_else(e, then, cond, else_),
+            // `v as unit` is a `show` op: the unit as text, the value in SI.
+            // It is a display value, only ever an operand of `print`.
+            ExprKind::As { value, unit, .. } => {
+                let a = self.expr(value)?;
+                let unit = self.text(unit.span()).to_string();
+                Ok(self.op1(OpKind::Show { unit }, vec![a], Type::Str, e.span))
+            }
             ExprKind::Index { .. } => Err(LowerError::new(
                 "indexing an array is not supported yet",
                 e.span,

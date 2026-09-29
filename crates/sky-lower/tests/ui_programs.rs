@@ -64,6 +64,10 @@ const REJECTED: &[(&str, &str)] = &[
         "ok_condition_warns.sky",
         "array literals are not supported in SIR yet",
     ),
+    (
+        "ok_show_arrays.sky",
+        "array literals are not supported in SIR yet",
+    ),
 ];
 
 #[test]

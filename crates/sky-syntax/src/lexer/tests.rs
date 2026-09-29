@@ -923,9 +923,193 @@ fn lexer_rejected_invisible_and_bidi_chars_are_display_unsafe() {
         not_escaped.is_empty(),
         "rejected by the lexer but not escaped by sky_diag::is_display_unsafe: {not_escaped:?}"
     );
-    // 38 invisible characters plus 12 bidi controls. Update this when either
-    // set changes; it keeps the loop above from silently checking nothing.
-    assert_eq!(rejected, 50);
+    // Computed from the tables, so it needs no hand-updating, but the loop
+    // above cannot silently check nothing. The three sets are disjoint
+    // (`invisible_tables_are_well_formed`, and bidi controls are neither
+    // XID nor in `INVISIBLE_EXTRA`).
+    let expected = table_len(DEFAULT_IGNORABLE_IDENT)
+        + table_len(INVISIBLE_EXTRA)
+        + crate::source::BIDI_CONTROLS.len();
+    assert!(expected > 0);
+    assert_eq!(rejected, expected);
+}
+
+fn table_len(ranges: &[(u32, u32)]) -> usize {
+    ranges.iter().map(|&(lo, hi)| (hi - lo + 1) as usize).sum()
+}
+
+#[test]
+fn invisible_tables_are_well_formed() {
+    assert!(!DEFAULT_IGNORABLE_IDENT.is_empty());
+    for table in [DEFAULT_IGNORABLE_IDENT, INVISIBLE_EXTRA] {
+        for &(lo, hi) in table {
+            assert!(lo <= hi && hi <= 0x10FFFF, "{lo:X}..{hi:X}");
+        }
+        for w in table.windows(2) {
+            assert!(w[0].1 + 1 < w[1].0, "unsorted or adjacent: {w:X?}");
+        }
+    }
+    // The extras are exactly the default-ignorables that are not XID, so
+    // none may overlap the generated table.
+    for c in (0..=0x10FFFFu32).filter_map(char::from_u32) {
+        assert!(
+            !(in_ranges(DEFAULT_IGNORABLE_IDENT, c) && in_ranges(INVISIBLE_EXTRA, c)),
+            "U+{:04X} is in both tables",
+            c as u32
+        );
+        if in_ranges(INVISIBLE_EXTRA, c) {
+            assert!(
+                !unicode_ident::is_xid_start(c) && !unicode_ident::is_xid_continue(c),
+                "U+{:04X} is XID: it belongs in the generated table",
+                c as u32
+            );
+        }
+    }
+    // ZWNJ, ZWJ, and the Hangul fillers come from the generated table (they
+    // are Default_Ignorable_Code_Point and XID in Unicode 18.0.0), not from
+    // an explicit list.
+    for c in [
+        '\u{200C}', '\u{200D}', '\u{115F}', '\u{1160}', '\u{3164}', '\u{FFA0}',
+    ] {
+        assert!(in_ranges(DEFAULT_IGNORABLE_IDENT, c), "U+{:04X}", c as u32);
+    }
+}
+
+/// Everything the old hand-typed `is_invisible` list (#11 through #16)
+/// rejected is still invisible, so no character is newly accepted.
+#[test]
+fn previously_invisible_characters_stay_invisible() {
+    let old = [
+        0x00AD..=0x00AD,
+        0x034F..=0x034F,
+        0x115F..=0x1160,
+        0x17B4..=0x17B5,
+        0x180B..=0x180F,
+        0x200B..=0x200D,
+        0x2060..=0x2064,
+        0x3164..=0x3164,
+        0xFE00..=0xFE0F,
+        0xFEFF..=0xFEFF,
+        0xFFA0..=0xFFA0,
+    ];
+    for cp in old.into_iter().flatten() {
+        assert!(is_invisible(char::from_u32(cp).unwrap()), "U+{cp:04X}");
+    }
+}
+
+/// Default_Ignorable_Code_Point ranges from the verbatim UCD records the
+/// generator also wrote out, parsed here independently of the generated
+/// intersection.
+fn default_ignorable_from_ucd() -> Vec<(u32, u32)> {
+    const SOURCE: &str = include_str!("../../tests/data/ucd-default-ignorable.txt");
+    let (a, b, c) = sky_diag::DISPLAY_UNSAFE_UNICODE_VERSION;
+    assert!(
+        SOURCE
+            .lines()
+            .next()
+            .unwrap()
+            .contains(&format!("Unicode {a}.{b}.{c} UCD")),
+        "sky-syntax and sky-diag tables must come from the same Unicode version"
+    );
+    let out: Vec<(u32, u32)> = SOURCE
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .map(|l| {
+            let (cps, prop) = l.split('#').next().unwrap().split_once(';').unwrap();
+            assert_eq!(prop.trim(), "Default_Ignorable_Code_Point");
+            let cps = cps.trim();
+            let (lo, hi) = cps.split_once("..").unwrap_or((cps, cps));
+            (
+                u32::from_str_radix(lo, 16).unwrap(),
+                u32::from_str_radix(hi, 16).unwrap(),
+            )
+        })
+        .collect();
+    assert!(!out.is_empty());
+    out
+}
+
+/// Every default-ignorable code point that `unicode-ident` counts as
+/// XID_Start or XID_Continue is rejected by `lex` at the start, middle, and
+/// end of an identifier (at the start of a line and after `=`), with the
+/// error pointing at exactly that character. Every other default-ignorable
+/// code point is rejected there too (as a bidi control or an unexpected
+/// character).
+#[test]
+fn default_ignorable_identifier_characters_are_rejected_everywhere() {
+    let di = default_ignorable_from_ucd();
+    let mut xid_count = 0;
+    for c in (0..=0x10FFFFu32).filter_map(char::from_u32) {
+        if !di.iter().any(|&(lo, hi)| lo <= c as u32 && c as u32 <= hi) {
+            continue;
+        }
+        let xid = unicode_ident::is_xid_start(c) || unicode_ident::is_xid_continue(c);
+        xid_count += usize::from(xid);
+        let cases = [
+            (format!("{c}ab = 1\n"), 0),
+            (format!("a{c}b = 1\n"), 1),
+            (format!("ab{c} = 1\n"), 2),
+            (format!("x = {c}ab\n"), 4),
+            (format!("x = a{c}b\n"), 5),
+            (format!("x = ab{c}\n"), 6),
+        ];
+        for (src, at) in cases {
+            if c == '\u{FEFF}' && at == 0 {
+                continue; // a leading BOM is skipped by design
+            }
+            let e = lex(&src).expect_err(&format!("U+{:04X} in {src:?}", c as u32));
+            if xid {
+                assert_eq!(e.kind, LexErrorKind::UnexpectedChar, "U+{:04X}", c as u32);
+                let span = e.diagnostic.primary.span;
+                assert_eq!(span.start as usize, at, "U+{:04X} in {src:?}", c as u32);
+                assert_eq!(span.len() as usize, c.len_utf8());
+                assert_eq!(
+                    e.diagnostic.help,
+                    ["invisible characters are not allowed in source code"]
+                );
+            }
+        }
+    }
+    // Cross-check: `unicode-ident`'s XID data agrees with the generated
+    // table on which default-ignorables are identifier characters.
+    assert!(xid_count > 0);
+    assert_eq!(xid_count, table_len(DEFAULT_IGNORABLE_IDENT));
+}
+
+#[test]
+fn supplementary_variation_selector_does_not_make_a_second_variable() {
+    // `ab` and `a\u{E0100}b` render the same; the second must not lex as a
+    // distinct identifier.
+    let e = assert_err(
+        "ab = 1\na\u{E0100}b = 2\n",
+        LexErrorKind::UnexpectedChar,
+        "\u{E0100}",
+    );
+    assert_eq!(e.diagnostic.message, "unexpected character U+E0100");
+    assert_eq!(
+        e.diagnostic.help,
+        ["invisible characters are not allowed in source code"]
+    );
+    assert_err(
+        "ab\u{E01EF} = 1\n",
+        LexErrorKind::UnexpectedChar,
+        "\u{E01EF}",
+    );
+    assert_err("a\u{FE0F}b = 1\n", LexErrorKind::UnexpectedChar, "\u{FE0F}");
+}
+
+#[test]
+fn zero_width_joiner_and_non_joiner_are_rejected_in_identifiers() {
+    for c in ['\u{200C}', '\u{200D}'] {
+        let s = c.to_string();
+        let e = assert_err(&format!("ab{c}c = 1\n"), LexErrorKind::UnexpectedChar, &s);
+        assert_eq!(
+            e.diagnostic.message,
+            format!("unexpected character U+{:04X}", c as u32)
+        );
+        assert_err(&format!("ab{c} = 1\n"), LexErrorKind::UnexpectedChar, &s);
+        assert_err(&format!("{c}ab = 1\n"), LexErrorKind::UnexpectedChar, &s);
+    }
 }
 
 /// The predicates the drift test uses are the ones `lex` enforces.

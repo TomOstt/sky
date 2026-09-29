@@ -12,6 +12,7 @@
 //! confusable identifiers produce warnings (see [`confusable`]).
 
 pub mod confusable;
+mod invisible_table;
 pub mod lexer;
 pub mod source;
 pub mod token;

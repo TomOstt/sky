@@ -26,9 +26,11 @@
 //! - bidirectional control characters anywhere, including comments and
 //!   strings (Trojan Source, spec v0.1 non-negotiable 4);
 //! - a lone `\r` not followed by `\n`;
-//! - invisible characters (e.g. ZERO WIDTH JOINER, HANGUL FILLER), even
-//!   where `XID_Start` or `XID_Continue` would allow them, and `·` (U+00B7)
-//!   inside identifiers;
+//! - invisible characters (every `Default_Ignorable_Code_Point` that is
+//!   `XID_Start` or `XID_Continue`, e.g. ZERO WIDTH JOINER, HANGUL FILLER,
+//!   VARIATION SELECTOR-17 U+E0100, plus a few non-identifier ones such as
+//!   ZERO WIDTH SPACE) anywhere outside strings and comments, so at any
+//!   position in an identifier, and `·` (U+00B7) inside identifiers;
 //! - tabs and spaces mixed in one line's indentation, or an indented line
 //!   whose indentation uses tabs where the enclosing block uses spaces (or
 //!   the reverse);
@@ -42,6 +44,7 @@ use std::collections::HashSet;
 use sky_diag::Diagnostic;
 
 use crate::confusable::check_identifier;
+use crate::invisible_table::DEFAULT_IGNORABLE_IDENT;
 use crate::source::find_bidi_control;
 use crate::token::{Kw, Token, TokenKind};
 use crate::{Span, MAX_SOURCE_BYTES};
@@ -197,8 +200,48 @@ pub fn unescape_str(text: &str) -> String {
 /// Escapes the lexer accepts after `\` in a string.
 const ESCAPES: &[char] = &['\\', '"', 'n', 't', 'r', '0'];
 
-/// Characters that render as nothing (or as ordinary space) and must never
-/// appear in source outside strings and comments.
+/// Default-ignorable characters the lexer rejects that are *not* in the
+/// generated [`DEFAULT_IGNORABLE_IDENT`] table because they are neither
+/// `XID_Start` nor `XID_Continue`. They could never be part of an identifier
+/// anyway; listing them keeps them described as invisible (`U+XXXX`, with
+/// the "invisible characters" help) wherever they appear outside strings and
+/// comments. All are `Default_Ignorable_Code_Point` in Unicode 18.0.0.
+///
+/// Sorted, non-overlapping, and disjoint from the generated table (checked
+/// by a test).
+pub(crate) static INVISIBLE_EXTRA: &[(u32, u32)] = &[
+    (0x00AD, 0x00AD), // SOFT HYPHEN (Cf)
+    (0x180E, 0x180E), // MONGOLIAN VOWEL SEPARATOR (Cf)
+    (0x200B, 0x200B), // ZERO WIDTH SPACE (Cf)
+    (0x2060, 0x2064), // WORD JOINER, FUNCTION APPLICATION .. INVISIBLE PLUS (Cf)
+    (0xFEFF, 0xFEFF), // ZERO WIDTH NO-BREAK SPACE / BOM (Cf); skipped only as a leading BOM
+];
+
+fn in_ranges(ranges: &[(u32, u32)], c: char) -> bool {
+    let c = c as u32;
+    ranges
+        .binary_search_by(|&(lo, hi)| {
+            if hi < c {
+                std::cmp::Ordering::Less
+            } else if lo > c {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .is_ok()
+}
+
+/// Characters that render as nothing and must never appear in source
+/// outside strings and comments, and never in an identifier at any position.
+///
+/// This is the generated [`DEFAULT_IGNORABLE_IDENT`] table
+/// (`Default_Ignorable_Code_Point` ∩ (`XID_Start` ∪ `XID_Continue`), Unicode
+/// 18.0.0, from `crates/sky-diag/tools/gen_display_unsafe.py`) plus
+/// [`INVISIBLE_EXTRA`]. The generated table includes ZWNJ/ZWJ (U+200C,
+/// U+200D), the Hangul fillers (U+115F, U+1160, U+3164, U+FFA0), and all
+/// variation selectors (U+180B..U+180D, U+180F, U+FE00..U+FE0F,
+/// U+E0100..U+E01EF).
 ///
 /// Every one of these, and every bidi control, must also be escaped by the
 /// diagnostic renderer (`sky_diag::is_display_unsafe`); the test
@@ -207,23 +250,13 @@ const ESCAPES: &[char] = &['\\', '"', 'n', 't', 'r', '0'];
 /// that set includes tab and the other C0 controls, which are legal in
 /// source (tab as whitespace, the rest inside strings and comments).
 fn is_invisible(c: char) -> bool {
-    matches!(
-        c,
-        '\u{00AD}' | '\u{034F}' | '\u{115F}' | '\u{1160}' | '\u{17B4}' | '\u{17B5}'
-            | '\u{180B}'..='\u{180F}'
-            | '\u{200B}'..='\u{200D}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{3164}'
-            | '\u{FE00}'..='\u{FE0F}'
-            | '\u{FEFF}'
-            | '\u{FFA0}'
-    )
+    in_ranges(DEFAULT_IGNORABLE_IDENT, c) || in_ranges(INVISIBLE_EXTRA, c)
 }
 
 fn is_ident_start(c: char) -> bool {
-    // The Hangul fillers (U+115F, U+1160, U+3164, U+FFA0) are XID_Start but
-    // render as nothing, so an identifier could otherwise start with (or be
-    // entirely) an invisible character.
+    // Some invisible characters are XID_Start (the Hangul fillers U+115F,
+    // U+1160, U+3164, U+FFA0), so an identifier could otherwise start with,
+    // or consist entirely of, an invisible character.
     c == '_' || (unicode_ident::is_xid_start(c) && !is_invisible(c))
 }
 

@@ -13,6 +13,7 @@ libfuzzer-sys = "0.4"
 sky-ast = { path = "../crates/sky-ast" }
 sky-syntax = { path = "../crates/sky-syntax" }
 sky-diag = { path = "../crates/sky-diag" }
+sky-ir = { path = "../crates/sky-ir" }
 
 # Keep the fuzz crate out of the main workspace so stable `cargo test --workspace` never builds it.
 [workspace]
@@ -28,6 +29,13 @@ bench = false
 [[bin]]
 name = "parse_module"
 path = "fuzz_targets/parse_module.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sir_parse"
+path = "fuzz_targets/sir_parse.rs"
 test = false
 doc = false
 bench = false

@@ -7,9 +7,11 @@
 //! nested regions, never jumps.
 //!
 //! This crate holds the data model ([`ir`]), the operation set ([`op`]), and
-//! a builder ([`builder`]) used by lowering and tests. The verifier, the
-//! text format, the pass manager, lowering from the checked AST, and the
-//! reference interpreter build on these types.
+//! a builder ([`builder`]) used by lowering and tests, plus the
+//! infrastructure every pass relies on: the verifier ([`verify`]), the text
+//! format ([`print`] and [`parse`], round-trip exact), and the pass manager
+//! with explanations ([`pass`]). Lowering from the checked AST and the
+//! reference interpreter build on these.
 //!
 //! # Levels
 //!
@@ -20,12 +22,25 @@
 #![forbid(unsafe_code)]
 
 pub mod builder;
+mod canon;
+mod display;
 pub mod ir;
 pub mod op;
+pub mod parse;
+pub mod pass;
+pub mod print;
+pub mod verify;
 
 pub use builder::FunctionBuilder;
+pub use canon::canonicalize;
 pub use ir::{
     BlockData, BlockId, Edition, Effect, EffectSet, Function, Module, NumberType, OpData, OpId,
     RegionData, RegionId, Repr, Type, ValueData, ValueDef, ValueId,
 };
 pub use op::{CmpOp, OpKind, OpProperties, SolveMethod};
+pub use parse::{parse, ParseError};
+pub use pass::{
+    Changed, Explanation, Pass, PassCx, PassError, PassManager, PipelineReport, RuleId,
+};
+pub use print::{print, print_function};
+pub use verify::{assignable, verify, VerifyError, MAX_REGION_DEPTH};

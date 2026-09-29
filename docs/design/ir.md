@@ -137,19 +137,26 @@ A rewrite rule must state its side conditions in terms of facts: for example, `A
 
 ## Text format
 
-A human-readable, data-only format, round-trip exact:
+A human-readable, data-only format, round-trip exact (`parse(print(m)) == m`, after ids are renumbered into the printer's canonical pre-order). `crates/sky-ir/src/parse.rs` documents the grammar; the printer is `print.rs`.
 
 ```text
 sir edition 2026
-fn @main() effects(IO) {
-  %0 = const.rational 10 : Number[L; ()]
-  %1 = const.rational 1/1000 : Number[1; ()]
-  %2 = mul %0, %1 : Number[L; ()]        @ 1:5-1:10
-  print %2                               @ 2:1-2:9
+
+fn @main() -> () effects(io) {
+  %0 = const.float 10000 : num[L; ()]
+  %1 = const.rational 1/1000 : num[1; ()]
+  %x = mul %0, %1 : num[L; ()] @ 34..52
+  print %x @ 60..68
+  return
 }
 ```
 
-It is parsed by a small hand-written parser. It never carries executable content or serialized closures (non-negotiable 3).
+* Types are `num[<dim>; <shape>; {<tags>}; <repr>]` (tags and repr only when present; repr only when not `unchosen`), `bool`, `str`, `nothing` and `unknown`. Dimensions print as `Dimension` displays them (`L²·M·T⁻²`), shapes as `(3, N#0)` (a shape variable prints with its id, because identity is the id).
+* Regions nest as `{ ... }` after the operation, with block labels and arguments (`^1(%i: num[1; ()]):`); the function body's entry block is implicit.
+* Spans are byte ranges, not line:column, because the parser can only restore what does not need the source file. `0..0` is omitted.
+* Floats print in the shortest round-trip form, or as `0x` plus the bits when not finite.
+
+It is parsed by a small hand-written parser that never panics, limits nesting to `MAX_REGION_DEPTH` and input size to `sky_syntax::MAX_SOURCE_BYTES`, and has a fuzz target. It never carries executable content or serialized closures (non-negotiable 3).
 
 ## Crates
 

@@ -1,0 +1,9 @@
+// Several independent errors, each reported once.
+sir edition 2026
+fn @f(%len: num[L; ()], %time: num[T; ()], %v: num[1; (3)], %m: num[1; (4, 4)]) -> (num[L; ()]) {
+  %a = add %len, %time : num[L; ()] @ 1..2
+  %b = matmul %m, %v : num[1; (4)] @ 3..4
+  %c = mul %len, %len : num[L; ()] @ 5..6
+  %d = cmp.lt %len, %time : bool @ 7..8
+  return %len
+}

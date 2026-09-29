@@ -1,0 +1,16 @@
+# Where ∂f/∂t is not the derivative of a def: not called (`∂f/∂t(2 s)` is
+# ∂f divided by ∂(t(2 s)), so it needs the parentheses), not a parameter,
+# not a def, or the wrong unit.
+def position(t: s) -> m:
+    return 5 m/s^2 * t^2
+
+x = 2 m
+
+a = ∂position/∂t
+b = (∂position/∂q)(1 s)
+c = (∂x/∂t)(1 s)
+d: m = (∂position/∂t)(1 s)
+e = (∂position/∂t)(1 m)
+f = (∂sqrt/∂t)(4)
+g = (∂position/∂t)
+h = ∂position/∂t(2 s)

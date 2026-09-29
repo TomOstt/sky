@@ -1379,6 +1379,12 @@ impl<'s> Checker<'s> {
                 BinaryOp::MatMul => self.matmul(e.span, *op_span, lhs, rhs),
                 BinaryOp::Pow => self.pow(*op_span, lhs, rhs),
                 _ => {
+                    if let Some(t) = self.partial_not_called(e) {
+                        return t;
+                    }
+                    if self.partial_misparsed(e) {
+                        return Ty::Unknown;
+                    }
                     let l = self.expr(lhs);
                     let r = self.expr(rhs);
                     self.binary(*op, *op_span, (lhs, l), (rhs, r))

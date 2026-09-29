@@ -824,3 +824,108 @@ fn an_unknown_operand_that_is_a_bool_is_checked_and_passed_on() {
     );
     assert_eq!(o.stdout, "false true true\n1\n2 2\n");
 }
+
+// ----- grad(f)(args) and (∂f/∂x)(args) -----
+//
+// `grad(f)` is one derivative per parameter, gathered in a Vector. The
+// tree-walker asks `sky-derive` for each; lowering emits a call of each
+// `df/dx` and an `array.literal`. Both must print the same bytes.
+
+const POTENTIAL: &str = "k = 3 N/m\ndef U(x: m, y: m) -> J:\n    return k * (x^2 + y^2)\n";
+
+#[test]
+fn the_gradient_of_a_potential_is_a_force_in_both_engines() {
+    // U = k (x² + y²): ∇U = (2 k x, 2 k y) = (6 N, 12 N) at (1 m, 2 m).
+    let o = assert_same(&format!(
+        "{POTENTIAL}F = grad(U)(1 m, 2 m)\nprint(F)\nprint(F[1])\nprint(grad(U)(0 m, 0 m))\n"
+    ));
+    assert_eq!(o.stdout, "[6 N, 12 N]\n12 N\n[0 N, 0 N]\n");
+    assert_eq!(o.error, None);
+}
+
+#[test]
+fn a_gradient_is_a_vector_that_arithmetic_and_units_apply_to() {
+    let o = assert_same(&format!(
+        "{POTENTIAL}F = -grad(U)(1 m, 2 m)\n\
+         total = F + [1 N, 1 N]\n\
+         print(total)\n\
+         print(F[0] + F[1])\n\
+         print(len(grad(U)(1 m, 1 m)))\n"
+    ));
+    assert_eq!(o.stdout, "[-5 N, -11 N]\n-18 N\n2\n");
+}
+
+#[test]
+fn a_gradient_with_one_or_three_parameters() {
+    let o = assert_same(
+        "def x(t: s) -> m:\n    return 5 m/s^2 * t^2\n\
+         def r2(a: m, b: m, c: m) -> m^2:\n    return a * a + 2 * b * b + 3 * c * c\n\
+         print(grad(x)(2 s))\n\
+         print(grad(r2)(1 m, 1 m, 1 m))\n",
+    );
+    assert_eq!(o.stdout, "[20 m/s]\n[2 m, 4 m, 6 m]\n");
+}
+
+#[test]
+fn a_gradient_of_parameters_in_different_units_of_one_dimension() {
+    // km and m are both lengths; the derivatives are in SI: J/m = N.
+    let o = assert_same(
+        "def w(a: km, b: m) -> J:\n    return 2 N * a + 3 N * b\n\
+         print(grad(w)(1 km, 1 m))\n",
+    );
+    assert_eq!(o.stdout, "[2 N, 3 N]\n");
+}
+
+#[test]
+fn a_gradient_through_control_flow_loops_and_recursion() {
+    let o = assert_same(
+        "def wedge(a: m, b: m) -> m^2:\n    if a > b:\n        return a * a\n    return a * b\n\
+         def sum3(a: m, b: m) -> m:\n    total = 0 m\n    i = 0\n    while i < 3:\n        total = total + a * (i + 1) + b\n        i += 1\n    return total\n\
+         print(grad(wedge)(3 m, 1 m))\n\
+         print(grad(wedge)(1 m, 3 m))\n\
+         print(grad(sum3)(1 m, 1 m))\n",
+    );
+    assert_eq!(o.stdout, "[6 m, 0 m]\n[3 m, 1 m]\n[6, 3]\n");
+}
+
+#[test]
+fn a_gradient_evaluates_its_arguments_once() {
+    let o = assert_same(
+        "def loud(v: m) -> m:\n    print(\"arg\")\n    return v\n\
+         def f(a: m, b: m) -> m^2:\n    return a * b\n\
+         print(grad(f)(loud(1 m), loud(2 m)))\n",
+    );
+    assert_eq!(o.stdout, "arg\narg\n[2 m, 1 m]\n");
+}
+
+#[test]
+fn the_function_prints_once_per_parameter_of_a_gradient() {
+    // Forward mode runs the function once per derivative.
+    let o = assert_same(
+        "def f(a: m, b: m) -> m^2:\n    print(\"called\")\n    return a * b\n\
+         print(grad(f)(1 m, 2 m))\n",
+    );
+    assert_eq!(o.stdout, "called\ncalled\n[2 m, 1 m]\n");
+}
+
+#[test]
+fn a_gradient_that_fails_fails_the_same_way() {
+    let o = assert_same(
+        "def root(a: m^2, b: m^2) -> m:\n    return sqrt(a) + sqrt(b)\n\
+         print(1)\nprint(grad(root)(4 m^2, 0 m^2))\n",
+    );
+    assert_eq!(o.stdout, "1\n");
+    assert_eq!(o.error.as_deref(), Some("division by zero"));
+}
+
+#[test]
+fn partial_notation_is_the_derivative_in_both_engines() {
+    let o = assert_same(&format!(
+        "{POSITION}print((∂x/∂t)(2 s))\nprint(derivative(x, t)(2 s))\n\
+         def v(t: s) -> m/s:\n    return (∂x/∂t)(t)\n\
+         print(((∂v/∂t))(2 s))\n\
+         g = 10 m/s^2\ndef fall(t: s, m0: kg) -> J:\n    return 0.5 * m0 * (g * t)^2\n\
+         print((∂fall/∂m0)(2 s, 3 kg), (∂fall/∂t)(2 s, 3 kg))\n"
+    ));
+    assert_eq!(o.stdout, "20 m/s\n20 m/s\n10 m/s^2\n200 m^2/s^2 600 W\n");
+}

@@ -59,7 +59,7 @@ impl Walk<'_> {
                 // Builtins (`print`, `inv`, `range`, the array and math functions) are
                 // recognised by name, so their callee is never typed.
                 let builtin = matches!(&callee.kind, ExprKind::Name(id)
-                    if matches!(&self.src[id.span.range()], "print" | "inv" | "zeros" | "identity" | "len" | "range" | "derivative")
+                    if matches!(&self.src[id.span.range()], "print" | "inv" | "zeros" | "identity" | "len" | "range" | "derivative" | "grad")
                         || sky_units::MathFn::from_name(&self.src[id.span.range()]).is_some())
                     && !self.checked.expr_types.contains_key(&callee.span);
                 self.expr(callee, builtin);
@@ -359,6 +359,69 @@ fn functions_are_recorded_by_def_name_span() {
             panic!("def")
         };
         assert_eq!(c.funcs.get(&g.span).expect("g").ret(), &Ty::Unknown);
+    });
+}
+
+#[test]
+fn a_gradient_call_is_a_vector_and_records_the_function() {
+    let src = "def U(x: m, y: m) -> J:\n    return 3 N/m * (x^2 + y^2)\nF = grad(U)(1 m, 2 m)\n";
+    with_deep_stack(|| {
+        let (module, c) = check(src);
+        assert!(!c.has_errors(), "{:#?}", c.diagnostics);
+        assert_complete("grad", src);
+        let StmtKind::Assign { value, .. } = &module.stmts[1].kind else {
+            panic!("assign")
+        };
+        // The call is a Vector[2] of forces ...
+        match c.expr_ty(value.span) {
+            Some(Ty::Value(v)) => {
+                assert_eq!(v.dim, Dimension::FORCE);
+                assert_eq!(v.ty.shape().rank(), 1);
+            }
+            other => panic!("{other:?}"),
+        }
+        // ... and its callee says it is the gradient of `U`.
+        let ExprKind::Call { callee, .. } = &value.kind else {
+            panic!("call")
+        };
+        let Some(Ty::Func(sig)) = c.expr_types.get(&callee.span) else {
+            panic!("the callee is a function")
+        };
+        let d = sig.derivative_of().expect("a gradient");
+        assert_eq!((d.func().name(), d.is_gradient()), ("U", true));
+        assert_eq!(d.wrts(), 0..2);
+        assert_eq!(sig.name(), "grad(U)");
+    });
+}
+
+#[test]
+fn partial_notation_records_the_derived_function_and_types_every_node() {
+    let src = "def position(t: s) -> m:\n    return 5 m/s^2 * t^2\nv = (∂position/∂t)(2 s)\nw = ∂position/∂t(2 s)\n";
+    with_deep_stack(|| {
+        let (module, c) = check(src);
+        // The second form is an error (a call binds tighter than ∂), and
+        // both leave no expression untyped.
+        assert_eq!(c.diagnostics.len(), 1, "{:#?}", c.diagnostics);
+        assert_complete("partial", src);
+        let StmtKind::Assign { value, .. } = &module.stmts[1].kind else {
+            panic!("assign")
+        };
+        match c.expr_ty(value.span) {
+            Some(Ty::Value(v)) => assert_eq!(v.dim, Dimension::VELOCITY),
+            other => panic!("{other:?}"),
+        }
+        let ExprKind::Call { callee, .. } = &value.kind else {
+            panic!("call")
+        };
+        let Some(Ty::Func(sig)) = c.expr_types.get(&callee.span) else {
+            panic!("the callee is a function")
+        };
+        let d = sig.derivative_of().expect("a derivative");
+        assert_eq!(
+            (d.func().name(), d.wrt(), d.is_gradient()),
+            ("position", 0, false)
+        );
+        assert_eq!(sig.name(), "derivative(position, t)");
     });
 }
 

@@ -1,0 +1,7 @@
+# A gradient is a Vector, so its entries share one unit: a function of a
+# length and a time has a force and a power for derivatives, and grad(f) is an
+# error whose help suggests derivative(f, x) per parameter.
+def energy(x: m, t: s) -> J:
+    return 2 J/m * x + 3 J/s * t
+
+g = grad(energy)(1 m, 2 s)

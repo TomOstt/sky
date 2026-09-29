@@ -1,0 +1,18 @@
+# grad(f) needs parameters of one dimension: a Vector has one unit for all
+# its entries, and the derivatives of an energy in a length and a time are a
+# force and a power. The help suggests derivative(f, x) per parameter.
+def energy(x: m, t: s) -> J:
+    return 2 J/m * x + 3 J/s * t
+
+def three(a: m, b: s, c: kg) -> J:
+    return 1 J/m * a + 1 J/s * b + 1 J/kg * c
+
+a = grad(energy)(1 m, 2 s)
+b = grad(three)(1 m, 2 s, 3 kg)
+
+# the entries carry the derivative's unit, so mixing them up is a unit error
+def U(x: m, y: m) -> J:
+    return 1 N * (x + y)
+
+c = U(1 m, 1 m) + grad(U)(1 m, 1 m)[0]
+d: Vector[2] J = grad(U)(1 m, 1 m)

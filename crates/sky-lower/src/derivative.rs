@@ -19,7 +19,7 @@
 
 use sky_ast::{Expr, ExprKind};
 use sky_diag::Span;
-use sky_ir::{OpKind, Type, ValueId};
+use sky_ir::{NumberType, OpKind, Type, ValueId};
 use sky_types::{FuncSig, Ty};
 
 use crate::ctx::{map_ty, Lower, R};
@@ -50,7 +50,8 @@ impl Lower<'_> {
         while let ExprKind::Paren(inner) = &target.kind {
             target = inner;
         }
-        if !matches!(target.kind, ExprKind::Call { .. }) {
+        // `derivative(f, x)`, `grad(f)`, or `∂f/∂x`.
+        if !matches!(target.kind, ExprKind::Call { .. }) && target.partial_quotient().is_none() {
             return None;
         }
         match self.checked.expr_types.get(&target.span) {
@@ -104,20 +105,42 @@ impl Lower<'_> {
         for g in &globals {
             vals.push(self.module_value(g, e.span)?);
         }
-        let param = f
-            .param_name(d.wrt())
-            .map_or_else(|| d.wrt().to_string(), str::to_string);
-        let callee = sky_ad::derivative_name_of(&name, &param);
-        let (_, results) =
-            self.st
-                .b
-                .op(OpKind::Call { callee }, vals, vec![primal, tangent], e.span);
-        self.derivatives.push(Wanted {
-            func: name,
-            wrt: d.wrt(),
-            span: e.span,
-        });
-        Ok(results[1])
+        // One derivative function per parameter asked for (one for
+        // `derivative`, all of them for `grad`), each called on the same
+        // evaluated arguments, keeping the derivative it returns.
+        let entry = match (d.is_gradient(), &tangent) {
+            (true, Type::Number(n)) => Type::Number(NumberType::scalar(n.dim)),
+            _ => tangent.clone(),
+        };
+        let mut derivatives = Vec::new();
+        for wrt in d.wrts() {
+            let param = f
+                .param_name(wrt)
+                .map_or_else(|| wrt.to_string(), str::to_string);
+            let callee = sky_ad::derivative_name_of(&name, &param);
+            let (_, results) = self.st.b.op(
+                OpKind::Call { callee },
+                vals.clone(),
+                vec![primal.clone(), entry.clone()],
+                e.span,
+            );
+            derivatives.push(results[1]);
+            self.derivatives.push(Wanted {
+                func: name.clone(),
+                wrt,
+                span: e.span,
+            });
+        }
+        if !d.is_gradient() {
+            return Ok(derivatives[0]);
+        }
+        // `grad`: the Vector of the derivatives, in parameter order.
+        Ok(self.op1(
+            OpKind::ArrayLiteral { cols: None },
+            derivatives,
+            tangent,
+            e.span,
+        ))
     }
 }
 

@@ -1,0 +1,93 @@
+crates/sky-types/tests/ui/err_grad_forms.sky:18:10: error: cannot take the gradient of `loose`: its parameter `x` has no unit
+   |
+18 | a = grad(loose)(1 m, 2 m)
+   |          ^^^^^ the gradient is with respect to every parameter
+ 3 | def loose(x, y: m) -> m:
+   |     ----- `loose` is defined here
+   = note: each derivative has the unit of the result divided by the unit of its parameter, and an unannotated parameter accepts any unit
+   = help: annotate the parameter with its unit, for example `x: m`
+
+crates/sky-types/tests/ui/err_grad_forms.sky:19:10: error: cannot take the gradient of `norm`: its parameter `v` is not a scalar
+   |
+19 | b = grad(norm)([1 m, 2 m, 3 m])
+   |          ^^^^ the gradient is with respect to every parameter
+ 6 | def norm(v: Vector[3] m) -> m:
+   |             ----------- this is Vector[3] [L]
+   = note: differentiation does not go through arrays yet, so a gradient is with respect to scalar parameters
+   = help: take the components as scalar parameters, for example `def norm(x: m, y: m, z: m)`
+
+crates/sky-types/tests/ui/err_grad_forms.sky:20:10: error: cannot differentiate `path`: its result is Vector[3] [L], not a number
+   |
+20 | d = grad(path)(1 s)
+   |          ^^^^ this function's result
+ 9 | def path(t: s) -> Vector[3] m:
+   |     ---- `path` is defined here
+   = note: the derivative of an array-valued function is a Jacobian, which comes with arrays at run time
+
+crates/sky-types/tests/ui/err_grad_forms.sky:21:10: error: `grad` needs a function defined with `def`, found the built-in `sqrt`
+   |
+21 | e = grad(sqrt)(4)
+   |          ^^^^ a built-in function
+   = note: a `def` states the units of its parameters and result, which the unit of the derivative is computed from
+   = help: wrap it in a `def` that states its units, and take the gradient of that
+
+crates/sky-types/tests/ui/err_grad_forms.sky:22:5: error: `grad` takes 1 argument, found 2: a function
+   |
+22 | f = grad(position, t)(1 s)
+   |     ^^^^^^^^^^^^^^^^^ extra argument
+   = note: the gradient is with respect to every parameter, so no parameter is named
+   = help: write `grad(f)(...)` for all of them, or `derivative(f, x)(...)` for one parameter
+
+crates/sky-types/tests/ui/err_grad_forms.sky:23:5: error: `grad` takes 1 argument, found 0: a function
+   |
+23 | g = grad()(1 s)
+   |     ^^^^^^ missing argument
+   = help: write `grad(f)(...)`, then the arguments of `f`
+
+crates/sky-types/tests/ui/err_grad_forms.sky:24:10: error: cannot take the gradient of `constant`: it has no parameters
+   |
+24 | h = grad(constant)()
+   |          ^^^^^^^^ nothing to differentiate with respect to
+12 | def constant() -> m:
+   |     -------- `constant` is defined here
+   = help: give the function the parameters the gradient is taken with respect to
+
+crates/sky-types/tests/ui/err_grad_forms.sky:25:5: error: `grad(position)` is a function, and must be called where it is written
+   |
+25 | i = grad(position)
+   |     ^^^^^^^^^^^^^^ not called
+   = note: Sky has no function values yet: a function can be called, but not stored or passed around
+   = help: pass the arguments of the function: `grad(position)(...)`, or name the gradient with a `def` that calls it
+
+crates/sky-types/tests/ui/err_grad_forms.sky:26:10: error: `grad` needs a function defined with `def`, found another derivative
+   |
+26 | j = grad(derivative(position, t))(1 s)
+   |          ^^^^^^^^^^^^^^^^^^^^^^^ this is `derivative(...)`, which can only be called
+   = help: name the first derivative with a `def` that calls it, and take the gradient of that
+
+crates/sky-types/tests/ui/err_grad_forms.sky:27:16: error: `derivative` needs a function defined with `def`, found a gradient
+   |
+27 | k = derivative(grad(position), t)(1 s)
+   |                ^^^^^^^^^^^^^^ this is `grad(...)`, which can only be called
+   = help: name the first gradient with a `def` that calls it, and differentiate that
+
+crates/sky-types/tests/ui/err_grad_forms.sky:28:20: error: `t` of `grad(position)` expects a time, found a length
+   |
+28 | l = grad(position)(1 m)
+   |                    ^^^ this is length
+15 | def position(t: s) -> m:
+   |                 - expected because of this annotation
+   = help: convert the argument, or fix the unit in the call
+
+crates/sky-types/tests/ui/err_grad_forms.sky:29:25: error: `grad(position)` takes 1 argument, found 2
+   |
+29 | n = grad(position)(1 s, 2 s)
+   |                         ^^^ extra argument
+15 | def position(t: s) -> m:
+   |     -------- `position` is defined here
+
+crates/sky-types/tests/ui/err_grad_forms.sky:30:10: error: `grad` needs a function defined with `def`
+   |
+30 | o = grad(3 m)(1 m)
+   |          ^^^ this is length
+   = help: define the function with `def f(x: unit) -> unit: ...` and take the gradient of that

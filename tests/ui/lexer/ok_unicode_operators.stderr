@@ -3,11 +3,6 @@ tests/ui/lexer/ok_unicode_operators.sky:2:7: error: cannot find `f` in this scop
 2 | df = ∂f/∂x
   |       ^ not defined
 
-tests/ui/lexer/ok_unicode_operators.sky:2:10: error: cannot find `x` in this scope
-  |
-2 | df = ∂f/∂x
-  |          ^ not defined
-
 tests/ui/lexer/ok_unicode_operators.sky:3:6: error: cannot find `d` in this scope
   |
 3 | df = d(f)/d(x)
@@ -52,11 +47,6 @@ tests/ui/lexer/ok_unicode_operators.sky:6:6: error: cannot find `φ` in this sco
   |
 6 | g = ∇φ
   |      ^ not defined
-
-tests/ui/lexer/ok_unicode_operators.sky:7:5: error: cannot find `grad` in this scope
-  |
-7 | g = grad(φ)
-  |     ^^^^ not defined
 
 tests/ui/lexer/ok_unicode_operators.sky:7:10: error: cannot find `φ` in this scope
   |

@@ -1,0 +1,20 @@
+# grad(f)(args) is a Vector with one entry per parameter, in the unit
+# dim(f) / dim(parameter): the gradient of an energy in two lengths is a
+# force, and of a position in a time a velocity. The parameters share one
+# dimension, though not one unit.
+k = 3 N/m
+
+def U(x: m, y: m) -> J:
+    return k * (x^2 + y^2)
+
+def position(t: s) -> m:
+    return 5 m/s^2 * t^2
+
+def mixed(a: km, b: m) -> J:
+    return 2 N * a + 3 N * b
+
+F: Vector[2] N = -grad(U)(1 m, 2 m)
+first: N = grad(U)(1 m, 2 m)[0]
+v = grad(position)(2 s)
+w: Vector[2] N = grad(mixed)(1 km, 1 m)
+work: J = F[0] * 1 m + F[1] * 2 m

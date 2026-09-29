@@ -1401,4 +1401,69 @@ fn a_closed_stdout_is_not_a_diagnostic_on_any_engine() {
         assert_eq!(err(&o), "", "{engine}");
         fs::remove_dir_all(&dir).unwrap();
     }
+#[test]
+fn run_evaluates_the_gradient_of_a_potential_as_a_force_vector() {
+    // U = k (x² + y²) has ∇U = (2 k x, 2 k y): a Vector in N.
+    let o = run_script(
+        "grad_potential",
+        "k = 3 N/m\n\
+         def U(x: m, y: m) -> J:\n    return k * (x^2 + y^2)\n\
+         F: Vector[2] N = -grad(U)(1 m, 2 m)\n\
+         print(F)\n\
+         print(grad(U)(0.5 m, 1 m))\n\
+         print(grad(U)(1 m, 2 m)[1])\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "[-6 N, -12 N]\n[3 N, 6 N]\n12 N\n");
+    assert!(o.status.success());
+}
+
+#[test]
+fn run_evaluates_partial_notation_like_derivative() {
+    let o = run_script(
+        "partial_notation",
+        "def x(t: s) -> m:\n    return 5 m/s^2 * t^2\n\
+         v: m/s = (∂x/∂t)(2 s)\n\
+         print(v)\n\
+         print((∂x/∂t)(2 s) == derivative(x, t)(2 s))\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "20 m/s\ntrue\n");
+    assert!(o.status.success());
+}
+
+#[test]
+fn a_gradient_over_different_units_is_a_check_error_and_nothing_runs() {
+    let o = run_script(
+        "grad_mixed",
+        "def E(x: m, t: s) -> J:\n    return 2 J/m * x + 3 J/s * t\n\
+         print(\"before\")\n\
+         print(grad(E)(1 m, 1 s))\n",
+    );
+    assert_eq!(out(&o), "");
+    let e = err(&o);
+    assert!(
+        e.contains("cannot take the gradient of `E`: its parameters have different units"),
+        "{e}"
+    );
+    assert!(e.contains("`derivative(E, x)(...)`"), "{e}");
+    assert_eq!(o.status.code(), Some(1));
+}
+
+#[test]
+fn a_gradient_unit_error_is_a_check_error_and_nothing_runs() {
+    // The gradient of an energy in a length is a force, not an energy.
+    let o = run_script(
+        "grad_unit",
+        "def U(x: m, y: m) -> J:\n    return 1 N * (x + y)\n\
+         print(\"before\")\n\
+         print(U(1 m, 1 m) + grad(U)(1 m, 1 m)[0])\n",
+    );
+    assert_eq!(out(&o), "");
+    assert!(
+        err(&o).contains("cannot add energy and force"),
+        "{}",
+        err(&o)
+    );
+    assert_eq!(o.status.code(), Some(1));
 }

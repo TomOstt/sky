@@ -17,6 +17,7 @@
 //! derivative's, with its dimension.
 
 use std::io::Write;
+use std::sync::Arc;
 
 use sky_ast::{Expr, ExprKind};
 use sky_diag::Span;
@@ -81,20 +82,58 @@ impl Interp<'_> {
             if self.is_derivative(name) {
                 return Some(self.derivative_of(call, inner, dargs, args));
             }
+            if self.is_grad(name) {
+                return Some(self.gradient_of(call, inner, dargs, args));
+            }
         }
-        if self.is_derivative(callee) {
-            return Some(Err(RuntimeError::new(
-                "`derivative(f, x)` is a function, and must be called where it is written",
-                call.span,
-            )));
+        // `∂f/∂x`, the same as `derivative(f, x)`.
+        if let Some((f, x)) = inner.partial_quotient() {
+            return Some(self.derivative_of(call, inner, &[f.clone(), x.clone()], args));
+        }
+        for (is_form, form) in [
+            (self.is_derivative(callee), "derivative(f, x)"),
+            (self.is_grad(callee), "grad(f)"),
+        ] {
+            if is_form {
+                return Some(Err(RuntimeError::new(
+                    format!("`{form}` is a function, and must be called where it is written"),
+                    call.span,
+                )));
+            }
         }
         None
+    }
+
+    /// `grad` while the program has not bound that name itself.
+    fn is_grad(&self, callee: &Expr) -> bool {
+        matches!(&callee.kind, ExprKind::Name(id)
+            if self.text(id.span) == "grad" && self.lookup("grad").is_none())
     }
 
     /// `derivative` while the program has not bound that name itself.
     fn is_derivative(&self, callee: &Expr) -> bool {
         matches!(&callee.kind, ExprKind::Name(id)
             if self.text(id.span) == "derivative" && !self.is_user_bound("derivative"))
+    }
+
+    /// The function a `derivative` or `grad` argument names.
+    fn derivative_function(&mut self, who: &str, f_arg: &Expr) -> R<Arc<Function>> {
+        // A name in a function body is the function in scope where that
+        // function was defined, as for a call (early binding).
+        let named = match &f_arg.kind {
+            ExprKind::Name(id) => self.lexical_function(self.text(id.span)).map(Value::Func),
+            _ => None,
+        };
+        match named.map_or_else(|| self.eval(f_arg), Ok)? {
+            Value::Func(f) => Ok(f),
+            other => Err(RuntimeError::new(
+                format!(
+                    "`{who}` needs a function defined with `def`, found {}",
+                    other.kind()
+                ),
+                f_arg.span,
+            )),
+        }
     }
 
     /// `derivative(dargs...)(args...)`, where `form` is the expression
@@ -112,24 +151,7 @@ impl Interp<'_> {
                 form.span,
             ));
         };
-        // A name in a function body is the function in scope where that
-        // function was defined, as for a call.
-        let named = match &f_arg.kind {
-            ExprKind::Name(id) => self.lexical_function(self.text(id.span)).map(Value::Func),
-            _ => None,
-        };
-        let func = match named.map_or_else(|| self.eval(f_arg), Ok)? {
-            Value::Func(f) => f,
-            other => {
-                return Err(RuntimeError::new(
-                    format!(
-                        "`derivative` needs a function defined with `def`, found {}",
-                        other.kind()
-                    ),
-                    f_arg.span,
-                ));
-            }
-        };
+        let func = self.derivative_function("derivative", f_arg)?;
         let wrt = match &x_arg.kind {
             ExprKind::Name(id) => {
                 let name = self.text(id.span);
@@ -147,18 +169,84 @@ impl Interp<'_> {
                 ));
             }
         };
+        let label = format!("derivative({}, {})", func.name, func.params[wrt]);
+        let values = self.derivative_arguments(&label, &func, call, args)?;
+        let mut derivatives = self.derivatives_at(call, &func, &[wrt], values)?;
+        Ok(derivatives.remove(0))
+    }
+
+    /// `grad(dargs...)(args...)`: the derivatives of the function with
+    /// respect to each of its parameters, in order, as a vector. The
+    /// arguments are evaluated once, and the function runs once per
+    /// parameter (forward mode: one derivative each).
+    fn gradient_of(&mut self, call: &Expr, form: &Expr, dargs: &[Expr], args: &[Expr]) -> R<Value> {
+        let [f_arg] = dargs else {
+            return Err(RuntimeError::new(
+                format!("`grad` takes 1 argument, found {}", dargs.len()),
+                form.span,
+            ));
+        };
+        let func = self.derivative_function("grad", f_arg)?;
+        let label = format!("grad({})", func.name);
+        let values = self.derivative_arguments(&label, &func, call, args)?;
+        let wrts: Vec<usize> = (0..func.params.len()).collect();
+        let derivatives = self.derivatives_at(call, &func, &wrts, values)?;
+        // The checker made sure the parameters share one dimension, so the
+        // derivatives do; the vector has that one.
+        let mut data = Vec::with_capacity(derivatives.len());
+        let mut dim = None;
+        for d in &derivatives {
+            match d {
+                Value::Number { value, dim: d } if dim.is_none_or(|x| x == *d) => {
+                    data.push(*value);
+                    dim = Some(*d);
+                }
+                _ => {
+                    return Err(RuntimeError::new(
+                        "the derivatives of a gradient must be numbers of one dimension",
+                        call.span,
+                    ));
+                }
+            }
+        }
+        let Some(dim) = dim else {
+            return Err(RuntimeError::new(
+                "cannot take the gradient of a function without parameters",
+                call.span,
+            ));
+        };
+        Ok(Value::array(vec![data.len()], data, dim))
+    }
+
+    /// The arguments of a call of the derivative function `label` of
+    /// `func`, evaluated left to right in the caller.
+    fn derivative_arguments(
+        &mut self,
+        label: &str,
+        func: &Function,
+        call: &Expr,
+        args: &[Expr],
+    ) -> R<Vec<Value>> {
         if args.len() != func.params.len() {
             return Err(arity_mismatch(
-                &format!("derivative({}, {})", func.name, func.params[wrt]),
+                label,
                 func.params.len(),
                 args.len(),
                 call.span,
             ));
         }
-        let values = args
-            .iter()
-            .map(|a| self.eval(a))
-            .collect::<R<Vec<Value>>>()?;
+        args.iter().map(|a| self.eval(a)).collect()
+    }
+
+    /// The derivative of `func` at `values` with respect to each parameter
+    /// in `wrts`, in that order, from the hook.
+    fn derivatives_at(
+        &mut self,
+        call: &Expr,
+        func: &Function,
+        wrts: &[usize],
+        values: Vec<Value>,
+    ) -> R<Vec<Value>> {
         // Disjoint borrows: the hook, the output, and the module names.
         let Interp {
             env,
@@ -176,16 +264,20 @@ impl Interp<'_> {
         };
         let env = &**env;
         let globals = |name: &str| env.get(name).cloned();
-        hook.derivative(
-            &DerivativeRequest {
-                func: &func,
-                wrt,
-                args: values,
-                span: call.span,
-                globals: &globals,
-                stack: *stack,
-            },
-            &mut **out,
-        )
+        wrts.iter()
+            .map(|&wrt| {
+                hook.derivative(
+                    &DerivativeRequest {
+                        func,
+                        wrt,
+                        args: values.clone(),
+                        span: call.span,
+                        globals: &globals,
+                        stack: *stack,
+                    },
+                    &mut **out,
+                )
+            })
+            .collect()
     }
 }

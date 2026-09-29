@@ -1,0 +1,12 @@
+# The gradient of a potential is a force: grad(U) is a Vector with one entry
+# per parameter, in J/m = N. (∂f/∂x)(args) is derivative(f, x)(args).
+k = 3 N/m
+
+def U(x: m, y: m) -> J:
+    return k * (x^2 + y^2)
+
+def position(t: s) -> m:
+    return 5 m/s^2 * t^2
+
+F: Vector[2] N = -grad(U)(1 m, 2 m)
+v: m/s = (∂position/∂t)(2 s)

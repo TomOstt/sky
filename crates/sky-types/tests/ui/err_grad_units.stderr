@@ -1,0 +1,36 @@
+crates/sky-types/tests/ui/err_grad_units.sky:10:10: error: cannot take the gradient of `energy`: its parameters have different units
+   |
+10 | a = grad(energy)(1 m, 2 s)
+   |          ^^^^^^ the gradient is with respect to every parameter
+ 4 | def energy(x: m, t: s) -> J:
+   |               - `x` is length
+   |                     - `t` is time
+   = note: the gradient is a Vector, which has one unit for all its entries, but the derivatives of `energy` are different quantities: force and power
+   = help: take one derivative per parameter instead: `derivative(energy, x)(...)`, `derivative(energy, t)(...)`
+
+crates/sky-types/tests/ui/err_grad_units.sky:11:10: error: cannot take the gradient of `three`: its parameters have different units
+   |
+11 | b = grad(three)(1 m, 2 s, 3 kg)
+   |          ^^^^^ the gradient is with respect to every parameter
+ 7 | def three(a: m, b: s, c: kg) -> J:
+   |              - `a` is length
+   |                    - `b` is time
+   |                          -- `c` is mass
+   = note: the gradient is a Vector, which has one unit for all its entries, but the derivatives of `three` are different quantities: force, power, ...
+   = help: take one derivative per parameter instead: `derivative(three, a)(...)`, `derivative(three, b)(...)`, `derivative(three, c)(...)`
+
+crates/sky-types/tests/ui/err_grad_units.sky:17:17: error: cannot add energy and force
+   |
+17 | c = U(1 m, 1 m) + grad(U)(1 m, 1 m)[0]
+   |                 ^ mismatched dimensions
+   |     ----------- energy (L²·M·T⁻²)
+   |                   -------------------- force (L·M·T⁻²)
+   = note: both operands of `+` must have the same dimension
+   = note: `U(1 m, 1 m)` is an energy, where `U(1 m, 1 m)` is an energy (a function result, `def` on line 14)
+   = help: these differ by a factor of length: `U(1 m, 1 m)` is `grad(U)(1 m, 1 m)[0]` times a length
+
+crates/sky-types/tests/ui/err_grad_units.sky:18:18: error: expected energy, found force
+   |
+18 | d: Vector[2] J = grad(U)(1 m, 1 m)
+   |                  ^^^^^^^^^^^^^^^^^ this is force (L·M·T⁻²)
+   |              - expected energy because of this unit

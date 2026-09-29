@@ -35,6 +35,7 @@ pub mod arith;
 mod env;
 mod error;
 mod eval;
+pub mod math;
 mod value;
 
 #[cfg(test)]

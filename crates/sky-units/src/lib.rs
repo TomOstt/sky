@@ -8,6 +8,7 @@
 //!   plus a scale factor) and SI prefixes, the single source of truth for unit names,
 //! * [`Constant`] and [`CONSTANTS`]: CODATA 2018 physical constants, which the checker
 //!   binds as names in scope (they are values, not units),
+//! * [`MathFn`]: the built-in math functions and their dimension rules,
 //! * [`DimUnifier`]: unification of dimension terms containing dimension variables.
 //!
 //! Unification only ever compares dimensions; unit scale factors never take part.
@@ -21,12 +22,14 @@
 
 pub mod constants;
 pub mod dimension;
+pub mod math;
 pub mod rational;
 pub mod unify;
 pub mod unit;
 
 pub use constants::{lookup_constant, Constant, CONSTANTS};
 pub use dimension::{BaseDim, DimError, Dimension};
+pub use math::{DimRule, MathDimError, MathFn};
 pub use rational::{Rational, RationalError};
 pub use unify::{DimMismatch, DimTerm, DimUnifier, DimVar, UnifyError};
 pub use unit::{is_unit_symbol, lookup, suggest_unit, Prefix, Resolved, Unit, PREFIXES, UNITS};

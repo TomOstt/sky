@@ -1,0 +1,5 @@
+crates/sky-types/tests/ui/err_math_shadowed.sky:4:5: error: cannot call a dimensionless number
+  |
+4 | a = sqrt(9)
+  |     ^^^^ this is dimensionless
+  = help: only functions defined with `def` can be called

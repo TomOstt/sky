@@ -1,0 +1,30 @@
+tests/ui/check/err_math_units.sky:4:9: error: the argument of `exp` must be dimensionless, found length
+  |
+4 | a = exp(L)
+  |         ^ this has dimension length
+  = note: exp(x) = 1 + x + x²/2 + …, which adds terms of different dimensions unless x has none
+  = help: divide by a reference length, e.g. `exp(L / (1 m))`
+
+tests/ui/check/err_math_units.sky:5:9: error: the argument of `sin` must be dimensionless, found velocity
+  |
+5 | b = sin(L / t)
+  |         ^^^^^ this has dimension velocity
+  = note: trigonometric functions take an angle, and an angle is a pure number (`rad` is a dimensionless unit)
+  = help: divide by a reference velocity, e.g. `sin(x / (1 m/s))`
+  = help: angles are dimensionless: write `0.5 rad`, or a plain number of radians
+
+tests/ui/check/err_math_units.sky:6:10: error: the arguments of `max` must have the same dimension, found length and time
+  |
+6 | bigger = max(L, t)
+  |          ^^^ mismatched dimensions
+  |              - length
+  |                 - time
+  = note: `max` compares or combines its two arguments, which only makes sense in one dimension
+  = help: convert one side, or fix the unit
+
+tests/ui/check/err_math_units.sky:7:11: error: the argument of `round` must be dimensionless, found length
+  |
+7 | d = round(1.5 km)
+  |           ^^^^^^ this has dimension length
+  = note: values are stored in SI, so rounding a quantity depends on the unit you would show it in, which Sky does not keep
+  = help: divide by a reference length, e.g. `round(x / (1 m))`

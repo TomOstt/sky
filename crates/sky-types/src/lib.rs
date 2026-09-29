@@ -25,6 +25,7 @@
 
 #![forbid(unsafe_code)]
 
+mod builtins;
 pub mod check;
 mod flow;
 mod provenance;

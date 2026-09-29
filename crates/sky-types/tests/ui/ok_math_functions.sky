@@ -1,0 +1,21 @@
+# prelude
+# Math builtins: dimension rules (spec "Math functions").
+area = 9 m^2
+side = sqrt(area)
+vol = 8 m^3
+edge = cbrt(vol)
+speed = abs(-3 m/s)
+decay = exp(-(2 s) / (4 s))
+ln = log(10) + log10(100) + log2(8)
+tau = 2 * pi
+angle = sin(30 rad) + cos(0.5 rad) + tan(0.1)
+back = asin(0.5) + acos(0.5) + atan(1)
+phase = atan2(3 m, 4 m)
+dist = hypot(3 m, 4 m)
+lo = min(1 s, 2 s)
+hi = max(1 kg, 2 kg)
+whole = floor(2.5) + ceil(2.5) + round(2.5)
+omega = 3 Hz
+t = 2 s
+wave = cos(omega * t)
+p = π + pi

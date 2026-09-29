@@ -23,6 +23,7 @@
 
 #![forbid(unsafe_code)]
 
+mod builtins;
 pub mod check;
 mod flow;
 pub mod rewrite;

@@ -624,10 +624,12 @@ impl<'s> Checker<'s> {
         let d = Diagnostic::warning(format!("`{q}` shadows {}", c.description), id.span)
             .with_label("shadows a predefined constant")
             .with_note(format!(
-                "`{q}` is predefined by Sky: {} ({}, {:e} in SI units, CODATA 2018), defined in the sky-units constants table",
+                "`{q}` is predefined by Sky: {} ({}, {:e} in SI units{}), defined in the sky-units constants table",
                 c.description,
                 describe(&c.dim),
-                c.value
+                c.value,
+                // π is not a measured constant.
+                if c.dim.is_dimensionless() { "" } else { ", CODATA 2018" }
             ))
             .with_help(format!(
                 "rename your variable to keep using the constant, e.g. `my_{q} = …`"
@@ -1207,6 +1209,9 @@ impl<'s> Checker<'s> {
                         self.expr(a);
                     }
                     return Ty::Unknown;
+                }
+                if let Some(t) = self.math_call(callee, args, e.span) {
+                    return t;
                 }
                 let callee_ty = self.expr(callee);
                 self.call(callee_ty, callee, args, e.span)

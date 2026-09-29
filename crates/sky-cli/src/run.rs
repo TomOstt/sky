@@ -8,6 +8,7 @@ use std::process::ExitCode;
 use sky_diag::SourceFile;
 use sky_interp::{run_module, RuntimeEnv};
 use sky_project::SystemIdentity;
+use sky_syntax::Edition;
 
 use crate::frontend::analyze;
 
@@ -19,13 +20,16 @@ use crate::frontend::analyze;
 pub fn run(path: &str, file: &File, src: &str) -> ExitCode {
     // Same discovery as `sky check` (spec non-negotiable 2): the project
     // root comes only from walking up from the opened file.
-    if let Err(e) = sky_project::discover_opened(Path::new(path), file, &SystemIdentity) {
-        eprint!("{}", e.to_diagnostic().display(&e.source_file()));
-        return ExitCode::FAILURE;
-    }
+    let discovery = match sky_project::discover_opened(Path::new(path), file, &SystemIdentity) {
+        Ok(d) => d,
+        Err(e) => {
+            eprint!("{}", e.to_diagnostic().display(&e.source_file()));
+            return ExitCode::FAILURE;
+        }
+    };
     // Front end and interpreter both run on the known-size stack, so the
     // parser's, checker's and evaluator's depth bounds hold.
-    sky_ast::with_deep_stack(|| run_source(path, src))
+    sky_ast::with_deep_stack(|| run_source(path, src, discovery.edition))
 }
 
 /// Forwards to stdout and remembers whether the reader went away (`sky run
@@ -47,9 +51,9 @@ impl Write for Stdout<'_> {
     }
 }
 
-fn run_source(path: &str, src: &str) -> ExitCode {
+fn run_source(path: &str, src: &str, edition: Edition) -> ExitCode {
     let file = SourceFile::new(path, src);
-    let front = analyze(src, sky_types::Env::with_prelude(), false);
+    let front = analyze(src, sky_types::Env::with_prelude(), false, edition);
     let rendered = front.render(&file);
     eprint!("{}", rendered.join("\n"));
     let module = match front.module {

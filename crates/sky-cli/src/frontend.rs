@@ -3,6 +3,7 @@
 
 use sky_ast::{Module, ParseError};
 use sky_diag::{Diagnostic, Severity, SourceFile, Span};
+use sky_syntax::Edition;
 use sky_types::Env;
 
 /// The outcome of the front end on one source text.
@@ -32,7 +33,12 @@ impl FrontEnd {
 /// Lexes, parses, and (if parsing succeeded) type-checks `src` starting
 /// from `env`. With `explain`, the checker's rewrite decisions follow as
 /// notes. Never executes anything. Runs inside `with_deep_stack`.
-pub fn analyze(src: &str, env: Env, explain: bool) -> FrontEnd {
+///
+/// `edition` is the language edition the source is written for. Nothing
+/// consults it yet (there is one edition); it is threaded through now so the
+/// first edition-dependent rule has one place to read it, and no phase can
+/// forget to ask.
+pub fn analyze(src: &str, env: Env, explain: bool, _edition: Edition) -> FrontEnd {
     let mut module_out = None;
     let mut env_out = env.clone();
     let mut diagnostics: Vec<Diagnostic> = match sky_syntax::lex(src) {

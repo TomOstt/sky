@@ -104,6 +104,7 @@ dependencies = [
  "sky-ast",
  "sky-diag",
  "sky-ir",
+ "sky-project",
  "sky-syntax",
 ]
 
@@ -115,6 +116,15 @@ dependencies = [
  "sky-syntax",
  "sky-types",
  "sky-units",
+]
+
+[[package]]
+name = "sky-project"
+version = "0.0.1"
+dependencies = [
+ "libc",
+ "sky-diag",
+ "sky-syntax",
 ]
 
 [[package]]

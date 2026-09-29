@@ -14,6 +14,7 @@ sky-ast = { path = "../crates/sky-ast" }
 sky-syntax = { path = "../crates/sky-syntax" }
 sky-diag = { path = "../crates/sky-diag" }
 sky-ir = { path = "../crates/sky-ir" }
+sky-project = { path = "../crates/sky-project" }
 
 # Keep the fuzz crate out of the main workspace so stable `cargo test --workspace` never builds it.
 [workspace]
@@ -36,6 +37,13 @@ bench = false
 [[bin]]
 name = "sir_parse"
 path = "fuzz_targets/sir_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest"
+path = "fuzz_targets/manifest.rs"
 test = false
 doc = false
 bench = false

@@ -15,7 +15,7 @@ use std::process::ExitCode;
 
 use sky_diag::SourceFile;
 use sky_interp::{run_module, RuntimeEnv, Value};
-use sky_syntax::MAX_SOURCE_BYTES;
+use sky_syntax::{Edition, MAX_SOURCE_BYTES};
 use sky_types::Env;
 
 use crate::frontend::analyze;
@@ -114,7 +114,7 @@ fn repl_loop(interactive: bool) -> ExitCode {
 /// as it was.
 fn eval_input(session: &mut Session, src: &str, out: &mut impl Write) {
     let file = SourceFile::new(NAME, src);
-    let front = analyze(src, session.types.clone(), false);
+    let front = analyze(src, session.types.clone(), false, Edition::LATEST);
     eprint!("{}", front.render(&file).join("\n"));
     let module = match front.module {
         Some(m) if front.ok => m,

@@ -29,10 +29,12 @@
 //!    The two resource-limit errors compare as one, exactly as in the
 //!    hand-written differential tests.
 //!
-//! Bugs this fuzzer already found are reported, not repeated: the generator
-//! steers around most (the `GATE_*` constants) and [`KNOWN`] lets a lenient
-//! run tolerate the rest, so a failure of the target or the test is a new
-//! one. Each has an `#[ignore]`d regression test in the sky-ir-interp test.
+//! Bugs this fuzzer found are fixed and each has a regression test in the
+//! sky-ir-interp test. A bug found later that is not fixed at once is
+//! reported, not repeated: the generator steers around it (a `GATE_*`
+//! constant, `true` while the bug is open) and [`KNOWN`] lets a lenient run
+//! tolerate it, so a failure of the target or the test is a new one. Both are
+//! empty or off now.
 //!
 //! The file depends only on `std` and the sky crates (path dependencies of
 //! the fuzz crate; sky-ir-interp's tests have them all).
@@ -367,6 +369,10 @@ struct Gen<'a> {
     shadow_consts: bool,
     /// No math functions in this program (see GATE_SIR_TEXT_MATH).
     no_math: bool,
+    /// The identity function `def u(a): return a` of this program, if it has
+    /// one: its result has a type the checker cannot know, so a call of it
+    /// can stand where a Bool goes whatever its argument is.
+    unknown: Option<String>,
 }
 
 /// Known bugs the generator steers around, so the fuzzer keeps finding new
@@ -376,38 +382,44 @@ struct Gen<'a> {
 /// gate to `false` when the bug is fixed.
 ///
 /// Some reported differences the generator never produces, by construction
-/// (see the tests of the same file): a call whose name is defined again
-/// after the caller (`lowering_binds_a_call_to_the_definition_seen_at_check_time`:
-/// only the most recent function is redefined, and a `def` that shadows a
-/// builtin comes before any other function), a conditionally defined
-/// function, a nested `def`, an input declaration, and a literal that
-/// overflows `f64` in a program that must run (huge numbers get plain SI
-/// units).
+/// (see the tests of the same file): a conditionally defined function and a
+/// nested `def` (lowering refuses them, `sky run` runs them). An input
+/// declaration is generated (rarely: the run ends at it), and so is a literal
+/// too large for an `f64` (a run-time error where it is evaluated). A function may
+/// be defined again, and a `def` may shadow a builtin, after functions that
+/// call the name (calls bind where the caller is defined,
+/// `lowering_binds_a_call_to_the_definition_seen_at_check_time`).
 ///
-/// `lowering_loses_a_name_bound_beside_a_break_arm`: a name bound only by the
-/// arms of an `if` that fall through, when another arm `break`s or
-/// `continue`s, is "cannot find `t` in this scope" if read after the `if`
-/// inside the loop.
-const GATE_MERGE_AFTER_JUMP: bool = true;
+/// `lowering_loses_a_name_bound_beside_a_break_arm`: fixed (a name bound only
+/// by the arms of an `if` that fall through, when another arm `break`s or
+/// `continue`s, was "cannot find `t` in this scope" if read after the `if`
+/// inside the loop).
+const GATE_MERGE_AFTER_JUMP: bool = false;
 
-/// `lowering_ignores_a_constant_rebound_in_a_block`: rebinding a predefined
-/// constant (`c = 2 m/s`) inside an `if` or `while`, at module level or in a
-/// function: after the block, lowering still reads the constant's own value.
-const GATE_CONST_REBIND_IN_BLOCK: bool = true;
+/// `lowering_ignores_a_constant_rebound_in_a_block`: fixed (rebinding a
+/// predefined constant (`c = 2 m/s`) inside an `if` or `while`, at module
+/// level or in a function, was ignored after the block).
+const GATE_CONST_REBIND_IN_BLOCK: bool = false;
 
 /// `sir_text_parse_accepts_the_math_operations_the_printer_writes`: fixed
 /// (the SIR parser reads `math.*`), so the generator uses math freely.
 const GATE_SIR_TEXT_MATH: bool = false;
 
 /// `sir_does_not_check_the_right_operand_of_and_or_for_bool` and
-/// `the_left_operand_of_and_is_worded_as_an_if_in_sir`: a value the checker
-/// cannot type (from an unannotated parameter) that is not a Bool, used as an
-/// operand of `and`/`or`. `sky run` stops with "`or` needs a Bool operand,
-/// found a number"; for a right operand the SIR interpreter does not check at
-/// all (`false or f(1)` prints 1), and for a left operand it says "`if`
-/// needs ..." (`and` is lowered to an `if`). The generator only puts
+/// `the_left_operand_of_and_is_worded_as_an_if_in_sir`: fixed (a value the
+/// checker cannot type, from an unannotated parameter, that is not a Bool, as
+/// an operand of `and`/`or`: the SIR interpreter did not check a right
+/// operand at all, and worded a left one as an `if`; lowering now emits
+/// `expect.bool` for it). With the gate on, the generator only puts
 /// Bool-returning functions in such places.
-const GATE_NON_BOOL_OPERAND: bool = true;
+const GATE_NON_BOOL_OPERAND: bool = false;
+
+/// `unary_plus_of_an_unknown_non_number_is_not_checked_in_sir`: `+x` is lowered
+/// as `x`, so where `x` is a value the checker cannot type (an unannotated
+/// parameter) and is not a number, `sky run` stops with "`+` needs a number,
+/// found a Bool" and SIR goes on (and fails later, or never). The generator
+/// writes no unary `+` inside a function with unannotated parameters.
+const GATE_UNARY_PLUS_UNKNOWN: bool = true;
 
 const MATH_FNS: &[&str] = &[
     "sqrt", "cbrt", "abs", "exp", "log", "log10", "log2", "sin", "cos", "tan", "asin", "acos",
@@ -611,10 +623,9 @@ impl Gen<'_> {
             }
             return atom(n);
         }
-        // A literal whose conversion to SI overflows is refused by lowering
-        // as a whole (see KNOWN), so huge numbers get plain SI units.
-        let big = n.starts_with("1e") && n.len() > 3 && !n.starts_with("1e-");
-        let u = self.unit_with(d, big);
+        // A huge number with a prefixed unit overflows when converted to SI:
+        // a run-time error where the literal is evaluated, in both engines.
+        let u = self.unit_with(d, false);
         E {
             s: format!("{n} {u}"),
             p: 8,
@@ -705,7 +716,9 @@ impl Gen<'_> {
                         s: format!("-{}", at(a, 8)),
                         p: 7,
                     }
-                } else if self.c.chance(30) {
+                } else if self.c.chance(30)
+                    && !(GATE_UNARY_PLUS_UNKNOWN && self.cur.is_some_and(|i| self.fns[i].poly))
+                {
                     E {
                         s: format!("+{}", at(a, 8)),
                         p: 7,
@@ -1296,6 +1309,8 @@ impl Gen<'_> {
             } else {
                 0
             }, // 11 probe
+            // 12 an input declaration: the run ends there, so it is rare
+            if self.ind == 0 && !self.in_fn { 1 } else { 0 },
         ];
         match self.c.weighted(&w) {
             0 => {
@@ -1332,6 +1347,10 @@ impl Gen<'_> {
                 self.annotated();
                 Exit::Falls
             }
+            12 => {
+                self.input_declaration();
+                Exit::Falls
+            }
             _ => {
                 self.poly_probe();
                 Exit::Falls
@@ -1364,12 +1383,21 @@ impl Gen<'_> {
             }
         }
         self.weight += f.weight * self.mult;
-        let call = format!("{}({})", f.name, args.join(", "));
-        // A Bool-returning function can be an operand or a condition, though
-        // the checker does not know its type. (Only those: for a number the
-        // two engines word the error differently, see GATE_NON_BOOL_OPERAND.)
-        if (f.ret == Some(Ty::Bool) || !GATE_NON_BOOL_OPERAND) && self.c.chance(50) {
-            match self.c.below(4) {
+        let mut call = format!("{}({})", f.name, args.join(", "));
+        // A call can be an operand or a condition where the checker does not
+        // know its type: a Bool works, and any other result is the run-time
+        // error "`kw` needs a Bool operand", the same in both engines (see
+        // GATE_NON_BOOL_OPERAND). What it returns is only unknown to the
+        // checker through the identity function.
+        let mut unknown = f.ret == Some(Ty::Bool);
+        if let (Some(u), Some(_)) = (&self.unknown, &f.ret) {
+            if self.c.chance(60) {
+                call = format!("{u}({call})");
+                unknown = true;
+            }
+        }
+        if unknown && self.c.chance(50) {
+            match self.c.below(8) {
                 0 => {
                     self.line(&format!("if {call}:"));
                     self.ind += 1;
@@ -1378,6 +1406,24 @@ impl Gen<'_> {
                 }
                 1 => self.line(&format!("print({call} and true)")),
                 2 => self.line(&format!("print(false or {call})")),
+                3 => self.line(&format!("print(true and {call} and true)")),
+                4 => self.line(&format!("print(1 if {call} else 2)")),
+                5 => {
+                    self.line("if false:");
+                    self.ind += 1;
+                    self.line("pass");
+                    self.ind -= 1;
+                    self.line(&format!("elif {call}:"));
+                    self.ind += 1;
+                    self.line("pass");
+                    self.ind -= 1;
+                }
+                6 => {
+                    self.line(&format!("while {call}:"));
+                    self.ind += 1;
+                    self.line("break");
+                    self.ind -= 1;
+                }
                 _ => self.line(&format!("print(not {call})")),
             }
         } else if self.c.chance(70) {
@@ -1414,6 +1460,17 @@ impl Gen<'_> {
         let ann = self.annotation(d);
         let e = self.num(d, 3);
         self.line(&format!("{name}: {ann} = {}", e.s));
+        self.bind(name, Ty::Num(d), false);
+    }
+
+    /// `x: m`: a name declared without a value, an input nothing supplies. The
+    /// run stops here with "`x` is declared but has no value", so what the
+    /// program printed before it must be the same in both engines.
+    fn input_declaration(&mut self) {
+        let d = self.rand_dim();
+        let name = self.fresh_name();
+        let ann = self.annotation(d);
+        self.line(&format!("{name}: {ann}"));
         self.bind(name, Ty::Num(d), false);
     }
 
@@ -1669,17 +1726,26 @@ impl Gen<'_> {
             .c
             .weighted(&[50, 25, 10, 6, if self.risk > 0 { 3 } else { 0 }, 12]);
         let poly = kind == 5;
-        let shadow = self.fns.is_empty() && kind == 0 && self.c.chance(8);
-        // Redefining the most recent function: nothing defined later can call
-        // it, so lowering's early binding of calls cannot show (see the
-        // gates' comment).
+        // A `def` of a name an earlier function already calls (a user
+        // function, or a builtin the `def` shadows): calls bind to the
+        // definition in scope where the caller is defined, so the earlier
+        // callers keep the old one.
         let redefine = !self.fns.is_empty() && self.c.chance(10);
+        let redefined = if redefine {
+            self.c.below(self.fns.len())
+        } else {
+            0
+        };
+        let shadow_name = *self.c.pick(SHADOWABLE);
+        let shadow = !redefine
+            && kind == 0
+            && self.c.chance(8)
+            && !self.fns.iter().any(|f| f.name == shadow_name);
         let name = if redefine {
-            self.fns.last().map(|f| f.name.clone()).unwrap_or_default()
+            self.fns[redefined].name.clone()
         } else if shadow {
-            let n = *self.c.pick(SHADOWABLE);
-            self.shadowed.push(n);
-            n.to_string()
+            self.shadowed.push(shadow_name);
+            shadow_name.to_string()
         } else {
             self.fresh("f")
         };
@@ -1749,9 +1815,8 @@ impl Gen<'_> {
             weight: 0,
         };
         let idx = if redefine {
-            let i = self.fns.len() - 1;
-            self.fns[i] = sig;
-            i
+            self.fns[redefined] = sig;
+            redefined
         } else {
             self.fns.push(sig);
             self.fns.len() - 1
@@ -1931,7 +1996,14 @@ pub fn generate(data: &[u8]) -> String {
         shadowed: Vec::new(),
         shadow_consts,
         no_math,
+        unknown: None,
     };
+    if !GATE_NON_BOOL_OPERAND && g.c.chance(50) {
+        let name = g.fresh("u");
+        g.line(&format!("def {name}(a):"));
+        g.line("    return a");
+        g.unknown = Some(name);
+    }
     // A few of the predefined constants.
     for _ in 0..g.c.below(6) {
         let (name, d) = *g.c.pick(CONSTANTS);
@@ -1998,15 +2070,7 @@ pub struct Outcome {
 /// for new bugs; a strict run ([`check_source_strict`], used by the ignored
 /// regression tests in `fuzz_differential.rs`) reports it. Delete the entry
 /// when the bug is fixed.
-const KNOWN: &[(&str, &str)] = &[
-    // Documented in sky-lower: a number literal that overflows f64 (here
-    // through its unit's scale) is refused when lowering, while `sky run`
-    // reports it only if the literal is evaluated.
-    (
-        "lowering-literal-overflow",
-        "lowering failed on a checked program: arithmetic overflow",
-    ),
-];
+const KNOWN: &[(&str, &str)] = &[];
 
 fn known_issue(msg: &str) -> Option<&'static str> {
     KNOWN

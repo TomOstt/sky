@@ -1,0 +1,57 @@
+crates/sky-types/tests/ui/err_partial_notation.sky:9:5: error: `∂position/∂t` is a function, and must be called where it is written
+  |
+9 | a = ∂position/∂t
+  |     ^^^^^^^^^^^^ not called
+  = note: Sky has no function values yet: a function can be called, but not stored or passed around
+  = help: pass the arguments of the function: `(∂position/∂t)(...)`, or name the derivative with a `def` that calls it
+
+crates/sky-types/tests/ui/err_partial_notation.sky:10:17: error: `position` has no parameter `q`
+   |
+10 | b = (∂position/∂q)(1 s)
+   |                 ^ not a parameter of `position`
+ 4 | def position(t: s) -> m:
+   |     -------- `position` is defined here
+   = note: its parameter is `t`
+   = help: differentiate with respect to a parameter: `derivative(position, t)`
+
+crates/sky-types/tests/ui/err_partial_notation.sky:11:7: error: `∂` needs a function defined with `def`
+   |
+11 | c = (∂x/∂t)(1 s)
+   |       ^ this is length
+   = note: `∂f/∂t` is the derivative of a function, not of a quantity that depends on another: Sky has no dependent variables
+   = help: define the function with `def f(x: unit) -> unit: ...` and differentiate that
+
+crates/sky-types/tests/ui/err_partial_notation.sky:12:8: error: expected length, found velocity
+   |
+12 | d: m = (∂position/∂t)(1 s)
+   |        ^^^^^^^^^^^^^^^^^^^ this is velocity (L·T⁻¹)
+   |    - expected length because of this unit
+
+crates/sky-types/tests/ui/err_partial_notation.sky:13:20: error: `t` of `derivative(position, t)` expects a time, found a length
+   |
+13 | e = (∂position/∂t)(1 m)
+   |                    ^^^ this is length
+ 4 | def position(t: s) -> m:
+   |                 - expected because of this annotation
+   = help: convert the argument, or fix the unit in the call
+
+crates/sky-types/tests/ui/err_partial_notation.sky:14:7: error: `∂` needs a function defined with `def`, found the built-in `sqrt`
+   |
+14 | f = (∂sqrt/∂t)(4)
+   |       ^^^^ a built-in function
+   = note: a `def` states the units of its parameters and result, which the unit of the derivative is computed from
+   = help: wrap it in a `def` that states its units, and differentiate that
+
+crates/sky-types/tests/ui/err_partial_notation.sky:15:6: error: `∂position/∂t` is a function, and must be called where it is written
+   |
+15 | g = (∂position/∂t)
+   |      ^^^^^^^^^^^^ not called
+   = note: Sky has no function values yet: a function can be called, but not stored or passed around
+   = help: pass the arguments of the function: `(∂position/∂t)(...)`, or name the derivative with a `def` that calls it
+
+crates/sky-types/tests/ui/err_partial_notation.sky:16:5: error: `∂position/∂t(2 s)` is not a derivative: it divides `∂position` by `∂` of a call
+   |
+16 | h = ∂position/∂t(2 s)
+   |     ^^^^^^^^^^^^^^^^^ this is `∂t(2 s)`
+   = note: a call binds tighter than `∂`, so the arguments belong to `t`
+   = help: call the derivative: `(∂position/∂t)(2 s)`

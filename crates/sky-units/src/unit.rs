@@ -97,6 +97,8 @@ pub const ELECTRONVOLT_IN_JOULES: f64 = 1.602_176_634e-19;
 pub const ASTRONOMICAL_UNIT_IN_METRES: f64 = 149_597_870_700.0;
 /// 1 pc in metres: 648000/π au (IAU 2015 Resolution B2).
 pub const PARSEC_IN_METRES: f64 = 648_000.0 / std::f64::consts::PI * ASTRONOMICAL_UNIT_IN_METRES;
+/// 1 degree of arc in radians: π/180 (SI Brochure, 9th edition, Table 8).
+pub const DEGREE_IN_RADIANS: f64 = std::f64::consts::PI / 180.0;
 /// 1 min in seconds (SI Brochure, 9th edition, Table 8).
 pub const MINUTE_IN_SECONDS: f64 = 60.0;
 /// 1 h in seconds (SI Brochure, 9th edition, Table 8).
@@ -259,6 +261,14 @@ pub static UNITS: &[Unit] = &[
     // The radian is dimensionless (SI Brochure, 9th edition, Table 4), so
     // `mrad` and `μrad` are allowed and are plain numbers.
     decimal("rad", Dimension::DIMENSIONLESS, 0).prefixable(),
+    // The degree of arc (SI Brochure, 9th edition, Table 8: 1° = (π/180)
+    // rad) is a dimensionless multiple of the radian, so `sin(30 deg)`
+    // works. It takes no SI prefixes (the Brochure lists it among the
+    // non-SI units accepted for use with SI, and no one writes `kdeg`;
+    // sub-degree angles are arcminutes and arcseconds, not `mdeg`). `deg`
+    // is not `d` (deci) + `eg`, and the table has no `eg`, so no spelling
+    // is ambiguous.
+    unit("deg", Dimension::DIMENSIONLESS, DEGREE_IN_RADIANS),
     // Accepted for use with SI (SI Brochure, 9th edition, Table 8): the
     // litre is exactly 1 dm³ = 10⁻³ m³ and the tonne exactly 10³ kg.
     decimal("L", Dimension::VOLUME, -3).prefixable(),
@@ -358,6 +368,7 @@ static FULL_NAMES: &[(&str, &str)] = &[
     ("litre", "L"),
     ("tonne", "t"),
     ("radian", "rad"),
+    ("degree", "deg"),
     ("parsec", "pc"),
     ("electronvolt", "eV"),
     ("lightyear", "ly"),
@@ -483,14 +494,28 @@ mod tests {
     }
 
     #[test]
+    fn degree_is_a_dimensionless_multiple_of_the_radian_without_prefixes() {
+        let deg = lookup("deg").unwrap();
+        assert!(deg.dim.is_dimensionless());
+        assert_eq!(deg.scale, std::f64::consts::PI / 180.0);
+        assert!(!deg.unit.prefixable);
+        for p in PREFIXES {
+            assert_eq!(lookup(&format!("{}deg", p.name)), None, "{}deg", p.name);
+        }
+        assert_eq!(suggest_unit("degrees").as_deref(), Some("deg"));
+        // 180 deg is a half turn.
+        assert!((180.0 * deg.scale - std::f64::consts::PI).abs() < 1e-15);
+    }
+
+    #[test]
     fn table_is_exactly_this_set() {
         let names: Vec<_> = UNITS.iter().map(|u| u.name).collect();
         assert_eq!(
             names,
             [
                 "m", "s", "g", "K", "A", "mol", "cd", "J", "N", "Pa", "W", "Hz", "C", "V", "Ω",
-                "F", "T", "Wb", "H", "S", "rad", "L", "t", "min", "h", "day", "yr", "ly", "pc",
-                "AU", "eV"
+                "F", "T", "Wb", "H", "S", "rad", "deg", "L", "t", "min", "h", "day", "yr", "ly",
+                "pc", "AU", "eV"
             ]
         );
         for u in UNITS {

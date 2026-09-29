@@ -1,0 +1,9 @@
+// Literals that have no value: `1e999` (too large for an f64) and
+// `1e306 km` (its SI value is). They fail when they run, not before.
+sir edition 2026
+
+fn @<main>() -> () effects(fail) @ 0..40 {
+  %x = literal.error[too_large] : num[1; ()] @ 4..9
+  %y = literal.error[overflow] : num[L; ()] @ 14..22
+  return
+}

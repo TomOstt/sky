@@ -1,0 +1,69 @@
+// `fused` broken in every way its verifier checks, each reported once.
+sir edition 2026
+fn @f(%a: num[L; (3)], %b: num[L; (2)], %s: num[L; ()], %t: num[T; ()], %q: bool) -> (num[L; (3)]) {
+  %shapes = fused %a, %b : num[L; (3)] {
+    ^1(%x1: num[L; ()], %y1: num[L; ()]):
+      %r1 = add %x1, %y1 : num[L; ()] @ 1..2
+      yield %r1 @ 1..2
+  } @ 1..2
+  %scalars = fused %s : num[L; (3)] {
+    ^2(%x2: num[L; ()]):
+      yield %x2 @ 3..4
+  } @ 3..4
+  %args = fused %a, %s : num[L; (3)] {
+    ^3(%x3: num[L; ()]):
+      yield %x3 @ 5..6
+  } @ 5..6
+  %argdim = fused %a : num[L; (3)] {
+    ^4(%x4: num[T; ()]):
+      yield %x4 @ 7..8
+  } @ 7..8
+  %argshape = fused %a : num[L; (3)] {
+    ^5(%x5: num[L; (3)]):
+      yield %x5 @ 9..10
+  } @ 9..10
+  %resshape = fused %a : num[L; (2)] {
+    ^6(%x6: num[L; ()]):
+      yield %x6 @ 11..12
+  } @ 11..12
+  %resdim = fused %a : num[T; (3)] {
+    ^7(%x7: num[L; ()]):
+      yield %x7 @ 13..14
+  } @ 13..14
+  %effects = fused %a : num[L; (3)] {
+    ^8(%x8: num[L; ()]):
+      print %x8 @ 15..16
+      yield %x8 @ 15..16
+  } @ 15..16
+  %capture = fused %a : num[L; (3)] {
+    ^9(%x9: num[L; ()]):
+      %c9 = add %x9, %s : num[L; ()] @ 17..18
+      yield %c9 @ 17..18
+  } @ 17..18
+  %arrays = fused %a : num[L; (3)] {
+    ^10(%x10: num[L; ()]):
+      %c10 = neg %a : num[L; (3)] @ 19..20
+      yield %x10 @ 19..20
+  } @ 19..20
+  %nested = fused %a : num[L; (3)] {
+    ^11(%x11: num[L; ()]):
+      %c11 = if %q : num[L; ()] {
+        ^12:
+          yield %x11 @ 21..22
+      } {
+        ^13:
+          yield %x11 @ 21..22
+      } @ 21..22
+      yield %c11 @ 21..22
+  } @ 21..22
+  %noargs = fused : num[L; (3)] {
+    ^14:
+      yield %s @ 23..24
+  } @ 23..24
+  %calls = fused %a : num[L; (3)] {
+    ^15(%x15: num[L; ()]):
+      %c15 = call @f(%a, %b, %s, %t, %q) : num[L; (3)] @ 25..26
+      yield %x15 @ 25..26
+  } @ 25..26
+  return %a
+}

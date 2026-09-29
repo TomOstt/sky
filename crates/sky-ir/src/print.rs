@@ -226,11 +226,21 @@ impl Printer<'_> {
                 self.out.push(' ');
                 write_string(&mut self.out, unit);
             }
+            OpKind::Input { name } => {
+                self.out.push(' ');
+                write_string(&mut self.out, name);
+            }
             OpKind::PowConst { exponent } => {
                 let _ = write!(self.out, "[{exponent}]");
             }
             OpKind::Solve { method } => {
                 let _ = write!(self.out, "[{}]", method.mnemonic());
+            }
+            OpKind::LiteralError { error } => {
+                let _ = write!(self.out, "[{}]", error.text());
+            }
+            OpKind::ExpectBool { context } => {
+                let _ = write!(self.out, "[{}]", context.keyword());
             }
             OpKind::ArrayLiteral { cols: Some(c) } => {
                 let _ = write!(self.out, "[{c}]");

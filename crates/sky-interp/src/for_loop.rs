@@ -74,9 +74,7 @@ impl Interp<'_> {
             return None;
         };
         match &callee.kind {
-            ExprKind::Name(id)
-                if self.text(id.span) == "range" && self.lookup("range").is_none() =>
-            {
+            ExprKind::Name(id) if self.text(id.span) == "range" && !self.is_user_bound("range") => {
                 Some(args)
             }
             _ => None,

@@ -1,0 +1,10 @@
+# The added functions take a plain number, except sign, which takes anything.
+x = 3 m
+a = expm1(x)
+b = log1p(2 s)
+c = sinh(5 m/s)
+d = atanh(1 kg)
+e = erf(x)
+f = sign(x) + 1
+g = sign(1 m, 2 m)
+h = 30 kdeg

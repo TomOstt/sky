@@ -188,6 +188,113 @@ fn math_functions_agree_including_domain_errors() {
 }
 
 #[test]
+fn added_math_functions_and_degrees_agree_including_domain_errors() {
+    let o = assert_same(
+        "print(expm1(1e-10), log1p(1e-10), expm1(0.5), log1p(2))\n\
+         print(sinh(1), cosh(1), tanh(0.5), asinh(2), acosh(3), atanh(0.25))\n\
+         print(erf(0.5), erf(-1.5), erf(3), erf(7), erf(0))\n\
+         print(sign(-3 m), sign(0 kg), sign(2 m/s), sign(0 - 0.0))\n\
+         print(sin(30 deg), cos(60 deg), tan(45 deg), 180 deg)\n\
+         print(asinh(1e308), acosh(1e308), tanh(1000))\n",
+    );
+    assert_eq!(o.error, None);
+    assert!(
+        o.stdout
+            .starts_with("1.00000000005e-10 9.999999999500001e-11 "),
+        "{}",
+        o.stdout
+    );
+    for (bad, message) in [
+        (
+            "print(acosh(0.5))\n",
+            "`acosh` of a number below 1 has no real value",
+        ),
+        (
+            "print(atanh(1))\n",
+            "`atanh` of a number outside (-1, 1) has no real value",
+        ),
+        (
+            "print(atanh(0 - 2))\n",
+            "`atanh` of a number outside (-1, 1) has no real value",
+        ),
+        ("print(log1p(0 - 1))\n", "`log1p` of -1 has no real value"),
+        (
+            "print(log1p(0 - 3))\n",
+            "`log1p` of a number below -1 has no real value",
+        ),
+        ("print(expm1(1000))\n", "arithmetic overflow"),
+        ("print(sinh(1000))\n", "arithmetic overflow"),
+        ("print(cosh(0 - 1000))\n", "arithmetic overflow"),
+    ] {
+        let o = assert_same(bad);
+        assert_eq!(o.error.as_deref(), Some(message), "{bad}");
+    }
+}
+
+#[test]
+fn derivatives_of_added_math_functions() {
+    let o = assert_same(
+        "def f(x: rad) -> rad:\n    return expm1(x) + log1p(x) + sinh(x) + cosh(x) + tanh(x) + erf(x)\n\
+         def g(x: rad) -> rad:\n    return asinh(x) + acosh(x + 2 rad) + atanh(x / 2) + sign(x)\n\
+         print(derivative(f, x)(0.5 rad))\nprint(derivative(g, x)(0.5 rad))\n",
+    );
+    assert_eq!(o.error, None);
+    // f' = e^x + 1/(1+x) + cosh x + sinh x + sech^2 x + 2/sqrt(pi) e^(-x^2)
+    // at 0.5, one number per line.
+    assert_eq!(o.stdout.lines().count(), 2, "{}", o.stdout);
+    let o = assert_same(
+        "def root(a: rad) -> rad:\n    return acosh(a)\nprint(derivative(root, a)(1 rad))\n",
+    );
+    assert_eq!(o.error.as_deref(), Some("division by zero"));
+}
+
+#[test]
+fn transpose_glyph_and_function_agree() {
+    let o = assert_same(
+        "\
+A = [[1, 2, 3], [4, 5, 6]]
+K = [[2 N/m, 1 N/m], [1 N/m, 3 N/m]]
+print(Aᵀ, transpose(A), Aᵀᵀ)
+print(Aᵀ @ A)
+print(A @ Aᵀ)
+print(Kᵀ, transpose(K), (A @ Aᵀ)⁻¹)
+print(5 m ᵀ, transpose(2 s))
+def gram(M: Matrix[R, C]):
+    return Mᵀ @ M
+def flip(M: Matrix[R, C]):
+    return transpose(M)
+print(gram(A), flip(A), gram(Aᵀ))
+S = Aᵀ @ A
+i = 0
+while i < 3:
+    S = Sᵀ + S
+    i += 1
+print(S)
+",
+    );
+    assert_eq!(o.error, None);
+    assert!(
+        o.stdout.starts_with("[[1, 4], [2, 5], [3, 6]] [[1, 4], [2, 5], [3, 6]] [[1, 2, 3], [4, 5, 6]]\n[[17, 22, 27]"),
+        "{}",
+        o.stdout
+    );
+}
+
+#[test]
+fn transposing_a_vector_is_the_same_error_in_both() {
+    // The checker rejects it, so this goes through the interpreters via a
+    // function whose parameter has no declared shape.
+    let o = assert_same("def flip(x):\n    return xᵀ\nprint(flip([[1, 2], [3, 4]]))\n");
+    assert_eq!(o.stdout, "[[1, 3], [2, 4]]\n");
+    assert_eq!(o.error, None);
+    let o = assert_same("def flip(x):\n    return transpose(x)\nprint(flip([1, 2, 3]))\n");
+    assert_eq!(
+        o.error.as_deref(),
+        Some("cannot transpose Vector[3]: transpose needs a matrix")
+    );
+}
+
+#[test]
 fn for_range_forms_agree() {
     let src = "\
 for i in range(3):
@@ -631,6 +738,42 @@ fn a_matrix_declared_without_a_value_is_an_input_nothing_supplies() {
     assert_eq!(o.error.as_deref(), Some("`A` is declared but has no value"));
 }
 
+/// A literal too large for an `f64` fails where it is evaluated, with
+/// `sky run`'s error on `sky run`'s span, in the SIR interpreter too.
+#[test]
+fn a_literal_too_large_fails_with_the_same_error_on_the_same_span() {
+    for (src, message) in [
+        ("print(1)\nx = 1e999\nprint(2)\n", "number too large"),
+        ("print(1)\nx = 1e999 m\nprint(2)\n", "number too large"),
+        ("print(1)\nx = 1e306 km\nprint(2)\n", "arithmetic overflow"),
+        ("if 1 > 0:\n    y = 2e400\n", "number too large"),
+    ] {
+        let (walker, sir) = located_errors(src);
+        assert_eq!(
+            walker.as_ref().map(|w| w.0.as_str()),
+            Some(message),
+            "{src}"
+        );
+        assert_eq!(sir, walker, "{src}");
+        let o = assert_same(src);
+        assert_eq!(o.error.as_deref(), Some(message));
+    }
+    let o = assert_same("print(1)\nif false:\n    x = 1e999\nprint(2)\n");
+    assert_eq!((o.stdout.as_str(), o.error), ("1\n2\n", None));
+}
+
+/// The declaration is where the run stops: what is printed before it stays,
+/// and the error points at the declaration, as in `sky run`.
+#[test]
+fn an_input_declaration_fails_where_it_is_after_the_earlier_output() {
+    let src = "print(1)\nA: Matrix[2, 2]\nprint(2)\n";
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "1\n");
+    assert_eq!(o.error.as_deref(), Some("`A` is declared but has no value"));
+    let (walker, sir) = located_errors(src);
+    assert_eq!(sir, walker);
+}
+
 // ----- derivative(f, x)(args) -----
 //
 // `sky run` evaluates a derivative by lowering the function to SIR and
@@ -716,4 +859,180 @@ fn a_derivative_that_fails_fails_the_same_way() {
     );
     assert_eq!(o.stdout, "1\n");
     assert_eq!(o.error.as_deref(), Some("division by zero"));
+}
+
+/// A run-time error's message and span, if the run failed.
+type Located = Option<(String, Span)>;
+
+/// The error of the tree-walker and of the SIR interpreter on `src`, with
+/// the span: they must be the same, including where they point.
+fn located_errors(src: &str) -> (Located, Located) {
+    let (module, solves) = parse_checked(src);
+    let walker = sky_ast::with_deep_stack(|| {
+        let mut out = Vec::new();
+        let mut env = RuntimeEnv::with_prelude();
+        let mut derivatives = SirDerivatives::new(&module, src);
+        run_module_with_derivatives(&module, src, &mut env, &mut out, &solves, &mut derivatives)
+            .err()
+            .map(|e| (e.message.clone(), e.span))
+    });
+    let ir = sky_lower::lower_source(src).unwrap_or_else(|e| panic!("lowering failed: {e}"));
+    let sir = sky_ast::with_deep_stack(|| {
+        sky_ir_interp::run(&ir, &mut Vec::new())
+            .err()
+            .map(|e| (e.message.clone(), e.span))
+    });
+    (walker, sir)
+}
+
+/// An operand the checker cannot type (an unannotated parameter's result)
+/// that is not a Bool: both interpreters stop with the same message on the
+/// same span, whichever construct wanted the Bool, and whichever operand.
+#[test]
+fn a_non_bool_operand_of_unknown_type_fails_alike_in_every_position() {
+    let def = "def f(a):\n    return a\n";
+    for (body, kw) in [
+        ("print(f(1) and true)", "and"),
+        ("print(true and f(1))", "and"),
+        ("print(false or f(1))", "or"),
+        ("print(f(1) or true)", "or"),
+        ("print(true and true and f(1))", "and"),
+        ("print(not f(1))", "not"),
+        ("if f(1):\n    print(1)", "if"),
+        ("if false:\n    print(1)\nelif f(1):\n    print(2)", "if"),
+        (
+            "if false:\n    print(1)\nelif false:\n    print(2)\nelif f(1):\n    print(3)",
+            "if",
+        ),
+        ("print(1 if f(1) else 2)", "if"),
+        ("while f(1):\n    print(1)", "while"),
+        ("k = 0\nwhile k < 3 and f(1):\n    k += 1", "and"),
+    ] {
+        let src = format!("{def}{body}\n");
+        let (walker, sir) = located_errors(&src);
+        let (msg, span) = walker.clone().expect("sky run fails");
+        assert_eq!(
+            msg,
+            format!("`{kw}` needs a Bool operand, found a number"),
+            "{src}"
+        );
+        assert_eq!(sir, walker, "the SIR interpreter differs on:\n{src}");
+        // The span is the operand's.
+        assert!(src[span.start as usize..span.end as usize].starts_with("f(1)"));
+    }
+}
+
+/// A Bool operand that is unknown but really a Bool passes through.
+#[test]
+fn an_unknown_operand_that_is_a_bool_is_checked_and_passed_on() {
+    let o = assert_same(
+        "def f(a):\n    return a\nprint(f(true) and f(false), f(false) or f(true), not f(false))\n\
+         if f(true):\n    print(1)\nk = 0\nwhile f(k < 2):\n    k += 1\nprint(k, 1 if f(false) else 2)\n",
+    );
+    assert_eq!(o.stdout, "false true true\n1\n2 2\n");
+}
+
+// ----- grad(f)(args) and (∂f/∂x)(args) -----
+//
+// `grad(f)` is one derivative per parameter, gathered in a Vector. The
+// tree-walker asks `sky-derive` for each; lowering emits a call of each
+// `df/dx` and an `array.literal`. Both must print the same bytes.
+
+const POTENTIAL: &str = "k = 3 N/m\ndef U(x: m, y: m) -> J:\n    return k * (x^2 + y^2)\n";
+
+#[test]
+fn the_gradient_of_a_potential_is_a_force_in_both_engines() {
+    // U = k (x² + y²): ∇U = (2 k x, 2 k y) = (6 N, 12 N) at (1 m, 2 m).
+    let o = assert_same(&format!(
+        "{POTENTIAL}F = grad(U)(1 m, 2 m)\nprint(F)\nprint(F[1])\nprint(grad(U)(0 m, 0 m))\n"
+    ));
+    assert_eq!(o.stdout, "[6 N, 12 N]\n12 N\n[0 N, 0 N]\n");
+    assert_eq!(o.error, None);
+}
+
+#[test]
+fn a_gradient_is_a_vector_that_arithmetic_and_units_apply_to() {
+    let o = assert_same(&format!(
+        "{POTENTIAL}F = -grad(U)(1 m, 2 m)\n\
+         total = F + [1 N, 1 N]\n\
+         print(total)\n\
+         print(F[0] + F[1])\n\
+         print(len(grad(U)(1 m, 1 m)))\n"
+    ));
+    assert_eq!(o.stdout, "[-5 N, -11 N]\n-18 N\n2\n");
+}
+
+#[test]
+fn a_gradient_with_one_or_three_parameters() {
+    let o = assert_same(
+        "def x(t: s) -> m:\n    return 5 m/s^2 * t^2\n\
+         def r2(a: m, b: m, c: m) -> m^2:\n    return a * a + 2 * b * b + 3 * c * c\n\
+         print(grad(x)(2 s))\n\
+         print(grad(r2)(1 m, 1 m, 1 m))\n",
+    );
+    assert_eq!(o.stdout, "[20 m/s]\n[2 m, 4 m, 6 m]\n");
+}
+
+#[test]
+fn a_gradient_of_parameters_in_different_units_of_one_dimension() {
+    // km and m are both lengths; the derivatives are in SI: J/m = N.
+    let o = assert_same(
+        "def w(a: km, b: m) -> J:\n    return 2 N * a + 3 N * b\n\
+         print(grad(w)(1 km, 1 m))\n",
+    );
+    assert_eq!(o.stdout, "[2 N, 3 N]\n");
+}
+
+#[test]
+fn a_gradient_through_control_flow_loops_and_recursion() {
+    let o = assert_same(
+        "def wedge(a: m, b: m) -> m^2:\n    if a > b:\n        return a * a\n    return a * b\n\
+         def sum3(a: m, b: m) -> m:\n    total = 0 m\n    i = 0\n    while i < 3:\n        total = total + a * (i + 1) + b\n        i += 1\n    return total\n\
+         print(grad(wedge)(3 m, 1 m))\n\
+         print(grad(wedge)(1 m, 3 m))\n\
+         print(grad(sum3)(1 m, 1 m))\n",
+    );
+    assert_eq!(o.stdout, "[6 m, 0 m]\n[3 m, 1 m]\n[6, 3]\n");
+}
+
+#[test]
+fn a_gradient_evaluates_its_arguments_once() {
+    let o = assert_same(
+        "def loud(v: m) -> m:\n    print(\"arg\")\n    return v\n\
+         def f(a: m, b: m) -> m^2:\n    return a * b\n\
+         print(grad(f)(loud(1 m), loud(2 m)))\n",
+    );
+    assert_eq!(o.stdout, "arg\narg\n[2 m, 1 m]\n");
+}
+
+#[test]
+fn the_function_prints_once_per_parameter_of_a_gradient() {
+    // Forward mode runs the function once per derivative.
+    let o = assert_same(
+        "def f(a: m, b: m) -> m^2:\n    print(\"called\")\n    return a * b\n\
+         print(grad(f)(1 m, 2 m))\n",
+    );
+    assert_eq!(o.stdout, "called\ncalled\n[2 m, 1 m]\n");
+}
+
+#[test]
+fn a_gradient_that_fails_fails_the_same_way() {
+    let o = assert_same(
+        "def root(a: m^2, b: m^2) -> m:\n    return sqrt(a) + sqrt(b)\n\
+         print(1)\nprint(grad(root)(4 m^2, 0 m^2))\n",
+    );
+    assert_eq!(o.stdout, "1\n");
+    assert_eq!(o.error.as_deref(), Some("division by zero"));
+}
+
+#[test]
+fn partial_notation_is_the_derivative_in_both_engines() {
+    let o = assert_same(&format!(
+        "{POSITION}print((∂x/∂t)(2 s))\nprint(derivative(x, t)(2 s))\n\
+         def v(t: s) -> m/s:\n    return (∂x/∂t)(t)\n\
+         print(((∂v/∂t))(2 s))\n\
+         g = 10 m/s^2\ndef fall(t: s, m0: kg) -> J:\n    return 0.5 * m0 * (g * t)^2\n\
+         print((∂fall/∂m0)(2 s, 3 kg), (∂fall/∂t)(2 s, 3 kg))\n"
+    ));
+    assert_eq!(o.stdout, "20 m/s\n20 m/s\n10 m/s^2\n200 m^2/s^2 600 W\n");
 }

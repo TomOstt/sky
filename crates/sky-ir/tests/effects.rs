@@ -53,6 +53,35 @@ fn @prints(%a: num[L; ()]) -> () {{
 }
 
 #[test]
+fn a_fused_kernel_has_the_effects_of_its_body() {
+    let t = format!(
+        "{HEAD}
+fn @pure(%a: num[L; (3)]) -> (num[L; (3)]) {{
+  %k = fused %a : num[L; (3)] {{
+    ^1(%x: num[L; ()]):
+      %n = neg %x : num[L; ()]
+      yield %n
+  }}
+  return %k
+}}
+fn @fails(%a: num[L; (3)], %b: num[L; (3)]) -> (num[L; (3)]) {{
+  %k = fused %a, %b : num[L; (3)] {{
+    ^1(%x: num[L; ()], %y: num[L; ()]):
+      %s = add %x, %y : num[L; ()]
+      yield %s
+  }}
+  return %k
+}}
+"
+    );
+    assert_eq!(effects_of(&t), ["", "fail"]);
+    // `@fails` declares no effects, so the verifier rejects the module.
+    let m = parse(&t).unwrap();
+    let errors = verify(&m).unwrap_err();
+    assert!(errors[0].message.contains("miss the inferred ones: fail"));
+}
+
+#[test]
 fn nested_regions_count() {
     let t = format!(
         "{HEAD}

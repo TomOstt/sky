@@ -30,6 +30,18 @@
 //!   removed, and no op moves across them (see `convert`);
 //! * a rewrite never *introduces* an operation that can fail.
 //!
+//! # Facts from the exactness analysis
+//!
+//! Besides what the e-graph derives from the shape of a term, the facts of
+//! a class include what `sky_ir::exact` proved about the `f64` the
+//! program's operation computes: strictly positive, nonzero, and *cannot
+//! fail* although its kind can (`x / 2` and `x * 0.5` for any finite `x`,
+//! `sqrt(2)`, `log(3)`). They come from the operations as written, so they
+//! are used only under `Reproducible`, whose rewrites are bit-identical.
+//! `sqrt(2) - sqrt(2)` then becomes `0` (ALG-003 needs the operand to be
+//! unable to fail), and `sqrt(2) / sqrt(2)` becomes `1` (ALG-010 needs it
+//! nonzero). The public API is unchanged; only more rules fire.
+//!
 //! Additionally, under `Reproducible`:
 //!
 //! * a rule may remove an operation only if it provably cannot fail, and a

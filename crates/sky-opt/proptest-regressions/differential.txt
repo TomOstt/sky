@@ -6,3 +6,5 @@
 # everyone who runs the test benefits from these saved cases.
 cc c2f4d41f6a85ed066a78af10c12154f8b4df6d82dcf05a8801044d43368325dd # shrinks to steps = [PowConst(0, -1, 1), Lit(Int(-1), false), Lit(Int(0), false), Lit(Int(0), false), Lit(Int(0), false), Bin(0, 0, 0), Lit(Int(0), false), Lit(Int(0), false), Inv(11), Lit(Int(0), false), Lit(Ratio(-1, 1), false), Bin(2, 0, 3), Bin(2, 29, 28)]
 cc dab9e2064942e22fd1ac089de03d67cb92bf94be3850f283db4b1ed6ab200f11 # shrinks to steps = [Bin(0, 0, 0), Bin(2, 0, 0), Lit(Int(0), false), Lit(Int(0), false), If(0, [], [], 0, 0), Bin(0, 0, 0), Inv(37), Lit(Int(0), false), If(0, [], [], 0, 0), Bin(2, 27, 2)]
+cc 6cc3b08047b2d00f28f96518199d2449f6f41e4b153c91610f0e97af9e1b8af7 # shrinks to steps = [Lit(Int(0), true), If(5, [], [Bin(0, 62, 1)], 0, 2)]
+cc 9aa517b4970f91d0e60583913b0b888422da617aab92ad86c16135bb4128934b # shrinks to steps = [Lit(Int(0), false), PowConst(2, 0, 1), Lit(Int(-1), false), Lit(Int(0), true), Lit(Int(0), false), If(19, [], [If(0, [], [Bin(0, 4, 5)], 0, 0)], 0, 0)]

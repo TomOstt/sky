@@ -101,6 +101,62 @@ impl SliceAxis {
     }
 }
 
+/// The source construct a Bool was demanded by, for [`OpKind::ExpectBool`]:
+/// the wording of the run-time error ("`or` needs a Bool operand, found a
+/// number") names it, exactly as `sky run` does. `elif` and the conditional
+/// expression `a if c else b` are `if`, as they are in `sky run`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum BoolContext {
+    And,
+    Or,
+    Not,
+    If,
+    While,
+}
+
+impl BoolContext {
+    pub const ALL: [BoolContext; 5] = [
+        BoolContext::And,
+        BoolContext::Or,
+        BoolContext::Not,
+        BoolContext::If,
+        BoolContext::While,
+    ];
+
+    /// The keyword the error message uses, and the text format's attribute.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            BoolContext::And => "and",
+            BoolContext::Or => "or",
+            BoolContext::Not => "not",
+            BoolContext::If => "if",
+            BoolContext::While => "while",
+        }
+    }
+}
+
+/// Why a literal has no value, for [`OpKind::LiteralError`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum LiteralError {
+    /// The number does not fit in an `f64` ("number too large").
+    TooLarge,
+    /// The number fits, but its value in SI (the unit's factors applied)
+    /// does not: "arithmetic overflow".
+    Overflow,
+}
+
+impl LiteralError {
+    pub const ALL: [LiteralError; 2] = [LiteralError::TooLarge, LiteralError::Overflow];
+
+    /// The text format's attribute.
+    pub fn text(self) -> &'static str {
+        match self {
+            LiteralError::TooLarge => "too_large",
+            LiteralError::Overflow => "overflow",
+        }
+    }
+}
+
 /// The math functions (`sqrt`, `exp`, `sin`, ...): the one list, with each
 /// function's arity, dimension rule and failure behaviour, lives in
 /// sky-units and is shared by the checker, both interpreters and SIR.
@@ -126,6 +182,28 @@ pub enum OpKind {
     /// The value of `print(...)` or a call to a function without a return
     /// value, when a program uses it. Result type `Nothing`.
     ConstNothing,
+    /// `literal.error[too_large]`, `literal.error[overflow]`: no operands,
+    /// one result, typed as the literal it stands for. A number literal
+    /// (`1e999`) or a unit literal whose SI value (`1e300 ms/nm^2/μg`) is
+    /// not a finite `f64` has no value, and `sky run` reports that only if the
+    /// literal is evaluated; a `const.float` cannot hold it, so lowering
+    /// writes this instead, and it fails when it runs with `sky run`'s error
+    /// ("number too large", "arithmetic overflow") at the operation's span,
+    /// which lowering sets to the span `sky run` reports. Effect `Fail`.
+    LiteralError {
+        error: LiteralError,
+    },
+    /// `input "A"`: no operands, one result, of the type the program
+    /// declared for the name (a value-less declaration such as
+    /// `A: PositiveDefinite Matrix[N, N]`; the checker takes its shape, tags
+    /// and unit on trust). Nothing in v0.1 supplies an input, so running it
+    /// always fails with "`A` is declared but has no value", at the
+    /// declaration: the program runs up to there and stops, as `sky run`
+    /// does. The result's type is what later operations are typed against.
+    /// Effect `Fail`, so no pass removes or moves it past output.
+    Input {
+        name: String,
+    },
 
     // ----- arithmetic on numbers -----
     /// `a + b`, `a - b`, `a * b`, `a / b`: two operands, one result.
@@ -251,6 +329,48 @@ pub enum OpKind {
     /// array fails, which a typed operand never is.
     Len,
 
+    // ----- fusion -----
+    /// A fused elementwise kernel: a tree of elementwise array operations
+    /// (`add`, `sub`, `mul`, `div`, `neg`) computed one element at a time,
+    /// so the intermediate arrays are never built. It is what the `fuse`
+    /// pass makes; the loop over the elements is implied, and no machine
+    /// code is chosen (a backend emits one kernel per `fused`).
+    ///
+    /// * **Operands**: `k >= 1` values, each an array or a scalar. All the
+    ///   arrays have one shape, and at least one operand is an array. A
+    ///   scalar operand is broadcast: every element sees the same value (as
+    ///   in the scaling `A * s`).
+    /// * **Result**: one array of that shape; its dimension is the dimension
+    ///   of the value the body yields.
+    /// * **Region**: one, with one block whose arguments are the per-element
+    ///   values, one per operand in order, each a scalar of the operand's
+    ///   dimension (a scalar operand's argument has the operand's own
+    ///   type). The block holds scalar operations and ends in a `yield` of
+    ///   one value: the result's element. The body is self-contained: its
+    ///   operations use only its own arguments and results, and none may
+    ///   have a region, print, or call. Every operation in it is pure or can
+    ///   fail, and the verifier enforces all of that.
+    /// * **Meaning**: element `i` of the result is what the body computes
+    ///   when its arguments are element `i` of each array operand (and the
+    ///   scalar operands as they are). Each body operation is evaluated
+    ///   exactly as the operation of the same kind is on numbers, except
+    ///   `neg`, which is `0 - x` as on arrays (a zero stays `+0`, where a
+    ///   scalar `neg` of `0` gives `-0`), so that a fused chain is
+    ///   bit-identical to the array operations it replaced.
+    /// * **Failure order**: the unfused chain computes one operation at a
+    ///   time over all the elements, so the failure it reports is that of
+    ///   the *first operation in program order* that fails at any element.
+    ///   `fused` has the same rule, whatever the order a backend visits
+    ///   elements in: if several body operations fail at some elements, the
+    ///   error is the one of the earliest failing operation *in body order*
+    ///   (the error's message and span belong to the operation, not to the
+    ///   element). A backend may stop as soon as it knows no earlier
+    ///   operation can fail, and must not stop before.
+    /// * **Effects**: those of the body: `Fail` if any operation in it can
+    ///   fail, else none (like `if` and `while`, the contents decide, so
+    ///   [`OpKind::properties`] says pure and the passes look inside).
+    Fused,
+
     // ----- comparison and logic -----
     /// Two operands (scalars of equal dimension, two Bools, or two
     /// strings for `eq`/`ne`), one Bool result.
@@ -258,6 +378,20 @@ pub enum OpKind {
     /// One Bool operand, one Bool result. (`and`/`or` short-circuit, so they
     /// lower to `if`, not to operations of their own.)
     Not,
+
+    /// `expect.bool[kw] a`: one operand, one Bool result. The run-time check
+    /// of an operand the checker could not type (its type is `unknown`, from
+    /// an unannotated parameter) where the source needs a Bool: an operand of
+    /// `and`, `or` or `not`, or the condition of an `if`, `elif`, `while` or
+    /// conditional expression (`kw` says which; see [`BoolContext`]). It
+    /// gives the operand back if it is a Bool and otherwise fails with
+    /// "`kw` needs a Bool operand, found ..." at the operation's span, which
+    /// lowering sets to the operand's, as `sky run` reports it. A typed Bool
+    /// needs no check, so lowering emits this only for `unknown` operands.
+    /// Effect `Fail`.
+    ExpectBool {
+        context: BoolContext,
+    },
 
     // ----- structured control flow -----
     /// `if`: one Bool operand (the condition) and two regions, `then` and
@@ -331,6 +465,8 @@ impl OpKind {
             OpKind::ConstBool(_) => "const.bool",
             OpKind::ConstStr(_) => "const.str",
             OpKind::ConstNothing => "const.nothing",
+            OpKind::LiteralError { .. } => "literal.error",
+            OpKind::Input { .. } => "input",
             OpKind::Add => "add",
             OpKind::Sub => "sub",
             OpKind::Mul => "mul",
@@ -351,6 +487,7 @@ impl OpKind {
             OpKind::Zeros => "zeros",
             OpKind::Identity => "identity",
             OpKind::Len => "len",
+            OpKind::Fused => "fused",
             OpKind::Cmp(c) => match c {
                 CmpOp::Eq => "cmp.eq",
                 CmpOp::Ne => "cmp.ne",
@@ -360,6 +497,7 @@ impl OpKind {
                 CmpOp::Ge => "cmp.ge",
             },
             OpKind::Not => "not",
+            OpKind::ExpectBool { .. } => "expect.bool",
             OpKind::If => "if",
             OpKind::While => "while",
             OpKind::Yield => "yield",
@@ -392,8 +530,12 @@ impl OpKind {
                 let e = if f.can_fail() { fail } else { EffectSet::PURE };
                 (e, false, f.commutative(), false)
             }
+            // Fail always: the literal has no value, nothing supplies an input.
+            OpKind::Input { .. } | OpKind::LiteralError { .. } => (fail, false, false, false),
             // Converting to a tiny unit can overflow.
             OpKind::Show { .. } => (fail, false, false, false),
+            // A value that is not a Bool fails.
+            OpKind::ExpectBool { .. } => (fail, false, false, false),
             // A singular matrix or a zero scalar fails.
             OpKind::Inverse | OpKind::Solve { .. } => (fail, false, false, false),
             OpKind::MatMul => (fail, false, false, true),
@@ -403,9 +545,9 @@ impl OpKind {
             | OpKind::Zeros
             | OpKind::Identity
             | OpKind::Len => (fail, false, false, false),
-            // Control flow has the effects of its regions; the verifier and
-            // passes compute those from the contents.
-            OpKind::If | OpKind::While => (EffectSet::PURE, false, false, false),
+            // Control flow and `fused` have the effects of their regions;
+            // the verifier and passes compute those from the contents.
+            OpKind::If | OpKind::While | OpKind::Fused => (EffectSet::PURE, false, false, false),
             OpKind::Yield | OpKind::Condition | OpKind::Return => {
                 (EffectSet::PURE, true, false, false)
             }

@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use sky_ast::{Module, ParseError};
 use sky_diag::{Diagnostic, Severity, SourceFile, Span};
 use sky_syntax::Edition;
-use sky_types::Env;
+use sky_types::{Checked, Env};
 
 use crate::ir;
 
@@ -23,6 +23,11 @@ pub struct FrontEnd {
     /// The `A⁻¹ @ b` sites the checker rewrote to Cholesky solves, which the
     /// interpreter must honour (see `sky_interp::run_module_with`).
     pub cholesky_solves: HashSet<Span>,
+    /// The checker's whole result, when the module parsed: `sky run`'s SIR
+    /// engine lowers with it (lowering reads the types the checker recorded
+    /// and must not re-derive them). Its diagnostics are also in
+    /// [`FrontEnd::diagnostics`].
+    pub checked: Option<Checked>,
     /// The IR outcome, when asked for ([`analyze_ir`]) and the program has
     /// no errors. Its notes (pass explanations, or why there is no IR) are
     /// already in `diagnostics`.
@@ -69,6 +74,7 @@ pub fn analyze_ir(
     let mut ir_out = None;
     let mut pass_notes = Vec::new();
     let mut module_out = None;
+    let mut checked_out = None;
     let mut env_out = env.clone();
     let mut solves = HashSet::new();
     let mut diagnostics: Vec<Diagnostic> = match sky_syntax::lex(src) {
@@ -91,7 +97,7 @@ pub fn analyze_ir(
                     }
                     ir_out = Some(outcome);
                 }
-                diagnostics.extend(checked.diagnostics);
+                diagnostics.extend(checked.diagnostics.iter().cloned());
                 if explain {
                     diagnostics.extend(checked.rewrites.iter().map(|r| r.to_diagnostic(src)));
                     if checked.rewrites_omitted > 0 {
@@ -112,8 +118,9 @@ pub fn analyze_ir(
                 }
                 // After the checker's notes: at one position they come first.
                 diagnostics.append(&mut pass_notes);
-                env_out = checked.env;
-                solves = checked.cholesky_solves;
+                env_out = checked.env.clone();
+                solves = checked.cholesky_solves.clone();
+                checked_out = Some(checked);
                 module_out = Some(module);
             } else {
                 diagnostics.extend(errors.into_iter().map(ParseError::into_diagnostic));
@@ -130,6 +137,7 @@ pub fn analyze_ir(
         module: module_out,
         env: env_out,
         cholesky_solves: solves,
+        checked: checked_out,
         ir: ir_out,
         ok,
     }

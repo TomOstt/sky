@@ -326,6 +326,14 @@ pub enum ExprKind {
         operand: Box<Expr>,
         op_span: Span,
     },
+    /// Postfix `ᵀ` (U+1D40), the transpose. Its own node, like `Inverse`,
+    /// so the glyph's span survives for diagnostics; the ASCII spelling
+    /// `transpose(x)` is an ordinary call that the checker, interpreter and
+    /// lowering recognize by name, as they do `inv(x)`.
+    Transpose {
+        operand: Box<Expr>,
+        op_span: Span,
+    },
     /// `[a, b, c]` or `[[a, b], [c, d]]`: an array literal, always at least
     /// one element. The parser does not decide the shape: a matrix is an
     /// `Array` whose elements are all `Array`s (its rows), and the checker

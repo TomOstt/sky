@@ -38,7 +38,13 @@
 //! | `atan2(y, x)` | `(x*ty - y*tx) / (x² + y²)` |
 //! | `hypot(a, b)` | `(a*ta + b*tb) / r` |
 //! | `min`, `max` | the tangent of the operand chosen (first on a tie) |
-//! | `floor`, `ceil`, `round` | none (zero) |
+//! | `expm1`, `log1p` | `exp(a) * ta`, `ta / (1 + a)` |
+//! | `sinh`, `cosh` | `cosh(a) * ta`, `sinh(a) * ta` |
+//! | `tanh` | `(1 - r²) * ta` |
+//! | `asinh`, `acosh` | `ta / hypot(1, a)`, `ta / sqrt(a² - 1)` |
+//! | `atanh` | `ta / (1 - a²)` |
+//! | `erf` | `2/sqrt(π) * exp(-a²) * ta` |
+//! | `floor`, `ceil`, `round`, `sign` | none (zero) |
 //!
 //! The general power `a ^ e` adds `r * ln(a) * te` when the exponent has a
 //! tangent (`ln` needs `a > 0`, and `ln(a)` is dimensionless because a

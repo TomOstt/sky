@@ -52,6 +52,7 @@ fn all_ops_module_uses_every_mnemonic() {
         "cmp.ge",
         "not",
         "show",
+        "fused",
         "if",
         "while",
         "yield",

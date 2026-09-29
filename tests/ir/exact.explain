@@ -1,0 +1,64 @@
+tests/ir/exact.sky:6:13: note: [DCE-002] `x / 2` is removed
+  |
+6 |     spare = x / 2
+  |             ^^^^^
+  = note: applied by the `dce` pass
+  = note: because `spare` is never used
+  = note: because `div` can fail in general, but not here: the divisor is 2 (never zero) and the result is at most 8.988465674311579e307 in size, which fits an f64, so removing it cannot change what the program does
+
+tests/ir/exact.sky:9:8: note: [DCE-002] `sqrt(2)` is removed
+  |
+9 | root = sqrt(2)
+  |        ^^^^^^^
+  = note: applied by the `dce` pass
+  = note: because `root` is never used
+  = note: because `math.sqrt` can fail in general, but not here: the argument is 2, inside the domain of `sqrt`, and the result is 1.4142135623730951, which fits an f64, so removing it cannot change what the program does
+
+tests/ir/exact.sky:10:7: note: [ALG-003] `sqrt(3) - sqrt(3)` is rewritten to `0`
+   |
+10 | gap = sqrt(3) - sqrt(3)
+   |       ^^^^^^^^^^^^^^^^^
+   = note: applied by the `egraph` pass
+   = note: because Sky numbers are finite, so x - x is exactly +0 and cannot fail; x itself must not be able to fail, since the rewrite stops evaluating it
+
+tests/ir/exact.sky:11:9: note: [ALG-010] `sqrt(5) / sqrt(5)` is rewritten to `1`
+   |
+11 | ratio = sqrt(5) / sqrt(5)
+   |         ^^^^^^^^^^^^^^^^^
+   = note: applied by the `egraph` pass
+   = note: because x / x is exactly 1 in IEEE arithmetic for every finite nonzero x; the exactness analysis proved x is not zero, and x itself cannot fail, since the rewrite stops evaluating it
+
+tests/ir/exact.sky:13:7: note: [FOLD-FLOAT-001] `1 / 3` is rewritten to `0.3333333333333333`
+   |
+13 | print(1/3 + 1/6, 0.1 + 0.2)
+   |       ^^^
+   = note: applied by the `fold` pass
+   = note: because every operand is a constant
+   = note: because the result is the reference interpreter's own, bit for bit, and it cannot fail at run time
+   = note: because over the reals the result is exactly 1/3; the f64 result 0.3333333333333333 is that value rounded (`sky run` rounds at every step)
+
+tests/ir/exact.sky:13:7: note: [FOLD-FLOAT-001] `0.3333333333333333 + 0.16666666666666666` is rewritten to `0.5`
+   |
+13 | print(1/3 + 1/6, 0.1 + 0.2)
+   |       ^^^^^^^^^
+   = note: applied by the `fold` pass
+   = note: because every operand is a constant
+   = note: because the result is the reference interpreter's own, bit for bit, and it cannot fail at run time
+   = note: because over the reals the result is exactly 1/2, and the f64 result is exactly that value
+
+tests/ir/exact.sky:13:13: note: [FOLD-FLOAT-001] `1 / 6` is rewritten to `0.16666666666666666`
+   |
+13 | print(1/3 + 1/6, 0.1 + 0.2)
+   |             ^^^
+   = note: applied by the `fold` pass
+   = note: because every operand is a constant
+   = note: because the result is the reference interpreter's own, bit for bit, and it cannot fail at run time
+   = note: because over the reals the result is exactly 1/6; the f64 result 0.16666666666666666 is that value rounded (`sky run` rounds at every step)
+
+tests/ir/exact.sky:13:18: note: [FOLD-FLOAT-001] `0.1 + 0.2` is rewritten to `0.30000000000000004`
+   |
+13 | print(1/3 + 1/6, 0.1 + 0.2)
+   |                  ^^^^^^^^^
+   = note: applied by the `fold` pass
+   = note: because every operand is a constant
+   = note: because the result is the reference interpreter's own, bit for bit, and it cannot fail at run time

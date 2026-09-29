@@ -1105,6 +1105,40 @@ fn not_needs_a_bool() {
 }
 
 #[test]
+fn an_input_has_no_operands_and_one_result_of_any_type() {
+    let input = |ty: Type| binary_or_unary(OpKind::Input { name: "A".into() }, vec![], ty);
+    for error in sky_ir::LiteralError::ALL {
+        accepts(&binary_or_unary(
+            OpKind::LiteralError { error },
+            vec![],
+            len(),
+        ));
+        rejects(
+            &binary_or_unary(OpKind::LiteralError { error }, vec![len()], len()),
+            "takes 0 operand(s)",
+        );
+    }
+    accepts(&input(Type::Bool));
+    accepts(&input(len()));
+    accepts(&input(Type::Unknown));
+}
+
+#[test]
+fn expect_bool_checks_a_bool_or_unknown_operand_and_gives_a_bool() {
+    use sky_ir::BoolContext;
+    for context in BoolContext::ALL {
+        let kind = OpKind::ExpectBool { context };
+        accepts(&unary(kind.clone(), Type::Unknown, Type::Bool));
+        accepts(&unary(kind.clone(), Type::Bool, Type::Bool));
+        rejects(
+            &unary(kind.clone(), len(), Type::Bool),
+            "`expect.bool` needs a Bool or unknown operand",
+        );
+        rejects(&unary(kind, Type::Unknown, len()), "must be Bool");
+    }
+}
+
+#[test]
 fn constants_are_typed_exactly() {
     let konst = |kind: OpKind, ty: Type| {
         let mut b = start(vec![], vec![]);

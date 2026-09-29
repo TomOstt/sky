@@ -18,4 +18,4 @@ crates/sky-types/tests/ui/err_shape_debugger_matmul_chain.sky:8:7: error: cannot
   = note: `@` contracts the last axis of the left operand with the first axis of the right one: [m, k] @ [k, n] -> [m, n]
   = note: here [5, *2*] @ [*4*, 2] needs 2 == 4
   = note: `N` was fixed to 4 at line 5 (`Z @ B`)
-  = help: the shapes would match if the right operand were transposed: Matrix[4,2] would become Matrix[2,4] (there is no transpose syntax yet)
+  = help: the shapes would match if the right operand were transposed: Matrix[4,2] would become Matrix[2,4] (transpose is the postfix `ᵀ` or `transpose(x)`)

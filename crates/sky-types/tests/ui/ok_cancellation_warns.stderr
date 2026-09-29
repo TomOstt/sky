@@ -24,14 +24,14 @@ crates/sky-types/tests/ui/ok_cancellation_warns.sky:10:6: warning: `exp(eps) - 1
 10 | r4 = exp(eps) - 1
    |      ^^^^^^^^^^^^ exp(x) is close to 1, so the subtraction cancels
    = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here, when |x| is small, exp(x) is 1 plus a small number, and the subtraction leaves only the digits that survived rounding to a multiple of 2.2e-16: for x = 1e-10 about 6 of 16 are correct. The function `expm1(x)`, exp(x) - 1 computed without the subtraction, is the standard cure
-   = help: when `eps` is small, use the series `eps + eps^2 / 2 + eps^3 / 6`, whose error is about `eps^4 / 24` (Sky has no `expm1` yet, which computes this accurately for every argument)
+   = help: write `expm1(eps)`
 
 crates/sky-types/tests/ui/ok_cancellation_warns.sky:11:6: warning: `log(1 + eps)` loses digits when the term added to 1 is small
    |
 11 | r5 = log(1 + eps)
    |      ^^^^^^^^^^^^ `1 + …` rounds away digits before the logarithm
    = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here 1 + x is rounded to a multiple of about 2.2e-16 before `log` sees it, so when x is small the low digits of x are gone (the result log(1 + x) ≈ x has a large relative error, and is 0 for x below 1.1e-16). The function `log1p(x)`, log(1 + x) computed without forming 1 + x, is the standard cure
-   = help: when `eps` is small, use the series `eps - eps^2 / 2 + eps^3 / 3`, whose error is about `eps^4 / 4` (Sky has no `log1p` yet, which computes this accurately for every argument)
+   = help: write `log1p(eps)`
 
 crates/sky-types/tests/ui/ok_cancellation_warns.sky:15:8: warning: the quadratic formula `(-b + sqrt(b^2 - 4*a*k)) / (2*a)` can lose digits to cancellation
    |
@@ -52,7 +52,7 @@ crates/sky-types/tests/ui/ok_cancellation_warns.sky:18:6: warning: `exp(0.000000
 18 | r6 = exp(0.0000001) - 1
    |      ^^^^^^^^^^^^^^^^^^ exp(x) is close to 1, so the subtraction cancels
    = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here, when |x| is small, exp(x) is 1 plus a small number, and the subtraction leaves only the digits that survived rounding to a multiple of 2.2e-16: for x = 1e-10 about 6 of 16 are correct. The function `expm1(x)`, exp(x) - 1 computed without the subtraction, is the standard cure
-   = help: when `0.0000001` is small, use the series `0.0000001 + 0.0000001^2 / 2 + 0.0000001^3 / 6`, whose error is about `0.0000001^4 / 24` (Sky has no `expm1` yet, which computes this accurately for every argument)
+   = help: write `expm1(0.0000001)`
 
 crates/sky-types/tests/ui/ok_cancellation_warns.sky:19:6: warning: `sqrt(1000000^2 + 1) - 1000000` can lose digits to cancellation
    |

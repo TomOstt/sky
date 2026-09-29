@@ -1,0 +1,10 @@
+# expm1, log1p, hyperbolic functions, erf, sign, and the degree unit.
+x = 0.001
+small = expm1(x) + log1p(x)
+hyp = sinh(x) + cosh(x) + tanh(x)
+inv = asinh(x) + acosh(2) + atanh(0.5)
+bell = erf(0.5)
+side = sign(-3 m)
+force = sign(2 N * 3 m)
+half = sin(30 deg)
+turn = cos(180 deg) + tan(45 deg)

@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 use sky_ast::{AssignTarget, Block, CompoundOp, Expr, ExprKind, Ident, Stmt, StmtKind};
 use sky_diag::Span;
-use sky_ir::{BlockId, OpId, OpKind, Type, ValueId};
+use sky_ir::{BlockId, BoolContext, OpId, OpKind, Type, ValueId};
 use sky_types::Ty;
 
 use crate::analysis::{
@@ -29,15 +29,23 @@ use crate::LowerError;
 struct Path {
     block: BlockId,
     scope: Scope,
+    /// Whether its variables reach the code after the `if`, or the exit of
+    /// the loop (an arm that `break`s or `continue`s).
     contrib: bool,
+    /// Whether the arm falls through to the code after the `if`: the paths
+    /// the checker merges to decide which names are bound there.
+    falls: bool,
 }
 
 /// Which names become results of a merge.
 enum Mode<'a> {
     /// A source `if`: a name is a result if it was bound before the `if`
-    /// (and changed), or is bound on every path that reaches the code after
-    /// it, which is when the checker says it is bound.
-    User,
+    /// (and changed), or is bound on every arm that *falls through* to the
+    /// code after it, which is when the checker says it is bound (an arm
+    /// that `break`s, `continue`s or returns takes no part in that rule), or
+    /// is in `needed` (the loop's exit reads it) and some arm that reaches
+    /// the loop's exit binds it, with a stand-in on the paths that do not.
+    User(&'a Needed),
     /// A guard, or one arm's `if` of a flat `elif` chain: the skipping path
     /// is "already exited" (or "an earlier arm ran"), so any name the code
     /// after may read (`needed`: the names the guarded statements assign,
@@ -170,11 +178,13 @@ impl Lower<'_> {
                 block: f.then_b,
                 scope: then_end,
                 contrib: true,
+                falls: true,
             },
             Path {
                 block: f.else_b,
                 scope: f.base.clone(),
                 contrib: true,
+                falls: true,
             },
         ];
         let merged = self.close_if(f.op, f.span, paths, &f.base, Mode::Guard(needed));
@@ -289,24 +299,34 @@ impl Lower<'_> {
         Ok(())
     }
 
-    /// `A: PositiveDefinite Matrix[N, N]`: an input. Inputs are the
-    /// parameters of `<main>`, in declaration order, typed with the
-    /// declared type the checker recorded (tags included). Only a
-    /// declaration at the top level of the file is an input.
+    /// `A: PositiveDefinite Matrix[N, N]`: an input. It is an `input`
+    /// operation at the declaration, with the declared type the checker
+    /// recorded (tags included) as its result's: nothing supplies an input
+    /// in v0.1, so running it fails right there, after the output before it,
+    /// as `sky run` does. Only a declaration at the top level of the file is
+    /// supported.
     fn declare_input(&mut self, name: &Ident, span: Span) -> R<()> {
         if !(self.st.is_main && self.st.nest == 0) {
             return Err(LowerError::new(
                 "an input declaration must be at the top level of the file",
                 span,
             )
-            .with_note("a name declared without a value is an input of the program; SIR gives inputs to `<main>` only"));
+            .with_note("a name declared without a value is an input of the program; lowering supports inputs at the top level of the file only"));
         }
         let Some(t) = self.checked.binding_types.get(&name.span) else {
             return self.err("internal error: the checker recorded no type here", span);
         };
         let ty = crate::ctx::map_ty(&self.checked.resolve_ty(t)).unwrap_or(Type::Unknown);
-        let v = self.st.b.add_param(ty);
-        self.bind(self.text(name.span), v);
+        let text = self.text(name.span);
+        let v = self.op1(
+            OpKind::Input {
+                name: text.to_string(),
+            },
+            Vec::new(),
+            ty,
+            span,
+        );
+        self.bind(text, v);
         Ok(())
     }
 
@@ -376,12 +396,12 @@ impl Lower<'_> {
             });
         };
         for (_, b) in branches {
-            if reaches_after(&b.stmts) {
+            if !block_diverges(&b.stmts) {
                 intersect(&b.stmts, self.src);
             }
         }
         match else_block {
-            Some(b) if reaches_after(&b.stmts) => intersect(&b.stmts, self.src),
+            Some(b) if !block_diverges(&b.stmts) => intersect(&b.stmts, self.src),
             Some(_) => {}
             // No `else`: the path where no condition held assigns nothing.
             None => intersect(&[], self.src),
@@ -413,6 +433,7 @@ impl Lower<'_> {
             return self.err("internal error: an `if` without a condition", span);
         };
         let c = self.expr(cond)?;
+        let c = self.bool_operand(BoolContext::If, cond, c);
         let (op, _) = self.st.b.op(OpKind::If, vec![c], Vec::new(), span);
         let then_b = self.new_arm(op);
         let else_b = self.new_arm(op);
@@ -434,14 +455,16 @@ impl Lower<'_> {
                 block: then_b,
                 scope: then_end,
                 contrib: reaches_after(&block.stmts),
+                falls: !block_diverges(&block.stmts),
             },
             Path {
                 block: else_b,
                 scope: else_end,
                 contrib: else_block.is_none_or(|b| reaches_after(&b.stmts)),
+                falls: else_block.is_none_or(|b| !block_diverges(&b.stmts)),
             },
         ];
-        let merged = self.close_if(op, span, paths, &base, Mode::User);
+        let merged = self.close_if(op, span, paths, &base, Mode::User(&arm_needed));
         self.st.b.set_at(outer);
         self.st.scope = merged;
         Ok(())
@@ -489,7 +512,8 @@ impl Lower<'_> {
             let base = self.st.scope.clone();
             let outer = self.st.b.at();
             let c = if k == 0 {
-                self.expr(cond)?
+                let c = self.expr(cond)?;
+                self.bool_operand(BoolContext::If, cond, c)
             } else {
                 let Some(&done) = base.get(&flag) else {
                     return self.err("internal error: the `elif` flag is not in scope", span);
@@ -516,11 +540,13 @@ impl Lower<'_> {
                     block: then_b,
                     scope: then_end,
                     contrib: reaches_after(&block.stmts),
+                    falls: !block_diverges(&block.stmts),
                 },
                 Path {
                     block: else_b,
                     scope: base.clone(),
                     contrib: true,
+                    falls: true,
                 },
             ];
             let merged = self.close_if(op, span, paths, &base, Mode::Guard(all));
@@ -547,11 +573,13 @@ impl Lower<'_> {
                     block: then_b,
                     scope: then_end,
                     contrib: reaches_after(&b.stmts),
+                    falls: !block_diverges(&b.stmts),
                 },
                 Path {
                     block: else_b,
                     scope: base.clone(),
                     contrib: true,
+                    falls: true,
                 },
             ];
             let merged = self.close_if(op, span, paths, &base, Mode::Guard(all));
@@ -575,6 +603,7 @@ impl Lower<'_> {
         self.st.b.set_at(open);
         let c = self.expr(cond)?;
         self.st.b.set_at(open);
+        let c = self.bool_operand(BoolContext::If, cond, c);
         self.st.b.op(OpKind::Yield, vec![c], Vec::new(), cond.span);
         self.st.b.set_at(outer);
         Ok(self.st.b.add_result(op, Type::Bool))
@@ -610,9 +639,13 @@ impl Lower<'_> {
         for name in cand {
             let keep = base.contains_key(name)
                 || match &mode {
-                    Mode::User => {
-                        let mut reaching = paths.iter().filter(|p| p.contrib).peekable();
-                        reaching.peek().is_some() && reaching.all(|p| p.scope.contains_key(name))
+                    Mode::User(needed) => {
+                        let mut falling = paths.iter().filter(|p| p.falls).peekable();
+                        (falling.peek().is_some() && falling.all(|p| p.scope.contains_key(name)))
+                            || (needed.contains(name)
+                                && paths
+                                    .iter()
+                                    .any(|p| p.contrib && p.scope.contains_key(name)))
                     }
                     Mode::Guard(needed) => needed.contains(name),
                 };

@@ -1,0 +1,12 @@
+# bench: N=100000 quick=50
+# A derivative evaluated in a loop (exact forward-mode AD of a function with
+# arithmetic, a power and a math call).
+N = 100000
+
+def x(t: s) -> m:
+    return 5 m/s^2 * t^2 + 2 m * sin(t / (1 s))
+
+total = 0 m/s
+for i in range(N):
+    total = total + derivative(x, t)(i * 0.001 s)
+print(total)

@@ -68,7 +68,7 @@ use crate::flow::{FnCtx, FuncSig, LoopFrame};
 use crate::numerics::NumState;
 use crate::provenance::{label_dim, Provenance};
 use crate::rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
-use crate::rules::{elementwise, inverse, matmul, TensorType};
+use crate::rules::{elementwise, inverse, matmul, transpose, TensorType};
 use crate::scale::{negated_tags, scaled_tags};
 use crate::shape::{Shape, ShapeContext, ShapeDim, ShapeError, ShapeUnifier, ShapeVar};
 use crate::tags::{Tag, TagSet};
@@ -611,7 +611,10 @@ impl<'s> Checker<'s> {
     pub(crate) fn operand_text(&self, e: &Expr) -> String {
         let text = self.quoted(e.span);
         match e.kind {
-            ExprKind::Binary { .. } | ExprKind::Unary { .. } | ExprKind::Inverse { .. } => {
+            ExprKind::Binary { .. }
+            | ExprKind::Unary { .. }
+            | ExprKind::Inverse { .. }
+            | ExprKind::Transpose { .. } => {
                 format!("({text})")
             }
             _ => text.to_string(),
@@ -1334,10 +1337,20 @@ impl<'s> Checker<'s> {
                 }
                 self.invert(t, *op_span, operand)
             }
+            ExprKind::Transpose { operand, op_span } => {
+                let t = self.expr(operand);
+                if self.reject_bool("ᵀ", operand, &t) {
+                    return Ty::Unknown;
+                }
+                self.transposed(t, *op_span, operand)
+            }
             ExprKind::Array(elems) => self.array_literal(elems),
             ExprKind::Call { callee, args } => {
                 if let Some(t) = self.derivative_call(callee, args, e.span) {
                     return t;
+                }
+                if self.is_transpose_call(callee) {
+                    return self.transpose_call(callee, args, e.span);
                 }
                 if let Some(arg) = self.inv_call(callee, args) {
                     let t = self.expr(arg);
@@ -1379,6 +1392,12 @@ impl<'s> Checker<'s> {
                 BinaryOp::MatMul => self.matmul(e.span, *op_span, lhs, rhs),
                 BinaryOp::Pow => self.pow(*op_span, lhs, rhs),
                 _ => {
+                    if let Some(t) = self.partial_not_called(e) {
+                        return t;
+                    }
+                    if self.partial_misparsed(e) {
+                        return Ty::Unknown;
+                    }
                     let l = self.expr(lhs);
                     let r = self.expr(rhs);
                     self.binary(*op, *op_span, (lhs, l), (rhs, r))
@@ -1396,6 +1415,59 @@ impl<'s> Checker<'s> {
                 Some(arg)
             }
             _ => None,
+        }
+    }
+
+    /// The callee `transpose` while the program has not bound that name
+    /// itself: the function spelling of `xᵀ`, shadowed like `inv`.
+    fn is_transpose_call(&self, callee: &Expr) -> bool {
+        matches!(&callee.kind, ExprKind::Name(id)
+            if self.ident(id) == "transpose" && self.env.get("transpose").is_none())
+    }
+
+    /// `transpose(x)`: `xᵀ` spelled as a call. Any other argument count is an
+    /// arity error, not an undefined name.
+    fn transpose_call(&mut self, callee: &Expr, args: &[Expr], call: Span) -> Ty {
+        let [arg] = args else {
+            for a in args {
+                self.expr(a);
+            }
+            self.error(
+                Diagnostic::error(
+                    format!("`transpose` takes 1 argument, found {}", args.len()),
+                    call,
+                )
+                .with_label("wrong number of arguments")
+                .with_help("call it as `transpose(A)` or write `Aᵀ`"),
+            );
+            return Ty::Unknown;
+        };
+        let t = self.expr(arg);
+        if self.reject_bool("transpose", arg, &t) {
+            return Ty::Unknown;
+        }
+        self.transposed(t, callee.span, arg)
+    }
+
+    /// `Aᵀ`: `Matrix[m, n]` becomes `Matrix[n, m]` with the tags
+    /// `preserved_by_transpose` allows, the dimension is unchanged, a scalar
+    /// is its own transpose, and a vector is an error (v0.1 vectors have no
+    /// row or column orientation, and `vᵀ` as the identity would turn the
+    /// outer product `v @ vᵀ` into a dot product without a word).
+    fn transposed(&mut self, t: Ty, op_span: Span, operand: &Expr) -> Ty {
+        let Ty::Value(v) = t else {
+            return Ty::Unknown;
+        };
+        match transpose(&v.ty) {
+            Ok(ty) => Ty::value(v.dim, ty),
+            Err(e) => {
+                let label = self.this_is(&v);
+                self.error(
+                    self.shape_diagnostic(&e, op_span)
+                        .with_secondary(operand.span, label),
+                );
+                Ty::Unknown
+            }
         }
     }
 

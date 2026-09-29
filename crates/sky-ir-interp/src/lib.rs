@@ -49,6 +49,8 @@ mod machine;
 mod math;
 
 #[cfg(test)]
+mod fused_tests;
+#[cfg(test)]
 mod tests;
 
 use std::fmt;
@@ -112,16 +114,10 @@ impl std::error::Error for IrRuntimeError {}
 /// `out`. Run this under `sky_ast::with_deep_stack`.
 ///
 /// Lowering turns a file's value-less declarations (`A: Matrix[3, 3]`, an
-/// input with no value) into parameters of `<main>`. Nothing can supply
-/// them in v0.1, so a `<main>` with parameters fails with the same error
-/// `sky run` gives on the same file.
+/// input with no value) into `input` operations at the declaration. Nothing
+/// can supply one in v0.1, so it fails there with the error `sky run` gives
+/// on the same file, after the output before it.
 pub fn run(module: &Module, out: &mut impl Write) -> Result<(), IrRuntimeError> {
-    if let Some(main) = module.function(Module::MAIN) {
-        if let Some(&first) = main.param_values().first() {
-            let name = main.value(first).name.as_deref().unwrap_or("an input");
-            return Err(sky_interp::arith::declared_without_value(name, main.span).into());
-        }
-    }
     machine::call(module, Module::MAIN, Vec::new(), out).map(|_| ())
 }
 

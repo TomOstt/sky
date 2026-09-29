@@ -27,6 +27,15 @@
 //!   interpreter would not have failed). Last-bit differences from the
 //!   float interpreter are possible; for programs that opt into exactness.
 //!
+//! # What the explanations say about exactness
+//!
+//! A float result whose value over the reals has a closed form gets one more
+//! line from the exactness analysis (`sky_ir::exact`), for example "over the
+//! reals the result is exactly 1/2, and the f64 result is exactly that
+//! value", or "exactly 3/10; the f64 result 0.30000000000000004 is that value
+//! rounded". It is text only: what is folded in is always the
+//! interpreter's number.
+//!
 //! # Not folded, deliberately
 //!
 //! * anything the interpreter functions reject (see above);
@@ -41,11 +50,12 @@
 use sky_diag::Span;
 use sky_interp::arith::{arith, equal, expect_bool, order, pow, reciprocal, sign, ArithOp};
 use sky_interp::Value;
+use sky_ir::exact::{self, Analysis};
 use sky_ir::{CmpOp, Function, Module, OpId, OpKind, Type, ValueId};
 use sky_units::{Dimension, Rational};
 
 use crate::rewrite::Rewrite;
-use crate::util::{defining_op, reachable_ops, replace_uses, value_text};
+use crate::util::{defining_op, in_fused_body, reachable_ops, replace_uses, value_text};
 
 /// What to do when an exact rational result differs from the interpreter's
 /// `f64` result. See the module documentation.
@@ -73,16 +83,23 @@ pub fn fold_with(m: &mut Module, mode: FoldMode) -> Vec<Rewrite> {
 }
 
 fn fold_function(f: &mut Function, mode: FoldMode, out: &mut Vec<Rewrite>) {
+    // What each value is over the reals, from the operations as written.
+    // Folding replaces an operation by a constant for the same value, so
+    // the table stays valid for the whole fixed point.
+    let facts = exact::analyze(f);
     loop {
         let mut restart = false;
         let mut changed = false;
         for op in reachable_ops(f) {
+            if in_fused_body(f, op) {
+                continue;
+            }
             let did = match f.op(op).kind {
                 OpKind::If => {
                     restart = fold_if(f, op, out);
                     restart
                 }
-                _ => fold_op(f, op, mode, out),
+                _ => fold_op(f, op, mode, &facts, out),
             };
             changed |= did;
             // Inlining an `if` moved operations, so the list is stale.
@@ -245,7 +262,13 @@ fn expr_text(kind: &OpKind, a: &[Const]) -> String {
     }
 }
 
-fn fold_op(f: &mut Function, id: OpId, mode: FoldMode, out: &mut Vec<Rewrite>) -> bool {
+fn fold_op(
+    f: &mut Function,
+    id: OpId,
+    mode: FoldMode,
+    facts: &Analysis,
+    out: &mut Vec<Rewrite>,
+) -> bool {
     let op = f.op(id).clone();
     let foldable = matches!(
         op.kind,
@@ -327,12 +350,15 @@ fn fold_op(f: &mut Function, id: OpId, mode: FoldMode, out: &mut Vec<Rewrite>) -
                 }
                 _ => {
                     let shown = Const::Flt(x, dim).text();
-                    let because = vec![
+                    let mut because = vec![
                         "every operand is a constant".to_string(),
                         "the result is the reference interpreter's own, bit for bit, and it \
                          cannot fail at run time"
                             .to_string(),
                     ];
+                    // Say what the value is over the reals, when that is
+                    // news: `1/3 + 1/6` is exactly `1/2`.
+                    because.extend(facts.known(result).and_then(exact::Known::note));
                     (
                         OpKind::ConstFloat { bits: float_bits },
                         "FOLD-FLOAT-001",

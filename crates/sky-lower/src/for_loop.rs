@@ -25,7 +25,10 @@
 //! is larger than 2^53 in size, and a zero step; SIR has no operation that
 //! stops a program with a message yet, so those checks are made by the
 //! checker for constants and only by the tree walker for computed values. A
-//! lowered loop with such a value counts as far as `f64` arithmetic goes.
+//! lowered loop with such a value counts as far as `f64` arithmetic goes
+//! (`range(5 / 2)` counts 0, 1, 2), which is fine for looking at the IR and
+//! wrong for running it: [`crate::lower_for_run`], which `sky run` lowers
+//! with, refuses such a loop, and the tree walker runs the program.
 //!
 //! `for x in v` over an array needs array values, which SIR does not have
 //! yet, so it is a [`LowerError`] that says so.
@@ -41,7 +44,7 @@ use std::collections::BTreeSet;
 
 use sky_ast::{Block, Expr, ExprKind, Ident};
 use sky_diag::Span;
-use sky_ir::{CmpOp, OpKind, Type, ValueId};
+use sky_ir::{BoolContext, CmpOp, OpKind, Type, ValueId};
 use sky_types::{range_constants, range_runs_at_least_once};
 use sky_units::Dimension;
 
@@ -103,7 +106,10 @@ impl Lower<'_> {
     /// values are in scope.
     pub(crate) fn head_cond(&mut self, head: &Head<'_>) -> R<ValueId> {
         match head {
-            Head::While(cond) => self.expr(cond),
+            Head::While(cond) => {
+                let c = self.expr(cond)?;
+                Ok(self.bool_operand(BoolContext::While, cond, c))
+            }
             Head::Range(r) => self.range_cond(r),
         }
     }
@@ -174,6 +180,19 @@ impl Lower<'_> {
             None => self.const_float(1.0, index_ty(), iter.span),
         };
         let constants = range_constants(self.src, args);
+        // The interpreter checks a computed bound or step when the loop
+        // starts (a whole number of sane size, a step that is not zero) and
+        // stops with an error otherwise; only constants are checked before
+        // the run. SIR cannot make that check, so a program that is to be
+        // executed would run on where `sky run` must fail: it stays on the
+        // tree walker until SIR can stop with a message.
+        if self.for_run && constants.is_none() {
+            return Err(LowerError::new(
+                "a `range` bound or step computed at run time is checked by the tree-walking interpreter",
+                iter.span,
+            )
+            .with_note(RANGE_CHECKS));
+        }
         let step_sign = match (step, constants) {
             (None, _) => Some(1),
             (Some(_), Some((_, _, s))) => Some(s.signum()),
@@ -219,6 +238,9 @@ impl Lower<'_> {
         }
     }
 }
+
+/// Why a computed `range` bound is not lowered for execution.
+const RANGE_CHECKS: &str = "`sky run` checks a computed `range` bound at run time (a whole number, not too large, a step that is not zero) and SIR has no operation to stop with that message yet";
 
 /// The type of an index: a dimensionless scalar.
 fn index_ty() -> Type {

@@ -7,12 +7,11 @@
 //! error (or success) must be identical, the lowered SIR must verify, and the
 //! SIR text format must round-trip (see the harness for the details).
 //!
-//! The `#[ignore]`d tests at the end are the bugs this fuzzer found, each
-//! reduced to a few lines. Run them with `cargo test -p sky-ir-interp --test
-//! fuzz_differential -- --ignored`; each fails until its bug is fixed. The
-//! generator steers around the open ones (the `GATE_*` constants in the
-//! harness), so the main test stays green and the fuzzer keeps looking for
-//! new bugs.
+//! The tests at the end are the bugs this fuzzer found, each reduced to a few
+//! lines; all are fixed (two are design limits of lowering, which the tests
+//! pin). A bug found later is added there as an `#[ignore]`d test, and the
+//! generator steers around it (a `GATE_*` constant in the harness) so the
+//! main test stays green and the fuzzer keeps looking for new bugs.
 //!
 //! Tools for a fuzzing session (each does nothing unless its variable is
 //! set): `SKY_SEED=n` prints the program for seed `n`; `SKY_FILE=x.sky` runs
@@ -491,12 +490,19 @@ fn sir_text_parse_accepts_the_math_operations_the_printer_writes() {
 }
 
 /// The checker follows the arm that falls through: `t` is bound after the
-/// `if`, since the other arm leaves the loop. Lowering does not: it builds no
-/// `t` for the merge and stops with "cannot find `t` in this scope". The same
-/// shape with `return` in a function is fine.
+/// `if`, since the other arm leaves the loop. Lowering used to build no `t`
+/// for the merge ("cannot find `t` in this scope"). Fixed: a name is a result
+/// of the merge when every arm that falls through binds it.
 #[test]
-#[ignore = "bug: lowering drops a name bound only by the arms that do not break or continue"]
 fn lowering_loses_a_name_bound_beside_a_break_arm() {
+    // An `elif` chain, and a name bound in a `while true` loop that the
+    // breaking arm also binds.
+    assert_agree(
+        "k = 0\nwhile k < 4:\n    k += 1\n    if k > 2:\n        break\n    elif k > 1:\n        t = 5\n    else:\n        t = 6\n    print(t)\nprint(k)\n",
+    );
+    assert_agree(
+        "k = 0\nwhile true:\n    k += 1\n    if k > 2:\n        u = 1\n        break\n    else:\n        t = 6\n    print(t)\nprint(u, k)\n",
+    );
     assert_agree(
         "k = 0\nwhile k < 3:\n    k += 1\n    if k > 1:\n        break\n    else:\n        t = 5\n    print(t)\nprint(k)\n",
     );
@@ -507,11 +513,16 @@ fn lowering_loses_a_name_bound_beside_a_break_arm() {
 }
 
 /// `sky run` reads a rebound constant as the new value after the `if`;
-/// the lowered code still reads the constant's own value (`pi`, `c`, ...),
-/// at module level, in a function, and in a loop.
+/// the lowered code used to read the constant's own value (`pi`, `c`, ...),
+/// at module level, in a function, and in a loop. Fixed: a constant bound
+/// inside a block is an ordinary variable in the scope, seeded with its
+/// value.
 #[test]
-#[ignore = "bug: lowering ignores a predefined constant rebound inside an if or while"]
 fn lowering_ignores_a_constant_rebound_in_a_block() {
+    // A function that reads the module's constant, which a block rebound.
+    assert_agree("def h():\n    return pi\nx = 1\nif x > 0:\n    pi = 2\nprint(h(), pi)\n");
+    // A `for` variable named like a constant.
+    assert_agree("for c in range(3):\n    print(c)\nprint(c)\n");
     assert_agree("x = 1\nif x > 0:\n    c = 2 m/s\nprint(c)\n");
     assert_agree("def f(n):\n    if n > 0:\n        pi = 2\n    return pi\nprint(f(1), f(0))\n");
     assert_agree("k = 0\nwhile k < 2:\n    k += 1\n    g_n = k * 1 m/s^2\nprint(g_n)\n");
@@ -520,12 +531,13 @@ fn lowering_ignores_a_constant_rebound_in_a_block() {
     assert_agree("def f():\n    while true:\n        y = pi\n        pi = 2\n        break\n    return y\nprint(f())\n");
 }
 
-/// `sky run` looks a called name up when the call runs; lowering binds each
-/// call to the definition the checker saw. They differ when the name is
-/// defined again after the caller: a second `def`, a `def` that shadows a
-/// builtin (`max`), or a rebinding to a number.
+/// `sky run` used to look a called name up when the call ran, lowering bound
+/// each call to the definition the checker saw. They differed when the name
+/// was defined again after the caller: a second `def`, a `def` that shadows a
+/// builtin (`max`), or a rebinding to a number. Early (lexical) binding is
+/// the language rule (spec, "Functions"), so the tree-walker now binds a
+/// call in a function body to the definition in scope at the `def`.
 #[test]
-#[ignore = "bug: lowering binds calls to the definition seen at check time, sky run to the current one"]
 fn lowering_binds_a_call_to_the_definition_seen_at_check_time() {
     assert_agree(
         "def f(x):\n    return x + 1\ndef g(x):\n    return f(x)\nprint(g(1))\ndef f(x):\n    return x + 100\nprint(g(1), f(1))\n",
@@ -536,63 +548,115 @@ fn lowering_binds_a_call_to_the_definition_seen_at_check_time() {
     assert_agree("def f(x):\n    return x + 1\ndef g(x):\n    return f(x)\nf = 5\nprint(g(1))\n");
 }
 
-/// Lowering refuses the whole program ("`f` is not a function known at
-/// compile time") although `sky run` runs it, because `f` is defined in
-/// both arms of an `if`. (sky-lower documents that it rejects a call it
-/// cannot resolve; this is a program `sky run` accepts.)
+/// Found by the longer campaign after the fixes above (seed 275714): unary `+`
+/// is lowered as its operand, so for a value the checker cannot type the
+/// tree-walker's "`+` needs a number, found a Bool" is missing in SIR, which
+/// says "cannot add a Bool and a Bool" (or nothing, if the value is only
+/// returned). A `pos` operation, or a check like `expect.bool` for numbers,
+/// would fix it.
 #[test]
-#[ignore = "limitation: lowering rejects a function defined in an if/else"]
-fn lowering_rejects_a_function_defined_in_both_arms_of_an_if() {
-    assert_agree("x = 1\nif x > 0:\n    def f(a):\n        return a + 1\nelse:\n    def f(a):\n        return a + 2\nprint(f(1))\n");
+#[ignore = "bug: unary + of a value of unknown type that is not a number is not checked in SIR"]
+fn unary_plus_of_an_unknown_non_number_is_not_checked_in_sir() {
+    assert_agree("def f(a):\n    return +a + a\nprint(f(true))\n");
+    assert_agree("def f(a):\n    return +a\nprint(f(true))\n");
 }
 
-/// A nested `def` reads its enclosing function's local. `sky run` fails only
-/// if the inner function runs ("cannot find `a`"); lowering fails the whole
-/// program, also when it never does (here `f(0)` returns first).
+/// What `sky run` does with `src`: its output and the error that stopped it.
+fn run_in_the_tree_walker(src: &str) -> (String, Option<String>) {
+    let lexed = sky_syntax::lex(src).expect("lexes");
+    let (ast, errors) = sky_ast::parse_module(&lexed.tokens, src);
+    assert!(errors.is_empty(), "{errors:?}");
+    let checked = sky_types::check_module(&ast, src);
+    assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+    sky_ast::with_deep_stack(|| {
+        let mut env = sky_interp::RuntimeEnv::with_prelude();
+        let mut out = Vec::new();
+        let r = sky_interp::run_module(&ast, src, &mut env, &mut out);
+        (
+            String::from_utf8_lossy(&out).into_owned(),
+            r.err().map(|e| e.message.clone()),
+        )
+    })
+}
+
+/// Design limit, not a bug: lowering refuses the whole program ("`f` is not a
+/// function known at compile time") although `sky run` runs it, because `f`
+/// is defined in both arms of an `if`: SIR calls name one function, fixed at
+/// compile time, and SIR has no function values to pick one at run time.
+/// Documented in sky-lower and in the spec ("Functions"); `sky run` falls back
+/// to the tree-walker on a lowering error.
 #[test]
-#[ignore = "limitation: lowering rejects a nested def that reads its enclosing function's local"]
-fn lowering_rejects_a_nested_def_that_reads_an_enclosing_local() {
-    assert_agree(
-        "def f(a):\n    if a > 1:\n        def h(b):\n            return b + a\n        return h(1)\n    return 0\nprint(f(0))\n",
+fn lowering_rejects_a_function_defined_in_both_arms_of_an_if() {
+    let src = "x = 1\nif x > 0:\n    def f(a):\n        return a + 1\nelse:\n    def f(a):\n        return a + 2\nprint(f(1))\n";
+    assert_eq!(run_in_the_tree_walker(src), ("2\n".to_string(), None));
+    let e = sky_lower::lower_source(src).expect_err("a design limit");
+    assert!(
+        e.contains("`f` is not a function known at compile time"),
+        "{e}"
     );
 }
 
-/// A number literal too large for f64 (also once its unit is applied) is a
-/// run-time error in `sky run`, only if evaluated; lowering rejects the
-/// program. Documented in sky-lower; the harness tolerates it (see `KNOWN`).
+/// Design limit, not a bug: a nested `def` reads its enclosing function's
+/// local. `sky run` fails only if the inner function runs ("cannot find `a`",
+/// its frame is not the enclosing one: there are no closures); lowering fails
+/// the whole program, also when it never runs (here `f(0)` returns first),
+/// because SIR functions have no access to another function's values.
 #[test]
-#[ignore = "limitation: lowering rejects a literal too large for f64 even if it is never evaluated"]
-fn lowering_rejects_a_literal_too_large_even_if_never_evaluated() {
-    assert_agree("print(1)\nif false:\n    x = 1e999\nprint(2)\n");
-    assert_agree("print(1)\nx = 1e300 ms/nm^2/μg\nprint(2)\n");
+fn lowering_rejects_a_nested_def_that_reads_an_enclosing_local() {
+    let src = "def f(a):\n    if a > 1:\n        def h(b):\n            return b + a\n        return h(1)\n    return 0\nprint(f(0))\n";
+    assert_eq!(run_in_the_tree_walker(src), ("0\n".to_string(), None));
+    let e = sky_lower::lower_source(src).expect_err("a design limit");
+    assert!(e.contains("cannot find `a` in this scope"), "{e}");
+    // The same program does fail in `sky run` once the inner function runs.
+    let src = src.replace("print(f(0))", "print(f(2))");
+    let (out, err) = run_in_the_tree_walker(&src);
+    assert_eq!(out, "");
+    assert_eq!(err.as_deref(), Some("cannot find `a` in this scope"));
 }
 
-/// A declaration without a value is an input of `<main>`: the SIR
-/// interpreter stops at entry, before anything is printed, while `sky run`
-/// prints up to the declaration and stops there. Same error, different
-/// stdout.
+/// A number literal too large for f64 (also once its unit is applied) is a
+/// run-time error in `sky run`, only if evaluated; lowering used to reject the
+/// program. It lowers to `literal.error` now, which fails when it runs.
 #[test]
-#[ignore = "limitation: an input declaration fails before any output in the SIR interpreter"]
+fn a_literal_too_large_is_an_error_only_where_it_is_evaluated() {
+    assert_agree("print(1)\nif false:\n    x = 1e999\nprint(2)\n");
+    assert_agree("print(1)\nif false:\n    x = 1e300 ms/nm^2/μg\nprint(2)\n");
+    assert_agree("print(1)\nx = 1e300 ms/nm^2/μg\nprint(2)\n");
+    assert_agree("print(1)\nx = 1e999\nprint(2)\n");
+    assert_agree("print(1)\nx = 1e999 m\nprint(2)\n");
+    assert_agree("def f(a):\n    return a * 1e999\nprint(1)\nprint(f(2))\n");
+    // Not evaluated: a function that is never called, a short-circuited operand.
+    assert_agree("def f(a):\n    return a * 1e999\nprint(1)\nprint(true or 1e999 > 1)\n");
+}
+
+/// A declaration without a value used to be a parameter of `<main>`: the SIR
+/// interpreter stopped at entry, before anything was printed, while `sky run`
+/// prints up to the declaration and stops there. It is an `input` operation
+/// now, which fails where the declaration is.
+#[test]
 fn an_input_declaration_stops_the_sir_interpreter_before_any_output() {
     assert_agree("print(1)\nx: m\nprint(2)\n");
+    // Inside a loop that runs first, and with the declared type in use.
+    assert_agree(
+        "k = 0\nwhile k < 2:\n    print(k)\n    k += 1\nA: Matrix[2, 2]\nprint(A[0, 0])\n",
+    );
 }
 
 /// A function without annotations has an unknown result type, so the checker
 /// lets `f(1)` stand where a Bool goes. `sky run` checks at run time and stops
-/// ("`or` needs a Bool operand, found a number"); the SIR interpreter checks
-/// the left operand only (as an `if` condition) and lets a number through as
-/// the right operand: `false or f(1)` prints 1.
+/// ("`or` needs a Bool operand, found a number"); the SIR interpreter used to
+/// check the left operand only (as an `if` condition) and let a number
+/// through as the right operand: `false or f(1)` printed 1. Lowering now puts
+/// an `expect.bool` on an operand of unknown type.
 #[test]
-#[ignore = "bug: SIR does not check that the right operand of and/or is a Bool"]
 fn sir_does_not_check_the_right_operand_of_and_or_for_bool() {
     assert_agree("def f(a):\n    return a\nprint(false or f(1))\n");
     assert_agree("def f(a):\n    return a\nprint(true and f(1))\n");
 }
 
-/// The same error in the left operand of `and` is worded as the `if` it is
+/// The same error in the left operand of `and` was worded as the `if` it is
 /// lowered to.
 #[test]
-#[ignore = "bug: the run-time error for a non-Bool left operand of and names `if` in SIR"]
 fn the_left_operand_of_and_is_worded_as_an_if_in_sir() {
     assert_agree("def f(a):\n    return a\nprint(f(1) and true)\n");
 }

@@ -1,0 +1,9 @@
+tests/ui/check/err_grad_units.sky:7:10: error: cannot take the gradient of `energy`: its parameters have different units
+  |
+7 | g = grad(energy)(1 m, 2 s)
+  |          ^^^^^^ the gradient is with respect to every parameter
+4 | def energy(x: m, t: s) -> J:
+  |               - `x` is length
+  |                     - `t` is time
+  = note: the gradient is a Vector, which has one unit for all its entries, but the derivatives of `energy` are different quantities: force and power
+  = help: take one derivative per parameter instead: `derivative(energy, x)(...)`, `derivative(energy, t)(...)`

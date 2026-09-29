@@ -662,6 +662,40 @@ fn spec_examples() {
 }
 
 #[test]
+fn transpose_glyph_is_a_postfix_operator_not_an_identifier_letter() {
+    // U+1D40 is a letter (XID_Continue), so it must be cut out of
+    // identifiers or `Aᵀ` would be one (non-NFKC, hence rejected) name.
+    assert_eq!(line("Aᵀ\n"), [Ident, Transpose]);
+    assert_eq!(line("Aᵀᵀ\n"), [Ident, Transpose, Transpose]);
+    assert_eq!(line("(A @ B)ᵀ\n").last(), Some(&Transpose));
+    assert_eq!(line("A⁻¹ᵀ\n"), [Ident, Inverse, Transpose]);
+    assert_eq!(line("xᵀy\n"), [Ident, Transpose, Ident]);
+    assert_eq!(texts("ᵀ\n")[0], (Transpose, "ᵀ"));
+    // Other modifier letters stay identifier characters, so `Aᴬ` is still
+    // rejected as non-NFKC rather than read as an operator.
+    assert_err("Aᴬ\n", LexErrorKind::NonNfkcIdentifier, "Aᴬ");
+}
+
+#[test]
+fn transpose_glyph_is_not_nfkc_stable_like_the_inverse_glyph() {
+    // The glyph is a compatibility character: NFKC maps it to a plain `T`,
+    // so a tool that normalizes source would silently turn `Aᵀ` into the
+    // name `AT`. The lexer never normalizes, and, as with `⁻¹` (NFKC `-1`),
+    // the ASCII spelling `transpose(A)` is immune.
+    assert_eq!(crate::nfkc::nfkc("ᵀ"), "T");
+    assert!(!crate::nfkc::is_nfkc("ᵀ"));
+    assert!(!is_ident_start('ᵀ') && !is_ident_continue('ᵀ'));
+}
+
+#[test]
+fn look_alike_transpose_marks_suggest_the_glyph() {
+    for src in ["A⊤\n", "A⊺\n"] {
+        let e = assert_err(src, LexErrorKind::UnexpectedChar, &src[1..src.len() - 1]);
+        assert!(e.diagnostic.help[0].contains("transpose"), "{src}");
+    }
+}
+
+#[test]
 fn lone_superscript_minus_and_bang_are_errors() {
     let e = assert_err("A⁻ @ b\n", LexErrorKind::UnexpectedChar, "⁻");
     assert!(e.diagnostic.help[0].contains("⁻¹"));
@@ -1477,6 +1511,15 @@ fn every_nfkc_qc_no_code_point_is_rejected_in_identifiers() {
     for &(lo, hi) in crate::nfkc_table::NFKC_QC_NO {
         for c in (lo..=hi).filter_map(char::from_u32) {
             let src = format!("a{c}b = 1\n");
+            if c == crate::lexer::TRANSPOSE_GLYPH {
+                // The one exception: it is the transpose operator, so it
+                // ends the identifier instead of joining it.
+                let kinds: Vec<_> = lex(&src).unwrap().tokens.iter().map(|t| t.kind).collect();
+                assert_eq!(kinds[..3], [Ident, Transpose, Ident]);
+                // Counted with the characters that never join an identifier.
+                as_unexpected += 1;
+                continue;
+            }
             let e = lex(&src).expect_err(&format!("U+{:04X}", c as u32));
             if is_ident_continue(c) {
                 assert_eq!(

@@ -102,6 +102,10 @@ pub(crate) struct Lower<'a> {
     /// The derivative functions `derivative(f, x)(...)` calls need, built
     /// once the module's functions exist (see `derivative.rs`).
     pub(crate) derivatives: Vec<Wanted>,
+    /// Lowering for execution ([`crate::lower_for_run`]): refuse what would
+    /// run differently from `sky run`'s tree walker, instead of lowering it
+    /// faithfully as far as SIR can say.
+    pub(crate) for_run: bool,
 }
 
 /// A checker type as a SIR type. `None` for a function value.

@@ -1,0 +1,11 @@
+# bench: N=100000 quick=50
+# A Cholesky solve of a PositiveDefinite literal in a loop (`K⁻¹ @ f` is
+# rewritten to a Cholesky solve); the load changes on every iteration.
+N = 100000
+K: PositiveDefinite Matrix[3, 3] N/m = [[4 N/m, 1 N/m, 0 N/m], [1 N/m, 5 N/m, 2 N/m], [0 N/m, 2 N/m, 6 N/m]]
+total = 0 m
+for i in range(N):
+    f: Vector[3] N = [i * 1 N, 100 N, 50 N]
+    u = K⁻¹ @ f
+    total = total + u[0] + u[1] + u[2]
+print(total)

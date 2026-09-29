@@ -1,24 +1,75 @@
 //! `sky run <file>`: check the file, and only if it has no errors, run it.
+//!
+//! # Two engines
+//!
+//! A checked program runs on one of two engines that must behave the same
+//! byte for byte (stdout, diagnostics, exit status):
+//!
+//! * SIR: lower to SIR, run the default optimization pipeline with
+//!   verification, and execute on the SIR reference interpreter
+//!   (`sky_ir_interp`). `docs/design/ir.md` plans for it to become the
+//!   executor; it is not the default yet because, measured with
+//!   `sky-bench`, it is slower than the tree-walker today (about 1.6× on a
+//!   scalar loop, 2.5× on calls) and gives nothing a user can see in
+//!   return. The default flips when SIR is the faster engine (roadmap
+//!   Phase 4).
+//! * the tree-walking interpreter over the AST (`sky_interp`): the default,
+//!   the oracle the differential tests compare SIR against, and the fallback
+//!   for the programs SIR cannot express yet.
+//!
+//! `--engine=auto` picks SIR and falls back to the tree-walker
+//! on a `LowerError`, silently: the program is valid, it is only that one
+//! engine cannot run it yet. `--engine=ast` and `--engine=sir` force one, for
+//! debugging and differential use; a forced SIR run of a program that does
+//! not lower is an error, so a fallback can never hide in a differential
+//! comparison.
 
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
 use sky_derive::SirDerivatives;
-use sky_diag::SourceFile;
+use sky_diag::{Diagnostic, SourceFile, Span};
 use sky_interp::{run_module_with_derivatives, RuntimeEnv};
 use sky_project::SystemIdentity;
 use sky_syntax::Edition;
 
 use crate::frontend::analyze;
+use crate::ir::{prepare_run, Runnable};
+
+/// Which engine `sky run` executes on (`--engine=`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Engine {
+    /// SIR, falling back to the tree-walker when the program does not lower.
+    Auto,
+    /// The AST tree-walker: the default until SIR is faster (see the module
+    /// docs).
+    #[default]
+    Ast,
+    /// SIR only: a program that does not lower is an error.
+    Sir,
+}
+
+impl Engine {
+    /// Parses the text after `--engine=`.
+    pub fn parse(text: &str) -> Option<Engine> {
+        match text {
+            "auto" => Some(Engine::Auto),
+            "ast" => Some(Engine::Ast),
+            "sir" => Some(Engine::Sir),
+            _ => None,
+        }
+    }
+}
 
 /// Refuses to run a file with any error: its diagnostics go to stderr and
 /// nothing executes, so a `print` before a type error prints nothing.
 /// Warnings are shown and the run continues. Program output goes to stdout,
 /// diagnostics (including a runtime error, with the span of the failing
 /// expression) to stderr. Exit 0 on success, 1 on any error.
-pub fn run(path: &str, file: &File, src: &str) -> ExitCode {
+pub fn run(path: &str, file: &File, src: &str, engine: Engine) -> ExitCode {
     // Same discovery as `sky check` (spec non-negotiable 2): the project
     // root comes only from walking up from the opened file.
     let discovery = match sky_project::discover_opened(Path::new(path), file, &SystemIdentity) {
@@ -30,7 +81,7 @@ pub fn run(path: &str, file: &File, src: &str) -> ExitCode {
     };
     // Front end and interpreter both run on the known-size stack, so the
     // parser's, checker's and evaluator's depth bounds hold.
-    sky_ast::with_deep_stack(|| run_source(path, src, discovery.edition))
+    sky_ast::with_deep_stack(|| run_source(path, src, discovery.edition, engine))
 }
 
 /// Forwards to stdout and remembers whether the reader went away (`sky run
@@ -52,42 +103,118 @@ impl Write for Stdout<'_> {
     }
 }
 
-fn run_source(path: &str, src: &str, edition: Edition) -> ExitCode {
+fn run_source(path: &str, src: &str, edition: Edition, engine: Engine) -> ExitCode {
     let file = SourceFile::new(path, src);
     let front = analyze(src, sky_types::Env::with_prelude(), false, edition);
     let rendered = front.render(&file);
     eprint!("{}", rendered.join("\n"));
-    let module = match front.module {
-        Some(m) if front.ok => m,
+    let (module, checked) = match (&front.module, &front.checked) {
+        (Some(m), Some(c)) if front.ok => (m, c),
         _ => return ExitCode::FAILURE,
+    };
+    // Lowering and the pipeline run before anything executes, so a program
+    // that falls back has printed nothing yet and the tree-walker starts
+    // clean. `--engine=ast` never lowers, as before.
+    let sir = match engine {
+        Engine::Ast => None,
+        Engine::Auto | Engine::Sir => match prepare_run(module, src, checked) {
+            Runnable::Ready(ir) => Some(ir),
+            Runnable::Unsupported(e) if engine == Engine::Sir => {
+                let d = Diagnostic::error(format!("cannot run on SIR: {}", e.message), e.span)
+                    .with_note("`--engine=sir` runs only programs that lower to SIR".to_string());
+                let d = match e.note {
+                    Some(n) => d.with_note(n),
+                    None => d,
+                };
+                return fail_with(&d, &rendered, &file);
+            }
+            Runnable::Unsupported(_) => None,
+            Runnable::Internal(message) => {
+                eprintln!("{message}");
+                return ExitCode::FAILURE;
+            }
+        },
     };
     let stdout = io::stdout();
     let mut out = Stdout {
         inner: stdout.lock(),
         closed: false,
     };
+    let result = match sir {
+        Some(ir) => sky_ir_interp::run(&ir, &mut out).map_err(|e| {
+            // Once SIR has stopped, the run is over: what is left is how the
+            // failure reads (see `explain_failure`).
+            if out.closed {
+                e.to_diagnostic()
+            } else {
+                explain_failure(&e, module, src, &front.cholesky_solves)
+            }
+        }),
+        None => {
+            tree_walk(module, src, &front.cholesky_solves, &mut out).map_err(|e| e.to_diagnostic())
+        }
+    };
+    let _ = out.flush();
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(_) if out.closed => ExitCode::FAILURE,
+        Err(d) => fail_with(&d, &rendered, &file),
+    }
+}
+
+/// Runs the checked module on the tree-walking interpreter.
+fn tree_walk(
+    module: &sky_ast::Module,
+    src: &str,
+    solves: &HashSet<Span>,
+    out: &mut impl Write,
+) -> Result<(), sky_interp::RuntimeError> {
     let mut env = RuntimeEnv::with_prelude();
     // `derivative(f, x)(args)` runs on SIR (see `sky_derive`); the program
     // is only lowered if it asks for one.
-    let mut derivatives = SirDerivatives::new(&module, src);
-    let result = run_module_with_derivatives(
-        &module,
-        src,
-        &mut env,
-        &mut out,
-        &front.cholesky_solves,
-        &mut derivatives,
-    );
-    let _ = out.flush();
-    match result {
-        Ok(_) => ExitCode::SUCCESS,
-        Err(_) if out.closed => ExitCode::FAILURE,
-        Err(e) => {
-            if !rendered.is_empty() {
-                eprintln!(); // blank line after the warnings
-            }
-            eprint!("{}", e.to_diagnostic().render_to_string(&file));
-            ExitCode::FAILURE
-        }
+    let mut derivatives = SirDerivatives::new(module, src);
+    run_module_with_derivatives(module, src, &mut env, out, solves, &mut derivatives).map(|_| ())
+}
+
+/// The diagnostic for a runtime error SIR stopped at, worded and pointed
+/// exactly as the tree-walker's.
+///
+/// A SIR operation carries one span, and an operand is a value that was
+/// bound elsewhere (`i` in `v[i]` is the value of an earlier assignment), so
+/// SIR knows an error's message and the operation that failed, not the
+/// operands' spans at the point of use that the tree-walker's labels point at
+/// (`this is zero` under the divisor, `valid indices are 0 to 2` under the
+/// index). The message is the same function's in both engines
+/// (`sky_interp::arith`), so the failure is replayed on the tree-walker with
+/// its output discarded (the run is deterministic and SIR has already
+/// written the output that precedes the error), and the diagnostic it
+/// produces is the one shown.
+///
+/// If the replay does not fail with the same message the engines disagree
+/// (or a resource limit, which each meters on its own stack, tripped in one
+/// only): SIR's own diagnostic is shown, so a disagreement is never hidden
+/// behind the oracle's answer.
+///
+/// The replay costs as much time as the run did, and only on a run that
+/// fails.
+fn explain_failure(
+    e: &sky_ir_interp::IrRuntimeError,
+    module: &sky_ast::Module,
+    src: &str,
+    solves: &HashSet<Span>,
+) -> Diagnostic {
+    match tree_walk(module, src, solves, &mut io::sink()) {
+        Err(replayed) if replayed.message == e.message => replayed.to_diagnostic(),
+        _ => e.to_diagnostic(),
     }
+}
+
+/// Prints a failure's diagnostic to stderr, after the warnings (with a blank
+/// line between) if there were any. Exit status 1.
+fn fail_with(d: &Diagnostic, warnings: &[String], file: &SourceFile) -> ExitCode {
+    if !warnings.is_empty() {
+        eprintln!(); // blank line after the warnings
+    }
+    eprint!("{}", d.render_to_string(file));
+    ExitCode::FAILURE
 }

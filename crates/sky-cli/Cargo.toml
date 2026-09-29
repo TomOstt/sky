@@ -17,6 +17,7 @@ sky-derive = { path = "../sky-derive" }
 sky-diag = { path = "../sky-diag" }
 sky-interp = { path = "../sky-interp" }
 sky-ir = { path = "../sky-ir" }
+sky-ir-interp = { path = "../sky-ir-interp" }
 sky-lower = { path = "../sky-lower" }
 sky-opt = { path = "../sky-opt" }
 sky-project = { path = "../sky-project" }

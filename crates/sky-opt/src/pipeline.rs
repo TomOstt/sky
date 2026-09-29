@@ -19,7 +19,15 @@
 //! 3. `dce`: removes dead pure operations, and says so when named
 //!    (user-written) values disappear. It runs after the e-graph, which
 //!    leaves the operations it replaced behind;
-//! 4. `cholesky`: `A⁻¹ @ b` with a PositiveDefinite `A` becomes
+//! 4. `fuse`: trees of elementwise array operations become `fused` kernels.
+//!    It runs after `dce`, because a dead operation left by the e-graph
+//!    would count as a second use of its operands and keep a temporary
+//!    alive, and after the e-graph, because a `fused` body is opaque to it
+//!    (fusing first would hide the arithmetic from the rewrite rules). It
+//!    runs before `cholesky` only by convention: they touch different
+//!    operations, and `cholesky`'s result must stay last so it is never
+//!    rewritten.
+//! 5. `cholesky`: `A⁻¹ @ b` with a PositiveDefinite `A` becomes
 //!    `solve[cholesky](A, b)`. It runs last so the earlier passes see the
 //!    program as the user wrote it, and its result is never rewritten.
 //!
@@ -31,11 +39,11 @@ use sky_egraph::EgraphPass;
 use sky_ir::{Changed, Module, Pass, PassCx, PassManager};
 
 use crate::rewrite::Rewrite;
-use crate::{cholesky, dce, fold_with, FoldMode};
+use crate::{cholesky, dce, fold_with, fuse, FoldMode};
 
 /// The pass names of [`default_pipeline`], in order: what
 /// `sky check --emit-ir=after:<name>` accepts.
-pub const DEFAULT_PASSES: [&str; 4] = ["fold", "egraph", "dce", "cholesky"];
+pub const DEFAULT_PASSES: [&str; 5] = ["fold", "egraph", "dce", "fuse", "cholesky"];
 
 /// Runs `f`, explains its records, and says whether the module changed.
 /// (A pass can change a module without a record: dropping an unnamed
@@ -82,6 +90,20 @@ impl Pass for DcePass {
     }
 }
 
+/// Kernel fusion ([`fuse`]) as a pass named `"fuse"`.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct FusePass;
+
+impl Pass for FusePass {
+    fn name(&self) -> &'static str {
+        "fuse"
+    }
+
+    fn run(&self, m: &mut Module, cx: &mut PassCx) -> Changed {
+        run_reporting(m, cx, fuse)
+    }
+}
+
 /// The Cholesky solve selection ([`cholesky`]) as a pass named
 /// `"cholesky"`.
 #[derive(Clone, Copy, Default, Debug)]
@@ -103,6 +125,7 @@ pub fn default_passes(manager: PassManager) -> PassManager {
         .with(FoldPass::default())
         .with(EgraphPass::default())
         .with(DcePass)
+        .with(FusePass)
         .with(CholeskyPass)
 }
 

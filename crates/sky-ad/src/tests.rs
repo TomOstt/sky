@@ -325,7 +325,7 @@ fn math2(f: MathFn) -> Module {
 #[test]
 fn unary_math_matches_the_exact_derivative_and_a_finite_difference() {
     type Case = (MathFn, f64, fn(f64) -> f64);
-    let cases: [Case; 16] = [
+    let cases: [Case; 31] = [
         (MathFn::Sqrt, 2.5, |x| 0.5 / x.sqrt()),
         (MathFn::Cbrt, 3.0, |x| 1.0 / (3.0 * x.cbrt().powi(2))),
         (MathFn::Abs, -1.5, |_| -1.0),
@@ -342,11 +342,43 @@ fn unary_math_matches_the_exact_derivative_and_a_finite_difference() {
         (MathFn::Atan, 1.3, |x| 1.0 / (1.0 + x * x)),
         (MathFn::Floor, 2.5, |_| 0.0),
         (MathFn::Round, 2.4, |_| 0.0),
+        (MathFn::Expm1, 0.7, f64::exp),
+        (MathFn::Expm1, -30.0, f64::exp),
+        (MathFn::Log1p, 2.2, |x| 1.0 / (1.0 + x)),
+        (MathFn::Log1p, -0.6, |x| 1.0 / (1.0 + x)),
+        (MathFn::Sinh, 0.9, f64::cosh),
+        (MathFn::Cosh, 0.9, f64::sinh),
+        (MathFn::Cosh, -1.4, f64::sinh),
+        (MathFn::Tanh, 0.4, |x| 1.0 / (x.cosh() * x.cosh())),
+        (MathFn::Tanh, 3.0, |x| 1.0 / (x.cosh() * x.cosh())),
+        (MathFn::Asinh, 0.9, |x| 1.0 / (x * x + 1.0).sqrt()),
+        (MathFn::Asinh, -4.0, |x| 1.0 / (x * x + 1.0).sqrt()),
+        (MathFn::Acosh, 2.5, |x| 1.0 / (x * x - 1.0).sqrt()),
+        (MathFn::Atanh, 0.3, |x| 1.0 / (1.0 - x * x)),
+        (MathFn::Atanh, -0.8, |x| 1.0 / (1.0 - x * x)),
+        (MathFn::Sign, -2.0, |_| 0.0),
     ];
     for (f, x, exact) in cases {
         check(&math1(f), "f", 0, &[x], exact(x));
     }
     check(&math1(MathFn::Ceil), "f", 0, &[2.5], 0.0);
+}
+
+#[test]
+fn erf_derivative_is_the_gaussian() {
+    // erf'(x) = 2/sqrt(pi) exp(-x^2), which the AD builds from exp, not
+    // from a second erf, so the finite difference also checks erf itself.
+    for x in [0.0_f64, 0.3, -0.8, 1.7, -2.4] {
+        let exact = std::f64::consts::FRAC_2_SQRT_PI * (-x * x).exp();
+        check(&math1(MathFn::Erf), "f", 0, &[x], exact);
+    }
+}
+
+#[test]
+fn asinh_derivative_survives_a_huge_argument() {
+    // 1/sqrt(x² + 1) would overflow x²; hypot(1, x) does not.
+    let x = 1e200;
+    check_with(&math1(MathFn::Asinh), "f", 0, &[x], 1.0 / x, false);
 }
 
 #[test]
@@ -440,6 +472,13 @@ fn math_tangents_have_the_right_dimension() {
             len.clone(),
             dimless.clone(),
         ),
+        // sign(length) is a pure number, and constant.
+        (
+            MathFn::Sign,
+            vec![len.clone()],
+            dimless.clone(),
+            per_len.clone(),
+        ),
         // atan2(y, x): dimensionless result, slope wrt a length is 1/length.
         (
             MathFn::Atan2,
@@ -472,7 +511,14 @@ fn math_tangents_have_the_right_dimension() {
 #[test]
 fn math_domain_edges_fail_like_the_primal() {
     // d sqrt(x) at 0 divides by zero; asin at 1 too.
-    for (f, x) in [(MathFn::Sqrt, 0.0), (MathFn::Asin, 1.0), (MathFn::Log, 0.0)] {
+    for (f, x) in [
+        (MathFn::Sqrt, 0.0),
+        (MathFn::Asin, 1.0),
+        (MathFn::Log, 0.0),
+        (MathFn::Acosh, 1.0),
+        (MathFn::Atanh, 1.0),
+        (MathFn::Log1p, -1.0),
+    ] {
         let mut m = math1(f);
         let name = differentiate_into(&mut m, "f", 0).unwrap();
         let args = vec![Value::scalar(x)];

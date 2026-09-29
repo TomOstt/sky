@@ -11,9 +11,13 @@ mod ir;
 mod repl;
 mod run;
 
-const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] <file.sky>\n       sky run <file.sky>\n       sky repl\n\n\
+const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] <file.sky>\n       sky run [--engine=auto|ast|sir] <file.sky>\n       sky repl\n\n\
                      <stage> is `lower`, `final` (the default), or `after:<pass>` for one of\n\
-                     fold, egraph, dce, cholesky";
+                     fold, egraph, dce, cholesky\n\
+                     --engine picks how `sky run` executes: `ast` (the tree-walking\n\
+                     interpreter, the default), `sir` (lower to SIR, run the optimized IR),\n\
+                     or `auto` (SIR, falling back to the tree-walker for programs SIR cannot\n\
+                     lower yet)";
 
 /// The `sky` command line.
 ///
@@ -54,19 +58,21 @@ fn main() -> ExitCode {
             check(&opts, &file, &src)
         }
         Some("run") => {
-            let [path] = &args[1..] else {
-                eprintln!("{USAGE}");
-                return ExitCode::from(2);
+            let (path, engine) = match parse_run_args(&args[1..]) {
+                Ok(x) => x,
+                Err(msg) => {
+                    eprintln!("{USAGE}");
+                    if let Some(msg) = msg {
+                        eprintln!("\nerror: {msg}");
+                    }
+                    return ExitCode::from(2);
+                }
             };
-            if path.starts_with("--") {
-                eprintln!("{USAGE}");
-                return ExitCode::from(2);
-            }
-            let (file, src) = match read_entry(path) {
+            let (file, src) = match read_entry(&path) {
                 Ok(x) => x,
                 Err(code) => return code,
             };
-            run::run(path, &file, &src)
+            run::run(&path, &file, &src, engine)
         }
         Some("repl") => {
             if args.len() != 1 {
@@ -80,6 +86,30 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// Parses `sky run`'s arguments: one file and at most one
+/// `--engine=ast|sir|auto` (before or after the file, like `check`'s flags).
+/// `Err` is a usage error: the message, if it needs one beyond the usage
+/// text.
+fn parse_run_args(args: &[String]) -> Result<(String, run::Engine), Option<String>> {
+    let (mut path, mut engine) = (None, None);
+    for arg in args {
+        if let Some(text) = arg.strip_prefix("--engine=") {
+            let e = run::Engine::parse(text).ok_or_else(|| {
+                Some(format!(
+                    "unknown engine `{}` (use `auto`, `ast` or `sir`)",
+                    display_safe(text)
+                ))
+            })?;
+            if engine.replace(e).is_some() {
+                return Err(None);
+            }
+        } else if arg.starts_with("--") || path.replace(arg.clone()).is_some() {
+            return Err(None);
+        }
+    }
+    Ok((path.ok_or(None)?, engine.unwrap_or_default()))
 }
 
 /// Opens and reads the entry file for `check` and `run`. One open, then

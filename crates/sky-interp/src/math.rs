@@ -13,8 +13,14 @@
 //! `atan2(0, 0)` (which C returns 0 for, but the angle of the zero vector
 //! is undefined, and a silent 0 hides a bug). A finite input whose result
 //! does not fit an `f64` (`exp(1000)`, `hypot` of two huge numbers) is the
-//! usual overflow error. Underflow to zero (`exp(-1000)`) is fine: zero is
-//! a correct rounding, not a lost value.
+//! usual overflow error. The same holds for the added functions: `log1p(x)`
+//! for `x <= -1`, `acosh(x)` for `x < 1` and `atanh(x)` for `|x| >= 1` are
+//! domain errors (the last two limits are infinite), and `expm1`, `sinh` and
+//! `cosh` overflow for large arguments. `erf` (see `erf`), `tanh`, `asinh`
+//! and `sign` cannot fail. `sign(0)` is 0, and `sign` accepts any
+//! dimension and returns a plain number.
+//! Underflow to zero (`exp(-1000)`) is fine: zero is a correct rounding, not a
+//! lost value.
 //!
 //! `round` is half away from zero (Rust's `f64::round`, C's `round`), not
 //! banker's rounding. A result of `-0` is normalised to `0`, so `round(-0.4)`
@@ -25,6 +31,7 @@ use sky_diag::Span;
 use sky_units::{MathDimError, MathFn};
 
 use crate::arith::{arity_mismatch, describe, finite, R};
+use crate::erf::erf;
 use crate::{RuntimeError, Value};
 
 /// `f(args)` for already evaluated arguments. `whole` is the call's span
@@ -112,9 +119,58 @@ pub fn apply(f: MathFn, args: &[Value], whole: Span, spans: &[Span]) -> R<Value>
         MathFn::Floor => x.floor(),
         MathFn::Ceil => x.ceil(),
         MathFn::Round => x.round(),
+        MathFn::Expm1 => x.exp_m1(),
+        MathFn::Log1p if x <= -1.0 => {
+            let what = if x == -1.0 { "-1" } else { "a number below -1" };
+            return Err(domain(what).with_secondary(span_of(0), format!("this is {what}")));
+        }
+        MathFn::Log1p => x.ln_1p(),
+        MathFn::Sinh => x.sinh(),
+        MathFn::Cosh => x.cosh(),
+        MathFn::Tanh => x.tanh(),
+        MathFn::Asinh => asinh(x),
+        MathFn::Acosh if x < 1.0 => {
+            return Err(domain("a number below 1").with_secondary(span_of(0), "this is below 1"))
+        }
+        MathFn::Acosh => acosh(x),
+        MathFn::Atanh if x.abs() >= 1.0 => {
+            return Err(domain("a number outside (-1, 1)")
+                .with_secondary(span_of(0), "this is outside (-1, 1)")
+                .with_note("atanh(x) grows without bound as x approaches 1 or -1"))
+        }
+        MathFn::Atanh => x.atanh(),
+        MathFn::Erf => erf(x),
+        MathFn::Sign if x == 0.0 => 0.0,
+        MathFn::Sign => x.signum(),
     };
     // `+ 0.0` turns `-0.0` into `0.0`.
     Ok(Value::number(finite(r, whole)? + 0.0, dim))
+}
+
+/// Above this the `+ 1` under the square root of `asinh`/`acosh` is below
+/// half an ulp and squaring `x` would overflow near `f64::MAX`, so the
+/// asymptotic `ln(2x)` is used (the same switch as fdlibm's).
+const LARGE: f64 = 268_435_456.0; // 2^28
+
+/// `asinh(x)` that stays finite for every finite `x` (the standard
+/// library's forms `x + x/(...)` overflow for `|x|` near `f64::MAX`).
+fn asinh(x: f64) -> f64 {
+    let a = x.abs();
+    let r = if a > LARGE {
+        a.ln() + std::f64::consts::LN_2
+    } else {
+        a.asinh()
+    };
+    r.copysign(x)
+}
+
+/// `acosh(x)` for `x >= 1`, finite for every finite `x`.
+fn acosh(x: f64) -> f64 {
+    if x > LARGE {
+        x.ln() + std::f64::consts::LN_2
+    } else {
+        x.acosh()
+    }
 }
 
 #[cfg(test)]

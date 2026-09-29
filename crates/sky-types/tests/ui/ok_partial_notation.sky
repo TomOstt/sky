@@ -1,0 +1,12 @@
+# (∂f/∂t)(args) is derivative(f, t)(args): the quotient of two names, called
+# where it is written, and it has the same type.
+def position(t: s) -> m:
+    return 5 m/s^2 * t^2
+
+def spring(x: m, k: N/m) -> J:
+    return 0.5 * k * x^2
+
+v: m/s = (∂position/∂t)(2 s)
+f: N = (∂spring/∂x)(0.1 m, 200 N/m)
+half: m^2 = ((∂spring/∂k))(0.1 m, 200 N/m)
+same = (∂position/∂t)(2 s) - derivative(position, t)(2 s)

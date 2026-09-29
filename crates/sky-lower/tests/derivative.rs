@@ -115,3 +115,35 @@ fn a_function_the_ad_pass_cannot_differentiate_is_a_lowering_error() {
     assert!(e.contains("unit annotation"), "{e}");
     assert!(e.contains("print(derivative(f, t)(1 s))"), "{e}");
 }
+
+#[test]
+fn a_gradient_calls_one_derivative_per_parameter_and_gathers_them_in_a_vector() {
+    let src = "k = 3 N/m\ndef U(x: m, y: m) -> J:\n    return k * (x^2 + y^2)\n\
+               print(grad(U)(1 m, 2 m))\n";
+    let m = lower_ok(src);
+    assert_eq!(names(&m), ["<main>", "U", "dU/dx", "dU/dy"]);
+    let main = main_fn(&m);
+    for callee in ["dU/dx", "dU/dy"] {
+        let calls = main
+            .ops
+            .iter()
+            .filter(|o| matches!(&o.kind, OpKind::Call { callee: c } if c == callee))
+            .count();
+        assert_eq!(calls, 1, "{callee}");
+    }
+    let literal = main
+        .ops
+        .iter()
+        .find(|o| matches!(o.kind, OpKind::ArrayLiteral { cols: None }))
+        .expect("the derivatives are gathered in an array literal");
+    assert_eq!(literal.operands.len(), 2);
+    assert_eq!(run(src), "[6 N, 12 N]\n");
+}
+
+#[test]
+fn partial_notation_lowers_to_the_derivative_function() {
+    let src = format!("{POSITION}print((∂x/∂t)(2 s))\n");
+    let m = lower_ok(&src);
+    assert_eq!(names(&m), ["<main>", "x", "dx/dt"]);
+    assert_eq!(run(&src), "20 m/s\n");
+}

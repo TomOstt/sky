@@ -1,0 +1,45 @@
+crates/sky-types/tests/ui/err_math_more_dimensions.sky:3:11: error: the argument of `expm1` must be dimensionless, found length
+  |
+3 | a = expm1(x)
+  |           ^ this has dimension length
+  = note: expm1(x) = exp(x) - 1, and exp needs a pure number
+  = help: divide by a reference length, e.g. `expm1(x / (1 m))`
+
+crates/sky-types/tests/ui/err_math_more_dimensions.sky:4:11: error: the argument of `log1p` must be dimensionless, found time
+  |
+4 | b = log1p(2 s)
+  |           ^^^ this has dimension time
+  = note: log1p(x) = log(1 + x) adds x to 1, which only makes sense when x is a pure number
+  = help: divide by a reference time, e.g. `log1p(x / (1 s))`
+
+crates/sky-types/tests/ui/err_math_more_dimensions.sky:5:10: error: the argument of `sinh` must be dimensionless, found velocity
+  |
+5 | c = sinh(5 m/s)
+  |          ^^^^^ this has dimension velocity
+  = note: hyperbolic functions are built from exp(x) and exp(-x), which need a pure number
+  = help: divide by a reference velocity, e.g. `sinh(x / (1 m/s))`
+
+crates/sky-types/tests/ui/err_math_more_dimensions.sky:6:11: error: the argument of `atanh` must be dimensionless, found mass
+  |
+6 | d = atanh(1 kg)
+  |           ^^^^ this has dimension mass
+  = note: inverse hyperbolic functions are logarithms of expressions in a pure number x, like log(x + sqrt(x² + 1))
+  = help: divide by a reference mass, e.g. `atanh(x / (1 kg))`
+
+crates/sky-types/tests/ui/err_math_more_dimensions.sky:7:9: error: the argument of `erf` must be dimensionless, found length
+  |
+7 | e = erf(x)
+  |         ^ this has dimension length
+  = note: erf(x) integrates exp(-t²) up to x, and exp needs a pure number, so x must be one
+  = help: divide by a reference length, e.g. `erf(x / (1 m))`
+
+crates/sky-types/tests/ui/err_math_more_dimensions.sky:9:15: error: `sign` takes 1 argument, found 2
+  |
+9 | g = sign(1 m, 2 m)
+  |               ^^^ extra argument
+  = help: call it as `sign(x)`
+
+crates/sky-types/tests/ui/err_math_more_dimensions.sky:10:8: error: unknown unit `kdeg`
+   |
+10 | h = 30 kdeg
+   |        ^^^^

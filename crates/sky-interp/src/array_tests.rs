@@ -178,6 +178,68 @@ fn inverse_of_known_matrices() {
 }
 
 #[test]
+fn transpose_swaps_the_axes_and_keeps_dimension_and_values() {
+    assert_eq!(show("[[1, 2, 3], [4, 5, 6]]ᵀ"), "[[1, 4], [2, 5], [3, 6]]");
+    // `transpose(A)` is the same operator, like `inv(A)` for `⁻¹`.
+    assert_eq!(
+        run("transpose([[1, 2, 3], [4, 5, 6]])").unwrap(),
+        run("[[1, 2, 3], [4, 5, 6]]ᵀ").unwrap()
+    );
+    // Units ride along untouched.
+    assert_eq!(
+        show("[[1 m, 2 m], [3 m, 4 m]]ᵀ"),
+        "[[1 m, 3 m], [2 m, 4 m]]"
+    );
+    // A double transpose is the original, and a number is its own transpose.
+    assert_eq!(show("[[1, 2, 3], [4, 5, 6]]ᵀᵀ"), "[[1, 2, 3], [4, 5, 6]]");
+    assert_eq!(show("5 kg ᵀ"), "5 kg");
+    assert_eq!(show("5 kgᵀ"), "5 kg");
+    assert_eq!(show("transpose(2)"), "2");
+    // Postfix binds tighter than `@`: `Aᵀ @ A` is Gram, and it is symmetric.
+    let mut env = RuntimeEnv::new();
+    run_in(&mut env, "A = [[1, 2], [3, 4], [5, 6]]").unwrap();
+    assert_eq!(
+        run_in(&mut env, "Aᵀ @ A").unwrap().to_string(),
+        "[[35, 44], [44, 56]]"
+    );
+    assert_eq!(
+        run_in(&mut env, "A @ Aᵀ").unwrap().to_string(),
+        "[[5, 11, 17], [11, 25, 39], [17, 39, 61]]"
+    );
+    // (A B)ᵀ = Bᵀ Aᵀ.
+    run_in(&mut env, "B = [[1, 0, 2], [0, 1, 3]]").unwrap();
+    assert_eq!(
+        run_in(&mut env, "(B @ A)ᵀ").unwrap(),
+        run_in(&mut env, "Aᵀ @ Bᵀ").unwrap()
+    );
+}
+
+#[test]
+fn transpose_of_a_vector_or_a_non_array_is_a_runtime_error() {
+    assert_eq!(
+        err("[1, 2, 3]ᵀ"),
+        "cannot transpose Vector[3]: transpose needs a matrix"
+    );
+    assert_eq!(
+        err("transpose([1, 2])"),
+        "cannot transpose Vector[2]: transpose needs a matrix"
+    );
+    assert_eq!(err("trueᵀ"), "cannot transpose a Bool");
+    assert_eq!(
+        err("transpose(1, 2)"),
+        "`transpose` takes 1 argument, found 2"
+    );
+}
+
+#[test]
+fn a_user_function_named_transpose_shadows_the_builtin() {
+    assert_eq!(
+        show("def transpose(x):\n    return x + 1\ntranspose(1)"),
+        "2"
+    );
+}
+
+#[test]
 fn inverse_of_a_symmetric_matrix_is_bitwise_symmetric() {
     let v = run("[[2, -1, 0.3, 0.1], [-1, 2, -1, 0.7], [0.3, -1, 2, -1], [0.1, 0.7, -1, 2]]⁻¹")
         .unwrap();

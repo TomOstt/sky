@@ -18,9 +18,13 @@
 //! # Module layout
 //!
 //! * The file's top-level statements are the function [`Module::MAIN`]
-//!   (`<main>`), first in the module; it has no results. A declaration
-//!   without a value at the top level (`A: PositiveDefinite Matrix[N, N]`)
-//!   is an *input*, a parameter of `<main>` typed with the declared type.
+//!   (`<main>`), first in the module; it has no results and no parameters.
+//!   A declaration without a value at the top level
+//!   (`A: PositiveDefinite Matrix[N, N]`) is an *input*: an `input`
+//!   operation, at the declaration, whose result has the declared type. It
+//!   fails when it runs ("`A` is declared but has no value": nothing
+//!   supplies an input in v0.1), so the program prints what comes before it
+//!   and stops there, as `sky run` does.
 //! * Every `def` (however nested) is a function with the def's name (a
 //!   later def of the same name is `name#2`, ...), in source order after
 //!   `<main>`. Its parameters are typed by the annotations
@@ -43,6 +47,15 @@
 //! variable, else the module's" is an ordinary lookup, and a call passes
 //! the *module's* values, never the caller's locals.
 //!
+//! A predefined constant is a literal only where **no binding of its name
+//! can be in scope**: the interpreter keeps constants in the same
+//! environment as variables, so `if c: pi = 2` changes `pi` after the `if`.
+//! A constant that the file or a function binds inside an `if`, `while` or
+//! `for` is therefore put in scope as a `const.float` at the start of that
+//! function (`Lower::seed_constants`) and is an ordinary variable from then
+//! on (merged after the `if`, carried by the loop); one the module rebinds
+//! anywhere is a global as above.
+//!
 //! # Variables are SSA
 //!
 //! Lowering keeps a map from name to the current SSA value, with the
@@ -53,7 +66,13 @@
 //!   every name whose value differs on some path becomes a **result** of the
 //!   `if`, and each arm yields its current values. A name that is bound
 //!   after the `if` only on some paths (the checker calls it "maybe
-//!   undefined") is not a result: a checked program cannot read it.
+//!   undefined") is not a result: a checked program cannot read it. "Some
+//!   paths" are the arms that *fall through*: an arm that `break`s,
+//!   `continue`s or returns takes no part, as in the checker's merge
+//!   (`sky-types/src/flow.rs`), so `t` is a result of an `if` whose other
+//!   arm `break`s (with a stand-in on the breaking path, which the flags
+//!   make unobservable). A name the enclosing loop's exit reads (a new name
+//!   of a `while true`) is a result too, if a `break`ing arm binds it.
 //! * `while` is `scf.while`: the variables the body assigns (that are bound
 //!   before the loop) are the **loop-carried** values, block arguments of
 //!   `before` and `after` and results of the loop. `before` computes the
@@ -62,6 +81,13 @@
 //!   arm (below).
 //! * `and`/`or` are a running Bool updated by sibling `if`s, one per
 //!   operand (below); `a if c else b` is an `if` with a result.
+//! * An operand of `and`/`or`/`not`, or a condition, that the checker could
+//!   not type (`Unknown`: the result of a function with unannotated
+//!   parameters) gets an `expect.bool[kw]` at the operand's span, with the
+//!   construct's keyword (`elif` and the conditional expression are `if`).
+//!   It fails with `sky run`'s message on `sky run`'s span, and it covers the
+//!   operand that is only yielded (the last of an `and`/`or`), which no `if`
+//!   tests. A typed Bool gets none.
 //! * `for i in range(a, b, s)` is that `while` over a hidden carried index
 //!   (`<i1>`, `<i2>`, ...) that the body's first operations copy into `i`
 //!   and advance; see `for_loop.rs`. `for x in v` over an array is a
@@ -153,8 +179,22 @@
 //! but the top level of the file; and anything SIR v1 has no
 //! representation for: a function used as a value (passed, stored,
 //! returned), calling anything that is not a function defined with `def`.
-//! Also number literals that overflow `f64`, which the interpreter reports
-//! when it evaluates them.
+//!
+//! Two programs `sky run` runs are refused for that reason, by design: a
+//! function defined in more than one arm of an `if` and called afterwards
+//! (a SIR call names one function, fixed at compile time: "`f` is not a
+//! function known at compile time"), and a nested `def` that reads a local
+//! of its enclosing function (a SIR function sees only its own values and
+//! the module's names, which lowering passes; "cannot find `a` in this
+//! scope", even when the inner function is never called, where `sky run`
+//! fails only if it is). `sky run` falls back to the tree-walker on a
+//! [`LowerError`]. The spec's "Functions" lists both.
+//!
+//! Not rejected, though `sky run` reports it only when it evaluates the
+//! literal: a number literal too large for an `f64` (or whose SI value is).
+//! It is a `literal.error` operation that fails when it runs, with
+//! `sky run`'s error on `sky run`'s span, so a literal in a branch that never
+//! runs is harmless.
 //!
 //! # Effects
 //!
@@ -265,6 +305,28 @@ pub fn lower_with_defs(
     src: &str,
     checked: &Checked,
 ) -> Result<(Module, HashMap<Span, String>), LowerError> {
+    lower_impl(module, src, checked, false)
+}
+
+/// [`lower`] for a module that is about to be executed in place of the tree
+/// walker (`sky run`'s SIR engine), which must behave exactly as the tree
+/// walker does. It refuses, with a [`LowerError`], the programs whose SIR
+/// would run differently because SIR cannot express a check the tree walker
+/// makes at run time: today, a `for` over `range` with a bound or step
+/// computed at run time (see `for_loop.rs`). Everything else is [`lower`].
+///
+/// Tools that only look at the IR (`sky check --emit-ir`) keep using
+/// [`lower`], which lowers such a loop as far as `f64` arithmetic goes.
+pub fn lower_for_run(module: &Ast, src: &str, checked: &Checked) -> Result<Module, LowerError> {
+    lower_impl(module, src, checked, true).map(|(m, _)| m)
+}
+
+fn lower_impl(
+    module: &Ast,
+    src: &str,
+    checked: &Checked,
+    for_run: bool,
+) -> Result<(Module, HashMap<Span, String>), LowerError> {
     let main = FnState {
         b: Builder::new(Module::MAIN.to_string(), module.span),
         scope: Default::default(),
@@ -287,10 +349,12 @@ pub fn lower_with_defs(
         st: main,
         stack: Vec::new(),
         derivatives: Vec::new(),
+        for_run,
     };
     lw.collect_defs(&module.stmts);
     lw.collect_module_names(&module.stmts);
     lw.collect_literal_bindings(&module.stmts);
+    lw.seed_constants(&module.stmts, module.span);
     lw.block(&module.stmts, &Needed::new())?;
     lw.st
         .b

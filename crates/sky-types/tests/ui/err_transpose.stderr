@@ -1,0 +1,50 @@
+crates/sky-types/tests/ui/err_transpose.sky:5:6: error: cannot transpose Vector[3]: transpose needs a matrix
+  |
+5 | a = vᵀ
+  |      ^
+  |     - this is Vector[3] [1]
+  = note: transpose swaps the two axes of a matrix; this shape has 1 axis ([3])
+  = help: vectors have no row or column orientation, so there is nothing to transpose: `u @ v` is already the dot product, and a 1 by n or n by 1 matrix is written `[[1, 2, 3]]` or `[[1], [2], [3]]`
+
+crates/sky-types/tests/ui/err_transpose.sky:6:5: error: cannot transpose Vector[3]: transpose needs a matrix
+  |
+6 | b = transpose(v)
+  |     ^^^^^^^^^
+  |               - this is Vector[3] [1]
+  = note: transpose swaps the two axes of a matrix; this shape has 1 axis ([3])
+  = help: vectors have no row or column orientation, so there is nothing to transpose: `u @ v` is already the dot product, and a 1 by n or n by 1 matrix is written `[[1, 2, 3]]` or `[[1], [2], [3]]`
+
+crates/sky-types/tests/ui/err_transpose.sky:7:5: error: `ᵀ` needs a number, found Bool
+  |
+7 | c = trueᵀ
+  |     ^^^^ this is Bool
+  = note: v0.1 has no truthiness: a Bool is never a number
+
+crates/sky-types/tests/ui/err_transpose.sky:8:5: error: `transpose` takes 1 argument, found 2
+  |
+8 | d = transpose(A, B)
+  |     ^^^^^^^^^^^^^^^ wrong number of arguments
+  = help: call it as `transpose(A)` or write `Aᵀ`
+
+crates/sky-types/tests/ui/err_transpose.sky:9:7: error: cannot multiply Matrix[3,4] by Matrix[3,4]
+  |
+9 | e = A @ B
+  |       ^ inner dimensions differ: 4 vs 3
+  |     - this is Matrix[3,4] [1]
+  |         - this is Matrix[3,4] [1]
+  = note: `@` contracts the last axis of the left operand with the first axis of the right one: [m, k] @ [k, n] -> [m, n]
+  = note: here [3, *4*] @ [*3*, 4] needs 4 == 3
+  = help: the shapes would match if the left operand were transposed: Matrix[3,4] would become Matrix[4,3], or if the right operand were transposed: Matrix[3,4] would become Matrix[4,3] (transpose is the postfix `ᵀ` or `transpose(x)`)
+
+crates/sky-types/tests/ui/err_transpose.sky:12:7: error: cannot add Matrix[4,3] to Matrix[3,4]
+   |
+12 | h = A + Bᵀ
+   |       ^ axis 0 differs: 3 vs 4
+   |     - this is Matrix[3,4] [1]
+   |         -- this is Matrix[4,3] [1]
+   = note: axis     0  1
+   = note: left     3  4
+   = note: right    4  3
+   = note: differs  ^
+   = note: in a matrix, axis 0 is the rows and axis 1 the columns
+   = help: the shapes would match if the right operand were transposed: Matrix[4,3] would become Matrix[3,4] (transpose is the postfix `ᵀ` or `transpose(x)`)

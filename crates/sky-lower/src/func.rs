@@ -119,6 +119,7 @@ impl Lower<'_> {
             // A parameter of the same name shadows the module's.
             self.st.scope.entry(g.clone()).or_insert(v);
         }
+        self.seed_constants(&body.stmts, span);
         if flags {
             let f = self.const_bool(false, span);
             self.st.scope.insert(RET.to_string(), f);
@@ -136,6 +137,29 @@ impl Lower<'_> {
         let done = std::mem::replace(&mut self.st, parent);
         self.out.push((name.span.start, done.b.finish()));
         Ok(())
+    }
+
+    /// Puts the predefined constants that `stmts` (a function's body, or the
+    /// file) bind inside an `if`, `while` or `for` into scope as literals, so
+    /// that they are ordinary variables: the merge after the block, and the
+    /// loop that carries them, treat them like any name bound before. A
+    /// constant read as a bare literal is only right where no path binds it
+    /// (see [`Lower::name`]); the interpreter keeps constants in the same
+    /// environment as variables, so a rebinding on one path changes the
+    /// value after the block. Names already in scope (a parameter, a module
+    /// name the function takes) keep their value.
+    pub(crate) fn seed_constants(&mut self, stmts: &[Stmt], span: Span) {
+        let mut names = BTreeSet::new();
+        crate::analysis::conditionally_bound(stmts, self.src, &mut names);
+        for n in names {
+            if self.st.scope.contains_key(&n) {
+                continue;
+            }
+            if let Some(c) = lookup_constant(&n) {
+                let v = self.const_float(c.value, Type::scalar(c.dim), span);
+                self.bind(&n, v);
+            }
+        }
     }
 
     /// A function body: the statements, then `return`.
@@ -417,7 +441,9 @@ impl Lower<'_> {
                 }
             }
             ExprKind::Literal(_) | ExprKind::UnitLiteral { .. } => {}
-            ExprKind::Unary { operand, .. } | ExprKind::Inverse { operand, .. } => {
+            ExprKind::Unary { operand, .. }
+            | ExprKind::Inverse { operand, .. }
+            | ExprKind::Transpose { operand, .. } => {
                 self.scan_expr(operand, defined, direct, callees)
             }
             ExprKind::Paren(inner) => self.scan_expr(inner, defined, direct, callees),

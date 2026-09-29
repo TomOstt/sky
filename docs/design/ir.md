@@ -60,10 +60,11 @@ Type = Number { dim: Dimension, shape: Shape, tags: TagSet, repr: Repr }
 
 Repr = Unchosen         -- L1 default: a strategy pass decides
      | Exact            -- rational or symbolic until approximation is needed (idea 9)
+                        -- reserved: no pass chooses it (see "Exact and symbolic values")
      | F32 | F64        -- chosen by precision passes (F16, BF16, F128 come with Phase 3)
 ```
 
-Functions are not first-class values in v1: calls name their callee (`call @f`). A function's parameter types are also the types of its entry block's arguments, and the verifier checks that the two agree. `if` and `while` report no effects of their own; a pass computes their effects from their regions.
+Functions are not first-class values in v1: calls name their callee (`call @f`). A function's parameter types are also the types of its entry block's arguments, and the verifier checks that the two agree. `if`, `while` and `fused` report no effects of their own; a pass computes their effects from their regions.
 
 `Dimension`, `Shape` and `TagSet` are the existing types from sky-units and sky-types, reused as they are. SIR depends on those crates and does not copy them. Tags stay *closed* (implications applied), as the checker already guarantees.
 
@@ -73,14 +74,15 @@ Planned extension points, which v1 leaves out: an error bound per value (interva
 
 | Group | Operations |
 |---|---|
-| Constants | `const.rational`, `const.float`, `const.bool`, `const.str`, `const.symbol` (π, e, √2) |
+| Constants | `const.rational`, `const.float`, `const.bool`, `const.str`, `const.symbol` (π, e, √2) is deferred (see "Exact and symbolic values"); `literal.error[too_large\|overflow]`, a literal with no finite `f64` value, which fails when it runs (as `sky run` does, only where it is evaluated) |
 | Arithmetic | `add`, `sub`, `mul`, `div`, `neg`, `pow` (with a constant rational exponent attribute when known), `inverse` |
 | Linear algebra | `matmul`, `transpose`, `solve` (produced by rewrites, never written by users in v1) |
 | Arrays | `array.literal`, `index`, `slice`, `zeros`, `identity`, `len`; `add`, `sub`, `mul` (scaling), `div`, `neg`, `inverse` and `matmul` also work on arrays |
-| Comparison and logic | `cmp.{eq,ne,lt,le,gt,ge}` (on Bools and strings only `eq`/`ne`), `not`; `and`/`or` short-circuit, so they lower to `if` |
+| Comparison and logic | `cmp.{eq,ne,lt,le,gt,ge}` (on Bools and strings only `eq`/`ne`), `not`; `and`/`or` short-circuit, so they lower to `if`; `expect.bool[and\|or\|not\|if\|while]`, the run-time Bool check of an operand the checker could not type (an unannotated parameter's result), which fails with `sky run`'s wording and on the operand's span |
 | Control | `if` (regions), `while` (regions), `yield`, `call`, `return` |
+| Fusion | `fused` (one region: a scalar body run per element; made by the `fuse` pass, see "Fusion") |
 | Display | `show "unit"` (`v as km/h`: the operand written in a unit, a `str`, only ever printed) |
-| Environment | `param`, `print` (effectful) |
+| Environment | `param`, `input "name"` (a value-less declaration: no operands, a result of the declared type; nothing supplies it in v0.1, so it fails when run with "`name` is declared but has no value", at the declaration), `print` (effectful) |
 
 Every operation kind is declared once, in a table with:
 - its operand and result type rule (a function reusing `sky_types::rules`);
@@ -120,14 +122,58 @@ v1 ships these passes:
 3. **effects** (`sky_ir::effects`): the union over operations and regions, calls taking the callee's effects, recursion by fixed point. Not part of the default pipeline (lowering already ran it); available as a pass that also tightens declarations.
 4. **fold**: constant folding, exact on rationals and bit-identical to the reference interpreter on floats.
 5. **egraph**: rewriting with `egg` under the `Reproducible` contract (exact and conditional rules only).
-6. **dce**: removes pure operations whose results are never used, with an explanation when user-written code is removed (idea 30).
-7. **cholesky**: `matmul(inverse(A), b)` with PositiveDefinite A becomes `solve[cholesky](A, b)`. Its explanation is the checker's sentence for the same rewrite, word for word (`sky_opt::cholesky_text`).
+6. **dce**: removes pure operations whose results are never used, and operations that can fail by kind but provably cannot here (`DCE-002`), with an explanation when user-written code is removed (idea 30).
+7. **fuse**: trees of elementwise array operations become one `fused` kernel (`FUSE-001`); see "Fusion" below.
+8. **cholesky**: `matmul(inverse(A), b)` with PositiveDefinite A becomes `solve[cholesky](A, b)`. Its explanation is the checker's sentence for the same rewrite, word for word (`sky_opt::cholesky_text`).
 
-The default pipeline (`sky_opt::default_pipeline`) is 4, 5, 6, 7 in that order: fold first so the e-graph sees constants; the e-graph before dce because it leaves the operations it replaced behind; cholesky last so its `solve` is never rewritten. `sky-opt`'s passes and `sky-egraph`'s rewriting each keep their own record type (`Rewrite`), and convert to `Explanation` in one place each (`Rewrite::explain`, through `PassCx::explain`), so rule ids and texts are unchanged.
+Alongside the passes, `sky_ir::exact` (see "Exact and symbolic values") is an *analysis*: it changes nothing, so it is not in the pipeline, and each pass that wants it (`fold` for explanations, `dce`, the e-graph) computes it again rather than caching it across a change.
+
+The default pipeline (`sky_opt::default_pipeline`) is 4, 5, 6, 7, 8 in that order: fold first so the e-graph sees constants; the e-graph before dce because it leaves the operations it replaced behind; dce before fuse because a dead operation left behind counts as a second use of its operands and would keep a temporary alive; fuse after the e-graph because a `fused` body is opaque to fold and the e-graph (they would otherwise rewrite it as scalar code, and `neg` differs, below); cholesky last so its `solve` is never rewritten (fuse and cholesky touch different operations, so their relative order does not matter). `sky-opt`'s passes and `sky-egraph`'s rewriting each keep their own record type (`Rewrite`), and convert to `Explanation` in one place each (`Rewrite::explain`, through `PassCx::explain`), so rule ids and texts are unchanged.
+
+### Fusion
+
+A chain such as `c = (a + b) * 2 - d` over arrays builds a temporary array per operation. The `fuse` pass turns a chain (in general a tree) of elementwise operations into one `fused` operation that computes each element once. It records the loop and the composition, not machine code: there is no code generation yet, and a later backend gets one kernel per `fused`. The payoff now is explicit structure, and an explanation of each kernel in `--explain`.
+
+```text
+%c = fused %a, %b, %two, %d : num[1; (3)] {
+  ^1(%x: num[1; ()], %y: num[1; ()], %s: num[1; ()], %e: num[1; ()]):
+    %t1 = add %x, %y : num[1; ()] @ 47..52
+    %t2 = mul %t1, %s : num[1; ()] @ 46..57
+    %r = sub %t2, %e : num[1; ()] @ 46..61
+    yield %r @ 46..61
+} @ 46..61
+```
+
+**The operation** (`OpKind::Fused`, specified in `op.rs`):
+
+* Operands: `k >= 1` values, arrays of one shape and scalars, at least one array. A scalar operand is broadcast, as in the scaling `A * s`.
+* One result: an array of that shape, whose dimension is that of the value the body yields.
+* One region with one block. Its arguments are the per-element values, one per operand in order (a scalar of the operand's dimension). Its operations are scalar and it ends in `yield` of one value.
+* The verifier checks that the body is scalar-only (every result a scalar number or a Bool), pure or `Fail` only (no `print`, no `call`), has no nested regions (no control flow in v1), and is self-contained (it uses only its arguments and its own results); that the argument count and dimensions match the operands; and that the result's shape is the operands' and its dimension the yield's.
+* Effects are those of the body: `fail` if any operation in it can fail. `properties()` says pure, as for `if` and `while`, and effect inference and the passes look inside. The text format needs nothing new (regions already print and parse), and canonicalization treats the body like any region.
+* Element `i` of the result is what the body computes with element `i` of each array operand. Each body operation is evaluated by the code an unfused operation uses (`sky_interp::arith`), so results are bit-identical, with one exception: `neg` in a body is `0 - x`, as `neg` on an array is (a zero stays `+0`, where scalar `neg` gives `-0`). For that reason fold and the e-graph leave `fused` bodies alone.
+
+**Failure semantics.** The unfused chain runs one operation over all elements, then the next, and reports the *first operation in program order* that fails at any element (division by zero, overflow); an error carries its operation's message and span, never an element. Per-element evaluation could meet a later operation's failure at an earlier element first. Two designs were possible: fuse only when at most one operation can fail, or define the fused operation's error to be the unfused one. We chose the second, so no chain is refused: **a `fused` reports the error of the earliest failing operation in body order, over all elements.** The reference interpreter runs the elements in order; when body operation `k` fails, it remembers the error and runs the remaining elements only up to operation `k`, so an earlier operation failing at a later element replaces it. A backend may visit elements in any order as long as it reports that error. The body keeps the operations in the unfused program order and their own spans, so the error is the same message at the same span. This is tested three ways: hand-built kernels where the naive order gives a different span (in `sky-opt` and `sky-ir-interp`), a differential property test over random elementwise programs with division by zero and overflow (the same output, error message and span before and after `fuse`), and the pipeline test.
+
+**What is fused.** A candidate is `add`, `sub`, `mul`, `div` or `neg` on arrays of known type, laid out as the checker allows (two arrays of one shape for `add`/`sub`, an array and a scalar for `mul`, an array over a scalar for `div`). A candidate is absorbed into its consumer when its result has exactly one use, which is an operand of a candidate in the same block. A *tree* is a candidate with everything absorbed into it, and a tree of two or more operations becomes one `fused` at the root's position. Scalar operands stay outside as operands. The kernel keeps the root's result value (name and users) and the join of the operations' spans, and the operations move into the body with their own spans and names.
+
+Moving the operations to the root's position must not reorder effects: an operation that can fail is never moved past another operation that can fail, print, call, loop, or touch an `Unknown`-typed value (which may fail dynamically). If a tree would move past one, the tree is not fused as a whole; its subtrees are tried, and the pass repeats until nothing is left, so it is idempotent.
+
+**Explanation.** One `FUSE-001` per kernel, at the joined span. For the chain above, `sky check --explain` says:
+
+```text
+note: [FUSE-001] `(a + b) * 2 - d` is rewritten to `fused(a, b, 2, d)`
+  = note: applied by the `fuse` pass
+  = note: because fused 3 elementwise operations into one kernel; saves 2 temporary arrays of 3 elements
+  = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[3]
+  = note: because 3 of the operations can fail (`add`, `mul`, `sub`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
+```
+
+It also names the user's variables that stop being materialized (`` `t` is only used here ``), and says "no operation can fail" or "only `div` can fail, so a failure has the same message and place as before" when that is the case.
 
 ### `sky check` and the passes
 
-* `sky check --emit-ir[=<stage>]` prints the SIR text to stdout: `lower` (straight out of lowering), `after:<pass>` (or just the pass name: `fold`, `egraph`, `dce`, `cholesky`), or `final` (the default, the end of the pipeline). With the flag, stdout is only the IR, so it can be piped into a file and parsed back; the `edition:` and `ok` lines go to stderr.
+* `sky check --emit-ir[=<stage>]` prints the SIR text to stdout: `lower` (straight out of lowering), `after:<pass>` (or just the pass name: `fold`, `egraph`, `dce`, `fuse`, `cholesky`), or `final` (the default, the end of the pipeline). With the flag, stdout is only the IR, so it can be piped into a file and parsed back; the `edition:` and `ok` lines go to stderr.
 * `sky check --explain` also shows the passes' explanations, merged with the checker's notes in source order. The checker's Cholesky note is kept as it is (it names the operands by their source text, which SIR does not keep), and the pass's explanation of the same site is dropped, so it is never shown twice. A site only the IR sees (`B = inv(A)`, then `B @ b`) is shown once, from the pass, in the same words.
 * A program that checks but cannot be lowered yet (`sky_lower::LowerError`, today: array literals) is still `ok`. `--emit-ir` prints a note saying why there is no IR and nothing on stdout; `--explain` alone is unchanged.
 
@@ -146,9 +192,65 @@ Pure L1 expression trees are loaded into an e-graph (the `egg` crate, MIT). Rewr
 
 A rewrite rule must state its side conditions in terms of facts: for example, `Aᵀ → A` requires `Symmetric ∈ tags(A)`, and `x/x → 1` requires `x ≠ 0` proven. That keeps identity-based optimization safe (ideas 5 and 6). Rules that are only valid over the reals, not over floats (for instance reassociation), are tagged and allowed only when the program's numerical contract permits them (`@fast` vs `@reproducible`, original vision §28).
 
+## Exact and symbolic values
+
+Roadmap idea 9 asks for "exact rationals and symbolic constants (π, √2) kept until approximation is needed", and the design's first goal is that an optimization never changes what `sky run` prints. These two pull against each other: `1/10 + 2/10` is exactly `3/10`, and `0.1 + 0.2` is not `0.3` in floats. This section says how they fit together.
+
+### Decision: the meaning stays f64; exactness is an analysis
+
+**SIR means what `sky run` computes**: every scalar is an `f64`, each operation rounds once, in the order written, and an operation whose result would leave the finite numbers fails. This does not change. A `const.float` is the binary number it holds (`0.1` is `3602879701896397 / 2⁵⁵`, not `1/10`), a `const.rational` is converted with one division, and no pass may substitute a value that differs in any bit unless the program opted into a looser contract.
+
+**Exactness is a fact about a value, not a second meaning of it.** `sky_ir::exact` analyses a function and tells each scalar apart along two axes, and keeps them apart:
+
+| | Answers | Domain | May justify a rewrite? |
+|---|---|---|---|
+| **ideal value** | "which real number does this expression denote?" | a `Sym`: a rational, or a sum of at most four terms `q·1`, `q·π`, `q·e`, `q·√n` (`n` squarefree) with rational coefficients; or unknown | no |
+| **range** | "which `f64`s can the interpreter produce here?" | an interval `[lo, hi]` of finite `f64`s; parameters are the whole finite range, constants are points | yes |
+
+The split is the whole design. A fact about the ideal value is a fact about mathematics, and a rewrite justified by it is right for the reals and can be wrong for the float: `sqrt(2) * sqrt(2) - 2` is exactly `0` over the reals and `4.4e-16` in `f64`, so dividing by it is fine at run time, and treating it as zero would be wrong. A fact about the range is a fact about the number the program computes, so it is safe to build on. Passes rely only on ranges. The ideal value is used to *say* things (below) and is the fact a looser contract would use, if a program ever opts into one.
+
+The analysis is total and never guesses. Every transfer function follows the interpreter's own rounding: `+ - * /` and `sqrt` are correctly rounded and monotone, so the range of the result is read off the corners of the operand box with the same `f64` operations, exactly; the libm functions (`exp`, `log`, `sin`, ...) and `powi` get a small relative slack (about 450 ulps for libm), so that a platform's libm cannot make a proof wrong. What it does not know it says: `None` for the ideal value, the whole finite range for the range. The soundness of every transfer function is a property test against `sky_interp`'s own arithmetic and math functions (`crates/sky-opt/src/exact_tests.rs`), and the analysis trusts the same things the other passes trust: a value of type `Number` scalar is a finite number of that dimension, and a value of type `Unknown` is not analysed at all.
+
+### The symbolic domain
+
+`Sym` is a sorted sum of at most `MAX_TERMS = 4` terms. Each atom is `1`, `π`, `e` or `√n`; `√8` is stored as `2√2`, so **two forms are equal as data exactly when they are equal as real numbers**. That needs the atoms to be linearly independent over the rationals, which holds for the square roots of distinct squarefree integers together with `1`, and for `π` or `e` next to them (both are transcendental). Whether `1, π, e` are jointly independent is an open problem, so a form never holds both `π` and `e`, and `π - e` is "not known".
+
+It is closed under `+`, `-`, negation, scaling by a rational, products of algebraic forms (`√2·√3 = √6`, `(1+√2)² = 3+2√2`), division by a rational or a single `q·√n`, small integer powers, and `sqrt` of a rational. A few functions have a closed form at a few points: `exp(1) = e`, `atan(1) = π/4`, `acos(-1) = π`, `floor` and `hypot` of rationals. Everything else (`π²`, `1/π`, `sin 1`) is `None`, and `None` is never wrong, only silent. Coefficients are `i64` rationals with checked arithmetic, so overflow is `None` as well.
+
+Nothing in SIR constructs `π` from a name yet, so it appears only through the functions above and in tests; see "`const.symbol`" below.
+
+### What the analysis is used for
+
+None of these change a printed digit. Each is covered by a differential property test against the reference interpreter.
+
+1. **Discharging `Fail`.** An operation that can fail *by its kind* (`div`, `add`, `mul`, `sqrt`, `log`, ...) but provably cannot with these operands is treated as pure. `x / 2` and `x * 0.5` cannot fail for any finite `x` (the result is at most half of `x` in size); `sqrt(2)` and `log(3)` cannot; `1 / x`, `x / 0.5`, `x * 2`, `x + x` and `sqrt(x)` can, and stay. The analysis repeats the operand-dimension rules instead of trusting the verifier, because a proof of "cannot fail" is only as good as its premises. Consumers:
+   * `dce` removes an unused such operation, and says so with rule **`DCE-002`** and the proof ("`div` can fail in general, but not here: the divisor is 2 (never zero) and the result is at most 9e307 in size, which fits an f64").
+   * the e-graph treats such a node as unable to fail, so a rule that stops evaluating it may fire: `sqrt(3) - sqrt(3)` becomes `0` (`ALG-003` needs its operand droppable).
+2. **Nonzero and positive facts for conditional rules.** A class whose range excludes zero is *nonzero*, and one whose range is above zero is *positive*, as `f64`s. New rule **`ALG-010`**, `x / x → 1`, needs nonzero (`x / x` is exactly `1.0` for every finite nonzero `x`, and fails at zero): `sqrt(5) / sqrt(5)` becomes `1`. Positivity strengthens the sign fact the real-only rules (`EXP-001`, `ALG-004`) ask for. The facts enter the e-graph as fields on the nodes made from the program's own operations, and only under the `Reproducible` contract: a `Fast` rewrite can change a value in its last bit, which could carry a razor-thin fact over its edge. The e-graph's public API is unchanged.
+3. **Exact `--explain` text.** A folded float says what it is over the reals: "over the reals the result is exactly 1/2, and the f64 result is exactly that value", or "over the reals the result is exactly 1/3; the f64 result 0.3333333333333333 is that value rounded (`sky run` rounds at every step)". It is text only: what is folded in is the interpreter's number. An integer the float has exactly says nothing, and neither does a form longer than 30 characters (a `const.float` `0.1` is a rational with a 16-digit numerator, which is the truth about the program and not worth printing).
+
+### What it is deliberately not used for
+
+* **Deciding a rewrite from the ideal value.** See above.
+* **`x - x == 0` for an unknown `x`.** That is the e-graph's job and needs no analysis (`ALG-003`); the analysis only widens what counts as droppable.
+* **Tightening declared function effects.** `infer_effects` stays a function of operation kinds: a declaration is a contract the verifier checks, and a proof is a fact about operands, so a function keeps `fail` in its effects even when every failing operation in it is harmless. A later pass may tighten declarations from proofs.
+* **`FoldMode::Exact`.** It stays the opt-in that keeps exact rationals at the cost of the last printed bit. It changes what is computed; the analysis never does. The analysis is what such a contract would consult to decide when the exact value may replace the float.
+
+### `const.symbol`: not now
+
+The operations table has long listed `const.symbol` (π, e, √2). It is **not added in this version**, for three reasons.
+
+1. It would change no output and enable no rewrite. Its `f64` meaning is the nearest float, which is what `const.float` already holds for `pi` today, and the analysis proves everything the float supports from the float (the range of `pi` is the point `3.141592653589793`: positive, nonzero). A symbol adds a name, and a name is not a fact the optimizer may use without letting the ideal value into a decision, which the rule above forbids.
+2. It would promise more than SIR means. `sin(pi)` is exactly `0` for a symbol and `1.2246e-16` for the float the program computes; an operation called `pi` invites the rewrite that turns one into the other. Until a contract says "this program means the reals", a symbol is a trap.
+3. It touches every match over `OpKind` (verifier, printer, parser, interpreter, lowering, e-graph, AD) while other work is changing that enum, for no immediate benefit.
+
+When a program can opt into a real-valued contract (an `@exact` region, or a `Repr::Exact` chosen by a precision pass), `const.symbol` arrives with it, with the ideal value as its meaning and `f64` as its approximation, and `Sym` is what it plugs into. Until then the way to put an exact `π` in front of the analysis is `acos(-1)`.
+
+One follow-up would make `--explain` say "exactly 3/10" for a decimal literal the user wrote: lowering emitting `const.rational 3/10` for decimal literals whose numerator and denominator are exact floats. That is bit-identical by construction (`n as f64 / d as f64` is the correctly rounded decimal), but it is a lowering change with many golden diffs, and is left alone here.
+
 ## Reference semantics and testing
 
-- **The IR interpreter is the specification.** It evaluates L1 directly. Once it exists, the tree-walking interpreter in sky-interp either becomes lowering plus the IR interpreter, or stays as a second implementation for differential testing. The Phase 1 decision is to keep both until the IR interpreter passes every run test, then retire the tree-walker.
+- **The IR interpreter is the specification.** It evaluates L1 directly. Once it exists, the tree-walking interpreter in sky-interp either becomes lowering plus the IR interpreter, or stays as a second implementation for differential testing. The Phase 1 decision is to keep both until the IR interpreter passes every run test. It does, so `sky run` executes lowered, optimized SIR by default (`--engine=auto`), and the tree-walker stays as the oracle of the differential tests (`--engine=ast`) and as the fallback for what lowering cannot express yet. The run tests in `sky-cli` compare the two engines' stdout, stderr and exit status byte for byte. Two SIR limits are worked around there, and are what to fix before the tree-walker can retire: SIR has no operation that stops a run with a message (so a `range` bound computed at run time stays on the tree-walker), and an operation carries one span (so a runtime error found on SIR is explained by replaying it on the tree-walker).
 - **Differential testing:** for every program in `tests/`, and for fuzz-generated programs, run the unoptimized IR against the optimized IR (and later each backend). They must agree within the declared error bound. This is the practical form of translation validation, and it comes long before formal proofs (idea 6).
 - **Golden IR files:** `tests/ir/*.sky` with `.sir` expectations, blessed like the other goldens.
 - **Fuzzing:** the verifier and the IR text parser each get a fuzz target.
@@ -180,9 +282,9 @@ It is parsed by a small hand-written parser that never panics, limits nesting to
 
 | Crate | Contents | Depends on |
 |---|---|---|
-| `sky-ir` | data model, operation table, verifier, effect inference, text printer and parser, pass manager | sky-units, sky-types (types only), sky-ast (reads the unit text of `show`), sky-diag |
+| `sky-ir` | data model, operation table, verifier, effect inference, exactness analysis, text printer and parser, pass manager | sky-units, sky-types (types only), sky-ast (reads the unit text of `show`), sky-diag |
 | `sky-lower` | checked AST to L1 | sky-ast, sky-types, sky-ir |
-| `sky-opt` | passes: fold, dce, cholesky, and the default pipeline (which includes `sky-egraph`'s pass); later autodiff | sky-ir, sky-egraph |
+| `sky-opt` | passes: fold, dce, fuse, cholesky, and the default pipeline (which includes `sky-egraph`'s pass); later autodiff | sky-ir, sky-egraph |
 | `sky-egraph` | identity-aware e-graph rewriting (`egg`) as a pass | sky-ir |
 | `sky-ir-interp` | reference interpreter | sky-ir, sky-units |
 
@@ -197,7 +299,7 @@ It is parsed by a small hand-written parser that never panics, limits nesting to
 
 Deleting the checker's `cholesky_rewrite`, `RewriteSite`, `Checked::rewrites` and `Checked::cholesky_solves` needs `--explain` and `sky run` to work without them. Today neither does:
 
-* **`sky run` reads `Checked::cholesky_solves`.** The tree-walking interpreter (and the REPL) does the Cholesky solve at exactly the sites the checker chose. The design keeps the tree-walker until the IR interpreter passes every run test; until `sky run` executes SIR, the site set is part of its input.
+* **`sky run` reads `Checked::cholesky_solves`.** The tree-walking interpreter (and the REPL) does the Cholesky solve at exactly the sites the checker chose. The design keeps the tree-walker until the IR interpreter passes every run test; `sky run` executes SIR by default now (`--engine=auto`); the site set stays part of the tree-walker's input, which remains as the fallback and the oracle.
 * **Programs with arrays do not lower.** `ok_cholesky_literal` and `ok_literal_tag_proofs` have `--explain` goldens, and SIR has no array values, so only the checker can explain them.
 * **The wording needs source text.** The checker's note names the operands as written (`(K⁻¹)⁻¹ @ (f + f)`). SIR values have names, not use-site spans, so the pass can reproduce the sentence for simple names only (that is what `cholesky_text` does) and the goldens would change for compound operands.
 * **The two see different sites.** The checker rewrites the syntactic `A⁻¹ @ b` only. The pass also rewrites `B = inv(A); B @ b`, which `sky run` computes with an explicit inverse. That is a behaviour difference to decide on when `sky run` moves to SIR, not one to introduce through a deletion.

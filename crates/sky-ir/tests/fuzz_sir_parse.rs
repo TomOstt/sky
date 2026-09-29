@@ -122,6 +122,7 @@ const SNIPPETS: &[&str] = &[
     "%x",
     "call @f(",
     "solve[cholesky]",
+    "expect.bool[and]",
 ];
 
 fn mutate(rng: &mut Rng, seed: &[u8]) -> Vec<u8> {

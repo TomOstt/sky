@@ -80,14 +80,29 @@ fn a_nested_def_does_not_see_its_enclosing_functions_locals() {
     assert_eq!(at, "y");
 }
 
+/// A literal `sky run` cannot read is an error only where it is evaluated,
+/// so lowering does not refuse the program: the literal becomes an operation
+/// that fails when it runs (`literal.error`), at the span `sky run` reports.
 #[test]
-fn literals_the_interpreter_cannot_read_are_rejected() {
-    let (msg, at) = rejected("x = 1e999\n");
-    assert!(msg.contains("number too large"), "{msg}");
-    assert_eq!(at, "1e999");
-    let (msg, at) = rejected("x = 1e306 km\n");
-    assert!(msg.contains("overflow"), "{msg}");
-    assert_eq!(at, "1e306 km");
+fn literals_the_interpreter_cannot_read_lower_to_an_operation_that_fails() {
+    for (src, kind, at) in [
+        ("x = 1e999\n", "literal.error[too_large]", "1e999"),
+        ("x = 1e999 m\n", "literal.error[too_large]", "1e999"),
+        ("x = 1e306 km\n", "literal.error[overflow]", "1e306 km"),
+    ] {
+        let m = lower_ok(src);
+        let f = main_fn(&m);
+        assert_eq!(count(f, "literal.error"), 1, "{src}");
+        let op = f
+            .ops
+            .iter()
+            .find(|o| o.kind.mnemonic() == "literal.error")
+            .expect("the literal");
+        assert_eq!(&src[op.span.range()], at, "{src}");
+        let text = sky_ir::print(&m);
+        assert!(text.contains(kind), "{text}");
+        assert_eq!(sky_ir::print(&sky_ir::parse(&text).expect("parses")), text);
+    }
 }
 
 #[test]
@@ -105,4 +120,30 @@ fn what_lowers_is_not_rejected() {
     lower_ok("A: PositiveDefinite Matrix[3, 3]\nb: Vector[3]\nx = A⁻¹ @ b\ny = A @ b\n");
     // A function may take an array-typed parameter.
     lower_ok("def apply(A: Matrix[N, N], b: Vector[N]) -> Vector[N]:\n    return A @ b\n");
+}
+
+/// Lowers `src` the way `sky run` does, for execution.
+fn try_lower_for_run(src: &str) -> Result<sky_ir::Module, sky_lower::LowerError> {
+    sky_ast::with_deep_stack(|| {
+        let lexed = sky_syntax::lex(src).expect("lexes");
+        let (ast, errors) = sky_ast::parse_module(&lexed.tokens, src);
+        assert!(errors.is_empty(), "{errors:#?}");
+        let checked = sky_types::check_module(&ast, src);
+        assert!(!checked.has_errors(), "{:#?}", checked.diagnostics);
+        sky_lower::lower_for_run(&ast, src, &checked)
+    })
+}
+
+#[test]
+fn a_computed_range_bound_lowers_for_reading_but_not_for_running() {
+    // The interpreter stops `range(5 / 2)` with an error when the loop
+    // starts and SIR cannot, so lowering for execution refuses it (the tree
+    // walker runs it), while the IR of it can still be looked at.
+    let src = "n = 5 / 2\nfor i in range(n):\n    print(i)\n";
+    assert!(try_lower(src).is_ok());
+    let e = try_lower_for_run(src).expect_err("must be refused for running");
+    assert!(e.message.contains("computed at run time"), "{}", e.message);
+    assert_eq!(&src[e.span.range()], "range(n)");
+    // Constants are checked by the checker, so those loops run on SIR.
+    assert!(try_lower_for_run("for i in range(2, 10, 3):\n    print(i)\n").is_ok());
 }

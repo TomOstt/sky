@@ -1,0 +1,14 @@
+# bench: N=200000 quick=100
+# `@` on small matrices in a loop: a 2x2 rotation (almost orthogonal, so the
+# values stay bounded) applied to a vector and to a 2x2 matrix, and a
+# vector-vector dot product.
+N = 200000
+R = [[0.6, -0.8], [0.8, 0.6]]
+M = [[1, 2], [3, 4]]
+v = [1 m, 0 m]
+s = 0 m^2
+for i in range(N):
+    v = R @ v
+    M = R @ M
+    s = s + v @ v
+print(v, M, s)

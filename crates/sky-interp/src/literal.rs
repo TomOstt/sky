@@ -17,13 +17,18 @@ use sky_units::Dimension;
 use crate::arith::{overflow, R};
 use crate::RuntimeError;
 
+/// A number literal that does not fit in an `f64`, at `span`.
+pub fn number_too_large(span: Span) -> RuntimeError {
+    RuntimeError::new("number too large", span)
+        .with_label("does not fit in a 64-bit float")
+        .with_note("the largest Sky number is about 1.8e308")
+}
+
 /// Reads a numeric literal's text (`1_000`, `2.5e-3`) as a finite `f64`.
 pub fn number_literal(src: &str, span: Span) -> R<f64> {
     match sky_types::parse_number(span_text(src, span).unwrap_or("")) {
         Ok(x) => Ok(x),
-        Err(NumberError::TooLarge) => Err(RuntimeError::new("number too large", span)
-            .with_label("does not fit in a 64-bit float")
-            .with_note("the largest Sky number is about 1.8e308")),
+        Err(NumberError::TooLarge) => Err(number_too_large(span)),
         Err(NumberError::Invalid) => Err(RuntimeError::new("invalid number", span)),
     }
 }

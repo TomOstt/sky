@@ -8,7 +8,7 @@
 use sky_ast::{BinaryOp, BoolOp, Expr, ExprKind, Ident, Literal, UnaryOp};
 use sky_diag::Span;
 use sky_interp::{number_literal, unit_literal_si};
-use sky_ir::{BlockId, CmpOp, OpId, OpKind, Type, ValueId};
+use sky_ir::{BlockId, BoolContext, CmpOp, LiteralError, OpId, OpKind, Type, ValueId};
 use sky_syntax::lexer::unescape_str;
 use sky_types::{const_exponent, FuncSig, Ty};
 use sky_units::lookup_constant;
@@ -38,10 +38,11 @@ impl Lower<'_> {
                 let (Literal::Int(vspan) | Literal::Float(vspan)) = value else {
                     return self.err("a unit needs a number", e.span);
                 };
-                let (si, _) =
-                    unit_literal_si(self.src, *vspan, unit, e.span).map_err(LowerError::from)?;
                 let ty = self.ty_of(e)?;
-                Ok(self.const_float(si, ty, e.span))
+                match unit_literal_si(self.src, *vspan, unit, e.span) {
+                    Ok((si, _)) => Ok(self.const_float(si, ty, e.span)),
+                    Err(err) => self.literal_error(err, ty),
+                }
             }
             ExprKind::Paren(inner) => self.expr(inner),
             ExprKind::Unary { op, operand, .. } => self.unary(e, *op, operand),
@@ -49,6 +50,11 @@ impl Lower<'_> {
                 let a = self.expr(operand)?;
                 let ty = self.ty_of(e)?;
                 Ok(self.op1(OpKind::Inverse, vec![a], ty, e.span))
+            }
+            ExprKind::Transpose { operand, .. } => {
+                let a = self.expr(operand)?;
+                let ty = self.ty_of(e)?;
+                Ok(self.op1(OpKind::Transpose, vec![a], ty, e.span))
             }
             ExprKind::Binary { op, lhs, rhs, .. } => {
                 if *op == BinaryOp::MatMul {
@@ -93,12 +99,31 @@ impl Lower<'_> {
         )
     }
 
+    /// A literal `sky run` cannot read (too large for an `f64`, or whose SI
+    /// value is): a `sky run` error only if the literal is evaluated, so a
+    /// `literal.error` that fails when it runs, with the same error at the
+    /// same span (a literal in a branch that never runs is no error). What
+    /// the checker cannot have accepted (an unreadable number, an unknown
+    /// unit) stays a lowering error.
+    fn literal_error(&mut self, err: sky_interp::RuntimeError, ty: Type) -> R<ValueId> {
+        let error = if err == sky_interp::number_too_large(err.span) {
+            LiteralError::TooLarge
+        } else if err == sky_interp::arith::overflow(err.span) {
+            LiteralError::Overflow
+        } else {
+            return Err(LowerError::from(err));
+        };
+        Ok(self.op1(OpKind::LiteralError { error }, Vec::new(), ty, err.span))
+    }
+
     fn literal(&mut self, e: &Expr, lit: &Literal) -> R<ValueId> {
         match lit {
             Literal::Int(span) | Literal::Float(span) => {
-                let x = number_literal(self.src, *span).map_err(LowerError::from)?;
                 let ty = self.ty_of(e)?;
-                Ok(self.const_float(x, ty, e.span))
+                match number_literal(self.src, *span) {
+                    Ok(x) => Ok(self.const_float(x, ty, e.span)),
+                    Err(err) => self.literal_error(err, ty),
+                }
             }
             Literal::Str(span) => {
                 let s = unescape_str(self.text(*span));
@@ -141,6 +166,7 @@ impl Lower<'_> {
             UnaryOp::Pos => self.expr(operand),
             UnaryOp::Not => {
                 let a = self.expr(operand)?;
+                let a = self.bool_operand(BoolContext::Not, operand, a);
                 Ok(self.op1(OpKind::Not, vec![a], Type::Bool, e.span))
             }
             UnaryOp::Partial | UnaryOp::Nabla => Err(LowerError::new(
@@ -200,7 +226,13 @@ impl Lower<'_> {
         let Some((first, rest)) = operands.split_first() else {
             return self.err("internal error: an empty `and`/`or`", span);
         };
+        let context = if decisive {
+            BoolContext::Or
+        } else {
+            BoolContext::And
+        };
         let mut t = self.expr(first)?;
+        t = self.bool_operand(context, first, t);
         for operand in rest {
             let outer = self.st.b.at();
             let (ifop, _) = self.st.b.op(OpKind::If, vec![t], Vec::new(), span);
@@ -221,11 +253,36 @@ impl Lower<'_> {
             // Evaluating an operand may open and close regions of its own;
             // the yield belongs to this arm.
             self.st.b.set_at(go);
+            let v = self.bool_operand(context, operand, v);
             self.st.b.op(OpKind::Yield, vec![v], Vec::new(), span);
             self.st.b.set_at(outer);
             t = self.st.b.add_result(ifop, Type::Bool);
         }
         Ok(t)
+    }
+
+    /// `v`, the value of `operand`, as a Bool where the source needs one (an
+    /// operand of `and`, `or`, `not`, or a condition): `v` itself when the
+    /// checker typed it, since a typed Bool needs no check. Where the checker
+    /// could not type it (`Unknown`, from an unannotated parameter) an
+    /// `expect.bool` at the operand's span, so the SIR interpreter fails as
+    /// `sky run` does: same wording, same place, and also for the operand
+    /// that is only yielded (the last one of an `and`/`or`).
+    pub(crate) fn bool_operand(
+        &mut self,
+        context: BoolContext,
+        operand: &Expr,
+        v: ValueId,
+    ) -> ValueId {
+        if !matches!(self.st.b.ty(v), Type::Unknown) {
+            return v;
+        }
+        self.op1(
+            OpKind::ExpectBool { context },
+            vec![v],
+            Type::Bool,
+            operand.span,
+        )
     }
 
     /// A new region with one empty block, for an `if` arm; returns the block.
@@ -239,6 +296,7 @@ impl Lower<'_> {
     #[inline(never)]
     fn if_else(&mut self, e: &Expr, then: &Expr, cond: &Expr, else_: &Expr) -> R<ValueId> {
         let c = self.expr(cond)?;
+        let c = self.bool_operand(BoolContext::If, cond, c);
         let outer = self.st.b.at();
         let (op, _) = self.st.b.op(OpKind::If, vec![c], Vec::new(), e.span);
         let mut tys = Vec::new();
@@ -306,6 +364,11 @@ impl Lower<'_> {
                         let a = self.expr(arg)?;
                         let ty = self.ty_of(e)?;
                         return Ok(self.op1(OpKind::Inverse, vec![a], ty, e.span));
+                    }
+                    ("transpose", [arg]) => {
+                        let a = self.expr(arg)?;
+                        let ty = self.ty_of(e)?;
+                        return Ok(self.op1(OpKind::Transpose, vec![a], ty, e.span));
                     }
                     (name @ ("zeros" | "identity" | "len"), _) => {
                         if let Some(v) = self.array_builtin(e, name, args)? {

@@ -16,19 +16,79 @@ fn scratch(name: &str) -> PathBuf {
     d
 }
 
-/// Writes `src` to a fresh script and runs `sky run` on it.
-fn run_script(name: &str, src: &str) -> Output {
+/// Writes `src` to a fresh script and runs `sky run [--engine=<engine>]`
+/// on it.
+fn run_engine(name: &str, src: &str, engine: Option<&str>) -> Output {
     let dir = scratch(name);
     let file = dir.join("prog.sky");
     fs::write(&file, src).unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_sky"))
-        .arg("run")
-        .arg(&file)
-        .current_dir(&dir)
-        .output()
-        .expect("run sky");
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_sky"));
+    cmd.arg("run");
+    if let Some(engine) = engine {
+        cmd.arg(format!("--engine={engine}"));
+    }
+    let out = cmd.arg(&file).current_dir(&dir).output().expect("run sky");
     fs::remove_dir_all(&dir).unwrap();
     out
+}
+
+/// The marker of a forced SIR run refusing a program that does not lower.
+const NOT_ON_SIR: &str = "error: cannot run on SIR:";
+
+/// The two limits that stop unbounded recursion. Which one trips first
+/// depends on how much Rust stack each engine spends per call (a debug
+/// tree-walker runs out of its stack budget before 1000 calls), not on the
+/// program, so runs that end in either are compared without the message.
+fn hit_a_limit(o: &Output) -> bool {
+    let e = err(o);
+    e.contains("recursion is too deep") || e.contains("nests too deeply")
+}
+
+/// Runs the program under `--engine=ast` and `--engine=sir` and asserts that
+/// they agree on stdout, stderr and exit status, byte for byte. A program
+/// SIR does not lower is refused by `--engine=sir` (that is the only thing
+/// it may do differently); it is then reported, so the caller can tell a
+/// comparison from a fallback. Returns whether SIR ran the program.
+fn engines_agree(name: &str, src: &str) -> bool {
+    let ast = run_engine(name, src, Some("ast"));
+    let sir = run_engine(name, src, Some("sir"));
+    if err(&sir).contains(NOT_ON_SIR) {
+        assert_eq!(sir.status.code(), Some(1), "{}", err(&sir));
+        assert_eq!(out(&sir), "", "a refused program prints nothing");
+        eprintln!("REFUSED {name}: {}", err(&sir));
+        return false;
+    }
+    assert_eq!(
+        sir.status.code(),
+        ast.status.code(),
+        "exit status of:\n{src}"
+    );
+    assert_eq!(out(&sir), out(&ast), "stdout of:\n{src}");
+    if !(hit_a_limit(&ast) && hit_a_limit(&sir)) {
+        assert_eq!(err(&sir), err(&ast), "stderr of:\n{src}");
+    }
+    true
+}
+
+/// Writes `src` to a fresh script and runs `sky run` on it, under the
+/// default engine (`auto`). Every program the tests here run is also run
+/// under `--engine=ast` and `--engine=sir` and the three must agree
+/// (see [`engines_agree`]), so each of these tests is also a differential
+/// test of the SIR engine against the tree-walker.
+fn run_script(name: &str, src: &str) -> Output {
+    let auto = run_engine(name, src, None);
+    let ast = run_engine(name, src, Some("ast"));
+    assert_eq!(
+        auto.status.code(),
+        ast.status.code(),
+        "auto exit status of:\n{src}"
+    );
+    assert_eq!(out(&auto), out(&ast), "auto stdout of:\n{src}");
+    if !(hit_a_limit(&ast) && hit_a_limit(&auto)) {
+        assert_eq!(err(&auto), err(&ast), "auto stderr of:\n{src}");
+    }
+    engines_agree(name, src);
+    auto
 }
 
 /// Runs `sky repl` with `input` on stdin.
@@ -153,6 +213,31 @@ fn overflow_and_arrays_are_runtime_errors() {
     assert_eq!(o.status.code(), Some(1));
     assert!(
         err(&o).contains("error: the matrix is singular"),
+        "{}",
+        err(&o)
+    );
+}
+
+#[test]
+fn transpose_runs_in_both_spellings_and_a_vector_is_a_check_error() {
+    let o = run_script(
+        "transpose",
+        "A = [[1, 2, 3], [4, 5, 6]]\nprint(Aᵀ)\nprint(transpose(A) @ A)\nprint(sin(30 deg))\n",
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    let printed = out(&o);
+    let mut lines = printed.lines();
+    assert_eq!(lines.next(), Some("[[1, 4], [2, 5], [3, 6]]"));
+    assert_eq!(
+        lines.next(),
+        Some("[[17, 22, 27], [22, 29, 36], [27, 36, 45]]")
+    );
+    assert_eq!(lines.next(), Some("0.49999999999999994"));
+    let o = run_script("transpose_vector", "v = [1, 2, 3]\nprint(vᵀ)\n");
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(out(&o), "");
+    assert!(
+        err(&o).contains("error: cannot transpose Vector[3]: transpose needs a matrix"),
         "{}",
         err(&o)
     );
@@ -819,5 +904,593 @@ fn a_derivative_that_fails_is_a_runtime_error_on_the_call() {
     );
     assert_eq!(out(&o), "0.25 m^-1\n");
     assert!(err(&o).contains("division by zero"), "{}", err(&o));
+    assert_eq!(o.status.code(), Some(1));
+}
+
+// ---- multi-line input in the REPL ----
+
+#[test]
+fn repl_defines_a_function_across_lines_and_calls_it_later() {
+    let o = repl(
+        "def area(w: m, h: m) -> m^2:\n\
+         \x20   a = w * h\n\
+         \x20   return a\n\
+         \n\
+         area(3 m, 4 m)\n\
+         print(area(1 m, 2 m))\n\
+         # a comment after the block\n\
+         def twice(x: m^2) -> m^2:\n\
+         \x20   return 2 * x\n\
+         \n\
+         twice(area(1 m, 1 m))\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "12 m^2\n2 m^2\n2 m^2\n");
+    assert_eq!(o.status.code(), Some(0));
+}
+
+#[test]
+fn repl_runs_for_while_and_if_blocks() {
+    let o = repl(
+        "total = 0\n\
+         for i in range(4):\n\
+         \x20   total += i\n\
+         \n\
+         total\n\
+         n = 0 m\n\
+         while n < 3 m:\n\
+         \x20   n += 1 m\n\
+         \x20   if n == 2 m:\n\
+         \x20       print(\"two\")\n\
+         \x20   else:\n\
+         \x20       print(n)\n\
+         \n\
+         n\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "6\n1 m\ntwo\n3 m\n3 m\n");
+}
+
+#[test]
+fn repl_error_in_a_block_is_reported_against_the_whole_input() {
+    let o = repl(
+        "x = 1 m\n\
+         if x > 0 m:\n\
+         \x20   y = 2 m\n\
+         \x20   z = y + 1 s\n\
+         \n\
+         x\n",
+    );
+    assert_eq!(out(&o), "1 m\n");
+    let e = err(&o);
+    // The bad line is the third of its input, not the fourth line typed.
+    assert!(
+        e.contains("<repl>:3:11: error: cannot add length and time"),
+        "{e}"
+    );
+    assert!(e.contains("3 |     z = y + 1 s"), "{e}");
+    assert!(e.contains("(line 2)"), "{e}");
+}
+
+#[test]
+fn repl_a_syntax_error_in_a_block_leaves_the_session_usable() {
+    let o = repl("if 1 > 0:\n    x = = 2\n\n1 + 1\n");
+    assert_eq!(out(&o), "2\n");
+    assert!(err(&o).contains("<repl>:2:9: error"), "{}", err(&o));
+}
+
+#[test]
+fn repl_continues_inside_open_brackets() {
+    let o = repl(
+        "v = [1 m,\n\
+         \x20    2 m,\n\
+         \x20    3 m]\n\
+         v[1]\n\
+         s = (1 +\n\
+         \n\
+         \x20    2)\n\
+         s\n\
+         print(3,\n\
+         4\n\
+         )\n",
+    );
+    // The empty line inside the parentheses does not end the input.
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "2 m\n3\n3 4\n");
+    // Errors count lines from the start of the input.
+    let o = repl("x = (1 m +\n     2 s)\n");
+    assert!(
+        err(&o).contains("<repl>:1:10: error: cannot add length and time"),
+        "{}",
+        err(&o)
+    );
+}
+
+// ---- the two engines of `sky run` ----
+
+/// Programs for the engine comparison: what each does is not the point, that
+/// SIR and the tree-walker do it the same way is. `true` when the program
+/// lowers, so `--engine=sir` runs it (the comparison is then real, not a
+/// refusal).
+const ENGINE_PROGRAMS: &[(&str, bool, &str)] = &[
+    (
+        "eng-arith",
+        true,
+        "x = 3 m\nv = 36 km/h\nprint(x * 2, v, v * 2 s, 1 / 4, 2 ^ 10)\nprint(v as km/h)\n",
+    ),
+    (
+        "eng-while",
+        true,
+        "i = 0\ntotal = 0\nwhile i < 100:\n    i += 1\n    if i % 2 == 0:\n        continue\n    if i > 50:\n        break\n    total += i\nprint(i, total)\n",
+    ),
+    (
+        "eng-funcs",
+        true,
+        "def fact(n):\n    if n <= 1:\n        return 1\n    return n * fact(n - 1)\nprint(fact(10))\n",
+    ),
+    (
+        "eng-div-in-func",
+        true,
+        "def ratio(a: m, b: m):\n    return a / b\nprint(\"first\")\nprint(ratio(1 m, 2 m))\nprint(ratio(1 m, 0 m))\nprint(\"never\")\n",
+    ),
+    (
+        "eng-div-nested",
+        true,
+        "def f(x: s):\n    return 1 m / (x - 1 s)\ndef g(y: s):\n    return f(y) * 2\nprint(g(3 s))\nprint(g(1 s))\n",
+    ),
+    (
+        "eng-overflow",
+        true,
+        "x = 1e308\nprint(x)\nprint(x * 10)\n",
+    ),
+    (
+        "eng-sqrt-neg",
+        true,
+        "def r(a: m^2):\n    return sqrt(a)\nprint(r(4 m^2))\nprint(r(-1 m^2))\n",
+    ),
+    (
+        "eng-index",
+        true,
+        "v = [1, 2, 3]\ni = 3\nprint(v[0], v[2])\nprint(v[i])\n",
+    ),
+    (
+        "eng-slice",
+        true,
+        "v = [1, 2, 3, 4]\nprint(v[1:3])\nn = 9\nprint(v[0:n])\n",
+    ),
+    (
+        "eng-matrix",
+        true,
+        "A = [[2, 0], [0, 4]]\nb = [2, 4]\nprint(A @ b, A⁻¹, A⁻¹ @ b)\n",
+    ),
+    (
+        "eng-singular",
+        true,
+        "A = [[1, 2], [2, 4]]\nprint(\"before\")\nprint(A⁻¹)\n",
+    ),
+    (
+        "eng-cholesky",
+        true,
+        "K: PositiveDefinite Matrix[2, 2] = [[4, 1], [1, 3]]\nf = [1, 2]\nprint(K⁻¹ @ f)\n",
+    ),
+    (
+        "eng-const-range",
+        true,
+        "s = 0\nfor i in range(1, 11):\n    s += i\nprint(s, i)\nfor j in range(10, 0, -3):\n    print(j)\n",
+    ),
+    (
+        "eng-warning-then-error",
+        true,
+        "аx = 1\nprint(аx / 0)\n",
+    ),
+    (
+        "eng-derivative",
+        true,
+        "def x(t: s) -> m:\n    return 5 m/s^2 * t^2\nprint(derivative(x, t)(2 s))\nprint(x(1 s))\n",
+    ),
+    (
+        "eng-derivative-fails",
+        true,
+        "def root(a: m^2) -> m:\n    return sqrt(a)\nprint(derivative(root, a)(0 m^2))\n",
+    ),
+    (
+        "eng-deep-recursion",
+        true,
+        "def f(n):\n    return f(n + 1)\nprint(\"start\")\nf(0)\n",
+    ),
+    // Programs SIR cannot run yet: `--engine=sir` refuses them, and `auto`
+    // must give the tree-walker's answer (`run_script` checks that).
+    (
+        "eng-computed-range",
+        false,
+        "n = 2 + 1\nfor i in range(n):\n    print(i)\n",
+    ),
+    (
+        "eng-array-loop",
+        false,
+        "v = [1 m, 2 m]\nfor x in v:\n    print(x)\n",
+    ),
+    (
+        "eng-input-after-output",
+        true,
+        "print(\"before\")\nA: Matrix[2, 2]\nprint(\"after\")\n",
+    ),
+    // The checker leaves `"a" + "b"` to run time; lowering builds an `add`
+    // of strings that does not verify, which is not the pass pipeline's fault.
+    (
+        "eng-string-add",
+        false,
+        "print(\"before\")\ns = \"a\" + \"b\"\n",
+    ),
+    (
+        "eng-input-in-func",
+        false,
+        "def f():\n    v: Vector[3]\n    return 1\nprint(2)\n",
+    ),
+];
+
+#[test]
+fn the_engines_agree_on_every_program() {
+    for &(name, on_sir, src) in ENGINE_PROGRAMS {
+        // `run_script` also compares `auto` with `--engine=ast`.
+        let auto = run_script(name, src);
+        assert_eq!(engines_agree(name, src), on_sir, "{name}");
+        // A refused program still runs, on the fallback.
+        assert_ne!(auto.status.code(), Some(2), "{name}: {}", err(&auto));
+    }
+}
+
+#[test]
+fn auto_falls_back_to_the_tree_walker_for_a_program_sir_cannot_lower() {
+    // An input declaration inside a function is a `LowerError` (see
+    // sky-lower's tests/errors.rs), and the function never runs.
+    let src = "def f():\n    v: Vector[3]\n    return v\nprint(2 m)\n";
+    let sir = run_engine("fallback", src, Some("sir"));
+    assert_eq!(sir.status.code(), Some(1));
+    assert_eq!(out(&sir), "");
+    let e = err(&sir);
+    assert!(e.contains(NOT_ON_SIR), "{e}");
+    assert!(e.contains("top level of the file"), "{e}");
+    assert!(e.contains("v: Vector[3]"), "{e}");
+    // `auto` says nothing about it and runs the program.
+    let auto = run_engine("fallback", src, None);
+    assert_eq!((out(&auto).as_str(), err(&auto).as_str()), ("2 m\n", ""));
+    assert_eq!(auto.status.code(), Some(0));
+    let ast = run_engine("fallback", src, Some("ast"));
+    assert_eq!((out(&ast), err(&ast)), (out(&auto), err(&auto)));
+}
+
+#[test]
+fn a_fallback_program_prints_what_the_tree_walker_prints_before_it_fails() {
+    // The input has no value to run with. Lowering accepts it, but SIR would
+    // refuse the whole run up front, so the output before it would be lost.
+    let src = "print(\"before\")\nA: Matrix[2, 2]\nprint(\"after\")\n";
+    let auto = run_engine("fallback-input", src, None);
+    assert_eq!(out(&auto), "before\n");
+    assert_eq!(auto.status.code(), Some(1));
+    assert!(
+        err(&auto).contains("`A` is declared but has no value"),
+        "{}",
+        err(&auto)
+    );
+}
+
+#[test]
+fn repl_an_unclosed_bracket_at_end_of_input_is_reported() {
+    let o = repl("1 + 1\nx = (1,\n");
+    assert_eq!(out(&o), "2\n");
+    assert!(
+        err(&o).contains("<repl>:1:5: error: unclosed `(`"),
+        "{}",
+        err(&o)
+    );
+    assert_eq!(o.status.code(), Some(0));
+}
+
+#[test]
+fn repl_an_unfinished_block_at_end_of_input_still_runs() {
+    let o = repl("for i in range(2):\n    print(i)");
+    assert_eq!(out(&o), "0\n1\n");
+}
+
+#[test]
+fn repl_a_header_without_a_body_is_an_error_not_a_trap() {
+    let o = repl("if 1 > 0:\n\nprint(3)\n");
+    assert_eq!(out(&o), "3\n");
+    assert!(
+        err(&o).contains("expected an indented block after `if`"),
+        "{}",
+        err(&o)
+    );
+}
+
+#[test]
+fn repl_a_failed_multi_line_input_changes_nothing() {
+    // Runtime failure on the second pass: `n` was rebound by the first
+    // pass, `m` was bound, and neither must survive.
+    let o = repl(
+        "n = 1\n\
+         while n < 5:\n\
+         \x20   n += 1\n\
+         \x20   m = 1 / (n - 3)\n\
+         \n\
+         n\n\
+         m\n",
+    );
+    assert_eq!(out(&o), "1\n");
+    let e = err(&o);
+    assert!(e.contains("<repl>:3:9: error: division by zero"), "{e}");
+    assert!(e.contains("cannot find `m` in this scope"), "{e}");
+
+    // A def that fails to check defines nothing, and does not disturb `f`.
+    let o = repl(
+        "def f(x: m) -> m:\n\
+         \x20   return x\n\
+         \n\
+         def g(x: m) -> m:\n\
+         \x20   return f(x) + 1 s\n\
+         \n\
+         f(2 m)\n\
+         g(1 m)\n",
+    );
+    assert_eq!(out(&o), "2 m\n");
+    let e = err(&o);
+    assert!(
+        e.contains("<repl>:2:17: error: cannot add length and time"),
+        "{e}"
+    );
+    assert!(e.contains("cannot find `g` in this scope"), "{e}");
+}
+
+#[test]
+fn repl_a_runtime_error_inside_an_earlier_function_names_that_input() {
+    let o = repl(
+        "def inv1(x: m) -> m^-1:\n\
+         \x20   return 1 / x\n\
+         \n\
+         inv1(0 m)\n\
+         inv1(2 m)\n",
+    );
+    assert_eq!(out(&o), "0.5 m^-1\n");
+    let e = err(&o);
+    assert!(e.contains("<repl:1>:2:12: error: division by zero"), "{e}");
+    assert!(e.contains("2 |     return 1 / x"), "{e}");
+}
+
+#[test]
+fn repl_differentiates_functions_defined_in_it() {
+    // x(t) = 5 m/s^2 t^2. The function, its derivative, and a function that
+    // differentiates it are defined by different inputs, and `y` starts at
+    // the same offset in its input as `x` does in its own.
+    let o = repl(
+        "def x(t: s) -> m:\n\
+         \x20   return 5 m/s^2 * t^2\n\
+         \n\
+         derivative(x, t)(2 s)\n\
+         def v(t: s) -> m/s:\n\
+         \x20   return derivative(x, t)(t)\n\
+         \n\
+         v(3 s)\n\
+         derivative(v, t)(2 s)\n\
+         def y(t: s) -> m:\n\
+         \x20   return 2 m/s * t\n\
+         \n\
+         derivative(y, t)(1 s)\n\
+         derivative(x, t)(1 s)\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "20 m/s\n30 m/s\n10 m/s^2\n2 m/s\n10 m/s\n");
+}
+
+#[test]
+fn repl_differentiates_a_redefined_function_with_its_new_body() {
+    let o = repl(
+        "def f(x: m) -> m:\n\
+         \x20   return x * 2\n\
+         \n\
+         derivative(f, x)(1 m)\n\
+         def f(x: m) -> m:\n\
+         \x20   return x * 3\n\
+         \n\
+         derivative(f, x)(1 m)\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "2\n3\n");
+}
+
+#[test]
+fn repl_a_failed_input_is_not_part_of_the_program_derivatives_see() {
+    let o = repl(
+        "def f(x: m) -> m:\n\
+         \x20   return x * 2\n\
+         \n\
+         def f(x: m) -> m:\n\
+         \x20   return x + 1 s\n\
+         \n\
+         derivative(f, x)(1 m)\n",
+    );
+    assert_eq!(out(&o), "2\n");
+    assert!(
+        err(&o).contains("cannot add length and time"),
+        "{}",
+        err(&o)
+    );
+}
+
+#[test]
+fn repl_commands_help_and_quit() {
+    let o = repl(":help\n1 + 1\n:nope\n:quit\n3 + 3\n");
+    assert_eq!(out(&o), "2\n");
+    let e = err(&o);
+    assert!(e.contains(":quit"), "{e}");
+    assert!(e.contains("unknown command `:nope`"), "{e}");
+    assert_eq!(o.status.code(), Some(0));
+    // Not a command inside a block: it is part of the input.
+    let o = repl("if 1 > 0:\n    :quit\n\n4\n");
+    assert_eq!(out(&o), "4\n");
+}
+
+#[test]
+fn a_computed_range_bound_is_still_checked_at_run_time() {
+    // SIR cannot stop a run with the message `range` gives for 2.5, so the
+    // loop stays on the tree-walker under `auto`, which fails as before.
+    let src = "n = 5 / 2\nfor i in range(n):\n    print(i)\n";
+    let auto = run_engine("range-bound", src, None);
+    assert_eq!(auto.status.code(), Some(1));
+    assert!(
+        err(&auto).contains("`range` needs an integer, found 2.5"),
+        "{}",
+        err(&auto)
+    );
+    let sir = run_engine("range-bound", src, Some("sir"));
+    assert!(err(&sir).contains(NOT_ON_SIR), "{}", err(&sir));
+}
+
+#[test]
+fn a_runtime_error_on_sir_points_where_the_tree_walker_points() {
+    // SIR knows the failing operation; the operands' spans in the labels
+    // are the tree-walker's, and every engine must print the same text.
+    let src = "v = [1, 2, 3]\ni = 3\nprint(v[i])\n";
+    for engine in ["sir", "ast", "auto"] {
+        let o = run_engine("span", src, Some(engine));
+        let e = err(&o);
+        assert!(
+            e.contains("3:9: error: index 3 is out of bounds"),
+            "{engine}: {e}"
+        );
+        assert!(e.contains("this is Vector[3]"), "{engine}: {e}");
+    }
+}
+
+#[test]
+fn engine_flag_usage_errors_exit_2() {
+    let dir = scratch("engine-usage");
+    let file = dir.join("prog.sky");
+    fs::write(&file, "print(1)\n").unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_sky"))
+            .arg("run")
+            .args(args)
+            .arg(&file)
+            .output()
+            .unwrap()
+    };
+    let o = run(&["--engine=jit"]);
+    assert_eq!(o.status.code(), Some(2));
+    assert!(err(&o).contains("unknown engine `jit`"), "{}", err(&o));
+    assert_eq!(
+        run(&["--engine=ast", "--engine=sir"]).status.code(),
+        Some(2)
+    );
+    assert_eq!(run(&["--engine"]).status.code(), Some(2));
+    // The flag may follow the file, as `check`'s flags may.
+    let after = Command::new(env!("CARGO_BIN_EXE_sky"))
+        .arg("run")
+        .arg(&file)
+        .arg("--engine=sir")
+        .output()
+        .unwrap();
+    assert_eq!(
+        (out(&after).as_str(), after.status.code()),
+        ("1\n", Some(0))
+    );
+    // No file.
+    let o = Command::new(env!("CARGO_BIN_EXE_sky"))
+        .args(["run", "--engine=ast"])
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(2));
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_closed_stdout_is_not_a_diagnostic_on_any_engine() {
+    // `sky run x.sky | head -0`: the reader is gone before the output is
+    // written. No engine prints a diagnostic; all exit 1.
+    let src = "i = 0\nwhile i < 20000:\n    print(i)\n    i += 1\n";
+    for engine in ["ast", "sir", "auto"] {
+        let dir = scratch(&format!("pipe-{engine}"));
+        let file = dir.join("prog.sky");
+        fs::write(&file, src).unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_sky"))
+            .arg("run")
+            .arg(format!("--engine={engine}"))
+            .arg(&file)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        drop(child.stdout.take());
+        let o = child.wait_with_output().unwrap();
+        assert_eq!(o.status.code(), Some(1), "{engine}");
+        assert_eq!(err(&o), "", "{engine}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[test]
+fn run_evaluates_the_gradient_of_a_potential_as_a_force_vector() {
+    // U = k (x² + y²) has ∇U = (2 k x, 2 k y): a Vector in N.
+    let o = run_script(
+        "grad_potential",
+        "k = 3 N/m\n\
+         def U(x: m, y: m) -> J:\n    return k * (x^2 + y^2)\n\
+         F: Vector[2] N = -grad(U)(1 m, 2 m)\n\
+         print(F)\n\
+         print(grad(U)(0.5 m, 1 m))\n\
+         print(grad(U)(1 m, 2 m)[1])\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "[-6 N, -12 N]\n[3 N, 6 N]\n12 N\n");
+    assert!(o.status.success());
+}
+
+#[test]
+fn run_evaluates_partial_notation_like_derivative() {
+    let o = run_script(
+        "partial_notation",
+        "def x(t: s) -> m:\n    return 5 m/s^2 * t^2\n\
+         v: m/s = (∂x/∂t)(2 s)\n\
+         print(v)\n\
+         print((∂x/∂t)(2 s) == derivative(x, t)(2 s))\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "20 m/s\ntrue\n");
+    assert!(o.status.success());
+}
+
+#[test]
+fn a_gradient_over_different_units_is_a_check_error_and_nothing_runs() {
+    let o = run_script(
+        "grad_mixed",
+        "def E(x: m, t: s) -> J:\n    return 2 J/m * x + 3 J/s * t\n\
+         print(\"before\")\n\
+         print(grad(E)(1 m, 1 s))\n",
+    );
+    assert_eq!(out(&o), "");
+    let e = err(&o);
+    assert!(
+        e.contains("cannot take the gradient of `E`: its parameters have different units"),
+        "{e}"
+    );
+    assert!(e.contains("`derivative(E, x)(...)`"), "{e}");
+    assert_eq!(o.status.code(), Some(1));
+}
+
+#[test]
+fn a_gradient_unit_error_is_a_check_error_and_nothing_runs() {
+    // The gradient of an energy in a length is a force, not an energy.
+    let o = run_script(
+        "grad_unit",
+        "def U(x: m, y: m) -> J:\n    return 1 N * (x + y)\n\
+         print(\"before\")\n\
+         print(U(1 m, 1 m) + grad(U)(1 m, 1 m)[0])\n",
+    );
+    assert_eq!(out(&o), "");
+    assert!(
+        err(&o).contains("cannot add energy and force"),
+        "{}",
+        err(&o)
+    );
     assert_eq!(o.status.code(), Some(1));
 }

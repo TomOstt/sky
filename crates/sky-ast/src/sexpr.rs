@@ -277,7 +277,16 @@ fn write_expr(out: &mut String, e: &Expr, src: &str) {
             let children: Vec<&Expr> = operands.iter().collect();
             node(out, op.keyword(), src, &children);
         }
-        ExprKind::Inverse { operand, .. } => node(out, "inverse", src, &[operand]),
+        // One arm for both postfix glyphs: a second `&[operand]` temporary
+        // would grow this recursive function's debug frame.
+        ExprKind::Inverse { operand, .. } | ExprKind::Transpose { operand, .. } => {
+            let head = if matches!(e.kind, ExprKind::Inverse { .. }) {
+                "inverse"
+            } else {
+                "transpose"
+            };
+            node(out, head, src, &[operand])
+        }
         ExprKind::Array(elems) => {
             let children: Vec<&Expr> = elems.iter().collect();
             node(out, "array", src, &children);

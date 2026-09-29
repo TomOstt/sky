@@ -22,6 +22,15 @@ fn walk_region(f: &Function, r: RegionId, out: &mut Vec<OpId>) {
     }
 }
 
+/// Whether `op` is in the body of a `fused` operation. Those bodies are
+/// opaque to the rewriting passes: a `fused` body's `neg` means `0 - x`, not
+/// the scalar `-x` a scalar rewrite would assume (`docs/design/ir.md`).
+pub(crate) fn in_fused_body(f: &Function, op: OpId) -> bool {
+    let region = f.block(f.op(op).parent).parent;
+    let owner = region.and_then(|r| f.region(r).parent);
+    owner.is_some_and(|o| f.op(o).kind == OpKind::Fused)
+}
+
 /// How many operands (in reachable operations) name each value.
 pub(crate) fn use_counts(f: &Function) -> Vec<u32> {
     let mut counts = vec![0; f.values.len()];

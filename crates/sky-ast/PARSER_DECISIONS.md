@@ -93,7 +93,7 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 **Operators:**
 - `⁻¹` is its own node, `ExprKind::Inverse`, and is not desugared to `^ -1`, because the checker rewrites `A⁻¹ @ b` into a Cholesky solve.
 - `@` is `BinaryOp::MatMul`.
-- `∂` and `∇` are plain prefix nodes (`UnaryOp::Partial`/`Nabla`), with no derivative-form semantics.
+- `∂` and `∇` are plain prefix nodes (`UnaryOp::Partial`/`Nabla`), with no derivative-form semantics in the parser. `∂f/∂t` is therefore the quotient of two prefix nodes; the checker, interpreter and lowering read that shape, when it is the callee of a call, as `derivative(f, t)` (see `Expr::partial_quotient` and the spec's "Derivatives"). No node was added for it.
 
 **Other choices:**
 - Type annotations have their own node, `TypeExpr`, and their own grammar: see "Type annotations" below. (They were ordinary index expressions, `Matrix[3, 4]` as an `Index`, until then.)

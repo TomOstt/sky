@@ -1,0 +1,23 @@
+// Fused elementwise kernels: a scalar body over per-element values, scalar
+// operands broadcast, the body's dimension giving the result's.
+sir edition 2026
+
+fn @kernel(%a: num[L; (3)], %b: num[L; (3)], %k: num[1; ()], %t: num[T; ()], %M: num[L; (2, 2)]) -> (num[L; (3)], num[L·T⁻¹; (3)], num[L; (2, 2)]) effects(fail) {
+  %sum = fused %a, %b, %k : num[L; (3)] {
+    ^1(%x: num[L; ()], %y: num[L; ()], %s: num[1; ()]):
+      %s1 = add %x, %y : num[L; ()] @ 10..15
+      %s2 = mul %s1, %s : num[L; ()] @ 10..20
+      yield %s2 @ 10..20
+  } @ 10..20
+  %rate = fused %a, %t : num[L·T⁻¹; (3)] {
+    ^2(%u: num[L; ()], %dt: num[T; ()]):
+      %r = div %u, %dt : num[L·T⁻¹; ()] @ 30..38
+      yield %r @ 30..38
+  } @ 30..38
+  %flip = fused %M : num[L; (2, 2)] {
+    ^3(%m: num[L; ()]):
+      %n = neg %m : num[L; ()] @ 40..42
+      yield %n @ 40..42
+  } @ 40..42
+  return %sum, %rate, %flip
+}

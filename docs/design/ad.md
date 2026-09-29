@@ -20,6 +20,8 @@ Cost: one pass over the program, about 2 to 3 times the work of `f`, per input p
 
 `derivative(f, x)(args)` (spec v0.1, "Derivatives") is the user-facing form. `f` is a `def`, `x` names one of its parameters, and the call passes `f`'s arguments; the checker types it `dim(f) / dim(x)` from the annotations, so a velocity added to a length is a unit error before anything runs. Both engines run the derivative that this crate builds: lowering emits a `call` of `df/dx` and keeps its second result, and `sky run` (the tree walker, which has no AD) lowers the program, builds the same function and runs it on the SIR interpreter (`sky-derive`). There is one set of rules, and a differential test compares the printed bytes. Higher derivatives are the derivative of a `def` that calls the first.
 
+`grad(f)(args)` is the same machinery once per parameter: the arguments are evaluated once, `df/dxᵢ` is called for each parameter, and the second results are gathered in a `Vector[n]` (`array.literal`). It exists when every parameter has the same dimension, so the vector has one element unit, `dim(f)/dim(x)`; with mixed dimensions the checker refuses and points at `derivative(f, x)` per parameter. Vector parameters (the gradient of a potential of a position vector) need forward-mode rules for the array operations, which `sky-ad` does not have, so `grad` takes scalar parameters for now. `(∂f/∂x)(args)` is sugar the checker, interpreter and lowering read as `derivative(f, x)(args)`.
+
 ## Why forward mode first
 
 1. It needs no storage of intermediate values, so it needs no answer to the hard question of reverse mode (see below), and it is correct on every structured construct on day one.

@@ -10,10 +10,12 @@
 //! * [`fold`]: constant folding, exact on rationals, bit-identical to the
 //!   reference interpreter on floats.
 //! * [`dce`]: removes pure operations whose results are unused.
+//! * [`fuse`]: a tree of elementwise array operations becomes one `fused`
+//!   operation (one kernel, no temporary arrays).
 //! * [`cholesky`]: `A⁻¹ @ b` with a PositiveDefinite `A` becomes
 //!   `solve[cholesky](A, b)`.
 //! * [`default_pipeline`]: `fold`, then the e-graph (`sky-egraph`, under the
-//!   `Reproducible` contract), then `dce`, then `cholesky`.
+//!   `Reproducible` contract), then `dce`, then `fuse`, then `cholesky`.
 //!
 //! The rule for all of them: the optimized program behaves exactly like the
 //! original under `sky_ir_interp`, including which error is reported where.
@@ -23,12 +25,15 @@
 mod cholesky;
 mod dce;
 mod fold;
+mod fuse;
 pub mod pipeline;
 mod rewrite;
 mod util;
 
 #[cfg(test)]
 mod differential;
+#[cfg(test)]
+mod fuse_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -37,7 +42,8 @@ mod testutil;
 pub use cholesky::{cholesky, cholesky_text, CHOLESKY_RULE};
 pub use dce::dce;
 pub use fold::{fold, fold_with, FoldMode};
+pub use fuse::{fuse, FUSE_RULE};
 pub use pipeline::{
-    default_passes, default_pipeline, CholeskyPass, DcePass, FoldPass, DEFAULT_PASSES,
+    default_passes, default_pipeline, CholeskyPass, DcePass, FoldPass, FusePass, DEFAULT_PASSES,
 };
 pub use rewrite::Rewrite;

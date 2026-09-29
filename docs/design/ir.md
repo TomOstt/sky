@@ -63,7 +63,7 @@ Repr = Unchosen         -- L1 default: a strategy pass decides
      | F32 | F64        -- chosen by precision passes (F16, BF16, F128 come with Phase 3)
 ```
 
-Functions are not first-class values in v1: calls name their callee (`call @f`). A function's parameter types are also the types of its entry block's arguments, and the verifier checks that the two agree. `if` and `while` report no effects of their own; a pass computes their effects from their regions.
+Functions are not first-class values in v1: calls name their callee (`call @f`). A function's parameter types are also the types of its entry block's arguments, and the verifier checks that the two agree. `if`, `while` and `fused` report no effects of their own; a pass computes their effects from their regions.
 
 `Dimension`, `Shape` and `TagSet` are the existing types from sky-units and sky-types, reused as they are. SIR depends on those crates and does not copy them. Tags stay *closed* (implications applied), as the checker already guarantees.
 
@@ -79,6 +79,7 @@ Planned extension points, which v1 leaves out: an error bound per value (interva
 | Arrays | `array.literal`, `index`, `slice`, `zeros`, `identity`, `len`; `add`, `sub`, `mul` (scaling), `div`, `neg`, `inverse` and `matmul` also work on arrays |
 | Comparison and logic | `cmp.{eq,ne,lt,le,gt,ge}` (on Bools and strings only `eq`/`ne`), `not`; `and`/`or` short-circuit, so they lower to `if`; `expect.bool[and\|or\|not\|if\|while]`, the run-time Bool check of an operand the checker could not type (an unannotated parameter's result), which fails with `sky run`'s wording and on the operand's span |
 | Control | `if` (regions), `while` (regions), `yield`, `call`, `return` |
+| Fusion | `fused` (one region: a scalar body run per element; made by the `fuse` pass, see "Fusion") |
 | Display | `show "unit"` (`v as km/h`: the operand written in a unit, a `str`, only ever printed) |
 | Environment | `param`, `input "name"` (a value-less declaration: no operands, a result of the declared type; nothing supplies it in v0.1, so it fails when run with "`name` is declared but has no value", at the declaration), `print` (effectful) |
 
@@ -121,13 +122,55 @@ v1 ships these passes:
 4. **fold**: constant folding, exact on rationals and bit-identical to the reference interpreter on floats.
 5. **egraph**: rewriting with `egg` under the `Reproducible` contract (exact and conditional rules only).
 6. **dce**: removes pure operations whose results are never used, with an explanation when user-written code is removed (idea 30).
-7. **cholesky**: `matmul(inverse(A), b)` with PositiveDefinite A becomes `solve[cholesky](A, b)`. Its explanation is the checker's sentence for the same rewrite, word for word (`sky_opt::cholesky_text`).
+7. **fuse**: trees of elementwise array operations become one `fused` kernel (`FUSE-001`); see "Fusion" below.
+8. **cholesky**: `matmul(inverse(A), b)` with PositiveDefinite A becomes `solve[cholesky](A, b)`. Its explanation is the checker's sentence for the same rewrite, word for word (`sky_opt::cholesky_text`).
 
-The default pipeline (`sky_opt::default_pipeline`) is 4, 5, 6, 7 in that order: fold first so the e-graph sees constants; the e-graph before dce because it leaves the operations it replaced behind; cholesky last so its `solve` is never rewritten. `sky-opt`'s passes and `sky-egraph`'s rewriting each keep their own record type (`Rewrite`), and convert to `Explanation` in one place each (`Rewrite::explain`, through `PassCx::explain`), so rule ids and texts are unchanged.
+The default pipeline (`sky_opt::default_pipeline`) is 4, 5, 6, 7, 8 in that order: fold first so the e-graph sees constants; the e-graph before dce because it leaves the operations it replaced behind; dce before fuse because a dead operation left behind counts as a second use of its operands and would keep a temporary alive; fuse after the e-graph because a `fused` body is opaque to fold and the e-graph (they would otherwise rewrite it as scalar code, and `neg` differs, below); cholesky last so its `solve` is never rewritten (fuse and cholesky touch different operations, so their relative order does not matter). `sky-opt`'s passes and `sky-egraph`'s rewriting each keep their own record type (`Rewrite`), and convert to `Explanation` in one place each (`Rewrite::explain`, through `PassCx::explain`), so rule ids and texts are unchanged.
+
+### Fusion
+
+A chain such as `c = (a + b) * 2 - d` over arrays builds a temporary array per operation. The `fuse` pass turns a chain (in general a tree) of elementwise operations into one `fused` operation that computes each element once. It records the loop and the composition, not machine code: there is no code generation yet, and a later backend gets one kernel per `fused`. The payoff now is explicit structure, and an explanation of each kernel in `--explain`.
+
+```text
+%c = fused %a, %b, %two, %d : num[1; (3)] {
+  ^1(%x: num[1; ()], %y: num[1; ()], %s: num[1; ()], %e: num[1; ()]):
+    %t1 = add %x, %y : num[1; ()] @ 47..52
+    %t2 = mul %t1, %s : num[1; ()] @ 46..57
+    %r = sub %t2, %e : num[1; ()] @ 46..61
+    yield %r @ 46..61
+} @ 46..61
+```
+
+**The operation** (`OpKind::Fused`, specified in `op.rs`):
+
+* Operands: `k >= 1` values, arrays of one shape and scalars, at least one array. A scalar operand is broadcast, as in the scaling `A * s`.
+* One result: an array of that shape, whose dimension is that of the value the body yields.
+* One region with one block. Its arguments are the per-element values, one per operand in order (a scalar of the operand's dimension). Its operations are scalar and it ends in `yield` of one value.
+* The verifier checks that the body is scalar-only (every result a scalar number or a Bool), pure or `Fail` only (no `print`, no `call`), has no nested regions (no control flow in v1), and is self-contained (it uses only its arguments and its own results); that the argument count and dimensions match the operands; and that the result's shape is the operands' and its dimension the yield's.
+* Effects are those of the body: `fail` if any operation in it can fail. `properties()` says pure, as for `if` and `while`, and effect inference and the passes look inside. The text format needs nothing new (regions already print and parse), and canonicalization treats the body like any region.
+* Element `i` of the result is what the body computes with element `i` of each array operand. Each body operation is evaluated by the code an unfused operation uses (`sky_interp::arith`), so results are bit-identical, with one exception: `neg` in a body is `0 - x`, as `neg` on an array is (a zero stays `+0`, where scalar `neg` gives `-0`). For that reason fold and the e-graph leave `fused` bodies alone.
+
+**Failure semantics.** The unfused chain runs one operation over all elements, then the next, and reports the *first operation in program order* that fails at any element (division by zero, overflow); an error carries its operation's message and span, never an element. Per-element evaluation could meet a later operation's failure at an earlier element first. Two designs were possible: fuse only when at most one operation can fail, or define the fused operation's error to be the unfused one. We chose the second, so no chain is refused: **a `fused` reports the error of the earliest failing operation in body order, over all elements.** The reference interpreter runs the elements in order; when body operation `k` fails, it remembers the error and runs the remaining elements only up to operation `k`, so an earlier operation failing at a later element replaces it. A backend may visit elements in any order as long as it reports that error. The body keeps the operations in the unfused program order and their own spans, so the error is the same message at the same span. This is tested three ways: hand-built kernels where the naive order gives a different span (in `sky-opt` and `sky-ir-interp`), a differential property test over random elementwise programs with division by zero and overflow (the same output, error message and span before and after `fuse`), and the pipeline test.
+
+**What is fused.** A candidate is `add`, `sub`, `mul`, `div` or `neg` on arrays of known type, laid out as the checker allows (two arrays of one shape for `add`/`sub`, an array and a scalar for `mul`, an array over a scalar for `div`). A candidate is absorbed into its consumer when its result has exactly one use, which is an operand of a candidate in the same block. A *tree* is a candidate with everything absorbed into it, and a tree of two or more operations becomes one `fused` at the root's position. Scalar operands stay outside as operands. The kernel keeps the root's result value (name and users) and the join of the operations' spans, and the operations move into the body with their own spans and names.
+
+Moving the operations to the root's position must not reorder effects: an operation that can fail is never moved past another operation that can fail, print, call, loop, or touch an `Unknown`-typed value (which may fail dynamically). If a tree would move past one, the tree is not fused as a whole; its subtrees are tried, and the pass repeats until nothing is left, so it is idempotent.
+
+**Explanation.** One `FUSE-001` per kernel, at the joined span. For the chain above, `sky check --explain` says:
+
+```text
+note: [FUSE-001] `(a + b) * 2 - d` is rewritten to `fused(a, b, 2, d)`
+  = note: applied by the `fuse` pass
+  = note: because fused 3 elementwise operations into one kernel; saves 2 temporary arrays of 3 elements
+  = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[3]
+  = note: because 3 of the operations can fail (`add`, `mul`, `sub`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
+```
+
+It also names the user's variables that stop being materialized (`` `t` is only used here ``), and says "no operation can fail" or "only `div` can fail, so a failure has the same message and place as before" when that is the case.
 
 ### `sky check` and the passes
 
-* `sky check --emit-ir[=<stage>]` prints the SIR text to stdout: `lower` (straight out of lowering), `after:<pass>` (or just the pass name: `fold`, `egraph`, `dce`, `cholesky`), or `final` (the default, the end of the pipeline). With the flag, stdout is only the IR, so it can be piped into a file and parsed back; the `edition:` and `ok` lines go to stderr.
+* `sky check --emit-ir[=<stage>]` prints the SIR text to stdout: `lower` (straight out of lowering), `after:<pass>` (or just the pass name: `fold`, `egraph`, `dce`, `fuse`, `cholesky`), or `final` (the default, the end of the pipeline). With the flag, stdout is only the IR, so it can be piped into a file and parsed back; the `edition:` and `ok` lines go to stderr.
 * `sky check --explain` also shows the passes' explanations, merged with the checker's notes in source order. The checker's Cholesky note is kept as it is (it names the operands by their source text, which SIR does not keep), and the pass's explanation of the same site is dropped, so it is never shown twice. A site only the IR sees (`B = inv(A)`, then `B @ b`) is shown once, from the pass, in the same words.
 * A program that checks but cannot be lowered yet (`sky_lower::LowerError`, today: array literals) is still `ok`. `--emit-ir` prints a note saying why there is no IR and nothing on stdout; `--explain` alone is unchanged.
 
@@ -182,7 +225,7 @@ It is parsed by a small hand-written parser that never panics, limits nesting to
 |---|---|---|
 | `sky-ir` | data model, operation table, verifier, effect inference, text printer and parser, pass manager | sky-units, sky-types (types only), sky-ast (reads the unit text of `show`), sky-diag |
 | `sky-lower` | checked AST to L1 | sky-ast, sky-types, sky-ir |
-| `sky-opt` | passes: fold, dce, cholesky, and the default pipeline (which includes `sky-egraph`'s pass); later autodiff | sky-ir, sky-egraph |
+| `sky-opt` | passes: fold, dce, fuse, cholesky, and the default pipeline (which includes `sky-egraph`'s pass); later autodiff | sky-ir, sky-egraph |
 | `sky-egraph` | identity-aware e-graph rewriting (`egg`) as a pass | sky-ir |
 | `sky-ir-interp` | reference interpreter | sky-ir, sky-units |
 

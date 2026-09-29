@@ -1,0 +1,27 @@
+tests/ir/fusion.sky:7:5: note: [FUSE-001] `(a + b) * 2 - d` is rewritten to `fused(a, b, 2, d)`
+  |
+7 | x = (a + b) * 2 - d
+  |     ^^^^^^^^^^^^^^^
+  = note: applied by the `fuse` pass
+  = note: because fused 3 elementwise operations into one kernel; saves 2 temporary arrays of 3 elements
+  = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[3]
+  = note: because 3 of the operations can fail (`add`, `mul`, `sub`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
+
+tests/ir/fusion.sky:8:5: note: [FUSE-001] `a * 3 + b` is rewritten to `fused(a, 3, b)`
+  |
+8 | t = a * 3
+  |     ^^^^^
+  = note: applied by the `fuse` pass
+  = note: because fused 2 elementwise operations into one kernel; saves 1 temporary array of 3 elements
+  = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[3]
+  = note: because `t` is only used here, so it is no longer materialized
+  = note: because 2 of the operations can fail (`mul`, `add`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
+
+tests/ir/fusion.sky:11:5: note: [FUSE-001] `w * 2 + w` is rewritten to `fused(w, 2)`
+   |
+11 | z = w * 2 + w
+   |     ^^^^^^^^^
+   = note: applied by the `fuse` pass
+   = note: because fused 2 elementwise operations into one kernel; saves 1 temporary array of 3 elements
+   = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[3]
+   = note: because 2 of the operations can fail (`mul`, `add`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave

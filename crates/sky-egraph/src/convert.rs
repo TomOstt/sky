@@ -63,6 +63,11 @@ pub(crate) fn rewrite_function(
     let uses = use_counts(func);
     for b in 0..func.blocks.len() {
         let block = BlockId(b as u32);
+        // A `fused` body is opaque: its `neg` means `0 - x` (see `OpKind::Fused`).
+        let owner = func.block(block).parent.and_then(|r| func.region(r).parent);
+        if owner.is_some_and(|o| func.op(o).kind == OpKind::Fused) {
+            continue;
+        }
         // Last segment first: committing one changes the positions of the
         // ops after it in the block, never those before it, and the
         // segments hold positions.

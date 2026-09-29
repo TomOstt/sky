@@ -1,4 +1,4 @@
-//! The default pipeline (`fold`, `egraph`, `dce`, `cholesky`) must not
+//! The default pipeline (`fold`, `egraph`, `dce`, `fuse`, `cholesky`) must not
 //! change what a program does: lower it, run it in the reference
 //! interpreter, run the pipeline (verified after every pass), run it again,
 //! and the two runs must agree byte for byte on stdout and on the error (its
@@ -232,20 +232,60 @@ fn math_functions_and_their_domain_errors_are_preserved() {
     }
 }
 
+// ----- kernel fusion -----
+
+#[test]
+fn elementwise_array_chains_fuse_and_are_explained() {
+    let (o, report) = same_before_and_after(
+        "a = [1, 2, 3]\nb = [4, 5, 6]\nd = [1, 1, 1]\nx = (a + b) * 2 - d\nprint(x)\n",
+    );
+    assert_eq!(o.stdout, "[9, 13, 17]\n");
+    let fuse: Vec<&Explanation> = report
+        .explanations
+        .iter()
+        .filter(|x| x.pass == "fuse")
+        .collect();
+    assert_eq!(fuse.len(), 1, "{fuse:#?}");
+    assert_eq!(fuse[0].rule, "FUSE-001");
+    assert_eq!(fuse[0].before, "(a + b) * 2 - d");
+    assert_eq!(
+        fuse[0].because[0],
+        "fused 3 elementwise operations into one kernel; saves 2 temporary arrays of 3 elements"
+    );
+    // `fuse` is where the module changed to have a kernel.
+    let fuse_ran = report.ran.iter().find(|(n, _)| *n == "fuse").unwrap();
+    assert!(fuse_ran.1.is_yes());
+}
+
+#[test]
+fn a_fused_kernel_fails_with_the_error_of_the_first_failing_operation() {
+    // `big * big` overflows at the last element, `small * big` at the
+    // first: the separate operations fail in the first one, and so does the
+    // kernel.
+    let src = "big = [1, 1, 1e200]\nsmall = [1e200, 1, 1]\nk = 1e200\n\
+               y = big * k + small * k\nprint(y)\n";
+    let (o, report) = same_before_and_after(src);
+    let (message, start, end) = o.error.expect("overflows");
+    assert_eq!(message, "arithmetic overflow");
+    assert_eq!(&src[start as usize..end as usize], "big * k");
+    assert!(report.explanations.iter().any(|x| x.rule == "FUSE-001"));
+}
+
 // ----- the pipeline and its adapters -----
 
 #[test]
-fn the_default_pipeline_runs_the_four_passes_in_order() {
+fn the_default_pipeline_runs_the_five_passes_in_order() {
     let mut m = sky_lower::lower_source("x = 2 * 3\nprint(x)\n").unwrap();
     let report = default_pipeline().verify_each(true).run(&mut m).unwrap();
     let names: Vec<&str> = report.ran.iter().map(|(n, _)| *n).collect();
-    assert_eq!(names, ["fold", "egraph", "dce", "cholesky"]);
+    assert_eq!(names, ["fold", "egraph", "dce", "fuse", "cholesky"]);
     assert_eq!(names, DEFAULT_PASSES);
     // fold changed the module (`2 * 3`), dce removed the operands.
     assert!(report.ran[0].1.is_yes());
     assert!(!report.ran[1].1.is_yes());
     assert!(report.ran[2].1.is_yes());
     assert!(!report.ran[3].1.is_yes());
+    assert!(!report.ran[4].1.is_yes());
     // A second run finds nothing left to do.
     let again = default_pipeline().verify_each(true).run(&mut m).unwrap();
     assert!(again.ran.iter().all(|(_, c)| !c.is_yes()), "{again:?}");

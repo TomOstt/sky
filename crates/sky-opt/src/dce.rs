@@ -92,6 +92,10 @@ fn removable(f: &Function, id: OpId) -> bool {
     let known = |v: &sky_ir::ValueId| !matches!(f.ty(*v), Type::Unknown);
     match &op.kind {
         OpKind::While => false,
+        // A `fused` fails, or not, as its body does.
+        OpKind::Fused => {
+            op.operands.iter().all(known) && op.regions.iter().all(|r| region_is_removable(f, *r))
+        }
         OpKind::If => {
             matches!(op.operands.first().map(|v| f.ty(*v)), Some(Type::Bool))
                 && op.regions.iter().all(|r| region_is_removable(f, *r))

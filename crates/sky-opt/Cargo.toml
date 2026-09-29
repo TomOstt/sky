@@ -1,6 +1,6 @@
 [package]
 name = "sky-opt"
-description = "Optimization passes over SIR and the default pipeline: constant folding, e-graph rewriting, dead-code elimination, Cholesky solve selection"
+description = "Optimization passes over SIR and the default pipeline: constant folding, e-graph rewriting, dead-code elimination, elementwise kernel fusion, Cholesky solve selection"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

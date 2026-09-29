@@ -1,0 +1,12 @@
+# Chains of elementwise array operations fuse into one kernel: the first
+# saves two temporary arrays, the second names a variable that is no longer
+# materialized. `w` is used twice, so it stays an array of its own.
+a = [1, 2, 3]
+b = [4, 5, 6]
+d = [1, 1, 1]
+x = (a + b) * 2 - d
+t = a * 3
+y = t + b
+w = a - d
+z = w * 2 + w
+print(x, y, z)

@@ -45,7 +45,7 @@ use sky_ir::{CmpOp, Function, Module, OpId, OpKind, Type, ValueId};
 use sky_units::{Dimension, Rational};
 
 use crate::rewrite::Rewrite;
-use crate::util::{defining_op, reachable_ops, replace_uses, value_text};
+use crate::util::{defining_op, in_fused_body, reachable_ops, replace_uses, value_text};
 
 /// What to do when an exact rational result differs from the interpreter's
 /// `f64` result. See the module documentation.
@@ -77,6 +77,9 @@ fn fold_function(f: &mut Function, mode: FoldMode, out: &mut Vec<Rewrite>) {
         let mut restart = false;
         let mut changed = false;
         for op in reachable_ops(f) {
+            if in_fused_body(f, op) {
+                continue;
+            }
             let did = match f.op(op).kind {
                 OpKind::If => {
                     restart = fold_if(f, op, out);

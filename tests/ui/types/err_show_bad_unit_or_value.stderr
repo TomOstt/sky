@@ -1,0 +1,40 @@
+tests/ui/types/err_show_bad_unit_or_value.sky:3:12: error: unknown unit `parsecs`
+  |
+3 | print(v as parsecs)
+  |            ^^^^^^^
+  = help: did you mean `pc`?
+
+tests/ui/types/err_show_bad_unit_or_value.sky:4:12: error: unknown unit `kmh`
+  |
+4 | print(v as kmh)
+  |            ^^^
+
+tests/ui/types/err_show_bad_unit_or_value.sky:5:12: error: unknown unit `c`
+  |
+5 | print(v as c)
+  |            ^
+  = help: `c` is a physical constant, not a unit; multiply by it: `x * c`
+
+tests/ui/types/err_show_bad_unit_or_value.sky:6:7: error: cannot show a Bool in km
+  |
+6 | print(true as km)
+  |       ^^^^ this is a Bool
+  = help: only numbers and arrays of numbers can be shown in a unit
+
+tests/ui/types/err_show_bad_unit_or_value.sky:7:7: error: cannot show a Bool in m
+  |
+7 | print((1 < 2) as m)
+  |       ^^^^^^^ this is a Bool
+  = help: only numbers and arrays of numbers can be shown in a unit
+
+tests/ui/types/err_show_bad_unit_or_value.sky:10:7: error: cannot show function `f` in m
+   |
+10 | print(f as m)
+   |       ^ this is function `f`
+   = help: only numbers and arrays of numbers can be shown in a unit
+
+tests/ui/types/err_show_bad_unit_or_value.sky:11:12: error: unknown unit `Gy`
+   |
+11 | print(v as Gy)
+   |            ^^
+   = help: did you mean `Gyr`?

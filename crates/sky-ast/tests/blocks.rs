@@ -258,16 +258,82 @@ fn empty_blocks_say_use_pass() {
 // ----- unsupported and reserved -----
 
 #[test]
-fn for_and_import_are_not_supported_yet() {
+fn import_is_not_supported_yet() {
     let errors = module_errors("for i in x:\n    y = i\nz = 1\nimport a.b\nw = 2\n");
     let messages: Vec<&str> = errors.iter().map(|e| e.message.as_str()).collect();
+    assert_eq!(messages, ["`import` is not supported yet"]);
+}
+
+// ----- for -----
+
+#[test]
+fn for_forms() {
     assert_eq!(
-        messages,
+        module_sexpr("for i in range(3):\n    x = i\ny = 1\n"),
+        "(for i (call range 3) (block (= x i)))\n(= y 1)"
+    );
+    assert_eq!(
+        module_sexpr("for i in range(1, n + 1, 2):\n    pass\n"),
+        "(for i (call range 1 (+ n 1) 2) (block (pass)))"
+    );
+    assert_eq!(
+        module_sexpr("for f in forces:\n    for r in A:\n        break\n    continue\n"),
+        "(for f forces (block (for r A (block (break))) (continue)))"
+    );
+}
+
+#[test]
+fn for_spans_run_from_the_keyword_to_the_end_of_the_body() {
+    let src = "for i in v:\n    x = i\nz = 1\n";
+    let (m, errors) = parse_module(&lex(src), src);
+    assert!(errors.is_empty(), "{errors:#?}");
+    let StmtKind::For { var, iter, body } = &m.stmts[0].kind else {
+        panic!("not a for: {:?}", m.stmts[0]);
+    };
+    assert_eq!(at(src, m.stmts[0].span), "for i in v:\n    x = i");
+    assert_eq!(at(src, var.span), "i");
+    assert_eq!(at(src, iter.span), "v");
+    assert_eq!(at(src, body.span), "x = i");
+}
+
+#[test]
+fn a_for_header_error_still_reads_the_body() {
+    // The body's own error is reported, and the block stays in sync.
+    let src = "for i range(3):\n    x = = 1\ny = 2\n";
+    assert_eq!(
+        messages(src),
         [
-            "`for` loops are not supported yet",
-            "`import` is not supported yet"
+            "expected `in` after the loop variable, found name `range`",
+            "expected an expression, found `=`"
         ]
     );
+}
+
+#[test]
+fn a_for_needs_a_plain_name_before_in() {
+    assert_eq!(
+        messages("for (a, b) in p:\n    pass\n"),
+        ["expected a loop variable name after `for`, found `(`"]
+    );
+    assert_eq!(
+        messages("for i, j in p:\n    pass\n"),
+        ["expected `in` after the loop variable, found `,`"]
+    );
+}
+
+#[test]
+fn a_for_body_on_the_header_line_is_rejected_like_while() {
+    assert_eq!(
+        messages("for i in v: x = i\n"),
+        ["the body of `for` must be on its own indented line"]
+    );
+}
+
+#[test]
+fn an_empty_for_body_says_use_pass() {
+    let errors = module_errors("for i in v:\nx = 1\n");
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert_eq!(errors[0].message, "expected an indented block after `for`");
 }
 
 #[test]

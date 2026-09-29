@@ -184,6 +184,11 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
                 stack.push(Node::Expr(cond));
                 push_block(&mut stmts, body, &mut f);
             }
+            StmtKind::For { var, iter, body } => {
+                f(var.span);
+                stack.push(Node::Expr(iter));
+                push_block(&mut stmts, body, &mut f);
+            }
             StmtKind::Def {
                 name,
                 params,
@@ -279,6 +284,15 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
                     ExprKind::Paren(inner) => stack.push(Node::Expr(inner)),
                     ExprKind::IfElse { then, cond, else_ } => {
                         stack.extend([then, cond, else_].map(|e| Node::Expr(e)));
+                    }
+                    ExprKind::As {
+                        value,
+                        unit,
+                        as_span,
+                    } => {
+                        f(*as_span);
+                        stack.push(Node::Expr(value));
+                        stack.push(Node::Unit(unit));
                     }
                 }
             }
@@ -389,6 +403,7 @@ const KINDS: &[TokenKind] = {
         Keyword(Kw::While),
         Keyword(Kw::For),
         Keyword(Kw::In),
+        Keyword(Kw::As),
         Keyword(Kw::Import),
         Keyword(Kw::Pass),
         Keyword(Kw::Break),

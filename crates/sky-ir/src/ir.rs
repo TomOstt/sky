@@ -109,7 +109,9 @@ pub enum Effect {
     /// Such an operation may be removed only if its result is unused *and*
     /// the program's contract allows dropping the error; v1 passes don't.
     Fail,
-    /// Calls a function whose effects are those of its body.
+    /// Calls a function. The call also has the callee's effects, which
+    /// [`crate::effects`] adds to the caller's set; `Call` itself stays as
+    /// the mark that a call can fail by exhausting the call depth.
     Call,
 }
 
@@ -143,6 +145,13 @@ impl EffectSet {
     pub const fn union(self, other: EffectSet) -> EffectSet {
         EffectSet {
             bits: self.bits | other.bits,
+        }
+    }
+
+    /// The effects in `self` that are not in `other`.
+    pub const fn difference(self, other: EffectSet) -> EffectSet {
+        EffectSet {
+            bits: self.bits & !other.bits,
         }
     }
 

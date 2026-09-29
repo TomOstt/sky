@@ -1,0 +1,19 @@
+# derivative(f, x)(args) has the type dim(f) / dim(x): the derivative of a
+# position with respect to time is a velocity, and with several parameters
+# the one named is the one differentiated.
+def position(t: s) -> m:
+    return 5 m/s^2 * t^2
+
+def spring(x: m, k: N/m) -> J:
+    return 0.5 * k * x^2
+
+def piecewise(t: s) -> m:
+    if t > 1 s:
+        return 3 m/s * t
+    return 1 m
+
+v: m/s = derivative(position, t)(2 s)
+f: N = derivative(spring, x)(0.1 m, 200 N/m)
+half: m^2 = derivative(spring, k)(0.1 m, 200 N/m)
+branchy: m/s = derivative(piecewise, t)(3 s)
+total = v + derivative(position, t)(1 s)

@@ -13,13 +13,14 @@ use std::io::Write;
 
 use sky_diag::Span;
 use sky_interp::arith::{
-    arith, arity_mismatch, arrays_unsupported, equal, expect_bool, order, pow, reciprocal,
-    recursion_too_deep, sign, ArithOp, StackMeter, MAX_CALL_DEPTH,
+    arith, arity_mismatch, equal, expect_bool, order, pow, reciprocal, recursion_too_deep, sign,
+    ArithOp, StackMeter, MAX_CALL_DEPTH,
 };
+use sky_interp::array::{self, Ix};
 use sky_interp::Value;
 use sky_ir::{
-    BlockData, BlockId, CmpOp, Function, Module, NumberType, OpData, OpId, OpKind, RegionId, Type,
-    ValueId,
+    BlockData, BlockId, CmpOp, Function, Module, NumberType, OpData, OpId, OpKind, RegionId,
+    SliceAxis, SolveMethod, Type, ValueId,
 };
 use sky_units::{Dimension, Rational};
 
@@ -135,16 +136,6 @@ impl<'m> Act<'m> {
     fn ty(&self, v: ValueId) -> Option<&'m Type> {
         self.func.values.get(v.index()).map(|d| &d.ty)
     }
-
-    /// Whether `op` is typed as working on an array: any operand or result
-    /// that is a number with a non-scalar shape.
-    fn touches_array(&self, op: &OpData) -> bool {
-        op.operands
-            .iter()
-            .chain(&op.results)
-            .filter_map(|v| self.ty(*v))
-            .any(|t| matches!(t, Type::Number(n) if n.shape.rank() != 0))
-    }
 }
 
 /// `op`'s operands as exactly `N` values' ids.
@@ -190,7 +181,10 @@ fn const_dim(act: &Act<'_>, op: &OpData) -> R<Dimension> {
     };
     match act.ty(r) {
         Some(Type::Number(NumberType { dim, shape, .. })) if shape.rank() == 0 => Ok(*dim),
-        Some(Type::Number(_)) => Err(arrays_unsupported(op.span).into()),
+        Some(Type::Number(_)) => Err(IrRuntimeError::malformed(
+            format!("`{}` must have a scalar result", op.kind.mnemonic()),
+            op.span,
+        )),
         Some(Type::Unknown) => Ok(Dimension::DIMENSIONLESS),
         _ => Err(IrRuntimeError::malformed(
             format!("`{}` must have a number result", op.kind.mnemonic()),
@@ -219,11 +213,23 @@ pub(crate) fn call(
     args: Vec<Value>,
     out: &mut dyn Write,
 ) -> R<Vec<Value>> {
+    call_metered(module, name, args, out, StackMeter::new())
+}
+
+/// [`call`] measuring the stack from `stack`, a meter another interpreter
+/// started, so a run nested in it stays inside one budget.
+pub(crate) fn call_metered(
+    module: &Module,
+    name: &str,
+    args: Vec<Value>,
+    out: &mut dyn Write,
+    stack: StackMeter,
+) -> R<Vec<Value>> {
     let mut m = Machine {
         module,
         out,
         depth: 0,
-        stack: StackMeter::new(),
+        stack,
         #[cfg(test)]
         fuel: u64::MAX,
     };
@@ -481,7 +487,6 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
         OpKind::Div => arith_op(act, op, ArithOp::Div),
         OpKind::Neg => {
             let [a] = fixed(op)?;
-            no_arrays(act, op)?;
             let v = sign(true, act.get(a, s)?.clone(), s)?;
             act.define(op, vec![v])
         }
@@ -498,21 +503,25 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
                     s,
                 ));
             }
-            no_arrays(act, op)?;
             let refs: Vec<&Value> = vals.iter().collect();
             let v = crate::math::eval(*f, &refs, s)?;
             act.define(op, vec![v])
         }
+        // The same function `sky run` calls for `v as unit`, so both print
+        // the same digits and fail the same way.
+        OpKind::Show { unit } => {
+            let [a] = fixed(op)?;
+            let v = sky_interp::show_unit_text(unit, act.get(a, s)?, s)?;
+            act.define(op, vec![v])
+        }
         OpKind::PowConst { exponent } => {
             let [a] = fixed(op)?;
-            no_arrays(act, op)?;
             let e = Value::scalar(exponent.numer() as f64 / exponent.denom() as f64);
             let v = pow(act.get(a, s)?, &e, || Some(*exponent), s, s, s)?;
             act.define(op, vec![v])
         }
         OpKind::Pow => {
             let [a, e] = fixed(op)?;
-            no_arrays(act, op)?;
             // A computed exponent gives a base with a unit no constant to
             // take the result's dimension from, as in `sky run`.
             let v = pow(act.get(a, s)?, act.get(e, s)?, || None::<Rational>, s, s, s)?;
@@ -523,17 +532,73 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
         // non-number always uses the `⁻¹` spelling.
         OpKind::Inverse => {
             let [a] = fixed(op)?;
-            no_arrays(act, op)?;
             let v = reciprocal("⁻¹", act.get(a, s)?, s, s)?;
             act.define(op, vec![v])
         }
-        OpKind::MatMul | OpKind::Transpose | OpKind::Solve { .. } => {
-            Err(arrays_unsupported(s).into())
+        OpKind::MatMul => {
+            let [a, b] = fixed(op)?;
+            let v = array::matmul(act.get(a, s)?, act.get(b, s)?, s, s, s)?;
+            act.define(op, vec![v])
+        }
+        OpKind::Transpose => {
+            let [a] = fixed(op)?;
+            let v = array::transpose(act.get(a, s)?, s)?;
+            act.define(op, vec![v])
+        }
+        // The Cholesky solve `sky run` performs where the checker rewrote
+        // `A⁻¹ @ b`: the same function, so the same bits and errors.
+        OpKind::Solve {
+            method: SolveMethod::Cholesky,
+        } => {
+            let [a, b] = fixed(op)?;
+            let v = array::cholesky_solve(act.get(a, s)?, act.get(b, s)?, s, s, s)?;
+            act.define(op, vec![v])
+        }
+        OpKind::ArrayLiteral { cols } => array_literal(act, op, *cols),
+        OpKind::Index => {
+            let Some((&base, positions)) = op.operands.split_first() else {
+                return Err(IrRuntimeError::malformed("`index` has no operands", s));
+            };
+            let mut items = Vec::with_capacity(positions.len());
+            for &p in positions {
+                items.push(Ix::At {
+                    i: array::to_index(act.get(p, s)?, s)?,
+                    span: s,
+                });
+            }
+            let v = array::index(act.get(base, s)?, &items, s, s)?;
+            act.define(op, vec![v])
+        }
+        OpKind::Slice { axes } => slice(act, op, axes),
+        OpKind::Zeros | OpKind::Identity => {
+            let mut sizes = Vec::with_capacity(2);
+            let name = op.kind.mnemonic();
+            for &v in &op.operands {
+                sizes.push(array::size_arg(name, act.get(v, s)?, s)?);
+            }
+            let v = match (&op.kind, sizes.as_slice()) {
+                (OpKind::Zeros, [_] | [_, _]) => array::zeros(&sizes, s)?,
+                (OpKind::Identity, [n]) => array::identity(*n, s)?,
+                _ => {
+                    return Err(IrRuntimeError::malformed(
+                        format!(
+                            "`{name}` takes a size (`zeros`: two), found {}",
+                            sizes.len()
+                        ),
+                        s,
+                    ))
+                }
+            };
+            act.define(op, vec![v])
+        }
+        OpKind::Len => {
+            let [a] = fixed(op)?;
+            let v = array::len(act.get(a, s)?, s)?;
+            act.define(op, vec![v])
         }
 
         OpKind::Cmp(c) => {
             let [a, b] = fixed(op)?;
-            no_arrays(act, op)?;
             let (l, r) = (act.get(a, s)?, act.get(b, s)?);
             let holds = match c {
                 CmpOp::Eq => equal(l, r, s, s, s)?,
@@ -566,20 +631,81 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
     }
 }
 
-/// An array-typed operation is not executable yet (`sky run` says the same),
-/// whatever its operation.
-fn no_arrays(act: &Act<'_>, op: &OpData) -> R<()> {
-    if act.touches_array(op) {
-        Err(arrays_unsupported(op.span).into())
-    } else {
-        Ok(())
-    }
-}
-
 fn arith_op(act: &mut Act<'_>, op: &OpData, kind: ArithOp) -> R<()> {
     let [a, b] = fixed(op)?;
-    no_arrays(act, op)?;
     let s = op.span;
     let v = arith(kind, act.get(a, s)?, act.get(b, s)?, s, s, s)?;
+    act.define(op, vec![v])
+}
+
+/// `array.literal`: the operands, in row-major order, arranged as `cols`
+/// says (see [`OpKind::ArrayLiteral`]) and built by `sky_interp`'s literal
+/// rule, which checks that every entry is a number of one dimension.
+fn array_literal(act: &mut Act<'_>, op: &OpData, cols: Option<u64>) -> R<()> {
+    let s = op.span;
+    let entries: Vec<(Value, Span)> = act
+        .values(&op.operands, s)?
+        .into_iter()
+        .map(|v| (v, s))
+        .collect();
+    let width = match cols {
+        None => entries.len(),
+        Some(c) => usize::try_from(c).unwrap_or(0),
+    };
+    if width == 0 || entries.len() % width != 0 {
+        return Err(IrRuntimeError::malformed(
+            format!(
+                "`array.literal` cannot arrange {} operands in rows of {width}",
+                entries.len()
+            ),
+            s,
+        ));
+    }
+    let rows: Vec<Vec<(Value, Span)>> = entries.chunks(width).map(<[_]>::to_vec).collect();
+    let v = array::literal(rows, cols.is_none(), s)?;
+    act.define(op, vec![v])
+}
+
+/// `slice`: the base, then each item's operands in order.
+fn slice(act: &mut Act<'_>, op: &OpData, axes: &[SliceAxis]) -> R<()> {
+    let s = op.span;
+    let Some((&base, rest)) = op.operands.split_first() else {
+        return Err(IrRuntimeError::malformed("`slice` has no operands", s));
+    };
+    let mut rest = rest.iter();
+    let mut bound = |act: &Act<'_>| -> R<usize> {
+        let Some(&v) = rest.next() else {
+            return Err(IrRuntimeError::malformed(
+                "`slice` has fewer operands than its items need",
+                s,
+            ));
+        };
+        Ok(array::to_index(act.get(v, s)?, s)?)
+    };
+    let mut items = Vec::with_capacity(axes.len());
+    for axis in axes {
+        items.push(match *axis {
+            SliceAxis::At => Ix::At {
+                i: bound(act)?,
+                span: s,
+            },
+            SliceAxis::Range { start, stop } => {
+                let start = if start { Some(bound(act)?) } else { None };
+                let stop = if stop { Some(bound(act)?) } else { None };
+                Ix::Slice {
+                    start,
+                    stop,
+                    span: s,
+                }
+            }
+        });
+    }
+    if rest.next().is_some() {
+        return Err(IrRuntimeError::malformed(
+            "`slice` has more operands than its items need",
+            s,
+        ));
+    }
+    let v = array::index(act.get(base, s)?, &items, s, s)?;
     act.define(op, vec![v])
 }

@@ -6,8 +6,8 @@
 //!
 //! # Scoping
 //!
-//! Python's: `if` and `while` bodies share the enclosing scope, and a `def`
-//! opens a new one. After an `if`, the bindings of every branch that can
+//! Python's: `if`, `while` and `for` bodies share the enclosing scope, and a
+//! `def` opens a new one. After an `if`, the bindings of every branch that can
 //! fall through are merged ([`Checker::merge`]): a name bound in all of them
 //! keeps its type (dimension and shape must agree, tags are joined with
 //! [`TagSet::join`]), a name bound in only some becomes *maybe-defined*
@@ -42,6 +42,7 @@ use sky_diag::{Diagnostic, Span};
 use sky_units::Dimension;
 
 use crate::check::{describe, strip_parens, Checker, Scope, Ty, ValueTy};
+use crate::derivative::DerivativeOf;
 use crate::provenance::label_dim;
 use crate::rules::TensorType;
 use crate::shape::{Shape, ShapeContext, ShapeDim, ShapeVar};
@@ -67,9 +68,19 @@ pub struct FuncSig {
     /// The size variables the signature leaves open; each call replaces
     /// them with fresh ones.
     pub(crate) generic: Vec<ShapeVar>,
+    /// Set for the signature of `derivative(f, x)`: which function and
+    /// parameter it is the derivative of (see [`crate::derivative`]). `None`
+    /// for a `def`.
+    pub(crate) derivative: Option<Arc<DerivativeOf>>,
 }
 
 impl FuncSig {
+    /// For the function `derivative(f, x)` gives, what it differentiates;
+    /// `None` for a function defined with `def`.
+    pub fn derivative_of(&self) -> Option<&DerivativeOf> {
+        self.derivative.as_deref()
+    }
+
     /// The function's name.
     pub fn name(&self) -> &str {
         &self.name
@@ -135,7 +146,23 @@ pub(crate) struct FnCtx {
     pub(crate) locals: BTreeSet<String>,
 }
 
-/// One `while` being checked: the states its `break`s and `continue`s left.
+/// How often a loop's body is known to run: it decides which paths leave
+/// the loop (see [`Checker::loop_body`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Runs {
+    /// Maybe never (`while c`, `range(n)` with a variable `n`): the state
+    /// before the loop is one way out, so a name first bound in the body
+    /// is only maybe-defined after it.
+    Maybe,
+    /// At least once (a `for` over an array, which is never empty, or over
+    /// a `range` with constant bounds): the body's own states are the only
+    /// ways out, so what it binds is defined after the loop.
+    AtLeastOnce,
+    /// Until a `break` (`while true`).
+    Forever,
+}
+
+/// One loop being checked: the states its `break`s and `continue`s left.
 #[derive(Default)]
 pub(crate) struct LoopFrame {
     breaks: Vec<Scope>,
@@ -294,18 +321,29 @@ impl Checker<'_> {
         let before = self.env.snapshot();
         let t = self.expr(cond);
         self.condition("while", cond, t);
+        let forever = matches!(
+            strip_parens(cond).kind,
+            ExprKind::Literal(Literal::Bool { value: true, .. })
+        );
+        let runs = if forever { Runs::Forever } else { Runs::Maybe };
+        self.loop_body(span, before, body, runs);
+    }
+
+    /// The body of a loop and the merge of every way out of it, for `while`
+    /// and `for` alike (a `for` is a `while` over an index, see
+    /// [`crate::for_loop`]). `before` is the state on entering the loop,
+    /// which is where the zero-iteration path ends up.
+    pub(crate) fn loop_body(&mut self, span: Span, before: Scope, body: &Block, runs: Runs) {
         self.loops.push(LoopFrame::default());
         self.diverged = false;
         self.block(body);
         let end_diverged = self.diverged;
         let frame = self.loops.pop().unwrap_or_default();
-        let forever = matches!(
-            strip_parens(cond).kind,
-            ExprKind::Literal(Literal::Bool { value: true, .. })
-        );
         let mut paths = Vec::new();
-        if !forever {
-            paths.push(before.clone());
+        if runs != Runs::Forever {
+            if runs == Runs::Maybe {
+                paths.push(before.clone());
+            }
             if !end_diverged {
                 paths.push(self.env.snapshot());
             }
@@ -319,8 +357,10 @@ impl Checker<'_> {
         if self.loops.is_empty() {
             self.error(
                 Diagnostic::error("`break` outside a loop", span)
-                    .with_label("not inside a `while`")
-                    .with_help("`break` only works inside a `while` loop of the same function"),
+                    .with_label("not inside a loop")
+                    .with_help(
+                        "`break` only works inside a `while` or `for` loop of the same function",
+                    ),
             );
         } else {
             let here = self.env.snapshot();
@@ -335,8 +375,10 @@ impl Checker<'_> {
         if self.loops.is_empty() {
             self.error(
                 Diagnostic::error("`continue` outside a loop", span)
-                    .with_label("not inside a `while`")
-                    .with_help("`continue` only works inside a `while` loop of the same function"),
+                    .with_label("not inside a loop")
+                    .with_help(
+                        "`continue` only works inside a `while` or `for` loop of the same function",
+                    ),
             );
         } else {
             let here = self.env.snapshot();
@@ -568,6 +610,7 @@ impl Checker<'_> {
             params: psigs.clone(),
             ret: Ty::Unknown,
             generic: self.open_vars(&psigs, &Ty::Unknown),
+            derivative: None,
         });
         self.bind_at(&fname, Ty::Func(provisional), name.span);
 
@@ -626,6 +669,7 @@ impl Checker<'_> {
             params,
             ret: ret_ty,
             generic,
+            derivative: None,
         };
         let sig = Arc::new(sig);
         self.funcs.insert(name.span, sig.clone());
@@ -978,7 +1022,14 @@ impl Checker<'_> {
                 primary,
             )
             .with_label(label)
-            .with_secondary(sig.def_span, format!("`{fname}` is defined here")),
+            .with_secondary(
+                sig.def_span,
+                // `derivative(f, x)` takes what `f` takes: point at `f`.
+                format!(
+                    "`{}` is defined here",
+                    quote(sig.derivative_of().map_or(sig.name(), |d| d.func().name()))
+                ),
+            ),
         );
     }
 
@@ -1014,22 +1065,28 @@ impl Checker<'_> {
                     return;
                 }
                 if av.dim != pt.dim {
-                    self.error(
-                        Diagnostic::error(
-                            format!(
-                                "`{pname}` of `{fname}` expects {}, found {}",
-                                self.ty_noun(&Ty::Value(pt.clone())),
-                                self.ty_noun(t)
-                            ),
-                            arg.span,
-                        )
-                        .with_label(format!("this is {}", self.ty_label(t)))
-                        .with_secondary(ann, "expected because of this annotation")
-                        .with_note(
-                            "annotations cannot state units yet, so an annotated parameter is dimensionless",
-                        )
-                        .with_help("leave the parameter unannotated to accept any unit"),
-                    );
+                    let d = Diagnostic::error(
+                        format!(
+                            "`{pname}` of `{fname}` expects {}, found {}",
+                            self.ty_noun(&Ty::Value(pt.clone())),
+                            self.ty_noun(t)
+                        ),
+                        arg.span,
+                    )
+                    .with_label(format!("this is {}", self.ty_label(t)))
+                    .with_secondary(ann, "expected because of this annotation");
+                    // An annotation without a unit is dimensionless: say so,
+                    // and how to accept any unit. With a unit, the argument
+                    // is what to fix.
+                    let d = if pt.dim.is_dimensionless() {
+                        d.with_note("an annotation without a unit is dimensionless")
+                            .with_help(
+                                "write the unit in the annotation (`x: m`), or leave the parameter unannotated to accept any unit",
+                            )
+                    } else {
+                        d.with_help("convert the argument, or fix the unit in the call")
+                    };
+                    self.error(d);
                 }
             }
             Ty::Bool | Ty::Func(_) => {

@@ -1,8 +1,9 @@
 //! Lowering statements, and with them all of structured control flow.
 //! The scheme is described in the crate docs; the names used here:
 //!
-//! * a **guard** is the `if not flag { rest of the block }` inserted after a
-//!   statement that may have set an exit flag;
+//! * a **guard** is the `if not flag { statements }` around each statement
+//!   (or run of statements that cannot exit) after one that may have set an
+//!   exit flag;
 //! * a **merge** ([`Lower::close_if`]) gives an `if` its results: every
 //!   variable or flag that differs from its value before the `if`, on some
 //!   path, becomes a result, and each region yields its current values.
@@ -15,10 +16,11 @@ use sky_ir::{BlockId, OpId, OpKind, Type, ValueId};
 use sky_types::Ty;
 
 use crate::analysis::{
-    assigned_vars, block_diverges, exits_stmt, exits_stmts, is_forever, stmt_diverges, Exits,
+    assigned_vars, block_diverges, exits_stmt, exits_stmts, stmt_diverges, Exits,
 };
 use crate::ctx::{assignable, brk_flag, join_ty, skip_flag, Lower, Needed, Scope, R, RET, RETVAL};
 use crate::expr::ARRAYS;
+use crate::for_loop::Head;
 use crate::LowerError;
 
 /// One way control can reach the end of an `if`: the block it ends in, the
@@ -36,9 +38,11 @@ enum Mode<'a> {
     /// (and changed), or is bound on every path that reaches the code after
     /// it, which is when the checker says it is bound.
     User,
-    /// A guard: the skipping path is "already exited", so any name the
-    /// code after needs (`needed`) is a result, with a stand-in value on
-    /// the skipping path.
+    /// A guard, or one arm's `if` of a flat `elif` chain: the skipping path
+    /// is "already exited" (or "an earlier arm ran"), so any name the code
+    /// after may read (`needed`: the names the guarded statements assign,
+    /// or that every arm of the chain assigns) is a result, with a stand-in
+    /// value on the skipping path.
     Guard(&'a Needed),
 }
 
@@ -52,13 +56,12 @@ struct GuardFrame {
     span: Span,
 }
 
-/// One `if`/`elif` of a chain: an `if` whose else arm holds the next.
-struct Level {
-    op: OpId,
-    then_b: BlockId,
-    else_b: BlockId,
-    then_end: Scope,
-    then_contrib: bool,
+/// Whether an arm reaches the code after its `if`: it can fall through, or
+/// leaves the *loop* by `break`/`continue` (its variables then flow to the
+/// loop's exit). One that only returns takes no part.
+fn reaches_after(stmts: &[Stmt]) -> bool {
+    let ex = exits_stmts(stmts);
+    !block_diverges(stmts) || ex.brk || ex.cont
 }
 
 /// An error for a write through an index or attribute, which the checker
@@ -68,27 +71,59 @@ fn write_through(span: Span) -> LowerError {
 }
 
 impl Lower<'_> {
-    /// Lowers a block's statements in the current scope. After a statement
-    /// that may have exited (set a flag), the rest of the block is guarded;
-    /// after one that always exits the rest is dead and is dropped. Guards
-    /// nest, so they are opened in a loop and closed in reverse: a long run
-    /// of early exits is depth in the IR, not in lowering's recursion.
+    /// Lowers a block's statements in the current scope. Once a statement
+    /// that may exit (set a flag) has been lowered, every statement after it
+    /// is guarded **individually**: a statement that may itself exit gets its
+    /// own `if not flag { stmt }`, and a maximal run of statements that
+    /// cannot exit shares one. The guards are siblings, so a block adds one
+    /// level of region nesting for its guards however many early exits it
+    /// has (wrapping "the rest of the block" instead made a level per exit).
+    /// A guarded group cannot pass its values on by scope, since the code
+    /// after it is no longer inside it: every name it assigns becomes a
+    /// result of its guard, with a stand-in on the skipping path
+    /// ([`Mode::Guard`]). After a statement that always exits, the rest of
+    /// the block is dead and is dropped.
     pub(crate) fn block(&mut self, stmts: &[Stmt], needed: &Needed) -> R<()> {
-        let mut frames: Vec<GuardFrame> = Vec::new();
-        for (i, s) in stmts.iter().enumerate() {
-            self.stmt(s, needed)?;
-            let rest = &stmts[i + 1..];
-            if stmt_diverges(s) || rest.is_empty() {
-                break;
-            }
-            let Some(flag) = self.guard_flag(exits_stmt(s)) else {
+        // The flag the statements after the first possible exit test. Which
+        // flag is fixed by the context (loop depth), so one per block.
+        let mut flag: Option<String> = None;
+        let mut i = 0;
+        while i < stmts.len() {
+            let mut end = i + 1;
+            let Some(f) = flag.clone() else {
+                // Nothing before has exited yet: no guard.
+                self.stmt(&stmts[i], needed)?;
+                if stmt_diverges(&stmts[i]) {
+                    break;
+                }
+                flag = self.guard_flag(exits_stmt(&stmts[i]));
+                i = end;
                 continue;
             };
-            let span = rest[0].span.join(rest[rest.len() - 1].span);
-            frames.push(self.open_guard(&flag, span)?);
-        }
-        while let Some(frame) = frames.pop() {
-            self.close_guard(frame, needed);
+            // A run of straight-line statements is one group; a statement
+            // that may exit is a group of its own, and so is one that
+            // diverges (nothing after it is live).
+            if self.guard_flag(exits_stmt(&stmts[i])).is_none() {
+                while end < stmts.len()
+                    && !stmt_diverges(&stmts[end - 1])
+                    && self.guard_flag(exits_stmt(&stmts[end])).is_none()
+                {
+                    end += 1;
+                }
+            }
+            let group = &stmts[i..end];
+            let span = group[0].span.join(group[group.len() - 1].span);
+            let mut assigned = Needed::new();
+            assigned_vars(group, self.src, &mut assigned);
+            let frame = self.open_guard(&f, span)?;
+            for s in group {
+                self.stmt(s, needed)?;
+            }
+            self.close_guard(frame, &assigned);
+            if stmt_diverges(&group[group.len() - 1]) {
+                break;
+            }
+            i = end;
         }
         Ok(())
     }
@@ -177,7 +212,10 @@ impl Lower<'_> {
                 branches,
                 else_block,
             } => self.if_stmt(s.span, branches, else_block.as_ref(), needed),
-            StmtKind::While { cond, body } => self.while_stmt(s.span, cond, body, needed),
+            StmtKind::While { cond, body } => {
+                self.while_loop(s.span, Head::While(cond), body, needed)
+            }
+            StmtKind::For { var, iter, body } => self.for_stmt(s.span, var, iter, body, needed),
             StmtKind::Def {
                 name, params, body, ..
             } => self.lower_def(name, params, body, s.span),
@@ -324,31 +362,11 @@ impl Lower<'_> {
         out
     }
 
-    /// `if`/`elif`/`else`. Each arm is lowered from the scope before the
-    /// `if`; the arms of the chain nest as `if c1 {..} else { if c2 {..}
-    /// else {..} }`, built in a loop (a long `elif` chain is a loop here,
-    /// depth only in the IR). Then the merges are closed from the innermost
-    /// `if` outwards.
-    #[inline(never)]
-    fn if_stmt(
-        &mut self,
-        span: Span,
-        branches: &[(Expr, Block)],
-        else_block: Option<&Block>,
-        needed: &Needed,
-    ) -> R<()> {
-        let base = self.st.scope.clone();
-        let outer = self.st.b.at();
-        // An arm reaches the code after the `if` if it can fall through, or
-        // leaves the *loop* by `break`/`continue` (its variables then flow
-        // to the loop's exit). One that only returns takes no part.
-        let contrib = |stmts: &[Stmt]| {
-            let ex = exits_stmts(stmts);
-            !block_diverges(stmts) || ex.brk || ex.cont
-        };
-        // Names the arms that reach the code after the `if` all assign: a
-        // guard inside an arm must keep them alive on its skipping path.
-        let mut all: Option<BTreeSet<String>> = None;
+    /// The names the arms of an `if` that reach the code after it all
+    /// assign: a guard inside an arm (and, for an `elif` chain, each arm's
+    /// own merge) must keep them alive on its skipping path.
+    fn common_assigns(&self, branches: &[(Expr, Block)], else_block: Option<&Block>) -> Needed {
+        let mut all: Option<Needed> = None;
         let mut intersect = |stmts: &[Stmt], src: &str| {
             let mut a = BTreeSet::new();
             assigned_vars(stmts, src, &mut a);
@@ -358,68 +376,208 @@ impl Lower<'_> {
             });
         };
         for (_, b) in branches {
-            if contrib(&b.stmts) {
+            if reaches_after(&b.stmts) {
                 intersect(&b.stmts, self.src);
             }
         }
         match else_block {
-            Some(b) if contrib(&b.stmts) => intersect(&b.stmts, self.src),
+            Some(b) if reaches_after(&b.stmts) => intersect(&b.stmts, self.src),
             Some(_) => {}
             // No `else`: the path where no condition held assigns nothing.
             None => intersect(&[], self.src),
         }
-        let mut arm_needed = needed.clone();
-        arm_needed.extend(all.unwrap_or_default());
+        all.unwrap_or_default()
+    }
 
-        let mut levels: Vec<Level> = Vec::new();
-        for (cond, block) in branches {
-            // Each condition is evaluated on the path where the earlier
-            // ones failed: in the previous else arm.
-            self.st.scope = base.clone();
-            let c = self.expr(cond)?;
-            let (op, _) = self.st.b.op(OpKind::If, vec![c], Vec::new(), span);
-            let then_b = self.new_arm(op);
-            let else_b = self.new_arm(op);
-            self.st.b.set_at(then_b);
-            self.st.nest += 1;
-            self.block(&block.stmts, &arm_needed)?;
-            self.st.nest -= 1;
-            levels.push(Level {
-                op,
-                then_b,
-                else_b,
-                then_end: std::mem::take(&mut self.st.scope),
-                then_contrib: contrib(&block.stmts),
-            });
-            self.st.b.set_at(else_b);
+    /// `if`/`elif`/`else`. A plain `if` (with or without `else`) is one `if`
+    /// operation with each arm lowered from the scope before it, and a merge
+    /// ([`Lower::close_if`]). Two or more conditions are an `elif` chain,
+    /// which [`Lower::elif_chain`] lowers flat.
+    #[inline(never)]
+    fn if_stmt(
+        &mut self,
+        span: Span,
+        branches: &[(Expr, Block)],
+        else_block: Option<&Block>,
+        needed: &Needed,
+    ) -> R<()> {
+        let all = self.common_assigns(branches, else_block);
+        let mut arm_needed = needed.clone();
+        arm_needed.extend(all.iter().cloned());
+        if branches.len() > 1 {
+            return self.elif_chain(span, branches, else_block, &arm_needed, &all);
         }
+        let base = self.st.scope.clone();
+        let outer = self.st.b.at();
+        let Some((cond, block)) = branches.first() else {
+            return self.err("internal error: an `if` without a condition", span);
+        };
+        let c = self.expr(cond)?;
+        let (op, _) = self.st.b.op(OpKind::If, vec![c], Vec::new(), span);
+        let then_b = self.new_arm(op);
+        let else_b = self.new_arm(op);
+        self.st.b.set_at(then_b);
+        self.st.nest += 1;
+        self.block(&block.stmts, &arm_needed)?;
+        self.st.nest -= 1;
+        let then_end = std::mem::take(&mut self.st.scope);
+        self.st.b.set_at(else_b);
         self.st.scope = base.clone();
         if let Some(b) = else_block {
             self.st.nest += 1;
             self.block(&b.stmts, &arm_needed)?;
             self.st.nest -= 1;
         }
-        let mut else_end = std::mem::take(&mut self.st.scope);
-        let mut else_contrib = else_block.is_none_or(|b| contrib(&b.stmts));
-        while let Some(level) = levels.pop() {
+        let else_end = std::mem::take(&mut self.st.scope);
+        let paths = vec![
+            Path {
+                block: then_b,
+                scope: then_end,
+                contrib: reaches_after(&block.stmts),
+            },
+            Path {
+                block: else_b,
+                scope: else_end,
+                contrib: else_block.is_none_or(|b| reaches_after(&b.stmts)),
+            },
+        ];
+        let merged = self.close_if(op, span, paths, &base, Mode::User);
+        self.st.b.set_at(outer);
+        self.st.scope = merged;
+        Ok(())
+    }
+
+    /// An `if`/`elif`/`else` chain of two or more conditions, **flat**: a
+    /// `done` flag says whether an earlier arm was taken, and each arm is a
+    /// sibling `if` in the current block instead of the `else` of the
+    /// previous one:
+    ///
+    /// ```text
+    /// done = false
+    /// if c1 { A; done = true }
+    /// g2 = if done { false } else { c2 }      // c2 only if nothing ran yet
+    /// if g2 { B; done = true }
+    /// ...
+    /// if not done { E }                        // the `else`
+    /// ```
+    ///
+    /// so a chain of any length is one level of region nesting (plus one
+    /// for the arm being lowered), not one per `elif`. A condition is
+    /// evaluated only if no earlier arm was taken, and in order, exactly as
+    /// the interpreter does; the last arm sets `done` only if an `else`
+    /// follows. Each arm's variables are results of its own `if`, the arm
+    /// being lowered from the scope the previous arms' merges left (which,
+    /// where this arm runs, is the scope before the chain). A name bound
+    /// first in the chain is a result of every arm's `if` if all arms
+    /// reaching the code after the chain assign it (`all`, as the checker's
+    /// merge decides), with a stand-in where an arm did not run
+    /// ([`Mode::Guard`]); the flag is a scope entry named for the nesting
+    /// level, so a chain inside an arm has its own, and it is dropped after.
+    #[inline(never)]
+    fn elif_chain(
+        &mut self,
+        span: Span,
+        branches: &[(Expr, Block)],
+        else_block: Option<&Block>,
+        arm_needed: &Needed,
+        all: &Needed,
+    ) -> R<()> {
+        let flag = format!("<elif{}>", self.st.nest);
+        let f = self.const_bool(false, span);
+        self.st.scope.insert(flag.clone(), f);
+        for (k, (cond, block)) in branches.iter().enumerate() {
+            let base = self.st.scope.clone();
+            let outer = self.st.b.at();
+            let c = if k == 0 {
+                self.expr(cond)?
+            } else {
+                let Some(&done) = base.get(&flag) else {
+                    return self.err("internal error: the `elif` flag is not in scope", span);
+                };
+                self.unless(done, cond, span)?
+            };
+            let (op, _) = self.st.b.op(OpKind::If, vec![c], Vec::new(), span);
+            let then_b = self.new_arm(op);
+            let else_b = self.new_arm(op);
+            self.st.b.set_at(then_b);
+            self.st.nest += 1;
+            self.block(&block.stmts, arm_needed)?;
+            self.st.nest -= 1;
+            // The last arm of a chain without `else` has nothing after it
+            // to tell.
+            if k + 1 < branches.len() || else_block.is_some() {
+                self.st.b.set_at(then_b);
+                let t = self.const_bool(true, span);
+                self.st.scope.insert(flag.clone(), t);
+            }
+            let then_end = std::mem::take(&mut self.st.scope);
             let paths = vec![
                 Path {
-                    block: level.then_b,
-                    scope: level.then_end,
-                    contrib: level.then_contrib,
+                    block: then_b,
+                    scope: then_end,
+                    contrib: reaches_after(&block.stmts),
                 },
                 Path {
-                    block: level.else_b,
-                    scope: else_end,
-                    contrib: else_contrib,
+                    block: else_b,
+                    scope: base.clone(),
+                    contrib: true,
                 },
             ];
-            else_contrib |= level.then_contrib;
-            else_end = self.close_if(level.op, span, paths, &base, Mode::User);
+            let merged = self.close_if(op, span, paths, &base, Mode::Guard(all));
+            self.st.b.set_at(outer);
+            self.st.scope = merged;
         }
-        self.st.b.set_at(outer);
-        self.st.scope = else_end;
+        if let Some(b) = else_block {
+            let Some(&done) = self.st.scope.get(&flag) else {
+                return self.err("internal error: the `elif` flag is not in scope", span);
+            };
+            let base = self.st.scope.clone();
+            let outer = self.st.b.at();
+            let go = self.op1(OpKind::Not, vec![done], Type::Bool, span);
+            let (op, _) = self.st.b.op(OpKind::If, vec![go], Vec::new(), span);
+            let then_b = self.new_arm(op);
+            let else_b = self.new_arm(op);
+            self.st.b.set_at(then_b);
+            self.st.nest += 1;
+            self.block(&b.stmts, arm_needed)?;
+            self.st.nest -= 1;
+            let then_end = std::mem::take(&mut self.st.scope);
+            let paths = vec![
+                Path {
+                    block: then_b,
+                    scope: then_end,
+                    contrib: reaches_after(&b.stmts),
+                },
+                Path {
+                    block: else_b,
+                    scope: base.clone(),
+                    contrib: true,
+                },
+            ];
+            let merged = self.close_if(op, span, paths, &base, Mode::Guard(all));
+            self.st.b.set_at(outer);
+            self.st.scope = merged;
+        }
+        self.st.scope.remove(&flag);
         Ok(())
+    }
+
+    /// `if flag { false } else { cond }`: the condition of an `elif` arm,
+    /// evaluated only while no earlier arm was taken.
+    fn unless(&mut self, flag: ValueId, cond: &Expr, span: Span) -> R<ValueId> {
+        let outer = self.st.b.at();
+        let (op, _) = self.st.b.op(OpKind::If, vec![flag], Vec::new(), span);
+        let taken = self.new_arm(op);
+        let open = self.new_arm(op);
+        self.st.b.set_at(taken);
+        let f = self.const_bool(false, span);
+        self.st.b.op(OpKind::Yield, vec![f], Vec::new(), span);
+        self.st.b.set_at(open);
+        let c = self.expr(cond)?;
+        self.st.b.set_at(open);
+        self.st.b.op(OpKind::Yield, vec![c], Vec::new(), cond.span);
+        self.st.b.set_at(outer);
+        Ok(self.st.b.add_result(op, Type::Bool))
     }
 
     /// Gives `op` (an `if` with both arms lowered) its results and the
@@ -509,13 +667,21 @@ impl Lower<'_> {
     /// variables the body assigns (that are bound before the loop) plus the
     /// flags the body may set. `before` computes the condition, `after` is
     /// the body. Carried values get their final types after the body is
-    /// lowered (the join of the initial and the next value).
+    /// lowered (the join of the initial and the next value). A `for` is the
+    /// same loop with a counting `head` (see `for_loop.rs`).
     #[inline(never)]
-    fn while_stmt(&mut self, span: Span, cond: &Expr, body: &Block, needed: &Needed) -> R<()> {
+    pub(crate) fn while_loop(
+        &mut self,
+        span: Span,
+        head: Head<'_>,
+        body: &Block,
+        needed: &Needed,
+    ) -> R<()> {
         let d = self.st.loops;
         let n = d + 1;
         let ex = exits_stmts(&body.stmts);
-        let forever = is_forever(cond);
+        let cond_span = head.span();
+        let carry_new = head.carries_new_names();
         let outer = self.st.b.at();
         let mut base = self.st.scope.clone();
 
@@ -524,9 +690,10 @@ impl Lower<'_> {
         // bind it (from the `break`s).
         let mut vars = BTreeSet::new();
         assigned_vars(&body.stmts, self.src, &mut vars);
+        head.assigned(&mut vars);
         let mut carried: Vec<String> = vars
             .into_iter()
-            .filter(|v| forever || base.contains_key(v))
+            .filter(|v| carry_new || base.contains_key(v))
             .collect();
         let brk = brk_flag(n);
         let skip = skip_flag(n);
@@ -567,26 +734,26 @@ impl Lower<'_> {
             let Some(bi) = carried.iter().position(|c| *c == brk) else {
                 return self.err("internal error: the loop's break flag is not carried", span);
             };
-            let go = self.op1(OpKind::Not, vec![before_args[bi]], Type::Bool, cond.span);
-            let (ifop, _) = self.st.b.op(OpKind::If, vec![go], Vec::new(), cond.span);
+            let go = self.op1(OpKind::Not, vec![before_args[bi]], Type::Bool, cond_span);
+            let (ifop, _) = self.st.b.op(OpKind::If, vec![go], Vec::new(), cond_span);
             let then_b = self.new_arm(ifop);
             let else_b = self.new_arm(ifop);
             self.st.b.set_at(then_b);
-            let cv = self.expr(cond)?;
-            self.st.b.op(OpKind::Yield, vec![cv], Vec::new(), cond.span);
+            let cv = self.head_cond(&head)?;
+            self.st.b.op(OpKind::Yield, vec![cv], Vec::new(), cond_span);
             self.st.b.set_at(else_b);
-            let f = self.const_bool(false, cond.span);
-            self.st.b.op(OpKind::Yield, vec![f], Vec::new(), cond.span);
+            let f = self.const_bool(false, cond_span);
+            self.st.b.op(OpKind::Yield, vec![f], Vec::new(), cond_span);
             self.st.b.set_at(before_b);
             self.st.b.add_result(ifop, Type::Bool)
         } else {
-            self.expr(cond)?
+            self.head_cond(&head)?
         };
         let mut forward = vec![c];
         forward.extend(&before_args);
         self.st
             .b
-            .op(OpKind::Condition, forward, Vec::new(), cond.span);
+            .op(OpKind::Condition, forward, Vec::new(), cond_span);
 
         // after: the body.
         self.st.b.set_at(after_b);
@@ -600,11 +767,12 @@ impl Lower<'_> {
             self.st.scope.insert(skip.clone(), f);
         }
         let mut body_needed = needed.clone();
-        if forever {
+        if carry_new {
             body_needed.extend(carried.iter().cloned());
         }
         self.st.loops = n;
         self.st.nest += 1;
+        self.head_prologue(&head)?;
         self.block(&body.stmts, &body_needed)?;
         self.st.nest -= 1;
         self.st.loops = d;

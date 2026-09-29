@@ -23,11 +23,16 @@
 //! * Functions of any number of parameters; `wrt` picks one. The other
 //!   parameters may be numbers (constants for this derivative) or anything
 //!   else (a Bool flag, say), and are passed through.
-//! * Exactly one result, a scalar number.
+//! * One or more results, each a scalar number. With one result `r` the
+//!   derivative function returns `(r, ∂r/∂x)`; with several it returns
+//!   the values, then their tangents (`(r0, r1, ∂r0/∂x, ∂r1/∂x)`), which
+//!   is what lets a derivative function be differentiated again (a second
+//!   derivative is the derivative of a function that calls `df/dx`).
 //! * Every scalar operation of SIR v1, `if`, `while` and `call`. Array
-//!   operations (`matmul`, `transpose`, `solve`, non-scalar shapes) are
-//!   errors when the derivative flows through them; array AD comes with
-//!   arrays in the interpreter.
+//!   operations (`matmul`, `transpose`, `solve`, `array.literal`, `index`,
+//!   `slice`, `zeros`, `identity`, `len`, non-scalar shapes) are errors
+//!   when the derivative flows through them ("array differentiation is not
+//!   supported yet"); array AD is future work.
 //!
 //! # `Unknown` types
 //!
@@ -66,6 +71,7 @@
 
 mod analysis;
 mod emit;
+mod math_rules;
 mod rules;
 
 #[cfg(test)]
@@ -153,7 +159,14 @@ pub fn derivative_name(f: &Function, wrt: usize) -> String {
         .get(wrt)
         .and_then(|v| f.value(*v).name.clone())
         .unwrap_or_else(|| wrt.to_string());
-    format!("d{}/d{}", f.name, param)
+    derivative_name_of(&f.name, &param)
+}
+
+/// [`derivative_name`] for a function called `func` whose parameter is
+/// called `param` (write its index if it has no name), for a caller that
+/// has to name the derivative before it is built.
+pub fn derivative_name_of(func: &str, param: &str) -> String {
+    format!("d{func}/d{param}")
 }
 
 /// The derivative of `func` with respect to parameter `wrt`, as a new
@@ -204,6 +217,9 @@ pub fn differentiate_into(m: &mut Module, func: &str, wrt: usize) -> Result<Stri
         let all = derivative_functions(m, func, wrt)?;
         m.functions.extend(all);
     }
+    // The derivatives are new functions: their effects (and those of any
+    // caller) follow from their bodies, and one pass owns that rule.
+    let _ = sky_ir::effects::infer_effects(m);
     Ok(name)
 }
 

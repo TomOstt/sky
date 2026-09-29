@@ -1,0 +1,5 @@
+# Adding a derivative of position to a length is a unit error: it is a velocity.
+def x(t: s) -> m:
+    return 5 m/s^2 * t^2
+
+total = x(2 s) + derivative(x, t)(2 s)

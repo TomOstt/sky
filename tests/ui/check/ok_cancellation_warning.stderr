@@ -1,0 +1,6 @@
+tests/ui/check/ok_cancellation_warning.sky:3:5: warning: `sqrt(x^2 + 1) - x` can lose digits to cancellation
+  |
+3 | y = sqrt(x^2 + 1) - x
+  |     ^^^^^^^^^^^^^^^^^ subtracts nearly equal numbers when `x` is large and positive
+  = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here, when x > 0 and c is small next to x^2, sqrt(x^2 + c) and x agree in their leading digits. Multiplying by the conjugate, sqrt(x^2 + c) - x = c / (sqrt(x^2 + c) + x), replaces the subtraction with an addition of positive numbers. (For x < 0 the original is already stable, and the rewrite is not.)
+  = help: write `1 / (sqrt(x^2 + 1) + x)`, the same value without the subtraction

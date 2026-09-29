@@ -5,6 +5,7 @@ use std::fmt::{self, Write as _};
 use std::sync::Arc;
 
 use sky_ast::Block;
+use sky_diag::Span;
 use sky_units::{BaseDim, Dimension, Rational, UNITS};
 
 /// A runtime value.
@@ -31,6 +32,11 @@ pub enum Value {
     },
     Bool(bool),
     Str(String),
+    /// A number or array written in a chosen unit (`v as km/h`): its text,
+    /// `90 km/h` or `[100 mm, 200 mm]`, already formatted. It is not a
+    /// number: it can only be printed or echoed (the checker rejects any
+    /// other use). Built by [`crate::show`].
+    Shown(String),
     /// What `print(...)` and a function without a `return` value give.
     /// The REPL does not echo it.
     None,
@@ -44,6 +50,10 @@ pub enum Value {
 #[derive(Debug, PartialEq)]
 pub struct Function {
     pub name: String,
+    /// The span of the function's name in its `def`: which `def` of the
+    /// program this is (two `def`s may share a name), the key the checker
+    /// and lowering use.
+    pub def_span: Span,
     pub params: Vec<String>,
     pub body: Block,
 }
@@ -80,6 +90,7 @@ impl Value {
             Value::Array { .. } => "a matrix",
             Value::Bool(_) => "a Bool",
             Value::Str(_) => "a string",
+            Value::Shown(_) => "a display value",
             Value::None => "none",
             Value::Func(_) => "a function",
         }
@@ -111,35 +122,13 @@ impl fmt::Display for Value {
                 // Every entry is written with the unit, so the text is
                 // valid Sky: `[1 m, 2 m]`, `[[1, 2], [3, 4]]`.
                 let unit = si_unit(dim);
-                let entry = |f: &mut fmt::Formatter<'_>, x: f64| -> fmt::Result {
+                write_array(f, dims, data, |f, x| {
                     f.write_str(&format_number(x))?;
                     match &unit {
                         Some(u) => write!(f, " {u}"),
                         None => Ok(()),
                     }
-                };
-                let cols = dims.last().copied().unwrap_or(1).max(1);
-                let write_row = |f: &mut fmt::Formatter<'_>, row: &[f64]| -> fmt::Result {
-                    f.write_char('[')?;
-                    for (j, &x) in row.iter().enumerate() {
-                        if j > 0 {
-                            f.write_str(", ")?;
-                        }
-                        entry(f, x)?;
-                    }
-                    f.write_char(']')
-                };
-                if dims.len() == 1 {
-                    return write_row(f, data);
-                }
-                f.write_char('[')?;
-                for (i, row) in data.chunks(cols).enumerate() {
-                    if i > 0 {
-                        f.write_str(", ")?;
-                    }
-                    write_row(f, row)?;
-                }
-                f.write_char(']')
+                })
             }
             Value::Bool(b) => f.write_str(if *b { "true" } else { "false" }),
             Value::Str(s) => {
@@ -157,10 +146,44 @@ impl fmt::Display for Value {
                 }
                 f.write_char('"')
             }
+            Value::Shown(text) => f.write_str(text),
             Value::None => f.write_str("none"),
             Value::Func(func) => write!(f, "<function {}>", func.name),
         }
     }
+}
+
+/// Writes a vector or matrix as a Sky array literal, row by row, with each
+/// entry written by `entry`. Shared by `Display` (entries in SI) and by
+/// `v as unit` (entries in the chosen unit), so both lay arrays out alike.
+pub(crate) fn write_array<W: fmt::Write>(
+    f: &mut W,
+    dims: &[usize],
+    data: &[f64],
+    mut entry: impl FnMut(&mut W, f64) -> fmt::Result,
+) -> fmt::Result {
+    let cols = dims.last().copied().unwrap_or(1).max(1);
+    let mut write_row = |f: &mut W, row: &[f64]| -> fmt::Result {
+        f.write_char('[')?;
+        for (j, &x) in row.iter().enumerate() {
+            if j > 0 {
+                f.write_str(", ")?;
+            }
+            entry(f, x)?;
+        }
+        f.write_char(']')
+    };
+    if dims.len() == 1 {
+        return write_row(f, data);
+    }
+    f.write_char('[')?;
+    for (i, row) in data.chunks(cols).enumerate() {
+        if i > 0 {
+            f.write_str(", ")?;
+        }
+        write_row(f, row)?;
+    }
+    f.write_char(']')
 }
 
 /// Formats an `f64` so that it parses back to the same value and is valid

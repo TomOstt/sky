@@ -1,0 +1,157 @@
+//! `derivative(f, x)(args)` for `sky run`.
+//!
+//! The tree-walking interpreter (`sky-interp`) has no automatic
+//! differentiation, and this crate does not add one. Differentiation is a
+//! program transformation on SIR (`sky-ad`), so [`SirDerivatives`], the
+//! interpreter's [`DerivativeHook`], evaluates a derivative by
+//!
+//! 1. lowering the program's `def`s to SIR, once, on the first derivative
+//!    (`sky-lower`, which also verifies the module);
+//! 2. building the derivative function of the requested `def` with
+//!    `sky_ad::differentiate_into` (once per function and parameter);
+//! 3. running it with the reference interpreter (`sky-ir-interp`) on the
+//!    arguments the tree walker evaluated, and the module-level names the
+//!    function reads, and returning the derivative it computed.
+//!
+//! So the derivative is computed by the same code in both engines: the
+//! lowered program calls `df/dx` and this crate calls it too, and there is
+//! no second set of differentiation rules to keep in step. The dimension of
+//! the value is the derivative function's, `dim(f)/dim(x)`.
+//!
+//! # What can go wrong
+//!
+//! The whole module is lowered, so a program `sky run` accepts but SIR
+//! cannot express yet (arrays) cannot evaluate a derivative, and a function
+//! `sky-ad` has no rule for is an error. Both are runtime errors on the
+//! derivative call that say so; the checker cannot know, because `sky check`
+//! never lowers.
+
+#![forbid(unsafe_code)]
+
+use std::collections::HashMap;
+use std::io::Write;
+
+use sky_ast::Module as Ast;
+use sky_diag::Span;
+use sky_interp::{DerivativeHook, DerivativeRequest, RuntimeError, Value};
+
+/// Evaluates derivatives for a program by SIR AD; see the crate docs.
+pub struct SirDerivatives<'a> {
+    module: &'a Ast,
+    src: &'a str,
+    /// The lowered program, built by the first derivative that needs it.
+    sir: Option<Result<Lowered, RuntimeError>>,
+}
+
+/// The program as SIR, growing derivative functions as they are asked for.
+struct Lowered {
+    module: sky_ir::Module,
+    /// The SIR function of each `def`, by the span of its name.
+    defs: HashMap<Span, String>,
+}
+
+impl<'a> SirDerivatives<'a> {
+    /// A hook for `module`, which was parsed from `src` and checked without
+    /// errors (as `sky run` does before it runs anything).
+    pub fn new(module: &'a Ast, src: &'a str) -> Self {
+        SirDerivatives {
+            module,
+            src,
+            sir: None,
+        }
+    }
+
+    /// Lowers the program on first use. The error (when lowering fails) is
+    /// kept, so it is reported the same way each time.
+    fn lowered(&mut self, at: Span) -> Result<&mut Lowered, RuntimeError> {
+        let (module, src) = (self.module, self.src);
+        let sir = self.sir.get_or_insert_with(|| {
+            let fail = |why: String, note: Option<String>| {
+                let mut e = RuntimeError::new(format!("cannot evaluate a derivative: {why}"), at)
+                    .with_label("this derivative");
+                if let Some(n) = note {
+                    e = e.with_note(n);
+                }
+                e.with_note("derivatives run on SIR, so the whole program must lower to SIR")
+            };
+            let checked = sky_types::check_module_with(module, src, sky_types::Env::with_prelude());
+            if checked.has_errors() {
+                return Err(fail("the program does not check".into(), None));
+            }
+            let (sir, defs) = sky_lower::lower_with_defs(module, src, &checked)
+                .map_err(|e| fail(e.message, e.note))?;
+            verified(&sir, at)?;
+            Ok(Lowered { module: sir, defs })
+        });
+        sir.as_mut().map_err(|e| e.clone())
+    }
+}
+
+/// SIR that `sky-lower` or `sky-ad` built must verify; anything else is a
+/// bug in them, reported as one.
+fn verified(m: &sky_ir::Module, at: Span) -> Result<(), RuntimeError> {
+    sky_ir::verify(m).map_err(|errors| {
+        let why = errors
+            .first()
+            .map_or_else(String::new, |e| e.message.clone());
+        RuntimeError::new(format!("internal error: invalid SIR: {why}"), at)
+    })
+}
+
+impl DerivativeHook for SirDerivatives<'_> {
+    fn derivative(
+        &mut self,
+        request: &DerivativeRequest<'_>,
+        out: &mut dyn Write,
+    ) -> Result<Value, RuntimeError> {
+        let at = request.span;
+        let lowered = self.lowered(at)?;
+        let Some(func) = lowered.defs.get(&request.func.def_span).cloned() else {
+            return Err(RuntimeError::new(
+                format!(
+                    "internal error: `{}` was not lowered to SIR",
+                    request.func.name
+                ),
+                at,
+            ));
+        };
+        let known = lowered.module.functions.len();
+        let name = sky_ad::differentiate_into(&mut lowered.module, &func, request.wrt)
+            .map_err(|e| RuntimeError::new(e.to_string(), at).with_label("this derivative"))?;
+        if lowered.module.functions.len() != known {
+            verified(&lowered.module, at)?;
+        }
+        let Some(target) = lowered.module.function(&name) else {
+            return Err(RuntimeError::new(
+                format!("internal error: `{name}` is missing"),
+                at,
+            ));
+        };
+        // The derivative has the parameters of `f`, then the module names
+        // `f` reads, which the function reads from the module at run time.
+        let mut args = request.args.clone();
+        for p in target.param_values().iter().skip(args.len()) {
+            let global = target.value(*p).name.clone().unwrap_or_default();
+            match (request.globals)(&global) {
+                Some(v) => args.push(v),
+                None => {
+                    return Err(RuntimeError::new(
+                        format!("cannot find `{global}` in this scope"),
+                        at,
+                    )
+                    .with_label("not defined"));
+                }
+            }
+        }
+        let results = sky_ir_interp::call_metered(&lowered.module, &name, args, out, request.stack)
+            .map_err(|e| (*e).clone())?;
+        match results.as_slice() {
+            // `(f(args), ∂f/∂x)`
+            [_, derivative] => Ok(derivative.clone()),
+            _ => Err(RuntimeError::new(
+                format!("internal error: `{name}` must return a value and a derivative"),
+                at,
+            )),
+        }
+    }
+}

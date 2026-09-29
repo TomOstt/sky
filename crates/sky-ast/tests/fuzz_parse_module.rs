@@ -111,9 +111,13 @@ def f(a, b: Vector[3]) -> Matrix[3, 3]:
             break
     return
 x = 1 if c else 2 if d else 3
+for i in range(1, n):
+    for row in A:
+        continue
+    break
 ";
     let out = harness::run(&seed("block_forms", src));
-    assert_eq!(out.stmts, Some(2));
+    assert_eq!(out.stmts, Some(3));
     assert!(out.errors.is_empty(), "{:?}", out.errors);
 
     let src = "\
@@ -160,4 +164,12 @@ fn type_annotations_parse_and_recover() {
     let out = harness::run(&seed("type_annotations", src));
     assert_eq!(out.stmts, Some(6));
     assert_eq!(out.errors.len(), 3, "{:?}", out.errors);
+}
+
+#[test]
+fn as_display_parses_and_recovers() {
+    let src = "v = 25 m/s\nprint(v as km/h, v as kg*m^2/s^2)\nv as km/h\nx = a + b as km\nbad = v as\nbad2 = v as km as m\nbad3 = v as km + 1\nbad4 = v as m / s\nbad5 = 3 as 4\n";
+    let out = harness::run(&seed("as_display", src));
+    assert_eq!(out.stmts, Some(4));
+    assert_eq!(out.errors.len(), 5, "{:?}", out.errors);
 }

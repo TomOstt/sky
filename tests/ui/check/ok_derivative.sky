@@ -1,0 +1,6 @@
+# The derivative of a position with respect to time is a velocity.
+def x(t: s) -> m:
+    return 5 m/s^2 * t^2
+
+v: m/s = derivative(x, t)(2 s)
+print(v)

@@ -1,0 +1,39 @@
+crates/sky-types/tests/ui/ok_condition_warns.sky:5:6: warning: estimated condition number κ(H) ≈ 1.6e13: about 13 of 16 significant digits may be lost
+  |
+5 | x = H⁻¹ @ b
+  |      ^^ inverting or solving with this magnifies errors by up to 1.6e13
+  |     - this is a constant 10×10 matrix
+  = note: κ(H) = σmax/σmin measures how much a matrix magnifies relative error: rounding error in the inputs (about 1.1e-16 for an `f64`) can change the solution of H·x = b by about κ(H) times as much, so about log10 κ = 13 of the 16 digits are lost. A well-conditioned matrix has κ near 1
+  = help: rescale rows and columns so their entries are similar in size; or reformulate so the matrix is better posed (a different basis, fewer nearly dependent unknowns, or a regularized or least-squares formulation); higher-precision arithmetic (planned) buys back digits but not a better problem
+
+crates/sky-types/tests/ui/ok_condition_warns.sky:7:5: warning: estimated condition number κ(A) ≈ 4.0e10: about 10 of 16 significant digits may be lost
+  |
+7 | y = inv([[1, 1], [1, 1.0000000001]])
+  |     ^^^ inverting or solving with this magnifies errors by up to 4.0e10
+  |         --------------------------- this is a constant 2×2 matrix
+  = note: κ(A) = σmax/σmin measures how much a matrix magnifies relative error: rounding error in the inputs (about 1.1e-16 for an `f64`) can change the solution of A·x = b by about κ(A) times as much, so about log10 κ = 10 of the 16 digits are lost. A well-conditioned matrix has κ near 1
+  = help: rescale rows and columns so their entries are similar in size; or reformulate so the matrix is better posed (a different basis, fewer nearly dependent unknowns, or a regularized or least-squares formulation); higher-precision arithmetic (planned) buys back digits but not a better problem
+
+crates/sky-types/tests/ui/ok_condition_warns.sky:10:6: warning: estimated condition number κ(S) ≈ 1.0e10: about 10 of 16 significant digits may be lost
+   |
+10 | z = S⁻¹ @ [1, 1]
+   |      ^^ inverting or solving with this magnifies errors by up to 1.0e10
+   |     - this is a constant 2×2 matrix
+   = note: κ(S) = σmax/σmin measures how much a matrix magnifies relative error: rounding error in the inputs (about 1.1e-16 for an `f64`) can change the solution of S·x = b by about κ(S) times as much, so about log10 κ = 10 of the 16 digits are lost. A well-conditioned matrix has κ near 1
+   = help: most of this is scaling: rows and columns of very different size. Rescale them (choose units that make the unknowns and equations similar in size), which brings κ down to about 1.0e0
+
+crates/sky-types/tests/ui/ok_condition_warns.sky:13:6: warning: this matrix is singular, so it has no inverse
+   |
+13 | w = Z⁻¹
+   |      ^^ `sky run` stops here with "the matrix is singular"
+   |     - this is a constant 2×2 matrix
+   = note: elimination finds a pivot that is zero, or no larger than n·ε·max|aᵢⱼ| (too small to tell from rounding error): the test `sky run` applies to the same numbers
+   = help: look for a row that is a multiple or a sum of others; if this is a linear system, a least-squares or regularized formulation handles a rank-deficient matrix
+
+crates/sky-types/tests/ui/ok_condition_warns.sky:18:13: warning: estimated condition number κ(L) ≈ 4.0e9: about 9 of 16 significant digits may be lost
+   |
+18 |     return L⁻¹
+   |             ^^ inverting or solving with this magnifies errors by up to 4.0e9
+   |            - this is a constant 2×2 matrix
+   = note: κ(L) = σmax/σmin measures how much a matrix magnifies relative error: rounding error in the inputs (about 1.1e-16 for an `f64`) can change the solution of L·x = b by about κ(L) times as much, so about log10 κ = 9 of the 16 digits are lost. A well-conditioned matrix has κ near 1
+   = help: rescale rows and columns so their entries are similar in size; or reformulate so the matrix is better posed (a different basis, fewer nearly dependent unknowns, or a regularized or least-squares formulation); higher-precision arithmetic (planned) buys back digits but not a better problem

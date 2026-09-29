@@ -1,0 +1,83 @@
+crates/sky-types/tests/ui/ok_cancellation_warns.sky:4:6: warning: `sqrt(x^2 + cc) - x` can lose digits to cancellation
+  |
+4 | r1 = sqrt(x^2 + cc) - x
+  |      ^^^^^^^^^^^^^^^^^^ subtracts nearly equal numbers when `x` is large and positive
+  = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here, when x > 0 and c is small next to x^2, sqrt(x^2 + c) and x agree in their leading digits. Multiplying by the conjugate, sqrt(x^2 + c) - x = c / (sqrt(x^2 + c) + x), replaces the subtraction with an addition of positive numbers. (For x < 0 the original is already stable, and the rewrite is not.)
+  = help: write `cc / (sqrt(x^2 + cc) + x)`, the same value without the subtraction
+
+crates/sky-types/tests/ui/ok_cancellation_warns.sky:6:6: warning: `(1 + eps) - 1` loses the low digits of the small term
+  |
+6 | r2 = (1 + eps) - 1
+  |      ^^^^^^^^^^^^^ `1 + …` rounds away digits before the subtraction
+  = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here 1 + x is rounded to a multiple of about 2.2e-16 (an `f64` has 52 fraction bits), so when x is small the low digits of x are gone before 1 is subtracted: the result is x plus an error of up to 1.1e-16, which is a large relative error when x is 1e-8 and everything when x is 1e-17
+  = help: write `eps`: it is the same value, without rounding it through 1 + …
+
+crates/sky-types/tests/ui/ok_cancellation_warns.sky:9:6: warning: `p^2 - q^2` can lose digits to cancellation
+  |
+9 | r3 = p^2 - q^2
+  |      ^^^^^^^^^ subtracts two nearly equal squares when the two bases are close
+  = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here, when x and y agree in their leading digits, so do x^2 and y^2. The difference x - y is computed exactly when x and y are within a factor of two of each other (Sterbenz's lemma), so x^2 - y^2 = (x - y) * (x + y) keeps every digit that the inputs have
+  = help: write `(p - q) * (p + q)`
+
+crates/sky-types/tests/ui/ok_cancellation_warns.sky:10:6: warning: `exp(eps) - 1` loses digits to cancellation when the argument is small
+   |
+10 | r4 = exp(eps) - 1
+   |      ^^^^^^^^^^^^ exp(x) is close to 1, so the subtraction cancels
+   = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here, when |x| is small, exp(x) is 1 plus a small number, and the subtraction leaves only the digits that survived rounding to a multiple of 2.2e-16: for x = 1e-10 about 6 of 16 are correct. The function `expm1(x)`, exp(x) - 1 computed without the subtraction, is the standard cure
+   = help: when `eps` is small, use the series `eps + eps^2 / 2 + eps^3 / 6`, whose error is about `eps^4 / 24` (Sky has no `expm1` yet, which computes this accurately for every argument)
+
+crates/sky-types/tests/ui/ok_cancellation_warns.sky:11:6: warning: `log(1 + eps)` loses digits when the term added to 1 is small
+   |
+11 | r5 = log(1 + eps)
+   |      ^^^^^^^^^^^^ `1 + …` rounds away digits before the logarithm
+   = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here 1 + x is rounded to a multiple of about 2.2e-16 before `log` sees it, so when x is small the low digits of x are gone (the result log(1 + x) ≈ x has a large relative error, and is 0 for x below 1.1e-16). The function `log1p(x)`, log(1 + x) computed without forming 1 + x, is the standard cure
+   = help: when `eps` is small, use the series `eps - eps^2 / 2 + eps^3 / 3`, whose error is about `eps^4 / 4` (Sky has no `log1p` yet, which computes this accurately for every argument)
+
+crates/sky-types/tests/ui/ok_cancellation_warns.sky:15:8: warning: the quadratic formula `(-b + sqrt(b^2 - 4*a*k)) / (2*a)` can lose digits to cancellation
+   |
+15 | root = (-b + sqrt(b^2 - 4*a*k)) / (2*a)
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ one of the two roots subtracts nearly equal numbers
+   = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here, when b^2 is much larger than |4ac|, sqrt(b^2 - 4ac) is nearly |b|, so the root `-b + sqrt(…)` cancels when b > 0 (for the other sign of b, the other root does). Since the roots multiply to c/a, that root equals 2c / (-b ∓ sqrt(b^2 - 4ac)) (the citardauq form), which adds numbers of the same sign exactly when the textbook form subtracts
+   = help: the other root has no cancellation: write `2 * k / (-b - sqrt(b^2 - 4*a*k))`
+
+crates/sky-types/tests/ui/ok_cancellation_warns.sky:16:9: warning: the quadratic formula `(-b - sqrt(b * b - 4 * k * a)) / (2 * a)` can lose digits to cancellation
+   |
+16 | other = (-b - sqrt(b * b - 4 * k * a)) / (2 * a)
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ one of the two roots subtracts nearly equal numbers
+   = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here, when b^2 is much larger than |4ac|, sqrt(b^2 - 4ac) is nearly |b|, so the root `-b - sqrt(…)` cancels when b < 0 (for the other sign of b, the other root does). Since the roots multiply to c/a, that root equals 2c / (-b ∓ sqrt(b^2 - 4ac)) (the citardauq form), which adds numbers of the same sign exactly when the textbook form subtracts
+   = help: the other root has no cancellation: write `2 * k / (-b + sqrt(b * b - 4 * k * a))`
+
+crates/sky-types/tests/ui/ok_cancellation_warns.sky:18:6: warning: `exp(0.0000001) - 1` loses digits to cancellation when the argument is small
+   |
+18 | r6 = exp(0.0000001) - 1
+   |      ^^^^^^^^^^^^^^^^^^ exp(x) is close to 1, so the subtraction cancels
+   = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here, when |x| is small, exp(x) is 1 plus a small number, and the subtraction leaves only the digits that survived rounding to a multiple of 2.2e-16: for x = 1e-10 about 6 of 16 are correct. The function `expm1(x)`, exp(x) - 1 computed without the subtraction, is the standard cure
+   = help: when `0.0000001` is small, use the series `0.0000001 + 0.0000001^2 / 2 + 0.0000001^3 / 6`, whose error is about `0.0000001^4 / 24` (Sky has no `expm1` yet, which computes this accurately for every argument)
+
+crates/sky-types/tests/ui/ok_cancellation_warns.sky:19:6: warning: `sqrt(1000000^2 + 1) - 1000000` can lose digits to cancellation
+   |
+19 | r7 = sqrt(1000000^2 + 1) - 1000000
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ subtracts nearly equal numbers when `1000000` is large and positive
+   = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here, when x > 0 and c is small next to x^2, sqrt(x^2 + c) and x agree in their leading digits. Multiplying by the conjugate, sqrt(x^2 + c) - x = c / (sqrt(x^2 + c) + x), replaces the subtraction with an addition of positive numbers. (For x < 0 the original is already stable, and the rewrite is not.)
+   = help: write `1 / (sqrt(1000000^2 + 1) + 1000000)`, the same value without the subtraction
+
+crates/sky-types/tests/ui/ok_cancellation_warns.sky:20:6: warning: `sqrt(x^2 - cc) - x` can lose digits to cancellation
+   |
+20 | r8 = sqrt(x^2 - cc) - x
+   |      ^^^^^^^^^^^^^^^^^^ subtracts nearly equal numbers when `x` is large and positive
+   = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here, when x > 0 and c is small next to x^2, sqrt(x^2 + c) and x agree in their leading digits. Multiplying by the conjugate, sqrt(x^2 + c) - x = c / (sqrt(x^2 + c) + x), replaces the subtraction with an addition of positive numbers. (For x < 0 the original is already stable, and the rewrite is not.)
+   = help: write `-cc / (sqrt(x^2 - cc) + x)`, the same value without the subtraction
+
+crates/sky-types/tests/ui/ok_cancellation_warns.sky:21:6: warning: `p * p - q * q` can lose digits to cancellation
+   |
+21 | r9 = p * p - q * q
+   |      ^^^^^^^^^^^^^ subtracts two nearly equal squares when the two bases are close
+   = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here, when x and y agree in their leading digits, so do x^2 and y^2. The difference x - y is computed exactly when x and y are within a factor of two of each other (Sterbenz's lemma), so x^2 - y^2 = (x - y) * (x + y) keeps every digit that the inputs have
+   = help: write `(p - q) * (p + q)`
+
+crates/sky-types/tests/ui/ok_cancellation_warns.sky:24:12: warning: `sqrt(u^2 + 1) - u` can lose digits to cancellation
+   |
+24 |     return sqrt(u^2 + 1) - u
+   |            ^^^^^^^^^^^^^^^^^ subtracts nearly equal numbers when `u` is large and positive
+   = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here, when x > 0 and c is small next to x^2, sqrt(x^2 + c) and x agree in their leading digits. Multiplying by the conjugate, sqrt(x^2 + c) - x = c / (sqrt(x^2 + c) + x), replaces the subtraction with an addition of positive numbers. (For x < 0 the original is already stable, and the rewrite is not.)
+   = help: write `1 / (sqrt(u^2 + 1) + u)`, the same value without the subtraction

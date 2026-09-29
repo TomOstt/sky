@@ -3,7 +3,7 @@
 //! ```text
 //! sir edition 2026
 //!
-//! fn @main(%n: num[1; ()]) -> (num[L; ()]) effects(io) {
+//! fn @main(%n: num[1; ()]) -> (num[L; ()]) effects(io, fail) {
 //!   %0 = const.float 10000 : num[L; ()]
 //!   %x = mul %0, %n : num[L; ()] @ 34..52
 //!   print %x @ 60..68
@@ -222,11 +222,22 @@ impl Printer<'_> {
                 self.out.push(' ');
                 write_string(&mut self.out, s);
             }
+            OpKind::Show { unit } => {
+                self.out.push(' ');
+                write_string(&mut self.out, unit);
+            }
             OpKind::PowConst { exponent } => {
                 let _ = write!(self.out, "[{exponent}]");
             }
             OpKind::Solve { method } => {
                 let _ = write!(self.out, "[{}]", method.mnemonic());
+            }
+            OpKind::ArrayLiteral { cols: Some(c) } => {
+                let _ = write!(self.out, "[{c}]");
+            }
+            OpKind::Slice { axes } => {
+                let items: Vec<&str> = axes.iter().map(|a| a.text()).collect();
+                let _ = write!(self.out, "[{}]", items.join(", "));
             }
             OpKind::Call { callee } => {
                 self.out.push_str(" @");

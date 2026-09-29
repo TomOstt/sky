@@ -15,6 +15,12 @@ sky-syntax = { path = "../crates/sky-syntax" }
 sky-diag = { path = "../crates/sky-diag" }
 sky-ir = { path = "../crates/sky-ir" }
 sky-project = { path = "../crates/sky-project" }
+# The differential target runs both engines: `sky run`'s AST interpreter,
+# and lowering plus the SIR reference interpreter.
+sky-interp = { path = "../crates/sky-interp" }
+sky-ir-interp = { path = "../crates/sky-ir-interp" }
+sky-lower = { path = "../crates/sky-lower" }
+sky-types = { path = "../crates/sky-types" }
 
 # Keep the fuzz crate out of the main workspace so stable `cargo test --workspace` never builds it.
 [workspace]
@@ -44,6 +50,13 @@ bench = false
 [[bin]]
 name = "manifest"
 path = "fuzz_targets/manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "differential"
+path = "fuzz_targets/differential.rs"
 test = false
 doc = false
 bench = false

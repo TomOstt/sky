@@ -1,0 +1,6 @@
+# A declaration without a value inside a function: `sky check` accepts it,
+# but there is no IR for it (an input can only be declared at the top level
+# of the file), so `--emit-ir` explains why instead of printing SIR.
+def length(x: m) -> m:
+    y: m
+    return x + y

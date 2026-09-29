@@ -1,21 +1,22 @@
-//! Lowering is bounded: long chains are loops, deep nesting stays within the
-//! parser's depth cap, and nothing panics on any program the front end
-//! accepts or rejects.
+//! Lowering is bounded: long chains are loops and flat IR (region nesting
+//! does not grow with the length of an `elif` chain, an `and`/`or` chain or
+//! a run of early returns), deep nesting stays within the parser's depth
+//! cap, and nothing panics on any program the front end accepts or rejects.
 
 mod common;
 
 use common::eval::run_main;
 use common::*;
 
-/// Lowers without the recursive structure check of `lower_ok`: the IR of
-/// these programs is thousands of levels deep, which the test helpers (not
-/// lowering) would need a deep stack for.
+/// Lowers without the structure check of `lower_ok`, which is quadratic in
+/// the number of regions: these programs have tens of thousands. (The
+/// module is still verified by `lower_source`, which is what bounds the
+/// nesting depth.)
 fn big(src: &str) -> sky_ir::Module {
     sky_lower::lower_source(src).expect("lowers")
 }
 
 #[test]
-#[ignore = "lowering nests one region per elif arm / and-or operand / early return; flattening it is in progress (the verifier caps nesting at 256)"]
 fn a_long_elif_chain_is_not_recursion() {
     let mut src = String::from("x = 4000\nif x == 0:\n    y = 0\n");
     for i in 1..5000 {
@@ -23,39 +24,42 @@ fn a_long_elif_chain_is_not_recursion() {
     }
     src.push_str("else:\n    y = 0 - 1\nprint(y)\n");
     let m = big(&src);
-    assert_eq!(count(main_fn(&m), "if"), 5000);
+    // The first arm is one `if`; each `elif` is a condition-`if` and an
+    // arm-`if`; the `else` is `if not done`.
+    assert_eq!(count(main_fn(&m), "if"), 1 + 2 * 4999 + 1);
+    assert_eq!(region_depth(main_fn(&m)), 1, "flat: no nesting per arm");
+    assert_eq!(run_main(&m).0, "4000\n");
 }
 
 #[test]
-#[ignore = "lowering nests one region per elif arm / and-or operand / early return; flattening it is in progress (the verifier caps nesting at 256)"]
 fn long_chains_still_mean_the_same() {
-    // Shorter, because the test evaluator recurses over the nesting.
+    // Run through the SIR interpreter at the full lengths of the tests
+    // above (flat IR is no deeper for the interpreter to recurse over).
     let mut src = String::from("x = 250\nif x == 0:\n    y = 0\n");
-    for i in 1..300 {
+    for i in 1..5000 {
         src.push_str(&format!("elif x == {i}:\n    y = {i}\n"));
     }
     src.push_str("else:\n    y = 0 - 1\nprint(y)\n");
-    assert_eq!(run_main(&lower_ok(&src)).0, "250\n");
+    assert_eq!(run_main(&big(&src)).0, "250\n");
     let mut src = String::from("x = 1\nok = ");
-    for _ in 0..300 {
+    for _ in 0..5000 {
         src.push_str("x > 0 and ");
     }
     src.push_str("true\nno = ");
-    for _ in 0..300 {
+    for _ in 0..5000 {
         src.push_str("x < 0 or ");
     }
     src.push_str("false\nprint(ok, no)\n");
-    assert_eq!(run_main(&lower_ok(&src)).0, "true false\n");
+    assert_eq!(run_main(&big(&src)).0, "true false\n");
     let mut src = String::from("def f(x):\n");
-    for i in 0..300 {
+    for i in 0..4000 {
         src.push_str(&format!("    if x == {i}:\n        return {i} * 2\n"));
     }
-    src.push_str("    return 0 - 1\nprint(f(299), f(5000))\n");
-    assert_eq!(run_main(&lower_ok(&src)).0, "598 -1\n");
+    src.push_str("    return 0 - 1\nprint(f(3999), f(5000), f(0), f(2000))\n");
+    assert_eq!(run_main(&big(&src)).0, "7998 -1 0 4000\n");
 }
 
 #[test]
-#[ignore = "lowering nests one region per elif arm / and-or operand / early return; flattening it is in progress (the verifier caps nesting at 256)"]
 fn a_long_run_of_early_returns_is_not_recursion() {
     let mut src = String::from("def f(x):\n");
     for i in 0..4000 {
@@ -67,12 +71,13 @@ fn a_long_run_of_early_returns_is_not_recursion() {
     assert_eq!(
         count(func(&m, "f"), "if"),
         8000,
-        "a guard after each early return"
+        "the source `if`s, and a guard before each statement after the first"
     );
+    assert!(region_depth(func(&m, "f")) <= 2, "guards are siblings");
+    assert_eq!(run_main(&m).0, "7998 -1\n");
 }
 
 #[test]
-#[ignore = "lowering nests one region per elif arm / and-or operand / early return; flattening it is in progress (the verifier caps nesting at 256)"]
 fn a_long_chain_of_and_or_operands_is_not_recursion() {
     let mut src = String::from("x = 1\nok = ");
     for _ in 0..5000 {
@@ -85,6 +90,12 @@ fn a_long_chain_of_and_or_operands_is_not_recursion() {
     src.push_str("false\nprint(ok, no)\n");
     let m = big(&src);
     assert_eq!(count(main_fn(&m), "if"), 10_000);
+    assert_eq!(
+        region_depth(main_fn(&m)),
+        1,
+        "an operand is one level, not one per operand"
+    );
+    assert_eq!(run_main(&m).0, "true false\n");
 }
 
 #[test]
@@ -117,6 +128,13 @@ fn nesting_at_the_parsers_depth_limit() {
     let m = lower_ok(&src);
     assert_eq!(run_main(&m).0, "1 0\n");
     assert_eq!(count(func(&m, "f"), "return"), 1);
+    // Source depth is the def's body plus `depth` ifs; the IR is at most
+    // two levels (a guard, an arm) for each, and no deeper for the flags.
+    assert!(
+        region_depth(func(&m, "f")) <= 2 * (depth + 1) + 4,
+        "{}",
+        region_depth(func(&m, "f"))
+    );
 
     // Nested whiles with a break at each level.
     let depth = 60;
@@ -137,6 +155,11 @@ fn nesting_at_the_parsers_depth_limit() {
     }
     let m = lower_ok(&src);
     assert_eq!(count(main_fn(&m), "while"), depth);
+    assert!(
+        region_depth(main_fn(&m)) <= 2 * (depth + 1) + 4,
+        "{}",
+        region_depth(main_fn(&m))
+    );
 }
 
 #[test]

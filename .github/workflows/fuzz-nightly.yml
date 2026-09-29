@@ -54,7 +54,7 @@ jobs:
       fail-fast: false
       matrix:
         # Every [[bin]] in fuzz/Cargo.toml (`cargo fuzz list`); add new targets here.
-        target: [lex, parse_module, sir_parse, manifest]
+        target: [lex, parse_module, sir_parse, manifest, differential]
     steps:
       # Same pinned actions, toolchain, and cargo-fuzz version as the `fuzz`
       # job in ci.yml; keep the two in sync.

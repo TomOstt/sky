@@ -15,16 +15,41 @@
 //!    them); an unresolved mismatch means no rewrite;
 //! 4. `A` and `b` are `Number`-typed, never `Unknown`.
 //!
+//! The explanation's `because` entries are the phrases of the checker's
+//! note, so [`cholesky_text`] joins them into exactly its words (when the
+//! operands are plain names, as they are for a value with a source name or
+//! the placeholders `A` and `b`).
+//!
 //! The `matmul` operation is rewritten in place, so its result value, name
 //! and users are unchanged, and its span is joined with the `inverse`'s.
 //! The `inverse` is deleted when nothing else uses it. If something does,
 //! it is kept, still computed for those users, and the rewrite notes it.
 
-use sky_ir::{Function, Module, OpId, OpKind, SolveMethod, Type};
+use sky_ir::{Explanation, Function, Module, OpId, OpKind, SolveMethod, Type};
 use sky_types::Tag;
 
 use crate::rewrite::Rewrite;
 use crate::util::{defining_op, detach, reachable_ops, use_counts};
+
+/// The rule id of the Cholesky rewrite.
+pub const CHOLESKY_RULE: &str = "LA-CHOLESKY-001";
+
+/// The sentence `sky check --explain` has always said for this rewrite
+/// (`sky_types::cholesky_rewrite`), built from a Cholesky pass explanation:
+/// "rewrite `A⁻¹ @ b` to a Cholesky solve: A is Matrix\[3,3\] and
+/// PositiveDefinite, b is Vector\[3\]. Factor A = L·Lᵀ ... never formed."
+/// `None` for any other explanation.
+pub fn cholesky_text(x: &Explanation) -> Option<String> {
+    let [a, b, factor, result] = &x.because[..] else {
+        return None;
+    };
+    (x.rule == CHOLESKY_RULE).then(|| {
+        format!(
+            "rewrite `{}` to a Cholesky solve: {a}, {b}. {factor}. {result}.",
+            x.before
+        )
+    })
+}
 
 /// Applies the Cholesky rewrite everywhere it holds.
 pub fn cholesky(m: &mut Module) -> Vec<Rewrite> {
@@ -98,24 +123,25 @@ fn rewrite_matmul(f: &mut Function, id: OpId) -> Option<Rewrite> {
     }
 
     let (an, bn) = (
-        a_name.clone().unwrap_or_else(|| "A".to_string()),
-        b_name.clone().unwrap_or_else(|| "b".to_string()),
+        a_name.unwrap_or_else(|| "A".to_string()),
+        b_name.unwrap_or_else(|| "b".to_string()),
     );
-    let mut because = Vec::new();
-    if a_name.is_some() || b_name.is_some() {
-        because.push(format!("A is `{an}` and b is `{bn}`"));
-    }
-    because.push(format!("A is {a_shape} and PositiveDefinite"));
-    because.push(format!("b is {b_shape}"));
-    because.push("Factor A = L·Lᵀ (L lower-triangular), solve L·y = b, then Lᵀ·x = y".to_string());
-    because.push(if other_users {
-        format!("x = A⁻¹·b is {r_shape}; A⁻¹ is still computed for its other users")
-    } else {
-        format!("x = A⁻¹·b is {r_shape}, and A⁻¹ is never formed")
-    });
+    // Four reasons that read as the checker's explanation when joined by
+    // `cholesky_text`. The operands are named as the IR names them: a
+    // source name, or `A` and `b`.
+    let because = vec![
+        format!("{an} is {a_shape} and PositiveDefinite"),
+        format!("{bn} is {b_shape}"),
+        format!("Factor {an} = L·Lᵀ (L lower-triangular), solve L·y = {bn}, then Lᵀ·x = y"),
+        if other_users {
+            format!("x = {an}⁻¹·{bn} is {r_shape}; {an}⁻¹ is still computed for its other users")
+        } else {
+            format!("x = {an}⁻¹·{bn} is {r_shape}, and {an}⁻¹ is never formed")
+        },
+    ];
     Some(Rewrite {
         pass: "cholesky",
-        rule: "LA-CHOLESKY-001",
+        rule: CHOLESKY_RULE,
         span,
         before: format!("{an}⁻¹ @ {bn}"),
         after: format!("solve[cholesky]({an}, {bn})"),

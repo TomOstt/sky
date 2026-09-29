@@ -17,9 +17,12 @@ fn interpret(src: &str) -> (String, Result<(), String>) {
         let lexed = sky_syntax::lex(src).expect("lexes");
         let (ast, errors) = sky_ast::parse_module(&lexed.tokens, src);
         assert!(errors.is_empty(), "{errors:#?}");
+        // `sky run` honours the checker's Cholesky rewrites.
+        let checked = sky_types::check_module(&ast, src);
         let mut env = RuntimeEnv::with_prelude();
         let mut out = Vec::new();
-        let r = sky_interp::run_module(&ast, src, &mut env, &mut out);
+        let r =
+            sky_interp::run_module_with(&ast, src, &mut env, &mut out, &checked.cholesky_solves);
         (
             String::from_utf8(out).expect("utf8"),
             r.map(|_| ()).map_err(|e| e.message.clone()),
@@ -265,6 +268,66 @@ fn print_shadowing_and_inv_shadowing() {
 }
 
 #[test]
+fn display_units_print_the_same_in_both() {
+    let out = agree(
+        "v = 90 km/h\nprint(v)\nprint(v as km/h)\nprint(v as m/s, v as km/h, 3)\nprint(1 AU as km, 1 AU as m)\nprint(511 keV as eV, 511 keV as MeV)\nprint(2 kg * 9.8 m/s^2 as N)\nprint(0.1 s + 0.2 s as ms)\nv as km/h\nprint(1 h + 30 min as min, 1 day as h)\n",
+    );
+    assert_eq!(
+        out,
+        "25 m/s\n90 km/h\n25 m/s 90 km/h 3\n149597870.7 km 149597870700 m\n511000 eV 0.511 MeV\n19.6 N\n300.00000000000006 ms\n90 min 24 h\n"
+    );
+}
+
+#[test]
+fn display_units_inside_functions_loops_and_branches() {
+    let out = agree(
+        "def show_speed(v):\n    print(v as km/h)\n    if v > 5 m/s:\n        print(\"fast\", v as mm/s)\n    return v\nx = show_speed(36 km/h)\nn = 0\nwhile n < 3:\n    n += 1\n    print(n * 1 km as m)\n    n * 1 km as km\nprint(x as m/s, (x as km/h))\nprint((1 m if true else 2 m) as cm)\n",
+    );
+    assert!(out.starts_with("36 km/h\nfast 10000 mm/s\n"), "{out}");
+}
+
+#[test]
+fn display_units_fail_the_same_way_in_both() {
+    for src in [
+        // 1e300 m is 1e309 nm.
+        "print(1)\nprint(1e300 m as nm)\nprint(2)\n",
+        "x = 1e300 m\nx as nm\n",
+        "def f(a):\n    print(a as nm)\nf(1e300 m)\n",
+    ] {
+        let m = lower_ok(src);
+        let (want_out, want) = interpret(src);
+        let (got_out, got) = run_main(&m);
+        assert_eq!(want, Err("arithmetic overflow".to_string()), "{src}");
+        assert_eq!(got, want, "{src}");
+        assert_eq!(got_out, want_out, "{src}");
+    }
+    // A wrong dimension is a check error before anything runs.
+    let e = lower_err("print(90 km/h as kg)\n");
+    assert!(e.contains("cannot show a velocity in kg"), "{e}");
+}
+
+#[test]
+fn every_value_and_unit_prints_alike_in_both() {
+    let units = [
+        "m", "km", "mm", "AU", "pc", "ly", "km/h", "m/s", "eV", "MeV", "J", "kW*h", "day", "h",
+        "min", "yr",
+    ];
+    for unit in units {
+        let mut src = String::new();
+        for n in 1..=40u32 {
+            let x = f64::from(n) * 0.75 + 0.125;
+            src.push_str(&format!("print({x} {unit} as {unit}, {x} {unit})\n"));
+        }
+        // Every value reads back as itself.
+        let out = agree(&src);
+        for (n, line) in (1..=40u32).zip(out.lines()) {
+            let x = sky_interp::format_number(f64::from(n) * 0.75 + 0.125);
+            assert!(line.starts_with(&format!("{x} {unit} ")), "{unit}: {line}");
+        }
+    }
+}
+
+#[test]
 fn the_runnable_ui_programs() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for name in [
@@ -284,6 +347,11 @@ fn the_runnable_ui_programs() {
         "crates/sky-types/tests/ui/ok_print_builtin.sky",
         "crates/sky-types/tests/ui/ok_scalar_inverse.sky",
         "crates/sky-types/tests/ui/ok_user_bound_true.sky",
+        "tests/ui/types/ok_array_builtins.sky",
+        "tests/ui/types/ok_array_index.sky",
+        "tests/ui/types/ok_array_literals.sky",
+        "tests/ui/types/ok_cholesky_literal.sky",
+        "tests/ui/types/ok_literal_tag_proofs.sky",
     ] {
         let path = root.join(name);
         let Ok(src) = std::fs::read_to_string(&path) else {
@@ -294,6 +362,49 @@ fn the_runnable_ui_programs() {
         let (got_out, got) = run_main(&m);
         assert_eq!(got_out, want_out, "{name}");
         assert_eq!(normalized(&got), normalized(&want), "{name}");
+    }
+}
+
+/// The names a program binds at its top level (`x = ...`, `x: T = ...`).
+fn top_level_names(src: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for line in src.lines() {
+        let ident: String = line
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        let rest = line[ident.len()..].trim_start();
+        let binds = !ident.is_empty()
+            && ((rest.starts_with('=') && !rest.starts_with("==")) || rest.starts_with(':'));
+        if binds && ident != "def" && !names.contains(&ident) {
+            names.push(ident);
+        }
+    }
+    names
+}
+
+/// The array programs of the UI suites print nothing, so print every name
+/// they bind: the arrays SIR computes must be the ones `sky run` computes,
+/// entry for entry, in the same text.
+#[test]
+fn the_array_ui_programs_bind_the_same_values() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for name in [
+        "ok_array_builtins",
+        "ok_array_index",
+        "ok_array_literals",
+        "ok_cholesky_literal",
+        "ok_literal_tag_proofs",
+    ] {
+        let path = root.join("tests/ui/types").join(format!("{name}.sky"));
+        let mut src = std::fs::read_to_string(&path).expect("reads");
+        let names = top_level_names(&src);
+        assert!(!names.is_empty(), "{name}");
+        for n in &names {
+            src.push_str(&format!("print({n})\n"));
+        }
+        let out = agree(&src);
+        assert_eq!(out.lines().count(), names.len(), "{name}:\n{out}");
     }
 }
 

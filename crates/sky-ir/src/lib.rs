@@ -10,8 +10,8 @@
 //! a builder ([`builder`]) used by lowering and tests, plus the
 //! infrastructure every pass relies on: the verifier ([`verify`]), the text
 //! format ([`print`] and [`parse`], round-trip exact), and the pass manager
-//! with explanations ([`pass`]). Lowering from the checked AST and the
-//! reference interpreter build on these.
+//! with explanations ([`pass`]), and effect inference ([`effects`]). Lowering
+//! from the checked AST and the reference interpreter build on these.
 //!
 //! # Levels
 //!
@@ -24,6 +24,7 @@
 pub mod builder;
 mod canon;
 mod display;
+pub mod effects;
 pub mod ir;
 pub mod op;
 pub mod parse;
@@ -37,7 +38,7 @@ pub use ir::{
     BlockData, BlockId, Edition, Effect, EffectSet, Function, Module, NumberType, OpData, OpId,
     RegionData, RegionId, Repr, Type, ValueData, ValueDef, ValueId,
 };
-pub use op::{CmpOp, MathFn, OpKind, OpProperties, SolveMethod};
+pub use op::{CmpOp, MathFn, OpKind, OpProperties, SliceAxis, SolveMethod};
 pub use parse::{parse, ParseError};
 pub use pass::{
     Changed, Explanation, Pass, PassCx, PassError, PassManager, PipelineReport, RuleId,

@@ -1,0 +1,34 @@
+crates/sky-types/tests/ui/err_for_iterable.sky:2:10: error: cannot iterate over a dimensionless number
+  |
+2 | for x in n:
+  |          ^ this is dimensionless
+  = note: only vectors and matrices have elements to loop over
+  = help: to repeat something that many times, write `for i in range(n):`
+
+crates/sky-types/tests/ui/err_for_iterable.sky:4:10: error: cannot iterate over a length
+  |
+4 | for x in 3 m:
+  |          ^^^ this is length
+  = note: only vectors and matrices have elements to loop over
+  = help: loop over a vector, a matrix or `range(n)`
+
+crates/sky-types/tests/ui/err_for_iterable.sky:6:10: error: cannot iterate over a Bool
+  |
+6 | for x in true:
+  |          ^^^^ this is Bool
+  = note: only vectors and matrices have elements to loop over
+  = help: loop over a vector, a matrix or `range(n)`
+
+crates/sky-types/tests/ui/err_for_iterable.sky:8:10: error: cannot iterate over a string
+  |
+8 | for x in "abc":
+  |          ^^^^^ this is a string
+  = note: in v0.1 a string is only printed; it has no elements to loop over
+  = help: loop over a vector, a matrix or `range(n)`
+
+crates/sky-types/tests/ui/err_for_iterable.sky:12:10: error: cannot iterate over function `f`
+   |
+12 | for x in f:
+   |          ^ this is a function
+   = note: only vectors and matrices have elements to loop over
+   = help: call it to get a value, or loop over `range(n)`

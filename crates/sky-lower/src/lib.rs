@@ -46,7 +46,7 @@
 //! # Variables are SSA
 //!
 //! Lowering keeps a map from name to the current SSA value, with the
-//! scoping the checker and interpreter define: `if` and `while` share the
+//! scoping the checker and interpreter define: `if`, `while` and `for` share the
 //! enclosing scope, a `def` opens a new one.
 //!
 //! * `if`: each arm is lowered from the scope before the `if`. Afterwards
@@ -58,9 +58,49 @@
 //!   before the loop) are the **loop-carried** values, block arguments of
 //!   `before` and `after` and results of the loop. `before` computes the
 //!   condition; `after` is the body and yields the next values.
-//! * `and`/`or` are nested `if`s, so the right operand runs only when the
-//!   left does not decide the result; `a if c else b` is an `if` with a
-//!   result.
+//! * an `elif` chain is **flat**: a `done` flag and one sibling `if` per
+//!   arm (below).
+//! * `and`/`or` are a running Bool updated by sibling `if`s, one per
+//!   operand (below); `a if c else b` is an `if` with a result.
+//! * `for i in range(a, b, s)` is that `while` over a hidden carried index
+//!   (`<i1>`, `<i2>`, ...) that the body's first operations copy into `i`
+//!   and advance; see `for_loop.rs`. `for x in v` over an array is a
+//!   [`LowerError`] until SIR has array values.
+//!
+//! # Flat chains
+//!
+//! Regions nest, and the verifier caps their depth
+//! (`sky_ir::MAX_REGION_DEPTH`), so anything a *chain* of a source construct
+//! produces must be siblings, never nested:
+//!
+//! * `a and b and c`: `t = a; t = if t { b } else { false };
+//!   t = if t { c } else { false }` (`or`: `if t { true } else { b }`).
+//!   Operand `k` is evaluated only in the arm that runs while `t` has not
+//!   decided the result, so short-circuiting is exact.
+//! * `if c1 { A } elif c2 { B } else { E }`: `done = false;
+//!   if c1 { A; done = true }; g = if done { false } else { c2 };
+//!   if g { B; done = true }; if not done { E }`. A condition is evaluated
+//!   only if no earlier arm was taken, in order, as the interpreter does.
+//!   Each arm's `if` merges its own variables (a name bound first in the
+//!   chain is kept when every arm reaching the code after assigns it, with
+//!   a stand-in where the arm did not run); a plain `if`/`else` is one `if`.
+//! * early exits: see the next section; each statement after a possible
+//!   exit is guarded by its own `if not flag`.
+//!
+//! # Region depth
+//!
+//! **The IR's region nesting is at most `2 * D + 4`**, where `D` is the
+//! source depth: the deepest point of block nesting (the bodies of `def`,
+//! `if`/`elif`/`else` and `while`, the top of the file being 0) plus
+//! short-circuit nesting in expressions (an `and`/`or` operand or ternary
+//! inside another). It does not depend on the length of any chain: an
+//! `elif` chain, an `and`/`or` chain or a run of early exits adds a
+//! constant. Each level of source nesting costs at most two IR levels: the
+//! arm of its `if`/`while`, and the guard around the statement (below); the
+//! constant covers the guard of a function's last `return`, and the `if`
+//! that gates a loop's condition or an `elif` condition. `tests/depth.rs`
+//! checks the bound on generated programs, and the chain tests in
+//! `tests/robustness.rs` lower chains of thousands.
 //!
 //! # `break`, `continue` and early `return`
 //!
@@ -77,10 +117,15 @@
 //!   each iteration. `break` sets both, `continue` sets `<skipN>`, and
 //!   `return` sets `<ret>`, `<retval>` and both flags of **every**
 //!   enclosing loop (so each loop stops and the code after each is skipped).
-//! * After a statement that may have set a flag, the rest of its block is a
-//!   **guard**: `if not <flag> { rest }` (`<skipN>` inside a loop, `<ret>`
-//!   outside), so nothing after an exit runs. Code after a statement that
-//!   always exits is dropped.
+//! * After a statement that may have set a flag, every statement after it
+//!   in the block is a **guard**: `if not <flag> { stmt }` (`<skipN>` inside
+//!   a loop, `<ret>` outside), so nothing after an exit runs. A statement
+//!   that may itself exit gets its own guard; a maximal run of statements
+//!   that cannot exit shares one. Guards are siblings, so a block adds one
+//!   level of nesting for them however many exits it has. A guarded group
+//!   passes its values on through the `if`'s results: every name it assigns
+//!   is a result, with a stand-in on the skipping path. Code after a
+//!   statement that always exits is dropped.
 //! * A loop whose body can `break` or `return` evaluates its condition only
 //!   while `<brkN>` is false: `if not <brkN> { cond } else { false }`.
 //! * At the end of the function, `return <retval>`. A function whose only
@@ -93,15 +138,30 @@
 //! make every reader skip it. Names the checker keeps out of merges (an arm
 //! that returned takes no part) are kept out here too.
 //!
+//! # Derivatives
+//!
+//! `derivative(f, x)(args)` is a `call` of `df/dx`, the function
+//! `sky_ad::differentiate_into` adds to the module once all functions exist
+//! (see `derivative.rs`); the call keeps the second result, the
+//! derivative. A function `sky-ad` cannot differentiate is a
+//! [`LowerError`] on the call.
+//!
 //! # Rejected with a [`LowerError`]
 //!
-//! Anything `sky run` cannot execute either: indexing, attributes, `∂` and
-//! `∇`, writes through an index or attribute, and an input declaration
-//! anywhere but the top level of the file; and anything SIR v1 has no
+//! Anything `sky run` cannot execute either: attributes, `∂` and `∇`,
+//! writes through an index or attribute, and an input declaration anywhere
+//! but the top level of the file; and anything SIR v1 has no
 //! representation for: a function used as a value (passed, stored,
 //! returned), calling anything that is not a function defined with `def`.
 //! Also number literals that overflow `f64`, which the interpreter reports
 //! when it evaluates them.
+//!
+//! # Effects
+//!
+//! Lowering leaves every function's effects to `sky_ir::effects`, which it
+//! runs once over the finished module: the union over the operations, with
+//! calls taking their callee's effects (so a function that only calls a
+//! printing function is `io` too).
 //!
 //! # Where the verifier plugs in
 //!
@@ -113,9 +173,12 @@
 #![forbid(unsafe_code)]
 
 mod analysis;
+mod array;
 mod build;
 mod ctx;
+mod derivative;
 mod expr;
+mod for_loop;
 mod func;
 mod stmt;
 
@@ -191,6 +254,17 @@ impl std::error::Error for LowerError {}
 /// Lowers `module` (parsed from `src` and checked without errors, with
 /// `checked` the checker's result for it) to SIR. The module is unverified.
 pub fn lower(module: &Ast, src: &str, checked: &Checked) -> Result<Module, LowerError> {
+    lower_with_defs(module, src, checked).map(|(m, _)| m)
+}
+
+/// [`lower`], and which SIR function each `def` became: the span of the
+/// `def`'s name (the key of `Checked::funcs`, and `Function::def_span` in
+/// the interpreter) to the function's name in the module.
+pub fn lower_with_defs(
+    module: &Ast,
+    src: &str,
+    checked: &Checked,
+) -> Result<(Module, HashMap<Span, String>), LowerError> {
     let main = FnState {
         b: Builder::new(Module::MAIN.to_string(), module.span),
         scope: Default::default(),
@@ -207,25 +281,49 @@ pub fn lower(module: &Ast, src: &str, checked: &Checked) -> Result<Module, Lower
         defs: HashMap::new(),
         mod_assigned: BTreeSet::new(),
         fns: HashMap::new(),
+        literal_bindings: HashMap::new(),
         out: Vec::new(),
         used_names: HashMap::new(),
         st: main,
         stack: Vec::new(),
+        derivatives: Vec::new(),
     };
     lw.collect_defs(&module.stmts);
     lw.collect_module_names(&module.stmts);
+    lw.collect_literal_bindings(&module.stmts);
     lw.block(&module.stmts, &Needed::new())?;
     lw.st
         .b
         .op(sky_ir::OpKind::Return, Vec::new(), Vec::new(), module.span);
-    let Lower { st, mut out, .. } = lw;
+    let Lower {
+        st,
+        mut out,
+        derivatives,
+        fns,
+        ..
+    } = lw;
     out.sort_by_key(|(start, _)| *start);
     let mut functions = vec![st.b.finish()];
     functions.extend(out.into_iter().map(|(_, f)| f));
-    Ok(Module {
+    let mut module = Module {
         edition: Edition::default(),
         functions,
-    })
+    };
+    // The derivative functions the program asked for, now that the
+    // functions they differentiate exist.
+    for want in derivatives {
+        sky_ad::differentiate_into(&mut module, &want.func, want.wrt)
+            .map_err(|e| derivative::ad_error(&e, want.span))?;
+    }
+    // Effects follow from the bodies (the derivative functions included)
+    // and the calls between them; one pass owns that rule
+    // (`sky_ir::effects`), lowering does not repeat it.
+    let _ = sky_ir::effects::infer_effects(&mut module);
+    let defs = fns
+        .into_iter()
+        .map(|(def, info)| (def, info.name))
+        .collect();
+    Ok((module, defs))
 }
 
 /// Lexes, parses, checks and lowers `src`: the whole path from source text

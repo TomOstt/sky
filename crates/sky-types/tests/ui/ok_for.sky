@@ -1,0 +1,27 @@
+# A Riemann sum: the index is a dimensionless number, and the bound may be
+# a variable.
+n = 100
+dx = 1 m / n
+length = 0 m
+for i in range(n):
+    length += dx
+
+# Ranges with a start, a step, and a negative step.
+for k in range(2, 20, 5):
+    picked = k
+for c in range(10, 0, -3):
+    if c == 4:
+        continue
+    seen = c
+    if c < 3:
+        break
+
+# Constant bounds always run, so what the body binds is defined after.
+for j in range(1, 4):
+    last = j * 2
+after = last + j
+
+# Loops nest, and the loop variable is a plain dimensionless number.
+for a in range(3):
+    for b in range(a, 3):
+        cell = a * b

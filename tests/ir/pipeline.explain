@@ -1,0 +1,44 @@
+tests/ir/pipeline.sky:7:5: note: [FOLD-FLOAT-001] `2 * 3` is rewritten to `6`
+  |
+7 | a = 2 * 3
+  |     ^^^^^
+  = note: applied by the `fold` pass
+  = note: because every operand is a constant
+  = note: because the result is the reference interpreter's own, bit for bit, and it cannot fail at run time
+
+tests/ir/pipeline.sky:8:10: note: [FOLD-FLOAT-001] `6 * 4` is rewritten to `24`
+  |
+8 | unused = a * 4
+  |          ^^^^^
+  = note: applied by the `fold` pass
+  = note: because every operand is a constant
+  = note: because the result is the reference interpreter's own, bit for bit, and it cannot fail at run time
+
+tests/ir/pipeline.sky:8:10: note: [DCE-001] `a * 4` is removed
+  |
+8 | unused = a * 4
+  |          ^^^^^
+  = note: applied by the `dce` pass
+  = note: because `unused` is never used
+  = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
+
+tests/ir/pipeline.sky:9:5: note: [ALG-001] `x * 1` is rewritten to `x`
+  |
+9 | y = x * 1
+  |     ^^^^^
+  = note: applied by the `egraph` pass
+  = note: because multiplying a finite float by 1 gives it back bit for bit, and cannot overflow
+
+tests/ir/pipeline.sky:10:5: note: [ALG-007] `-(-t)` is rewritten to `t`
+   |
+10 | z = -(-t)
+   |     ^^^^^
+   = note: applied by the `egraph` pass
+   = note: because negation only flips the sign bit, so applying it twice restores every bit
+
+tests/ir/pipeline.sky:12:7: note: `A⁻¹ @ b` is rewritten to a Cholesky solve
+   |
+12 | sol = A⁻¹ @ b
+   |       ^^^^^^^
+   |       - positive definite
+   = note: rewrite `A⁻¹ @ b` to a Cholesky solve: A is Matrix[3,3] and PositiveDefinite, b is Vector[3]. Factor A = L·Lᵀ (L lower-triangular), solve L·y = b, then Lᵀ·x = y. x = A⁻¹·b is Vector[3], and A⁻¹ is never formed.

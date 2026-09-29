@@ -8,6 +8,8 @@ use sky_diag::{Diagnostic, Severity, SourceFile, Span};
 use sky_syntax::Edition;
 use sky_types::Env;
 
+use crate::ir;
+
 /// The outcome of the front end on one source text.
 pub struct FrontEnd {
     /// Lexer warnings, parse errors and checker diagnostics, in source order.
@@ -21,6 +23,10 @@ pub struct FrontEnd {
     /// The `A⁻¹ @ b` sites the checker rewrote to Cholesky solves, which the
     /// interpreter must honour (see `sky_interp::run_module_with`).
     pub cholesky_solves: HashSet<Span>,
+    /// The IR outcome, when asked for ([`analyze_ir`]) and the program has
+    /// no errors. Its notes (pass explanations, or why there is no IR) are
+    /// already in `diagnostics`.
+    pub ir: Option<ir::Outcome>,
     /// Whether no diagnostic is an error.
     pub ok: bool,
 }
@@ -43,7 +49,25 @@ impl FrontEnd {
 /// consults it yet (there is one edition); it is threaded through now so the
 /// first edition-dependent rule has one place to read it, and no phase can
 /// forget to ask.
-pub fn analyze(src: &str, env: Env, explain: bool, _edition: Edition) -> FrontEnd {
+pub fn analyze(src: &str, env: Env, explain: bool, edition: Edition) -> FrontEnd {
+    analyze_ir(src, env, explain, false, edition)
+}
+
+/// [`analyze`], and with `explain` or `emit_ir`, also lowers a program the
+/// checker accepts to SIR and runs the default pipeline (see
+/// [`ir::build`]). With `explain`, the pass explanations join the checker's
+/// notes in source order; with `emit_ir`, [`FrontEnd::ir`] keeps the text of
+/// every stage. A program that cannot be lowered is not an error here:
+/// [`FrontEnd::ir`] says why.
+pub fn analyze_ir(
+    src: &str,
+    env: Env,
+    explain: bool,
+    emit_ir: bool,
+    _edition: Edition,
+) -> FrontEnd {
+    let mut ir_out = None;
+    let mut pass_notes = Vec::new();
     let mut module_out = None;
     let mut env_out = env.clone();
     let mut solves = HashSet::new();
@@ -56,6 +80,17 @@ pub fn analyze(src: &str, env: Env, explain: bool, _edition: Edition) -> FrontEn
                 // Only a module that parsed cleanly is checked, so the
                 // checker never reports on a statement the parser dropped.
                 let checked = sky_types::check_module_with(&module, src, env);
+                if (explain || emit_ir) && !checked.has_errors() {
+                    let outcome = ir::build(&module, src, &checked, emit_ir, explain);
+                    match &outcome {
+                        ir::Outcome::Ready(ready) => pass_notes = ready.notes.clone(),
+                        // Only `--emit-ir` says so: `--explain` alone stays
+                        // as it was for programs that cannot be lowered.
+                        ir::Outcome::Unavailable(why) if emit_ir => pass_notes.push(why.clone()),
+                        _ => {}
+                    }
+                    ir_out = Some(outcome);
+                }
                 diagnostics.extend(checked.diagnostics);
                 if explain {
                     diagnostics.extend(checked.rewrites.iter().map(|r| r.to_diagnostic(src)));
@@ -75,6 +110,8 @@ pub fn analyze(src: &str, env: Env, explain: bool, _edition: Edition) -> FrontEn
                         ));
                     }
                 }
+                // After the checker's notes: at one position they come first.
+                diagnostics.append(&mut pass_notes);
                 env_out = checked.env;
                 solves = checked.cholesky_solves;
                 module_out = Some(module);
@@ -93,6 +130,7 @@ pub fn analyze(src: &str, env: Env, explain: bool, _edition: Edition) -> FrontEn
         module: module_out,
         env: env_out,
         cholesky_solves: solves,
+        ir: ir_out,
         ok,
     }
 }

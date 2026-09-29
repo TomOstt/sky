@@ -1,0 +1,36 @@
+crates/sky-types/tests/ui/err_derivative_units.sky:8:19: error: cannot add length and velocity
+  |
+8 | a = position(2 s) + derivative(position, t)(2 s)
+  |                   ^ mismatched dimensions
+  |     ------------- length
+  |                     ---------------------------- velocity (L·T⁻¹)
+  = note: both operands of `+` must have the same dimension
+  = note: `position(2 s)` is a length, where `position(2 s)` is a length (a function result, `def` on line 2)
+  = help: these differ by a factor of time: `position(2 s)` is `derivative(position, t)(2 s)` times a time
+
+crates/sky-types/tests/ui/err_derivative_units.sky:9:8: error: expected length, found velocity
+  |
+9 | b: m = derivative(position, t)(2 s)
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is velocity (L·T⁻¹)
+  |    - expected length because of this unit
+
+crates/sky-types/tests/ui/err_derivative_units.sky:10:8: error: expected force, found L²
+   |
+10 | c: N = derivative(spring, k)(0.1 m, 200 N/m)
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is L²
+   |    - expected force because of this unit
+
+crates/sky-types/tests/ui/err_derivative_units.sky:11:29: error: `t` of `derivative(position, t)` expects a time, found a length
+   |
+11 | d = derivative(position, t)(2 m)
+   |                             ^^^ this is length
+ 2 | def position(t: s) -> m:
+   |                 - expected because of this annotation
+   = help: convert the argument, or fix the unit in the call
+
+crates/sky-types/tests/ui/err_derivative_units.sky:12:5: error: `derivative(spring, x)` takes 2 arguments, found 1
+   |
+12 | e = derivative(spring, x)(0.1 m)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ missing argument `k`
+ 5 | def spring(x: m, k: N/m) -> J:
+   |     ------ `spring` is defined here

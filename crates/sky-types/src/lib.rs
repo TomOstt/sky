@@ -7,9 +7,17 @@
 //!   [`check_module_with`]), producing `sky-diag` diagnostics and the
 //!   rewrite decisions ([`RewriteSite`]). Everything below is AST-free.
 //!   Blocks, control flow, and functions (scoping, merges, calls to `def`s)
-//!   are in the private `flow` module, documented at its top.
+//!   are in the private `flow` module, documented at its top; `for` loops
+//!   are in `for_loop`.
+//! * `display`: `v as unit`, a value shown in a chosen unit (only printed,
+//!   never computed with; private).
 //! * `provenance`: why a name has its dimension, for the derivation notes on
 //!   dimension-mismatch errors (private; see its module docs for the bounds).
+//! * [`linalg`]: dense linear algebra on `f64` slices (inverse, Cholesky),
+//!   shared with the interpreter.
+//! * [`numerics`] and `cancellation`: warnings that teach numerical
+//!   analysis (condition numbers of constant matrices, catastrophic
+//!   cancellation), and the estimator behind the first.
 //! * [`shape`]: symbolic shapes ([`Shape`], [`ShapeDim`]) and equality-only
 //!   unification ([`ShapeUnifier`]). There is no dimension arithmetic such as
 //!   `N+1` in v0.1.
@@ -27,9 +35,15 @@
 
 mod array;
 mod builtins;
+mod cancellation;
 pub mod check;
 pub mod constant;
+mod derivative;
+mod display;
 mod flow;
+mod for_loop;
+pub mod linalg;
+pub mod numerics;
 mod provenance;
 pub mod rewrite;
 pub mod rules;
@@ -44,9 +58,13 @@ pub use check::{
     MAX_STORED_REWRITES,
 };
 pub use constant::{
-    apply_unit, entry_value, parse_number, NumberError, UnitError, MAX_ARRAY_ELEMENTS,
+    apply_unit, entry_value, express_in_unit, parse_number, NumberError, UnitError,
+    MAX_ARRAY_ELEMENTS, MAX_RANGE_BOUND,
 };
+pub use derivative::DerivativeOf;
+pub use display::a_dimension;
 pub use flow::FuncSig;
+pub use for_loop::{range_constants, range_runs_at_least_once};
 pub use rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 pub use rules::{elementwise, inverse, matmul, transpose, TensorType};
 pub use scale::{negated_tags, scaled_tags};

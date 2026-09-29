@@ -1,0 +1,53 @@
+tests/ui/types/err_show_in_arithmetic.sky:4:8: error: a value shown in km/h can only be printed
+  |
+4 | print((v as km/h) + 1)
+  |        ^^^^^^^^^ this is for display, not a number to compute with
+  = help: values are computed in SI and converted only when shown: put `as` last, `print(… as km/h)`; to get a plain number of km/h, divide by one: `x / (1 km/h)`
+
+tests/ui/types/err_show_in_arithmetic.sky:5:12: error: a value shown in km/h can only be printed
+  |
+5 | print(2 * (v as km/h))
+  |            ^^^^^^^^^ this is for display, not a number to compute with
+  = help: values are computed in SI and converted only when shown: put `as` last, `print(… as km/h)`; to get a plain number of km/h, divide by one: `x / (1 km/h)`
+
+tests/ui/types/err_show_in_arithmetic.sky:6:5: error: a value shown in km/h can only be printed
+  |
+6 | x = v as km/h
+  |     ^^^^^^^^^ this is for display, not a number to compute with
+  = help: values are computed in SI and converted only when shown: put `as` last, `print(… as km/h)`; to get a plain number of km/h, divide by one: `x / (1 km/h)`
+
+tests/ui/types/err_show_in_arithmetic.sky:7:11: error: a value shown in km/h can only be printed
+  |
+7 | y: km/h = v as km/h
+  |           ^^^^^^^^^ this is for display, not a number to compute with
+  = help: values are computed in SI and converted only when shown: put `as` last, `print(… as km/h)`; to get a plain number of km/h, divide by one: `x / (1 km/h)`
+
+tests/ui/types/err_show_in_arithmetic.sky:8:8: error: a value shown in km/h can only be printed
+  |
+8 | print((v as km/h) == v)
+  |        ^^^^^^^^^ this is for display, not a number to compute with
+  = help: values are computed in SI and converted only when shown: put `as` last, `print(… as km/h)`; to get a plain number of km/h, divide by one: `x / (1 km/h)`
+
+tests/ui/types/err_show_in_arithmetic.sky:11:9: error: a value shown in km/h can only be printed
+   |
+11 | print(f(v as km/h))
+   |         ^^^^^^^^^ this is for display, not a number to compute with
+   = help: values are computed in SI and converted only when shown: put `as` last, `print(… as km/h)`; to get a plain number of km/h, divide by one: `x / (1 km/h)`
+
+tests/ui/types/err_show_in_arithmetic.sky:12:9: error: a value shown in km/h can only be printed
+   |
+12 | print(-(v as km/h))
+   |         ^^^^^^^^^ this is for display, not a number to compute with
+   = help: values are computed in SI and converted only when shown: put `as` last, `print(… as km/h)`; to get a plain number of km/h, divide by one: `x / (1 km/h)`
+
+tests/ui/types/err_show_in_arithmetic.sky:13:5: error: a value shown in km/h can only be printed
+   |
+13 | if (v as km/h) > 3:
+   |     ^^^^^^^^^ this is for display, not a number to compute with
+   = help: values are computed in SI and converted only when shown: put `as` last, `print(… as km/h)`; to get a plain number of km/h, divide by one: `x / (1 km/h)`
+
+tests/ui/types/err_show_in_arithmetic.sky:15:6: error: a value shown in km/h can only be printed
+   |
+15 | w = [v as km/h, v]
+   |      ^^^^^^^^^ this is for display, not a number to compute with
+   = help: values are computed in SI and converted only when shown: put `as` last, `print(… as km/h)`; to get a plain number of km/h, divide by one: `x / (1 km/h)`

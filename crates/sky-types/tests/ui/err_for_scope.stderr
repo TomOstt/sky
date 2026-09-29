@@ -1,0 +1,31 @@
+crates/sky-types/tests/ui/err_for_scope.sky:5:7: error: `i` may be undefined here
+  |
+5 | print(i)
+  |       ^ not assigned on every path
+3 | for i in range(n):
+  |     - `i` is assigned here
+  = help: assign it before the loop
+
+crates/sky-types/tests/ui/err_for_scope.sky:6:7: error: `inside` may be undefined here
+  |
+6 | print(inside)
+  |       ^^^^^^ not assigned on every path
+4 |     inside = i
+  |     ------ `inside` is assigned here
+  = help: assign it before the loop
+
+crates/sky-types/tests/ui/err_for_scope.sky:10:7: error: `e` may be undefined here
+   |
+10 | print(e)
+   |       ^ not assigned on every path
+ 8 | for e in range(0):
+   |     - `e` is assigned here
+   = help: assign it before the loop
+
+crates/sky-types/tests/ui/err_for_scope.sky:16:7: error: `z` may be undefined here
+   |
+16 | print(z)
+   |       ^ not assigned on every path
+15 |     z = 1
+   |     - `z` is assigned here
+   = help: assign it before the loop

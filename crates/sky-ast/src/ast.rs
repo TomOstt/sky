@@ -360,6 +360,21 @@ pub enum ExprKind {
         cond: Box<Expr>,
         else_: Box<Expr>,
     },
+    /// `value as unit`, e.g. `v as km/h`: a display value, the number (or
+    /// array) `value` written in `unit` instead of SI. It is the loosest
+    /// construct of all (looser than `a if c else b`), so it covers a whole
+    /// expression: `a + b as km` is `(a + b) as km`. It does not chain and
+    /// only appears where an expression ends (a statement, a call
+    /// argument, inside parentheses); the checker allows the result only
+    /// as an argument of `print` or as an expression statement.
+    As {
+        value: Box<Expr>,
+        /// Parsed with the unit-literal grammar (`parse_unit`). Boxed to
+        /// keep `Expr` (and every recursive parser frame) small.
+        unit: Box<UnitExpr>,
+        /// The `as` keyword.
+        as_span: Span,
+    },
 }
 
 /// One item inside `[...]`.
@@ -514,6 +529,15 @@ pub enum StmtKind {
     /// `while cond: body`. Loops share the enclosing scope, like `if`.
     While {
         cond: Expr,
+        body: Block,
+    },
+    /// `for var in iter: body`. `iter` is any expression: `range(...)` (a
+    /// plain call, told apart from a user's own `range` by the checker), or
+    /// a vector or matrix. Like `while`, the body shares the enclosing
+    /// scope, and `var` stays bound after the loop.
+    For {
+        var: Ident,
+        iter: Expr,
         body: Block,
     },
     /// `def name(params) -> ret: body`. Parameter and return annotations

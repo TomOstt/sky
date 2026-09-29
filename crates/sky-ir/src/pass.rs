@@ -15,8 +15,10 @@
 //! the bug. (`cfg(test)` cannot do this for us: it is false in downstream
 //! crates, which are where the real passes live.)
 //!
-//! There are no real passes here yet. The Cholesky rewrite and dead
-//! computation elimination come next, in `sky-opt`; the design document's
+//! The passes themselves live elsewhere: effect inference in this crate
+//! ([`crate::effects`]), constant folding, dead-code elimination and the
+//! Cholesky rewrite in `sky-opt`, e-graph rewriting in `sky-egraph`, and
+//! `sky_opt::default_pipeline` puts them in order. The design document's
 //! `level()` method is left out until there is a second level.
 
 use std::fmt;
@@ -74,7 +76,7 @@ pub struct Explanation {
     pub span: Span,
     /// The code before, in a form a user can read (usually its source form).
     pub before: String,
-    /// The code after.
+    /// The code after. Empty when the code was removed.
     pub after: String,
     /// The facts and type properties the rule relied on, one per entry
     /// ("`A` is PositiveDefinite", "`b` is Vector[3]").
@@ -85,16 +87,22 @@ impl Explanation {
     /// A note for `sky check --explain`: points at the changed code, names
     /// the rule and pass, and lists the reasons.
     pub fn to_diagnostic(&self) -> Diagnostic {
-        let mut d = Diagnostic::note(
+        let headline = if self.after.is_empty() {
+            format!(
+                "[{}] `{}` is removed",
+                self.rule,
+                display_capped(&self.before)
+            )
+        } else {
             format!(
                 "[{}] `{}` is rewritten to `{}`",
                 self.rule,
                 display_capped(&self.before),
                 display_capped(&self.after)
-            ),
-            self.span,
-        )
-        .with_note(format!("applied by the `{}` pass", self.pass));
+            )
+        };
+        let mut d = Diagnostic::note(headline, self.span)
+            .with_note(format!("applied by the `{}` pass", self.pass));
         for reason in &self.because {
             d = d.with_note(format!("because {reason}"));
         }

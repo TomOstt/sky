@@ -1,0 +1,38 @@
+# The stable forms, and look-alikes that do not cancel: no warnings.
+x = 1000000.0
+cc = 1.0
+r1 = cc / (sqrt(x^2 + cc) + x)
+eps = 0.00000001
+r2 = eps
+p = 1000000.5
+q = 1000000.4
+r3 = (p - q) * (p + q)
+# Constants far from the critical value lose no digits.
+r4 = exp(1) - 1
+r5 = log(1 + 2)
+r6 = (1 + 5) - 1
+r7 = sqrt(3^2 + 1) - 3
+r8 = 5^2 - 2^2
+# Not the same base, not the same operand.
+r9 = sqrt(x^2 + cc) - cc
+r10 = (1 + x) - 2
+r11 = exp(x) - 2
+r12 = log(2 + x)
+# A negative x does not cancel in sqrt(x^2 + c) - x.
+r13 = sqrt(4^2 + 1) + 4
+# The quadratic formula with different coefficients in b^2 - 4ac and 2a.
+a = 1.0
+b = 100000.0
+k = 1.0
+s1 = (-b + sqrt(b^2 - 4*a*k)) / (2*k*k)
+s2 = (-b + sqrt(b^2 - 3*a*k)) / (2*a)
+s3 = (-b + sqrt(b^2 - 4*a*k)) / a
+# Constants with a comfortable discriminant.
+s4 = (-3 + sqrt(3^2 - 4*1*2)) / (2*1)
+# A program's own exp and log are not the builtins.
+def exp(t):
+    return t
+def log(t):
+    return t
+u = exp(eps) - 1
+v = log(1 + eps)

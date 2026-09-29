@@ -16,15 +16,6 @@ use sky_units::lookup_constant;
 use crate::ctx::{join_ty, Lower, R};
 use crate::LowerError;
 
-/// A conditional `if` whose arms are being built one after the other.
-struct Open {
-    op: OpId,
-    /// The arm the rest of the expression continues in.
-    inside: BlockId,
-    /// The block the `if` is in.
-    outer: BlockId,
-}
-
 fn cmp_of(op: BinaryOp) -> Option<CmpOp> {
     Some(match op {
         BinaryOp::Eq => CmpOp::Eq,
@@ -60,6 +51,11 @@ impl Lower<'_> {
                 Ok(self.op1(OpKind::Inverse, vec![a], ty, e.span))
             }
             ExprKind::Binary { op, lhs, rhs, .. } => {
+                if *op == BinaryOp::MatMul {
+                    if let Some(v) = self.cholesky_site(e, lhs, rhs)? {
+                        return Ok(v);
+                    }
+                }
                 let a = self.expr(lhs)?;
                 let ty = if op.is_comparison() {
                     Type::Bool
@@ -71,16 +67,15 @@ impl Lower<'_> {
             ExprKind::BoolOp { op, operands, .. } => self.bool_op(e.span, *op, operands),
             ExprKind::Call { callee, args } => self.call(e, callee, args),
             ExprKind::IfElse { then, cond, else_ } => self.if_else(e, then, cond, else_),
-            ExprKind::Index { .. } => Err(LowerError::new(
-                "indexing an array is not supported yet",
-                e.span,
-            )
-            .with_note(ARRAYS)),
-            ExprKind::Array(_) => Err(LowerError::new(
-                "array literals are not supported in SIR yet",
-                e.span,
-            )
-            .with_note(ARRAYS)),
+            // `v as unit` is a `show` op: the unit as text, the value in SI.
+            // It is a display value, only ever an operand of `print`.
+            ExprKind::As { value, unit, .. } => {
+                let a = self.expr(value)?;
+                let unit = self.text(unit.span()).to_string();
+                Ok(self.op1(OpKind::Show { unit }, vec![a], Type::Str, e.span))
+            }
+            ExprKind::Index { base, items } => self.index_expr(e, base, items),
+            ExprKind::Array(elems) => self.array_literal(e, elems),
             ExprKind::Attribute { name, .. } => Err(LowerError::new(
                 format!("attribute `{}` is not supported yet", self.text(name.span)),
                 e.span,
@@ -188,28 +183,32 @@ impl Lower<'_> {
         Ok(self.op1(kind, vec![a, b], ty, span))
     }
 
-    /// `a and b and c` is `if a { if b { c } else { false } } else { false }`
-    /// and `a or b or c` is `if a { true } else { if b { true } else { c } }`:
-    /// an operand after the one that decides the result is never evaluated,
-    /// as in the interpreter. A run of operands is a loop, not recursion.
+    /// `a and b and c` is a running value `t`, updated one operand at a time:
+    /// `t = a; t = if t { b } else { false }; t = if t { c } else { false }`,
+    /// and `a or b or c` is `t = if t { true } else { b }` likewise. Every
+    /// `if` is a sibling in the current block, so a chain of any length adds
+    /// **one** level of region nesting (an operand is evaluated inside an
+    /// arm), not one per operand. Short-circuiting stays exact: once `t` has
+    /// decided the result it stays decided (`false and x` is `false`, `true
+    /// or x` is `true`), and operand `k` is evaluated only in the arm that
+    /// runs while `t` has not, so a later operand's effects and errors
+    /// happen exactly when the interpreter's would. The last `if` yields the
+    /// last operand's own value, as the interpreter returns it.
     fn bool_op(&mut self, span: Span, op: BoolOp, operands: &[Expr]) -> R<ValueId> {
         // `or` stops on true, `and` on false.
         let decisive = op == BoolOp::Or;
-        let mut open: Vec<Open> = Vec::new();
-        let mut last = None;
-        for (i, operand) in operands.iter().enumerate() {
-            let v = self.expr(operand)?;
-            if i + 1 == operands.len() {
-                last = Some(v);
-                break;
-            }
+        let Some((first, rest)) = operands.split_first() else {
+            return self.err("internal error: an empty `and`/`or`", span);
+        };
+        let mut t = self.expr(first)?;
+        for operand in rest {
             let outer = self.st.b.at();
-            let (ifop, _) = self.st.b.op(OpKind::If, vec![v], Vec::new(), span);
+            let (ifop, _) = self.st.b.op(OpKind::If, vec![t], Vec::new(), span);
             let then_b = self.new_arm(ifop);
             let else_b = self.new_arm(ifop);
             // The arm that stops the evaluation yields the decisive value;
-            // evaluation continues in the other.
-            let (inside, short) = if decisive {
+            // the other evaluates the next operand.
+            let (go, short) = if decisive {
                 (else_b, then_b)
             } else {
                 (then_b, else_b)
@@ -217,23 +216,16 @@ impl Lower<'_> {
             self.st.b.set_at(short);
             let k = self.const_bool(decisive, span);
             self.st.b.op(OpKind::Yield, vec![k], Vec::new(), span);
-            self.st.b.set_at(inside);
-            open.push(Open {
-                op: ifop,
-                inside,
-                outer,
-            });
+            self.st.b.set_at(go);
+            let v = self.expr(operand)?;
+            // Evaluating an operand may open and close regions of its own;
+            // the yield belongs to this arm.
+            self.st.b.set_at(go);
+            self.st.b.op(OpKind::Yield, vec![v], Vec::new(), span);
+            self.st.b.set_at(outer);
+            t = self.st.b.add_result(ifop, Type::Bool);
         }
-        let Some(mut value) = last else {
-            return self.err("internal error: an empty `and`/`or`", span);
-        };
-        while let Some(o) = open.pop() {
-            self.st.b.set_at(o.inside);
-            self.st.b.op(OpKind::Yield, vec![value], Vec::new(), span);
-            value = self.st.b.add_result(o.op, Type::Bool);
-            self.st.b.set_at(o.outer);
-        }
-        Ok(value)
+        Ok(t)
     }
 
     /// A new region with one empty block, for an `if` arm; returns the block.
@@ -276,6 +268,9 @@ impl Lower<'_> {
         while let ExprKind::Paren(inner) = &target.kind {
             target = inner;
         }
+        if let Some(sig) = self.derivative_sig(target) {
+            return self.derivative_call(e, &sig, args);
+        }
         if let ExprKind::Name(id) = &target.kind {
             match self.checked.expr_types.get(&target.span) {
                 Some(Ty::Func(sig)) => {
@@ -311,6 +306,11 @@ impl Lower<'_> {
                         let a = self.expr(arg)?;
                         let ty = self.ty_of(e)?;
                         return Ok(self.op1(OpKind::Inverse, vec![a], ty, e.span));
+                    }
+                    (name @ ("zeros" | "identity" | "len"), _) => {
+                        if let Some(v) = self.array_builtin(e, name, args)? {
+                            return Ok(v);
+                        }
                     }
                     (name, _) => {
                         if let Some(f) = sky_ir::MathFn::from_name(name) {
@@ -408,6 +408,6 @@ impl Lower<'_> {
     }
 }
 
-/// Why arrays are rejected.
+/// Why an index or attribute write, or an attribute read, is rejected.
 pub(crate) const ARRAYS: &str =
-    "`sky run` executes arrays, but SIR has no array values yet, so this program can't be lowered";
+    "`sky run` cannot execute this either: arrays are immutable and attributes are not supported in v0.1";

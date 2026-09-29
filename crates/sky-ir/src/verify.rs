@@ -38,8 +38,15 @@
 //! * **Tags.** Every [`NumberType`]'s tag set is closed, and a non-empty tag
 //!   set sits on a square matrix (the invariant of `TensorType`).
 //!
-//! Effects are not checked: `Function::effects` is declared, not derived,
-//! and the design's "effect consistency" rule needs an inference pass first.
+//! * **Effects.** A function's declared `effects` include what
+//!   [`crate::effects::infer`] computes from its body and its callees (the
+//!   design's "effect consistency"). Declaring *more* than inferred is fine:
+//!   a pass that removes code leaves the old declaration valid, and
+//!   [`crate::effects::InferEffects`] tightens it. This check runs only when
+//!   the module has no other error, because inference reads the structure
+//!   the other checks establish.
+
+mod arrays;
 
 use std::fmt;
 
@@ -50,10 +57,13 @@ use std::collections::BTreeMap;
 use sky_types::{Shape, ShapeDim, ShapeUnifier, Tag};
 use sky_units::Dimension;
 
+use crate::effects;
 use crate::ir::{
-    BlockId, Function, Module, NumberType, OpData, OpId, RegionId, Type, ValueDef, ValueId,
+    BlockId, EffectSet, Function, Module, NumberType, OpData, OpId, RegionId, Type, ValueDef,
+    ValueId,
 };
 use crate::op::{CmpOp, OpKind, SolveMethod};
+use crate::print::effect_name;
 
 /// The deepest nesting of regions the verifier, printer and parser accept.
 /// It bounds their recursion. It must leave room above Sky's own source
@@ -131,9 +141,43 @@ fn verify_inner(m: &Module) -> Result<(), Vec<VerifyError>> {
         FnVerifier::new(m, f, &mut errors).run();
     }
     if errors.is_empty() {
+        check_effects(m, &mut errors);
+    }
+    if errors.is_empty() {
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+/// Every function's declared effects include the inferred ones.
+fn check_effects(m: &Module, errors: &mut Vec<VerifyError>) {
+    let names = |e: EffectSet| {
+        let list: Vec<&str> = e.iter().map(effect_name).collect();
+        if list.is_empty() {
+            "none".to_string()
+        } else {
+            list.join(", ")
+        }
+    };
+    for (f, inferred) in m.functions.iter().zip(effects::infer(m)) {
+        let missing = inferred.difference(f.effects);
+        if !missing.is_pure() {
+            push(
+                errors,
+                VerifyError {
+                    message: format!(
+                        "the declared effects ({}) miss the inferred ones: {}",
+                        names(f.effects),
+                        names(missing)
+                    ),
+                    function: f.name.clone(),
+                    op: None,
+                    value: None,
+                    span: f.span,
+                },
+            );
+        }
     }
 }
 
@@ -567,7 +611,13 @@ impl<'a> FnVerifier<'a> {
             | OpKind::PowConst { .. }
             | OpKind::Inverse
             | OpKind::Transpose
+            | OpKind::Show { .. }
+            | OpKind::Identity
+            | OpKind::Len
             | OpKind::Not => (Some(1), Some(1)),
+            OpKind::ArrayLiteral { .. } | OpKind::Index | OpKind::Slice { .. } | OpKind::Zeros => {
+                (None, Some(1))
+            }
             OpKind::If => (Some(1), None),
             OpKind::While => (None, Some(op.operands.len())),
             OpKind::Yield | OpKind::Return | OpKind::Print => (None, Some(0)),
@@ -627,11 +677,17 @@ impl<'a> FnVerifier<'a> {
                 }
             }
             OpKind::Math(f) => self.check_math(o, op, *f),
+            OpKind::Show { unit } => self.check_show(o, op, unit),
             OpKind::Pow => self.check_pow(o, op),
             OpKind::Inverse => self.check_inverse(o, op),
             OpKind::MatMul => self.check_matmul(o, op),
             OpKind::Transpose => self.check_transpose(o, op),
             OpKind::Solve { method } => self.check_solve(o, op, *method),
+            OpKind::ArrayLiteral { cols } => self.check_array_literal(o, op, *cols),
+            OpKind::Index => self.check_index(o, op),
+            OpKind::Slice { axes } => self.check_slice(o, op, axes),
+            OpKind::Zeros | OpKind::Identity => self.check_zeros_or_identity(o, op),
+            OpKind::Len => self.check_len(o, op),
             OpKind::Cmp(c) => self.check_cmp(o, op, *c),
             OpKind::Not => {
                 let t = self.f.ty(op.operands[0]);
@@ -687,6 +743,30 @@ impl<'a> FnVerifier<'a> {
     }
 
     /// Result 0 must be a number or Unknown.
+    /// `show "unit"`: a number operand whose dimension is the unit's (the
+    /// unit text is read by the parser's own unit grammar and priced by the
+    /// unit table, as `sky_interp::show_unit_text` does), and a `Str` result.
+    fn check_show(&mut self, o: OpId, op: &OpData, unit: &str) {
+        let Some(u) = sky_ast::parse_unit_text(unit) else {
+            self.err_op(o, format!("`show` needs a unit, found `{unit}`"));
+            return;
+        };
+        if let Some(Slot::Num(n)) = self.operand_num(o, op, 0) {
+            match sky_types::apply_unit(&u.src, &u.unit, 1.0) {
+                Ok((_, dim)) if dim == n.dim => {}
+                Ok((_, dim)) => self.err_op(
+                    o,
+                    format!(
+                        "`show` of `{unit}` ({dim}) needs an operand of that dimension, found {}",
+                        n.dim
+                    ),
+                ),
+                Err(_) => self.err_op(o, format!("`show` needs a unit, found `{unit}`")),
+            }
+        }
+        self.expect_exact(o, op, &Type::Str);
+    }
+
     /// `math.*`: scalar operands (the checker rejects arrays), and the result
     /// dimension from the one rule table, `MathFn::result_dim`.
     fn check_math(&mut self, o: OpId, op: &OpData, f: crate::op::MathFn) {

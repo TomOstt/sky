@@ -1,6 +1,6 @@
 //! Every program the checker accepts in the repository's UI suites lowers,
 //! or is rejected with a clear `LowerError` for exactly the constructs
-//! `sky run` cannot execute either (arrays at run time).
+//! `sky run` cannot execute either.
 
 mod common;
 
@@ -31,25 +31,14 @@ fn ok_programs() -> Vec<PathBuf> {
     out
 }
 
-/// Programs the checker accepts that use arrays where `sky run` cannot follow
-/// (an input declared inside a function, indexing): rejected, with the
-/// reason. Everything else in the suites must lower.
+/// Programs the checker accepts that `sky run` cannot follow (an input
+/// declared inside a function), or that lowering cannot express yet:
+/// rejected, with the reason. Everything else in the suites must lower.
 const REJECTED: &[(&str, &str)] = &[
     ("ok_returns.sky", "top level of the file"),
-    // Arrays run in `sky run` but have no SIR values yet.
-    ("ok_array_builtins.sky", "only functions defined with `def`"),
-    ("ok_array_index.sky", "not supported"),
     (
-        "ok_array_literals.sky",
-        "array literals are not supported in SIR yet",
-    ),
-    (
-        "ok_cholesky_literal.sky",
-        "array literals are not supported in SIR yet",
-    ),
-    (
-        "ok_literal_tag_proofs.sky",
-        "array literals are not supported in SIR yet",
+        "ok_for_arrays.sky",
+        "iteration over arrays lowers once SIR has array values",
     ),
 ];
 

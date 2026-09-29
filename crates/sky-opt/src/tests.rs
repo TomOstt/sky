@@ -606,12 +606,19 @@ fn explanation_text_matches_the_checkers() {
             repr: Repr::Unchosen,
         });
         let mut s = solve_program(matrix(PD(), 3), b_ty, res, false);
-        let rws = cholesky(&mut s.m);
-        let r = &rws[0];
-        let text = format!(
-            "rewrite `{}` to a Cholesky solve: {}, {}. {}. {}.",
-            r.before, r.because[0], r.because[1], r.because[2], r.because[3]
-        );
+        // Through the pass manager, so this is the explanation
+        // `sky check --explain` gets, not just the pass's own record.
+        // (The hand-built types here have unclosed tag sets, which the
+        // verifier rightly refuses; the pass does not care.)
+        let report = sky_ir::PassManager::for_tests()
+            .verify_each(false)
+            .with(crate::CholeskyPass)
+            .run(&mut s.m)
+            .unwrap();
+        assert_eq!(report.explanations.len(), 1);
+        let x = &report.explanations[0];
+        assert_eq!((x.pass, x.rule), ("cholesky", "LA-CHOLESKY-001"));
+        let text = crate::cholesky_text(x).expect("a Cholesky explanation");
         assert_eq!(text, checker_text(Shape::matrix(3, 3), PD(), b_shape));
     }
 }
@@ -645,6 +652,22 @@ fn user_names_appear_in_before_and_after() {
     let rws = cholesky(&mut m);
     assert_eq!(rws[0].before, "K⁻¹ @ y");
     assert_eq!(rws[0].after, "solve[cholesky](K, y)");
+    // The names are in the reasons too, and they join into the checker's
+    // wording for named operands.
+    let x = sky_ir::Explanation {
+        pass: "cholesky",
+        rule: rws[0].rule,
+        span: rws[0].span,
+        before: rws[0].before.clone(),
+        after: rws[0].after.clone(),
+        because: rws[0].because.clone(),
+    };
+    assert_eq!(
+        crate::cholesky_text(&x).unwrap(),
+        "rewrite `K⁻¹ @ y` to a Cholesky solve: K is Matrix[2,2] and PositiveDefinite, \
+         y is Vector[2]. Factor K = L·Lᵀ (L lower-triangular), solve L·y = y, \
+         then Lᵀ·x = y. x = K⁻¹·y is Vector[2], and K⁻¹ is never formed."
+    );
 }
 
 #[test]
@@ -686,4 +709,171 @@ fn only_an_explicit_inverse_on_the_left_is_rewritten() {
     bd.op(OpKind::Return, vec![], vec![], sp());
     let mut m = module_of(bd.finish());
     assert!(cholesky(&mut m).is_empty());
+}
+
+// ---------------------------------------------------------------- show
+
+#[test]
+fn show_survives_fold_and_dce_and_keeps_its_failure() {
+    let mut b = main_builder();
+    let x = b.op1(
+        OpKind::ConstFloat {
+            bits: 25f64.to_bits(),
+        },
+        vec![],
+        Type::scalar(Dimension::VELOCITY),
+        sp(),
+    );
+    let shown = b.op1(
+        OpKind::Show {
+            unit: "km/h".into(),
+        },
+        vec![x],
+        Type::Str,
+        sp(),
+    );
+    print(&mut b, shown);
+    // An unused conversion that overflows (1e300 m is 1e309 nm) is an error
+    // the program has: neither pass may drop it as dead code.
+    let big = b.op1(
+        OpKind::ConstFloat {
+            bits: 1e300f64.to_bits(),
+        },
+        vec![],
+        Type::scalar(Dimension::LENGTH),
+        sp(),
+    );
+    b.op1(
+        OpKind::Show { unit: "nm".into() },
+        vec![big],
+        Type::Str,
+        sp(),
+    );
+    let mut m = finish_main(b);
+
+    let run = |m: &Module| {
+        sky_ast::with_deep_stack(|| {
+            let mut out = Vec::new();
+            let r = sky_ir_interp::run(m, &mut out).map_err(|e| e.message.clone());
+            (String::from_utf8(out).expect("utf-8"), r)
+        })
+    };
+    let before = run(&m);
+    assert_eq!(
+        before,
+        (
+            "90 km/h\n".to_string(),
+            Err("arithmetic overflow".to_string())
+        )
+    );
+    fold(&mut m);
+    dce(&mut m);
+    verify(&m).unwrap();
+    assert_eq!(run(&m), before);
+    let shows = entry_mnemonics(&m.functions[0])
+        .into_iter()
+        .filter(|n| *n == "show")
+        .count();
+    assert_eq!(shows, 2);
+}
+
+// -------------------------------------------------------------- arrays
+
+/// `[1, 2]` from two constants, typed as a vector.
+fn literal(b: &mut FunctionBuilder) -> ValueId {
+    let (x, y) = (rat(b, 1, 1), rat(b, 2, 1));
+    b.op1(
+        OpKind::ArrayLiteral { cols: None },
+        vec![x, y],
+        vector(2),
+        sp(),
+    )
+}
+
+#[test]
+fn array_operations_are_not_folded() {
+    let mut b = main_builder();
+    let v = literal(&mut b);
+    let i = rat(&mut b, 0, 1);
+    let e = b.op1(OpKind::Index, vec![v, i], num(), sp());
+    let n = b.op1(OpKind::Len, vec![v], num(), sp());
+    let z = b.op1(OpKind::Zeros, vec![n], vector(2), sp());
+    let sum = b.op1(OpKind::Add, vec![v, z], vector(2), sp());
+    print(&mut b, e);
+    print(&mut b, sum);
+    let mut m = finish_main(b);
+    let before = entry_mnemonics(&m.functions[0]);
+    assert!(fold(&mut m).is_empty());
+    assert!(fold_with(&mut m, FoldMode::Exact).is_empty());
+    assert_eq!(entry_mnemonics(&m.functions[0]), before);
+}
+
+#[test]
+fn unused_pure_array_literals_go_but_operations_that_can_fail_stay() {
+    let mut b = main_builder();
+    let v = literal(&mut b);
+    let i = rat(&mut b, 5, 1);
+    // Unused, but out of bounds at run time.
+    b.op1(OpKind::Index, vec![v, i], num(), sp());
+    b.op1(
+        OpKind::Slice {
+            axes: vec![sky_ir::SliceAxis::Range {
+                start: true,
+                stop: false,
+            }],
+        },
+        vec![v, i],
+        vector(1),
+        sp(),
+    );
+    b.op1(OpKind::Zeros, vec![i], vector(5), sp());
+    b.op1(OpKind::Identity, vec![i], matrix(TagSet::EMPTY, 5), sp());
+    b.op1(OpKind::Len, vec![v], num(), sp());
+    // A literal nobody reads is pure and vanishes.
+    let (x, y) = (rat(&mut b, 3, 1), rat(&mut b, 4, 1));
+    b.op1(
+        OpKind::ArrayLiteral { cols: None },
+        vec![x, y],
+        vector(2),
+        sp(),
+    );
+    let mut m = finish_main(b);
+    dce(&mut m);
+    verify(&m).unwrap();
+    assert_eq!(
+        entry_mnemonics(&m.functions[0]),
+        [
+            "const.rational",
+            "const.rational",
+            "array.literal",
+            "const.rational",
+            "index",
+            "slice",
+            "zeros",
+            "identity",
+            "len",
+            "return"
+        ]
+    );
+}
+
+#[test]
+fn a_solve_the_lowering_already_chose_is_left_alone() {
+    let pd = matrix(TagSet::of(Tag::PositiveDefinite).closure(), 2);
+    let mut b = FunctionBuilder::new("f", vec![pd, vector(2)], vec![vector(2)], sp());
+    let [a, rhs] = b.params()[..] else {
+        unreachable!()
+    };
+    let x = b.op1(
+        OpKind::Solve {
+            method: SolveMethod::Cholesky,
+        },
+        vec![a, rhs],
+        vector(2),
+        sp(),
+    );
+    b.op(OpKind::Return, vec![x], vec![], sp());
+    let mut m = module_of(b.finish());
+    assert!(cholesky(&mut m).is_empty());
+    assert_eq!(entry_mnemonics(&m.functions[0]), ["solve", "return"]);
 }

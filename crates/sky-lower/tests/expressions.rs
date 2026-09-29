@@ -419,6 +419,58 @@ fn print_is_an_effect_with_no_result() {
 }
 
 #[test]
+fn as_lowers_to_a_show_op_carrying_the_unit_text() {
+    let src = "v = 90 km/h\nprint(v as km/h, 1 AU as km, v)\nv as m/s\n";
+    let m = lower_ok(src);
+    let f = main_fn(&m);
+    // `90 km/h` is folded to SI at its literal, as always; `as` does not
+    // convert anything at lowering time, it keeps the unit for `show`.
+    assert_eq!(
+        top_kinds(f),
+        [
+            "const.float",
+            "show",
+            "const.float",
+            "show",
+            "print",
+            "show",
+            "return"
+        ]
+    );
+    let shows = top_ops(f, "show");
+    let units: Vec<_> = shows
+        .iter()
+        .map(|&o| match &f.op(o).kind {
+            OpKind::Show { unit } => unit.clone(),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(units, ["km/h", "km", "m/s"]);
+    for &o in &shows {
+        let op = f.op(o);
+        assert_eq!(op.operands.len(), 1);
+        assert_eq!(f.ty(op.results[0]), &Type::Str);
+    }
+    // The span is the whole `v as km/h`, for runtime errors.
+    let first = f.op(shows[0]);
+    assert_eq!(&src[first.span.range()], "v as km/h");
+    // The operand is the SI value: 90 km/h is 25 m/s.
+    let (x, dim) = {
+        let v = first.operands[0];
+        let op = def_op(f, v).expect("v is an operation result");
+        let OpKind::ConstFloat { bits } = f.op(op).kind else {
+            panic!("not a const.float\n{}", dump(f))
+        };
+        (
+            f64::from_bits(bits),
+            f.ty(v).as_number().expect("number").dim,
+        )
+    };
+    assert_eq!((x, dim), (25.0, Dimension::VELOCITY));
+    assert!(f.effects.contains(Effect::Fail));
+}
+
+#[test]
 fn a_used_print_result_is_nothing() {
     let m = lower_ok("r = print(1)\nprint(r)\n");
     let f = main_fn(&m);

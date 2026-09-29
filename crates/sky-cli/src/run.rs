@@ -5,8 +5,9 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
+use sky_derive::SirDerivatives;
 use sky_diag::SourceFile;
-use sky_interp::{run_module_with, RuntimeEnv};
+use sky_interp::{run_module_with_derivatives, RuntimeEnv};
 use sky_project::SystemIdentity;
 use sky_syntax::Edition;
 
@@ -66,7 +67,17 @@ fn run_source(path: &str, src: &str, edition: Edition) -> ExitCode {
         closed: false,
     };
     let mut env = RuntimeEnv::with_prelude();
-    let result = run_module_with(&module, src, &mut env, &mut out, &front.cholesky_solves);
+    // `derivative(f, x)(args)` runs on SIR (see `sky_derive`); the program
+    // is only lowered if it asks for one.
+    let mut derivatives = SirDerivatives::new(&module, src);
+    let result = run_module_with_derivatives(
+        &module,
+        src,
+        &mut env,
+        &mut out,
+        &front.cholesky_solves,
+        &mut derivatives,
+    );
     let _ = out.flush();
     match result {
         Ok(_) => ExitCode::SUCCESS,

@@ -39,10 +39,13 @@
 //!   failure is the same one; if the extracted form would reorder them the
 //!   block is left alone.
 //!
-//! # Merge
+//! # As a pass
 //!
-//! Each applied rule is reported as a [`Rewrite`]. The struct is local to
-//! this crate; the pass manager adapts it to its `Explanation` type.
+//! [`EgraphPass`] is the crate as a [`sky_ir::Pass`] named `"egraph"`. Each
+//! applied rule is a [`Rewrite`] (this crate's record, with the rule's
+//! justification as one string), and [`Rewrite::explain`] is the single place
+//! that turns it into a `sky_ir::Explanation` through `PassCx::explain`. The
+//! rule ids and texts are unchanged.
 
 #![forbid(unsafe_code)]
 
@@ -54,7 +57,7 @@ mod rules;
 use std::time::Duration;
 
 use sky_diag::Span;
-use sky_ir::{Function, Module};
+use sky_ir::{Changed, Function, Module, Pass, PassCx};
 
 pub use analysis::CostModel;
 pub use rules::{rule_table, RuleClass, RuleInfo};
@@ -180,4 +183,53 @@ pub fn rewrite_module(module: &mut Module, cfg: &RewriteConfig) -> Vec<Rewrite> 
         .iter_mut()
         .flat_map(|f| rewrite_function(f, cfg))
         .collect()
+}
+
+impl Rewrite {
+    /// Reports the rewrite through the pass manager's collector: the one
+    /// place that converts this crate's record into a
+    /// [`sky_ir::Explanation`]. The pass name in the explanation is the
+    /// running pass's, so it is `"egraph"` when run through [`EgraphPass`].
+    pub fn explain(&self, cx: &mut PassCx) {
+        debug_assert_eq!(self.pass, cx.pass_name(), "explained by a different pass");
+        cx.explain(
+            self.rule,
+            self.span,
+            self.before.clone(),
+            self.after.clone(),
+            vec![self.because.clone()],
+        );
+    }
+}
+
+/// E-graph rewriting as a [`Pass`]: [`rewrite_module`] with a fixed
+/// [`RewriteConfig`]. The default is the `Reproducible` contract (exact and
+/// conditional rules only), so the program computes the same bits and fails
+/// at the same operation.
+#[derive(Clone, Debug, Default)]
+pub struct EgraphPass {
+    pub config: RewriteConfig,
+}
+
+impl EgraphPass {
+    /// A pass with the default limits and the given contract.
+    pub fn new(contract: RewriteContract) -> Self {
+        EgraphPass {
+            config: RewriteConfig::with_contract(contract),
+        }
+    }
+}
+
+impl Pass for EgraphPass {
+    fn name(&self) -> &'static str {
+        "egraph"
+    }
+
+    fn run(&self, m: &mut Module, cx: &mut PassCx) -> Changed {
+        let before = m.clone();
+        for rw in rewrite_module(m, &self.config) {
+            rw.explain(cx);
+        }
+        Changed::from(*m != before)
+    }
 }

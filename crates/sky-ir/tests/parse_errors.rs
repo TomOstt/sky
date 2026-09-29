@@ -351,3 +351,32 @@ fn every_prefix_of_a_valid_module_parses_or_errors_without_panicking() {
     }
     assert!(ok >= 1);
 }
+
+#[test]
+fn slice_item_errors() {
+    fails(
+        &body("%a = slice[first] %x, %x : num[L; ()]"),
+        "expected `at`, `:`, `lo:`, `:hi` or `lo:hi`",
+        "first",
+    );
+    fails(
+        &body("%a = slice[lo:up] %x, %x : num[L; ()]"),
+        "expected `hi` or the end of the item",
+        "up",
+    );
+    fails(&body("%a = slice %x : num[L; ()]"), "expected `[`", "%");
+    fails(
+        &body("%a = slice[at %x, %x : num[L; ()]"),
+        "expected `]`",
+        "%",
+    );
+    let ok = body("%a = slice[at, :, lo:, :hi, lo:hi] %x, %x, %x, %x, %x, %x : num[L; ()]");
+    let printed = print(&parse(&ok).expect("parses"));
+    assert!(printed.contains("slice[at, :, lo:, :hi, lo:hi] %x, %x, %x, %x, %x, %x"));
+}
+
+#[test]
+fn math_operations_parse() {
+    let src = body("%a = math.sqrt %x : num[L; ()]");
+    assert!(print(&parse(&src).expect("parses")).contains("math.sqrt %x"));
+}

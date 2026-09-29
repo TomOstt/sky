@@ -1,0 +1,9 @@
+tests/ui/check/err_derivative_unit.sky:5:16: error: cannot add length and velocity
+  |
+5 | total = x(2 s) + derivative(x, t)(2 s)
+  |                ^ mismatched dimensions
+  |         ------ length
+  |                  --------------------- velocity (L·T⁻¹)
+  = note: both operands of `+` must have the same dimension
+  = note: `x(2 s)` is a length, where `x(2 s)` is a length (a function result, `def` on line 2)
+  = help: these differ by a factor of time: `x(2 s)` is `derivative(x, t)(2 s)` times a time

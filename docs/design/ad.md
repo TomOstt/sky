@@ -8,13 +8,17 @@ AD on SIR sees what an operator-overloading library or a tree-walker cannot: the
 
 ## Forward mode (implemented)
 
-`derivative(m, f, wrt)` builds `df/dx(params...) -> (value, ∂f/∂x)`. Each value `v` gets a tangent `tv = dv/dx` emitted next to it (a dual number spelled out as ops). Tangents that are structurally zero are `None` and cost nothing. An activity analysis (a fixpoint over the function) finds which values depend on `x`, so loop counters and flags carry no tangents.
+`derivative(m, f, wrt)` builds `df/dx(params...) -> (value, ∂f/∂x)`; a function with several results returns its values and then their tangents, so a derivative function (which has two results) can itself be differentiated and higher derivatives work. Each value `v` gets a tangent `tv = dv/dx` emitted next to it (a dual number spelled out as ops). Tangents that are structurally zero are `None` and cost nothing. An activity analysis (a fixpoint over the function) finds which values depend on `x`, so loop counters and flags carry no tangents.
 
 * `if`: both arms are differentiated and yield tangents; the condition does not flow.
 * `while`: a tangent slot beside each active loop-carried value, threaded through `before`, `condition`, `after`, `yield` and the results. No tape is needed: the tangent is computed in the same iteration as the value.
 * `call`: the callee is differentiated into `d<callee>/d<param>` and called; recursion works because the derivative calls itself. Derivatives are memoized by name.
 
 Cost: one pass over the program, about 2 to 3 times the work of `f`, per input parameter. That is the right trade for one input and many outputs, or a handful of inputs.
+
+## In the language
+
+`derivative(f, x)(args)` (spec v0.1, "Derivatives") is the user-facing form. `f` is a `def`, `x` names one of its parameters, and the call passes `f`'s arguments; the checker types it `dim(f) / dim(x)` from the annotations, so a velocity added to a length is a unit error before anything runs. Both engines run the derivative that this crate builds: lowering emits a `call` of `df/dx` and keeps its second result, and `sky run` (the tree walker, which has no AD) lowers the program, builds the same function and runs it on the SIR interpreter (`sky-derive`). There is one set of rules, and a differential test compares the printed bytes. Higher derivatives are the derivative of a `def` that calls the first.
 
 ## Why forward mode first
 
@@ -61,6 +65,6 @@ For `x = A⁻¹ b` (op `solve`), never differentiate the algorithm. The adjoints
 
 * Unknown types are rejected with a clear error when the derivative flows through them, never treated dynamically (a dynamic derivative would have no static unit).
 * The derivative of an `if` at its discontinuity is the taken arm's derivative; conditions never contribute.
-* A general power `a ^ e` differentiates in `a` today; the `e` tangent needs `ln`, which arrives with `OpKind::Math`. `rules.rs` holds the rule and the rules for every math function, ready to paste.
+* A general power `a ^ e` differentiates in both `a` and `e` (`r * ln(a) * te`). Every math function has a rule (`math_rules.rs`, table in the header of `rules.rs`); `floor`, `ceil` and `round` have a zero tangent, `abs`, `min` and `max` take the one-sided slope of the arm that runs, and a rule that divides by zero at the edge of a domain (`sqrt` at 0) fails there as the primal does.
 * A call with several dependent arguments calls one derivative per argument. A directional-derivative function (all tangents in one call) would avoid that for recursion and is a later optimization.
 * Arrays are out of scope until the interpreter runs them; the adjoint rules for `matmul`, `transpose` and `solve` go in with array AD.

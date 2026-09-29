@@ -16,6 +16,7 @@ pub mod ast;
 pub mod parser;
 pub mod precedence;
 mod sexpr;
+pub mod unit_text;
 
 pub use ast::{
     AssignTarget, BinaryOp, Block, BoolOp, CompoundOp, DimExpr, Expr, ExprKind, Ident, IndexItem,
@@ -28,3 +29,4 @@ pub use parser::{
 };
 pub use sky_diag::{with_deep_stack, DEEP_STACK_BYTES};
 pub use sky_syntax::{Kw, Span, Token, TokenKind};
+pub use unit_text::{parse_unit_text, UnitText};

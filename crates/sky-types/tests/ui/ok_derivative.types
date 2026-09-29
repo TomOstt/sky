@@ -1,0 +1,8 @@
+branchy: Scalar [L·T⁻¹]
+f: Scalar [L·M·T⁻²]
+half: Scalar [L²]
+piecewise: function `piecewise`
+position: function `position`
+spring: function `spring`
+total: Scalar [L·T⁻¹]
+v: Scalar [L·T⁻¹]

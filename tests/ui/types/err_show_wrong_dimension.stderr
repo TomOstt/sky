@@ -1,0 +1,54 @@
+tests/ui/types/err_show_wrong_dimension.sky:4:7: error: cannot show a velocity in kg
+  |
+4 | print(v as kg)
+  |       ^ this is velocity (L·T⁻¹)
+  |            -- `kg` measures mass
+  = note: `v` is a velocity because `v = 90 km/h` (line 2)
+  = help: `as` changes the unit a value is shown in, not what it measures; choose a unit of velocity
+
+tests/ui/types/err_show_wrong_dimension.sky:5:7: error: cannot show an energy in m
+  |
+5 | print(E as m)
+  |       ^ this is energy (L²·M·T⁻²)
+  |            - `m` measures length
+  = note: `E` is an energy because `E = 2 J` (line 3)
+  = help: `as` changes the unit a value is shown in, not what it measures; choose a unit of energy
+
+tests/ui/types/err_show_wrong_dimension.sky:6:7: error: cannot show a plain number in m
+  |
+6 | print(3 as m)
+  |       ^ this is dimensionless
+  |            - `m` measures length
+  = help: a plain number has no unit to convert from; write it with one, e.g. `3 m`
+
+tests/ui/types/err_show_wrong_dimension.sky:7:7: error: cannot show a velocity in m/s^2
+  |
+7 | print(v as m/s^2)
+  |       ^ this is velocity (L·T⁻¹)
+  |            ----- `m/s^2` measures L·T⁻²
+  = note: `v` is a velocity because `v = 90 km/h` (line 2)
+  = help: `as` changes the unit a value is shown in, not what it measures; choose a unit of velocity
+
+tests/ui/types/err_show_wrong_dimension.sky:8:7: error: cannot show a velocity in ms
+  |
+8 | print(v as ms)
+  |       ^ this is velocity (L·T⁻¹)
+  |            -- `ms` measures time
+  = note: `v` is a velocity because `v = 90 km/h` (line 2)
+  = help: `as` changes the unit a value is shown in, not what it measures; choose a unit of velocity
+
+tests/ui/types/err_show_wrong_dimension.sky:10:7: error: cannot show a length in s
+   |
+10 | print(u as s)
+   |       ^ this is length
+   |            - `s` measures time
+   = note: `u` is a length because `u = [0.1 m, 0.2 m]` (line 9)
+   = help: `as` changes the unit a value is shown in, not what it measures; choose a unit of length
+
+tests/ui/types/err_show_wrong_dimension.sky:12:7: error: cannot show a length in km/h
+   |
+12 | print(v * 1 s as km/h)
+   |       ^^^^^^^ this is length
+   |                  ---- `km/h` measures velocity
+   = note: `v * 1 s` is a length, where `v` is a velocity (`v = 90 km/h`, line 2)
+   = help: `as` changes the unit a value is shown in, not what it measures; choose a unit of length

@@ -9,6 +9,7 @@ use sky_ir::{Function, NumberType, OpKind, Repr, Type, ValueId};
 use sky_types::{Checked, Ty};
 
 use crate::build::Builder;
+use crate::derivative::Wanted;
 use crate::LowerError;
 
 pub(crate) type R<T> = Result<T, LowerError>;
@@ -88,6 +89,9 @@ pub(crate) struct Lower<'a> {
     /// Names assigned or declared at module level anywhere in the file.
     pub(crate) mod_assigned: BTreeSet<String>,
     pub(crate) fns: HashMap<Span, FnInfo>,
+    /// The array literals that initialize a typed declaration, by the
+    /// literal's span, with the span of the declared name (see `array.rs`).
+    pub(crate) literal_bindings: HashMap<Span, Span>,
     /// Finished user functions, with their `def` position for ordering.
     pub(crate) out: Vec<(u32, Function)>,
     pub(crate) used_names: HashMap<String, usize>,
@@ -95,6 +99,9 @@ pub(crate) struct Lower<'a> {
     /// The states of the functions around the one being lowered (the
     /// module's `<main>` first).
     pub(crate) stack: Vec<FnState>,
+    /// The derivative functions `derivative(f, x)(...)` calls need, built
+    /// once the module's functions exist (see `derivative.rs`).
+    pub(crate) derivatives: Vec<Wanted>,
 }
 
 /// A checker type as a SIR type. `None` for a function value.

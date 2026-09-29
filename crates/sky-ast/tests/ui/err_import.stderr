@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_import.sky:2:1: error: `import` is not supported yet
+  |
+2 | import physics.units
+  | ^^^^^^
+  = help: there is no module loader yet; keep the code in one file for now

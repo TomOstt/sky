@@ -7,7 +7,7 @@
 use sky_diag::Span;
 use sky_ir::{
     BlockId, Function, FunctionBuilder, Module, NumberType, OpData, OpId, OpKind, RegionId, Repr,
-    Type, ValueId,
+    Type, ValueDef, ValueId,
 };
 use sky_units::Dimension;
 
@@ -66,31 +66,28 @@ pub(crate) fn build(
         }
         _ => return Err(AdError::NonNumberParam { func: name, wrt }),
     };
-    let [res_ty] = &f.results[..] else {
+    if f.results.is_empty() {
         return Err(AdError::BadResult {
             func: name,
-            why: format!("it returns {} values, not one", f.results.len()),
+            why: "it returns no value".into(),
         });
-    };
-    match res_ty {
-        Type::Number(n) if n.shape.rank() == 0 => {}
-        Type::Number(_) => {
-            return Err(AdError::NonScalar {
-                func: name,
-                what: "the result".into(),
-            })
-        }
-        Type::Unknown => {
-            return Err(AdError::UnknownType {
-                func: name,
-                what: "the result".into(),
-            })
-        }
-        _ => {
-            return Err(AdError::BadResult {
-                func: name,
-                why: "its result is not a number".into(),
-            })
+    }
+    for (i, res_ty) in f.results.iter().enumerate() {
+        let what = if f.results.len() == 1 {
+            "the result".to_string()
+        } else {
+            format!("result {i}")
+        };
+        match res_ty {
+            Type::Number(n) if n.shape.rank() == 0 => {}
+            Type::Number(_) => return Err(AdError::NonScalar { func: name, what }),
+            Type::Unknown => return Err(AdError::UnknownType { func: name, what }),
+            _ => {
+                return Err(AdError::BadResult {
+                    func: name,
+                    why: format!("{what} is not a number"),
+                })
+            }
         }
     }
 
@@ -105,13 +102,11 @@ pub(crate) fn build(
         tan: vec![None; f.values.len()],
         needs: Vec::new(),
     };
-    let res_tan = tangent_type_of(&d, res_ty)?;
-    let mut b = FunctionBuilder::new(
-        derivative_name(f, wrt),
-        f.params.clone(),
-        vec![res_ty.clone(), res_tan],
-        f.span,
-    );
+    let mut results = f.results.clone();
+    for res_ty in &f.results {
+        results.push(tangent_type_of(&d, res_ty)?);
+    }
+    let mut b = FunctionBuilder::new(derivative_name(f, wrt), f.params.clone(), results, f.span);
     b.set_effects(f.effects);
     d.b = b;
 
@@ -128,15 +123,21 @@ pub(crate) fn build(
 
     let term = d.process_ops(f.entry())?;
     let t = f.op(term);
-    let [r] = t.operands[..] else {
-        return Err(d.malformed("`return` must have one operand"));
-    };
     if t.kind != OpKind::Return {
         return Err(d.malformed("the body must end in `return`"));
     }
-    let value = d.primal(r)?;
-    let tangent = d.tangent_or_zero(r, t.span)?;
-    d.b.op(OpKind::Return, vec![value, tangent], vec![], t.span);
+    if t.operands.len() != f.results.len() {
+        return Err(d.malformed("`return` must have one operand per result"));
+    }
+    // The values, then their tangents.
+    let mut returned = Vec::with_capacity(2 * t.operands.len());
+    for r in &t.operands {
+        returned.push(d.primal(*r)?);
+    }
+    for r in &t.operands {
+        returned.push(d.tangent_or_zero(*r, t.span)?);
+    }
+    d.b.op(OpKind::Return, returned, vec![], t.span);
     Ok((d.b.finish(), d.needs))
 }
 
@@ -200,13 +201,29 @@ impl Diff<'_> {
             Type::Number(n) if n.shape.rank() == 0 => Ok(n.dim),
             Type::Number(_) => Err(AdError::NonScalar {
                 func: self.src.name.clone(),
-                what: format!("{v}"),
+                what: self.describe(v),
             }),
             Type::Unknown => Err(AdError::UnknownType {
                 func: self.src.name.clone(),
-                what: format!("{v}"),
+                what: self.describe(v),
             }),
             _ => Err(self.malformed(&format!("{v} is not a number but has a tangent"))),
+        }
+    }
+
+    /// Source value `v` for an error message: its source name, or the
+    /// operation that computes it (`the result of the call to `g``).
+    fn describe(&self, v: ValueId) -> String {
+        let data = self.src.value(v);
+        if let Some(name) = &data.name {
+            return format!("`{name}`");
+        }
+        match data.def {
+            ValueDef::OpResult { op, .. } => match &self.src.op(op).kind {
+                OpKind::Call { callee } => format!("the result of the call to `{callee}`"),
+                other => format!("the result of `{}`", other.mnemonic()),
+            },
+            ValueDef::BlockArg { .. } => format!("{v}"),
         }
     }
 
@@ -490,45 +507,64 @@ impl Diff<'_> {
         let Some(target) = self.module.function(callee) else {
             return Err(AdError::NoSuchFunction(callee.into()));
         };
-        let [r] = op.results[..] else {
-            return Err(AdError::BadResult {
-                func: self.src.name.clone(),
-                why: format!("`{callee}` must return exactly one number to be differentiated"),
-            });
-        };
+        // Every result is a number with a tangent; a callee's derivative
+        // function returns its values, then the partial derivative of each
+        // (see `build`).
+        let n = op.results.len();
+        let mut result_tys = Vec::with_capacity(n);
+        for r in &op.results {
+            if !matches!(self.src.ty(*r), Type::Number(_) | Type::Unknown) {
+                return Err(AdError::BadResult {
+                    func: self.src.name.clone(),
+                    why: format!("`{callee}` must return only numbers to be differentiated"),
+                });
+            }
+            result_tys.push(self.tangent_ty(*r)?);
+        }
         let args = op
             .operands
             .iter()
             .map(|v| self.primal(*v))
             .collect::<Res<Vec<_>>>()?;
-        let r_dim = self.dim_of(r)?;
-        let result_ty = self.tangent_ty(r)?;
-        let mut sum: Option<ValueId> = None;
-        for (n, &k) in live.iter().enumerate() {
+        let mut sums: Vec<Option<ValueId>> = vec![None; n];
+        for (m, &k) in live.iter().enumerate() {
             let dname = derivative_name(target, k);
             self.needs.push((callee.to_string(), k));
-            // dim(∂f/∂a_k) = dim(f) / dim(a_k)
-            let partial = number_type(
-                self.dim_div(r_dim, self.dim_of(op.operands[k])?)?,
-                self.repr_of(r),
-            );
-            let (_, res) = self.b.op(
-                OpKind::Call { callee: dname },
-                args.clone(),
-                vec![self.src.ty(r).clone(), partial],
-                op.span,
-            );
-            if n == 0 {
-                self.map[r.index()] = Some(res[0]);
+            let mut tys: Vec<Type> = op.results.iter().map(|r| self.src.ty(*r).clone()).collect();
+            for r in &op.results {
+                // dim(∂r/∂a_k) = dim(r) / dim(a_k)
+                tys.push(number_type(
+                    self.dim_div(self.dim_of(*r)?, self.dim_of(op.operands[k])?)?,
+                    self.repr_of(*r),
+                ));
+            }
+            let (_, res) = self
+                .b
+                .op(OpKind::Call { callee: dname }, args.clone(), tys, op.span);
+            if m == 0 {
+                for (r, v) in op.results.iter().zip(&res) {
+                    self.map[r.index()] = Some(*v);
+                }
             }
             let t = self.tan_of(op.operands[k]).expect("live has a tangent");
-            let term = self.emit(OpKind::Mul, vec![res[1], t], result_ty.clone(), op.span);
-            sum = Some(match sum {
-                None => term,
-                Some(s) => self.emit(OpKind::Add, vec![s, term], result_ty.clone(), op.span),
-            });
+            for i in 0..n {
+                let term = self.emit(
+                    OpKind::Mul,
+                    vec![res[n + i], t],
+                    result_tys[i].clone(),
+                    op.span,
+                );
+                sums[i] = Some(match sums[i] {
+                    None => term,
+                    Some(s) => {
+                        self.emit(OpKind::Add, vec![s, term], result_tys[i].clone(), op.span)
+                    }
+                });
+            }
         }
-        self.tan[r.index()] = sum;
+        for (r, sum) in op.results.iter().zip(sums) {
+            self.tan[r.index()] = sum;
+        }
         Ok(())
     }
 }

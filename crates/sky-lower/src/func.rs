@@ -233,7 +233,9 @@ impl Lower<'_> {
                         self.collect_defs(&b.stmts);
                     }
                 }
-                StmtKind::While { body, .. } => self.collect_defs(&body.stmts),
+                StmtKind::While { body, .. } | StmtKind::For { body, .. } => {
+                    self.collect_defs(&body.stmts)
+                }
                 _ => {}
             }
         }
@@ -348,6 +350,10 @@ impl Lower<'_> {
                 self.scan_expr(cond, defined, direct, callees);
                 self.scan_block(body, defined, direct, callees);
             }
+            StmtKind::For { iter, body, .. } => {
+                self.scan_expr(iter, defined, direct, callees);
+                self.scan_block(body, defined, direct, callees);
+            }
             StmtKind::Return(v) => {
                 if let Some(v) = v {
                     self.scan_expr(v, defined, direct, callees);
@@ -429,6 +435,7 @@ impl Lower<'_> {
                     self.scan_expr(x, defined, direct, callees);
                 }
             }
+            ExprKind::As { value, .. } => self.scan_expr(value, defined, direct, callees),
             ExprKind::Array(elements) => {
                 for el in elements {
                     self.scan_expr(el, defined, direct, callees);
@@ -450,6 +457,10 @@ impl Lower<'_> {
                     if let Some(Ty::Func(sig)) = self.checked.expr_types.get(&target.span) {
                         callees.push(sig.def_span());
                     }
+                } else if let Some(def) = self.derivative_def(target) {
+                    // `derivative(f, x)(...)` calls (a derivative of) `f`;
+                    // its arguments name `f` and a parameter, not variables.
+                    callees.push(def);
                 } else {
                     self.scan_expr(callee, defined, direct, callees);
                 }

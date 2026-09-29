@@ -15,6 +15,19 @@
 //! function in [`sky_interp::arith`] that `sky run` itself calls, so the two
 //! cannot drift.
 //!
+//! # Arrays
+//!
+//! Arrays are [`sky_interp::Value::Array`] too, and every array operation is
+//! the function in [`sky_interp::array`] that `sky run` calls: elementwise
+//! arithmetic and scaling, `matmul`, the inverse (through
+//! [`sky_interp::arith::reciprocal`]), the Cholesky solve behind `solve`,
+//! `array.literal`, `index` and `slice` (bounds and index errors), `zeros`,
+//! `identity`, `len` and `transpose`. There is one Gauss-Jordan inverse, one
+//! Cholesky factorization and one printing path, so a program prints the same
+//! bytes and fails with the same message in both. SIR operations carry one
+//! span, so an error's span is the operation's, where `sky run` points at an
+//! operand; messages are identical.
+//!
 //! # Malformed IR
 //!
 //! The verifier is a separate component and this interpreter must not rely
@@ -121,4 +134,17 @@ pub fn call(
     out: &mut impl Write,
 ) -> Result<Vec<Value>, IrRuntimeError> {
     machine::call(module, name, args, out)
+}
+
+/// [`call`] for a run nested in another interpreter (`sky run` evaluating a
+/// derivative): `stack` is that interpreter's meter, so both share one
+/// stack budget instead of each spending a whole one.
+pub fn call_metered(
+    module: &Module,
+    name: &str,
+    args: Vec<Value>,
+    out: &mut dyn Write,
+    stack: sky_interp::arith::StackMeter,
+) -> Result<Vec<Value>, IrRuntimeError> {
+    machine::call_metered(module, name, args, out, stack)
 }

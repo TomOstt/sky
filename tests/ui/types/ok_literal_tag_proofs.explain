@@ -1,0 +1,39 @@
+tests/ui/types/ok_literal_tag_proofs.sky:3:29: note: [DCE-001] `[[2, 1], [1, 2]]` is removed
+  |
+3 | S: Symmetric Matrix[2, 2] = [[2, 1], [1, 2]]
+  |                             ^^^^^^^^^^^^^^^^
+  = note: applied by the `dce` pass
+  = note: because `S` is never used
+  = note: because `array.literal` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
+
+tests/ui/types/ok_literal_tag_proofs.sky:4:28: note: [DCE-001] `[[1, 0, 0], [0, -2, 0], [0, 0, 3]]` is removed
+  |
+4 | D: Diagonal Matrix[3, 3] = [[1, 0, 0], [0, -2, 0], [0, 0, 3]]
+  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: applied by the `dce` pass
+  = note: because `D` is never used
+  = note: because `array.literal` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
+
+tests/ui/types/ok_literal_tag_proofs.sky:5:36: note: [DCE-001] `[[4, 1], [1, 3]]` is removed
+  |
+5 | P: PositiveDefinite Matrix[2, 2] = [[4, 1], [1, 3]]
+  |                                    ^^^^^^^^^^^^^^^^
+  = note: applied by the `dce` pass
+  = note: because `P` is never used
+  = note: because `array.literal` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
+
+tests/ui/types/ok_literal_tag_proofs.sky:6:40: note: [DCE-001] `[[3000 N/m, -1000 N/m], [-1000 N/m, 2 kN/m]]` is removed
+  |
+6 | K: PositiveDefinite Matrix[2, 2] N/m = [[3000 N/m, -1000 N/m], [-1000 N/m, 2 kN/m]]
+  |                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: applied by the `dce` pass
+  = note: because `K` is never used
+  = note: because `array.literal` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
+
+tests/ui/types/ok_literal_tag_proofs.sky:7:38: note: [DCE-001] `[[0, 0], [0, 0]]` is removed
+  |
+7 | Z: Symmetric Diagonal Matrix[2, 2] = [[0, 0], [0, 0]]
+  |                                      ^^^^^^^^^^^^^^^^
+  = note: applied by the `dce` pass
+  = note: because `Z` is never used
+  = note: because `array.literal` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does

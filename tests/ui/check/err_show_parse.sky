@@ -1,0 +1,9 @@
+# `as` ends its expression, takes a unit, and cannot repeat.
+v = 90 km/h
+a = v as
+b = v as km/h as m
+c = v as km/h + 1
+d = v as 5
+e = v as m / s
+print(v as km/h if true else v)
+as = 3

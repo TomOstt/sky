@@ -1,0 +1,7 @@
+tests/ui/check/ok_condition_warning.sky:3:6: warning: estimated condition number κ(K) ≈ 4.0e8: about 8 of 16 significant digits may be lost
+  |
+3 | x = K⁻¹ @ [1, 2]
+  |      ^^ inverting or solving with this magnifies errors by up to 4.0e8
+  |     - this is a constant 2×2 matrix
+  = note: κ(K) = σmax/σmin measures how much a matrix magnifies relative error: rounding error in the inputs (about 1.1e-16 for an `f64`) can change the solution of K·x = b by about κ(K) times as much, so about log10 κ = 8 of the 16 digits are lost. A well-conditioned matrix has κ near 1
+  = help: rescale rows and columns so their entries are similar in size; or reformulate so the matrix is better posed (a different basis, fewer nearly dependent unknowns, or a regularized or least-squares formulation); higher-precision arithmetic (planned) buys back digits but not a better problem

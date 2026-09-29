@@ -239,6 +239,110 @@ fn repl_output_can_be_pasted_back() {
 }
 
 #[test]
+fn repl_echoes_values_shown_in_a_unit() {
+    let o = repl(
+        "v = 90 km/h\n\
+         v\n\
+         v as km/h\n\
+         (v as m/s)\n\
+         1 AU as km\n\
+         511 keV as MeV\n\
+         u = [0.1 m, 0.2 m]\n\
+         u as mm\n\
+         print(v as km/h, v)\n\
+         v * 2 as km/h\n",
+    );
+    assert_eq!(o.status.code(), Some(0));
+    assert_eq!(
+        out(&o),
+        "25 m/s\n90 km/h\n25 m/s\n149597870.7 km\n0.511 MeV\n[100 mm, 200 mm]\n90 km/h 25 m/s\n180 km/h\n"
+    );
+    assert_eq!(err(&o), "");
+}
+
+#[test]
+fn repl_shown_values_are_display_only_and_errors_do_not_poison_the_session() {
+    let o = repl(
+        "v = 90 km/h\n\
+         v as kg\n\
+         w = v as km/h\n\
+         (v as km/h) + 1\n\
+         v as km/h as m\n\
+         v as parsecs\n\
+         v as km/h\n",
+    );
+    assert_eq!(o.status.code(), Some(0));
+    // Only the last line echoes; `w` was never bound.
+    assert_eq!(out(&o), "90 km/h\n");
+    let e = err(&o);
+    assert!(
+        e.contains("<repl>:1:1: error: cannot show a velocity in kg"),
+        "{e}"
+    );
+    assert!(
+        e.contains("error: a value shown in km/h can only be printed"),
+        "{e}"
+    );
+    assert!(
+        e.contains("error: a value can be shown in only one unit"),
+        "{e}"
+    );
+    assert!(e.contains("error: unknown unit `parsecs`"), "{e}");
+    assert!(e.contains("= help: did you mean `pc`?"), "{e}");
+}
+
+#[test]
+fn run_prints_values_in_the_units_people_think_in() {
+    let o = run_script(
+        "as-units",
+        "v = 90 km/h\n\
+         print(v)\n\
+         print(v as km/h)\n\
+         print(\"1 AU is\", 1 AU as km)\n\
+         print(\"E =\", 511 keV as eV, 511 keV as MeV)\n\
+         u = [100 mm, 200 mm]\n\
+         print(u as mm)\n\
+         v as km/h\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(
+        out(&o),
+        "25 m/s\n90 km/h\n1 AU is 149597870.7 km\nE = 511000 eV 0.511 MeV\n[100 mm, 200 mm]\n"
+    );
+}
+
+#[test]
+fn run_rejects_a_wrong_dimension_and_arithmetic_on_shown_values() {
+    let o = run_script("as-wrong", "print(\"MARKER\")\nprint(90 km/h as kg)\n");
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(out(&o), "");
+    assert!(
+        err(&o).contains("prog.sky:2:7: error: cannot show a velocity in kg"),
+        "{}",
+        err(&o)
+    );
+    let o = run_script("as-arith", "print((1 km as m) + 1)\n");
+    assert_eq!(o.status.code(), Some(1));
+    assert!(
+        err(&o).contains("error: a value shown in m can only be printed"),
+        "{}",
+        err(&o)
+    );
+}
+
+#[test]
+fn a_display_overflow_is_a_runtime_error() {
+    let o = run_script("as-overflow", "print(1)\nprint(1e300 m as nm)\n");
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(out(&o), "1\n");
+    assert!(
+        err(&o).contains("error: arithmetic overflow"),
+        "{}",
+        err(&o)
+    );
+}
+
+#[test]
 fn repl_recovers_from_errors_without_poisoning_the_session() {
     let o = repl(
         "x = 1 m\n\
@@ -561,4 +665,159 @@ fn repl_solves_with_a_positive_definite_input_it_was_given_a_value() {
         (x[0] - 1.0 / 11.0).abs() < 1e-15 && (x[1] - 7.0 / 11.0).abs() < 1e-15,
         "{x:?}"
     );
+}
+
+// ----- for loops -----
+
+#[test]
+fn run_sums_a_vector_of_forces() {
+    let o = run_script(
+        "for-forces",
+        "forces = [10 N, 20 N, 5.5 N]\n\
+         total = 0 N\n\
+         for f in forces:\n    total += f\n\
+         print(\"total =\", total)\n\
+         print(\"last =\", f)\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "total = 35.5 N\nlast = 5.5 N\n");
+    assert_eq!(o.status.code(), Some(0));
+}
+
+#[test]
+fn run_integrates_with_a_riemann_sum() {
+    // The midpoint rule for the integral of x^2 on [0, 3 m]: 9 m^3.
+    let o = run_script(
+        "for-riemann",
+        "n = 3000\n\
+         a = 0 m\n\
+         b = 3 m\n\
+         dx = (b - a) / n\n\
+         area = 0 m^3\n\
+         for i in range(n):\n    x = a + (i + 0.5) * dx\n    area += x^2 * dx\n\
+         print(area)\n",
+    );
+    assert_eq!(err(&o), "");
+    let text = out(&o);
+    let value: f64 = text
+        .trim()
+        .strip_suffix(" m^3")
+        .expect("a volume")
+        .parse()
+        .expect("a number");
+    assert!((value - 9.0).abs() < 1e-5, "{text}");
+    assert_eq!(o.status.code(), Some(0));
+}
+
+#[test]
+fn run_loops_over_matrix_rows_and_uses_break_and_continue() {
+    let o = run_script(
+        "for-rows",
+        "A = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]\n\
+         for row in A:\n    if row[0] == 4:\n        continue\n    print(row)\n\
+         for i in range(10, 0, -3):\n    if i < 3:\n        break\n    print(i)\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "[1, 2, 3]\n[7, 8, 9]\n10\n7\n4\n");
+    assert_eq!(o.status.code(), Some(0));
+}
+
+#[test]
+fn run_rejects_iterating_a_scalar_before_running_anything() {
+    let o = run_script(
+        "for-scalar",
+        "print(\"MARKER_RAN\")\nn = 3\nfor i in n:\n    print(i)\n",
+    );
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(out(&o), "");
+    let e = err(&o);
+    assert!(
+        e.contains("3:10: error: cannot iterate over a dimensionless number"),
+        "{e}"
+    );
+    assert!(e.contains("for i in range(n)"), "{e}");
+}
+
+#[test]
+fn run_reports_a_bad_range_bound_at_run_time() {
+    let o = run_script(
+        "for-bad-bound",
+        "print(\"before\")\nn = 5 / 2\nfor i in range(n):\n    print(i)\n",
+    );
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(out(&o), "before\n");
+    assert!(
+        err(&o).contains("3:16: error: `range` needs an integer, found 2.5"),
+        "{}",
+        err(&o)
+    );
+}
+
+#[test]
+fn run_reports_iterating_a_string_at_run_time() {
+    let o = run_script("for-string", "s = \"abc\"\nfor c in s:\n    print(c)\n");
+    assert_eq!(o.status.code(), Some(1));
+    assert!(
+        err(&o).contains("2:10: error: cannot iterate over a string"),
+        "{}",
+        err(&o)
+    );
+}
+
+#[test]
+fn run_a_loop_variable_after_a_loop_that_may_not_run_is_a_check_error() {
+    let o = run_script(
+        "for-maybe",
+        "n = 0\nfor i in range(n):\n    pass\nprint(i)\n",
+    );
+    assert_eq!(o.status.code(), Some(1));
+    assert!(err(&o).contains("4:7: error: `i` may be undefined here"));
+}
+
+#[test]
+fn run_evaluates_a_derivative_with_its_unit() {
+    // x(t) = 5 m/s^2 t^2: x'(2 s) = 20 m/s, x''(2 s) = 10 m/s^2.
+    let o = run_script(
+        "derivative",
+        "def x(t: s) -> m:\n    return 5 m/s^2 * t^2\n\
+         def v(t: s) -> m/s:\n    return derivative(x, t)(t)\n\
+         print(x(2 s))\n\
+         print(derivative(x, t)(2 s))\n\
+         print(derivative(v, t)(2 s))\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "20 m\n20 m/s\n10 m/s^2\n");
+    assert!(o.status.success());
+}
+
+#[test]
+fn a_derivative_unit_error_is_a_check_error_and_nothing_runs() {
+    let o = run_script(
+        "derivative_unit",
+        "def x(t: s) -> m:\n    return 5 m/s^2 * t^2\n\
+         print(\"before\")\n\
+         print(x(2 s) + derivative(x, t)(2 s))\n",
+    );
+    assert_eq!(out(&o), "");
+    assert!(
+        err(&o).contains("cannot add length and velocity"),
+        "{}",
+        err(&o)
+    );
+    assert_eq!(o.status.code(), Some(1));
+}
+
+#[test]
+fn a_derivative_that_fails_is_a_runtime_error_on_the_call() {
+    // The slope of sqrt at 0 is infinite: division by zero, reported where
+    // the derivative was asked for, after the output before it.
+    let o = run_script(
+        "derivative_domain",
+        "def root(a: m^2) -> m:\n    return sqrt(a)\n\
+         print(derivative(root, a)(4 m^2))\n\
+         print(derivative(root, a)(0 m^2))\n",
+    );
+    assert_eq!(out(&o), "0.25 m^-1\n");
+    assert!(err(&o).contains("division by zero"), "{}", err(&o));
+    assert_eq!(o.status.code(), Some(1));
 }

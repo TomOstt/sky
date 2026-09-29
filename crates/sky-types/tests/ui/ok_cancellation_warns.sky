@@ -1,0 +1,24 @@
+# Textbook expressions that subtract nearly equal numbers, one warning each.
+x = 1000000.0
+cc = 1.0
+r1 = sqrt(x^2 + cc) - x
+eps = 0.00000001
+r2 = (1 + eps) - 1
+p = 1000000.5
+q = 1000000.4
+r3 = p^2 - q^2
+r4 = exp(eps) - 1
+r5 = log(1 + eps)
+a = 1.0
+b = 100000.0
+k = 1.0
+root = (-b + sqrt(b^2 - 4*a*k)) / (2*a)
+other = (-b - sqrt(b * b - 4 * k * a)) / (2 * a)
+# Constant operands are judged by value.
+r6 = exp(0.0000001) - 1
+r7 = sqrt(1000000^2 + 1) - 1000000
+r8 = sqrt(x^2 - cc) - x
+r9 = p * p - q * q
+# An unannotated parameter is linted too: the arithmetic is the problem.
+def gap(u):
+    return sqrt(u^2 + 1) - u

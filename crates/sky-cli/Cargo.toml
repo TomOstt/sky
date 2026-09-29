@@ -13,8 +13,12 @@ path = "src/main.rs"
 
 [dependencies]
 sky-ast = { path = "../sky-ast" }
+sky-derive = { path = "../sky-derive" }
 sky-diag = { path = "../sky-diag" }
 sky-interp = { path = "../sky-interp" }
+sky-ir = { path = "../sky-ir" }
+sky-lower = { path = "../sky-lower" }
+sky-opt = { path = "../sky-opt" }
 sky-project = { path = "../sky-project" }
 sky-syntax = { path = "../sky-syntax" }
 sky-types = { path = "../sky-types" }

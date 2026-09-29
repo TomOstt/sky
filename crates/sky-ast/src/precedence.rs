@@ -4,6 +4,7 @@
 //!
 //! | level | operators                      | assoc |
 //! |-------|--------------------------------|-------|
+//! | -1    | `v as unit`                    | none: covers the whole expression, does not chain |
 //! | 0     | `a if c else b`                | right (in the `else` arm); `c` is an `or` expression |
 //! | 1     | `or`                           | left (one flat `BoolOp` node per run) |
 //! | 2     | `and`                          | left (one flat `BoolOp` node per run) |
@@ -24,6 +25,12 @@
 
 use crate::ast::{BinaryOp, BoolOp, UnaryOp};
 use sky_syntax::{Kw, TokenKind};
+
+/// Binding power of `v as unit`: the loosest construct. `as` continues an
+/// operand only where the enclosing expression accepts anything (`min_bp`
+/// 0), so `a + b as km` is `(a + b) as km` and `x if c else y as km` is
+/// `(x if c else y) as km`. The parser ends the expression after its unit.
+pub const AS_BP: u8 = 0;
 
 /// `and` and `or`, parsed as flat runs (see `ExprKind::BoolOp`).
 /// Binding power of the conditional expression `a if c else b` (level 0):

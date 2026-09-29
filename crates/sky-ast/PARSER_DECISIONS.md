@@ -46,6 +46,7 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 
 | level | operators | associativity |
 |---|---|---|
+| -1 | `v as unit` | none: covers the whole expression and ends it (see "Display units") |
 | 0 | `a if c else b` | right, in the `else` arm; the condition is an `or` expression (see "Blocks and control flow") |
 | 1 | `or` | left (Eng Lead) |
 | 2 | `and` | left (Eng Lead) |
@@ -75,6 +76,13 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 - They stay attribute names after `.` (`y = x.true` parses). Since `sky-ast/assign-targets`, `x.true = 1` parses as an attribute target, exactly like `x.flag = 1` (it was a parse error while targets were plain names; the golden is now `ok_assign_attribute`). The v0.1 checker rejects both writes.
 - `true = 1`, `false = 0`, and `true: Bool` are errors on the literal: "cannot assign to `true`" / "cannot annotate `true`", with the help "`true` and `false` are Bool literals, not names". Other non-name targets keep the generic "invalid assignment target" message.
 - `True`/`False` are ordinary identifiers, and the parser does nothing special with them. The checker should give an undefined `True`/`False` the help "Sky writes booleans as `true`/`false`" (Dinesh's side).
+
+**Display units** (`v as unit`, spec "Showing values in a unit"):
+- `as` is a keyword (`Kw::As`), like `in`: the alternative, a contextual word, is ambiguous after a number (`10 as` would read `as` as a unit). Like every keyword it stays an attribute name (`x.as`).
+- **AST:** `ExprKind::As { value: Box<Expr>, unit: Box<UnitExpr>, as_span }`. The unit is boxed so `Expr` (and every recursive parser frame) stays small; the max-depth-in-1-MiB test caught it when it was inline.
+- **Precedence: the loosest construct** (`AS_BP` 0, only continues an operand where any expression is allowed). `a + b as km` is `(a + b) as km`, `x if c else y as km` is `(x if c else y) as km`, `a < b as km` is `(a < b) as km` (a Bool, so a check error). It ends the expression: after the unit nothing may follow, and an operator, a second `as`, or an `if` there is a parse error with help "put the arithmetic before `as`". Parentheses and call arguments restart the level, so `print(a + b as km, c)` works.
+- The unit is read by `parse_unit` with a third `UnitCtx::Display`, which behaves like an annotation (no number precedes the unit, so a spaced `m / s` is "a unit's `/` cannot have spaces around it"). So the parser's unit rules (adjacent `*`, `/`, `^`, exponent forms, the factor limit) are shared with unit literals and annotations; unit names, prefixes and dimensions are the checker's.
+- S-expression: `(as v (/ km h))`. It counts one nesting level.
 
 **AST shape:**
 - `Expr` is a struct holding `kind: ExprKind` and `span`; likewise `Stmt`/`StmtKind`.
@@ -129,11 +137,12 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 - **Recovery** resyncs on `Newline`, `Indent`, and `Dedent`:
   - Simple statements: an error skips to the next `Newline` (which is before any `Indent`/`Dedent`), so block tokens are never eaten.
   - A bad block header (missing `:`, bad condition, bad `def` signature) skips its line, then, if an `Indent` follows, parses that body anyway and drops it. Errors inside it are still reported, and its `Dedent` is consumed by it and not by the enclosing block.
-  - An unsupported or reserved statement (`for`, `import`, `equation`, ...) is one error, and its block is skipped iteratively.
+  - An unsupported or reserved statement (`import`, `equation`, ...) is one error, and its block is skipped iteratively.
   - A bad `elif` header keeps the clauses around it (the `else` is not reported as orphaned).
   - A stray `Indent` is "unexpected indentation"; its lines are parsed as a block and their statements spliced into the current list, so its `Dedent` ends only itself.
   - `else`/`elif` with no `if`, and `else if`, have their own messages. `parse_item` returns `None` only with the position on a line boundary, so callers never skip a second line.
-- **Unsupported and reserved:** `for` ("`for` loops are not supported yet"), `import` ("`import` is not supported yet"), default parameter values, and `equation`/`solve`/`field` ("`solve` is reserved for a future version") each get their own message, and they stay attribute names after `.`.
+- **`for`:** `StmtKind::For { var: Ident, iter: Expr, body: Block }`, printed `(for i (call range 3) (block ...))`. The loop variable is a plain name (`for (a, b) in p` and `for i, j in p` are errors: Sky has no tuples), `in` is required, and `iter` is any expression: `range(...)` is an ordinary call that the checker recognises, so the parser needs no special form. A bad header (`for i range(3):`) is one error and its body is still read, like a bad `def` header. A body on the header line is the usual one-line-body error.
+- **Unsupported and reserved:** `import` ("`import` is not supported yet"), default parameter values, and `equation`/`solve`/`field` ("`solve` is reserved for a future version") each get their own message, and they stay attribute names after `.`.
 - **Keywords:** `while`, `elif`, `pass`, `break`, `continue` are new `Kw` variants (lexer). No test or golden used them as identifiers.
 - **Downstream:** exhaustive matches on `StmtKind` and `ExprKind` need the new arms (the checker has them; the fuzz harness walks all of them with an explicit worklist, blocks included). The interpreter should treat `Block` as a plain statement list.
 

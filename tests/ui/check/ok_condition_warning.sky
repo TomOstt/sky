@@ -1,0 +1,3 @@
+# A warning teaches: this matrix is nearly singular.
+K = [[1, 1], [1, 1.00000001]]
+x = K⁻¹ @ [1, 2]

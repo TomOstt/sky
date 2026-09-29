@@ -5,7 +5,7 @@
 //! comparison operators, `@`, postfix `⁻¹` (and `inv(x)`), `^`, the Bool
 //! literals `true`/`false`, and `and`/`or`/`not` (strict Bool operands, no
 //! truthiness, per the spec's "Booleans and conditions"), the builtin
-//! `print(...)` call, and calls to user functions. Array literals, indexing
+//! `print(...)` call, calls to user functions, and `derivative(f, x)(...)` (in [`crate::derivative`]). Array literals, indexing
 //! and the builtins `zeros`, `identity` and `len` are in [`crate::array`].
 //! Anything else (strings, attributes, `∂`, `∇`, calls to names that are not
 //! functions) is typed as [`Ty::Unknown`] without a diagnostic, and an
@@ -65,6 +65,7 @@ use sky_units::{lookup, lookup_constant, suggest_unit, Dimension, Rational, CONS
 
 use crate::array::LiteralProof;
 use crate::flow::{FnCtx, FuncSig, LoopFrame};
+use crate::numerics::NumState;
 use crate::provenance::{label_dim, Provenance};
 use crate::rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 use crate::rules::{elementwise, inverse, matmul, TensorType};
@@ -412,6 +413,8 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         expr_types: HashMap::new(),
         binding_types: HashMap::new(),
         funcs: HashMap::new(),
+        num: NumState::default(),
+        shown_ok: None,
     };
     for stmt in &module.stmts {
         c.stmt(stmt);
@@ -446,14 +449,14 @@ pub(crate) struct Checker<'s> {
     /// annotation being read.
     shadow_reported: Vec<String>,
     pub(crate) env: Env,
-    diagnostics: Vec<Diagnostic>,
+    pub(crate) diagnostics: Vec<Diagnostic>,
     rewrites: Vec<RewriteSite>,
     rewrites_omitted: usize,
     /// See [`Checked::cholesky_solves`].
     solves: HashSet<Span>,
     /// The `def`s being checked, innermost last.
     pub(crate) fns: Vec<FnCtx>,
-    /// The `while` loops around the current statement within the current
+    /// The loops around the current statement within the current
     /// function (or the module), innermost last.
     pub(crate) loops: Vec<LoopFrame>,
     /// Whether the statement just checked cannot fall through: it ended in
@@ -468,6 +471,12 @@ pub(crate) struct Checker<'s> {
     binding_types: HashMap<Span, Ty>,
     /// See [`Checked::funcs`].
     pub(crate) funcs: HashMap<Span, Arc<FuncSig>>,
+    /// What the numerical warnings remember (see [`crate::numerics`]).
+    pub(crate) num: NumState,
+    /// The one `v as unit` the next `expr` call may type without an error:
+    /// the argument of `print` or the expression statement being checked
+    /// (see [`crate::display`]).
+    pub(crate) shown_ok: Option<Span>,
 }
 
 /// Human wording for a dimension in error text: its name if it has one
@@ -681,7 +690,7 @@ impl<'s> Checker<'s> {
     /// predefined constant, warns that it shadows it: allowed (like a Python
     /// builtin), but `c = 3` or `h = 0.1` silently losing the constant is
     /// exactly the surprise this is meant to prevent.
-    fn bind_name(&mut self, id: &Ident, ty: Ty) {
+    pub(crate) fn bind_name(&mut self, id: &Ident, ty: Ty) {
         self.warn_if_shadowing(id);
         let name = self.ident(id);
         self.binding_types.insert(id.span, ty.clone());
@@ -717,6 +726,7 @@ impl<'s> Checker<'s> {
     /// function being checked if there is one.
     pub(crate) fn bind_at(&mut self, name: &str, ty: Ty, span: Span) {
         self.env.bind(name, ty);
+        self.num.on_bind(name);
         self.env.origins.insert(name.to_string(), span);
         if let Some(ctx) = self.fns.last_mut() {
             ctx.locals.insert(name.to_string());
@@ -726,6 +736,7 @@ impl<'s> Checker<'s> {
     pub(crate) fn stmt(&mut self, stmt: &Stmt) {
         match &stmt.kind {
             StmtKind::Expr(e) => {
+                self.allow_show(e);
                 self.expr(e);
             }
             StmtKind::Assign { target, value } => {
@@ -733,7 +744,11 @@ impl<'s> Checker<'s> {
                 match target {
                     AssignTarget::Name(id) => {
                         self.note_binding(id.span, Some(value), None);
+                        let typed = matches!(t, Ty::Value(_));
                         self.bind_name(id, t);
+                        if typed {
+                            self.note_const_binding(self.ident(id), value);
+                        }
                     }
                     _ => self.reject_write(target, "="),
                 }
@@ -756,13 +771,18 @@ impl<'s> Checker<'s> {
                 let declares_unit = declared.as_ref().is_some_and(|d| d.dim.is_some());
                 self.note_binding(name.span, value.as_ref(), declares_unit.then_some(ty.span));
                 let bound = self.binding_type(ty, declared, found);
+                let typed = matches!(bound, Ty::Value(_));
                 self.bind_name(name, bound);
+                if let (true, Some(v)) = (typed, value) {
+                    self.note_const_binding(self.ident(name), v);
+                }
             }
             StmtKind::If {
                 branches,
                 else_block,
             } => self.if_stmt(stmt.span, branches, else_block.as_ref()),
             StmtKind::While { cond, body } => self.while_stmt(stmt.span, cond, body),
+            StmtKind::For { var, iter, body } => self.for_stmt(stmt.span, var, iter, body),
             StmtKind::Def {
                 name,
                 params,
@@ -972,6 +992,7 @@ impl<'s> Checker<'s> {
             span: id.span,
         };
         self.warn_if_shadowing(id);
+        self.num.on_bind(self.ident(id));
         // Silent lookup: typing `whole` below reports an undefined name once.
         let declared = self.env.get(self.ident(id)).unwrap_or(Ty::Unknown);
         let whole = Expr {
@@ -1251,7 +1272,9 @@ impl<'s> Checker<'s> {
     /// expression goes through here, so the table is complete by
     /// construction (see the exceptions on the field).
     pub(crate) fn expr(&mut self, e: &Expr) -> Ty {
+        let reported = self.diagnostics.len();
         let t = self.expr_untabled(e);
+        self.lint_cancellation(e, &t, reported);
         self.expr_types.insert(e.span, t.clone());
         t
     }
@@ -1309,17 +1332,21 @@ impl<'s> Checker<'s> {
                 if self.reject_bool("⁻¹", operand, &t) {
                     return Ty::Unknown;
                 }
-                self.invert(t, *op_span, operand.span)
+                self.invert(t, *op_span, operand)
             }
             ExprKind::Array(elems) => self.array_literal(elems),
             ExprKind::Call { callee, args } => {
+                if let Some(t) = self.derivative_call(callee, args, e.span) {
+                    return t;
+                }
                 if let Some(arg) = self.inv_call(callee, args) {
                     let t = self.expr(arg);
-                    return self.invert(t, callee.span, arg.span);
+                    return self.invert(t, callee.span, arg);
                 }
                 if self.is_print(callee) {
                     // The builtin: any arguments, no result to use.
                     for a in args {
+                        self.allow_show(a);
                         self.expr(a);
                     }
                     return Ty::Unknown;
@@ -1328,6 +1355,9 @@ impl<'s> Checker<'s> {
                     return t;
                 }
                 if let Some(t) = self.builtin_call(callee, args, e.span) {
+                    return t;
+                }
+                if let Some(t) = self.range_outside_for(callee, args, e.span) {
                     return t;
                 }
                 let callee_ty = self.expr(callee);
@@ -1339,6 +1369,7 @@ impl<'s> Checker<'s> {
                 Ty::Unknown
             }
             ExprKind::IfElse { then, cond, else_ } => self.if_else(then, cond, else_),
+            ExprKind::As { value, unit, .. } => self.show(e, value, unit),
             ExprKind::Binary {
                 op,
                 op_span,
@@ -1376,7 +1407,7 @@ impl<'s> Checker<'s> {
             if self.ident(id) == "print" && self.env.get("print").is_none())
     }
 
-    fn unit(&mut self, u: &UnitExpr) -> Option<Dimension> {
+    pub(crate) fn unit(&mut self, u: &UnitExpr) -> Option<Dimension> {
         let r = match u {
             UnitExpr::Name(id) => {
                 let name = self.ident(id);
@@ -1447,22 +1478,25 @@ impl<'s> Checker<'s> {
         Ty::value(v.dim, ty)
     }
 
-    fn invert(&mut self, t: Ty, op_span: Span, operand: Span) -> Ty {
+    fn invert(&mut self, t: Ty, op_span: Span, operand: &Expr) -> Ty {
         let Ty::Value(v) = t else {
             return Ty::Unknown;
         };
         let Ok(dim) = v.dim.inverse() else {
-            self.overflow(op_span.join(operand));
+            self.overflow(op_span.join(operand.span));
             return Ty::Unknown;
         };
-        let what = format!("`{}⁻¹`", self.quoted(operand));
+        let what = format!("`{}⁻¹`", self.quoted(operand.span));
         match self.with_origin(op_span, what, |u| inverse(u, &v.ty)) {
-            Ok(ty) => Ty::value(dim, ty),
+            Ok(ty) => {
+                self.warn_conditioning(operand, op_span);
+                Ty::value(dim, ty)
+            }
             Err(e) => {
                 let label = self.this_is(&v);
                 self.error(
                     self.shape_diagnostic(&e, op_span)
-                        .with_secondary(operand, label),
+                        .with_secondary(operand.span, label),
                 );
                 Ty::Unknown
             }
@@ -1482,7 +1516,7 @@ impl<'s> Checker<'s> {
         let (a, l) = match inverted {
             Some((operand, inv_span)) => {
                 let a = self.expr(operand);
-                let l = self.invert(a.clone(), inv_span, operand.span);
+                let l = self.invert(a.clone(), inv_span, operand);
                 (Some((operand, a)), l)
             }
             None => (None, self.expr(lhs)),

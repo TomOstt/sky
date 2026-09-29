@@ -1,0 +1,59 @@
+crates/sky-ast/tests/ui/err_for_header.sky:1:5: error: expected a loop variable name after `for`, found `(`
+  |
+1 | for (a, b) in pairs:
+  |     ^
+  | --- `for` starts here
+  = help: a loop binds one name; Sky has no tuples to unpack
+
+crates/sky-ast/tests/ui/err_for_header.sky:3:5: error: expected a loop variable name after `for`, found integer literal `3`
+  |
+3 | for 3 in v:
+  |     ^
+  | --- `for` starts here
+  = help: write `for name in ...`
+
+crates/sky-ast/tests/ui/err_for_header.sky:5:7: error: expected `in` after the loop variable, found name `range`
+  |
+5 | for i range(3):
+  |       ^^^^^
+  |     - the loop variable
+  = help: write `for name in range(n):` or `for x in v:`
+
+crates/sky-ast/tests/ui/err_for_header.sky:7:6: error: expected `in` after the loop variable, found `,`
+  |
+7 | for i, j in v:
+  |      ^
+  |     - the loop variable
+  = help: a loop binds one name; loop over a matrix's rows with `for row in A:`
+
+crates/sky-ast/tests/ui/err_for_header.sky:9:9: error: expected an expression, found `:`
+  |
+9 | for i in:
+  |         ^
+
+crates/sky-ast/tests/ui/err_for_header.sky:11:11: error: expected `:` after `for`, found end of line
+   |
+11 | for i in v
+   |           ^
+   | --- `for` starts here
+   = help: end the header line with `:`
+
+crates/sky-ast/tests/ui/err_for_header.sky:13:11: error: expected an indented block after `for`
+   |
+13 | for i in v:
+   |           ^
+   = help: use `pass` for a block that does nothing
+
+crates/sky-ast/tests/ui/err_for_header.sky:15:13: error: the body of `for` must be on its own indented line
+   |
+15 | for i in v: total += i
+   |             ^^^^^
+   |           - the block starts after this `:`
+   = help: put the body on its own indented line
+
+crates/sky-ast/tests/ui/err_for_header.sky:16:6: error: expected `:` after `if`, found keyword `in`
+   |
+16 | if x in v:
+   |      ^^
+   | -- `if` starts here
+   = help: end the header line with `:`

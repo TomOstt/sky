@@ -1,0 +1,18 @@
+// Each array operation broken in one way, each error reported once.
+sir edition 2026
+fn @f(%a: num[L; ()], %t: num[T; ()], %v: num[1; (3)], %A: num[1; (3, 4)], %i: num[1; ()]) -> (num[L; ()]) {
+  %lit1 = array.literal %a, %t : num[L; (2)] @ 1..2
+  %lit2 = array.literal %a, %a : num[L; (3)] @ 3..4
+  %lit3 = array.literal %v : num[1; (3)] @ 5..6
+  %idx1 = index %a, %i : num[L; ()] @ 7..8
+  %idx2 = index %A, %i, %i, %i : num[1; ()] @ 9..10
+  %idx3 = index %v, %t : num[1; ()] @ 11..12
+  %idx4 = index %A, %i : num[1; (3)] @ 13..14
+  %sl1 = slice[lo:hi] %v, %i : num[1; (2)] @ 15..16
+  %sl2 = slice[:] %A : num[1; (4)] @ 17..18
+  %z1 = zeros %a : num[1; (3)] @ 19..20
+  %z2 = zeros %i, %i : num[1; (3)] @ 21..22
+  %id = identity %i : num[1; (2, 3)] @ 23..24
+  %n = len %a : num[1; ()] @ 25..26
+  return %a
+}

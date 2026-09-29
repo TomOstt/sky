@@ -1,6 +1,6 @@
 [package]
 name = "sky-opt"
-description = "Optimization passes over SIR: constant folding, dead-code elimination, Cholesky solve selection"
+description = "Optimization passes over SIR and the default pipeline: constant folding, e-graph rewriting, dead-code elimination, Cholesky solve selection"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 sky-diag = { path = "../sky-diag" }
+sky-egraph = { path = "../sky-egraph" }
 sky-interp = { path = "../sky-interp" }
 sky-ir = { path = "../sky-ir" }
 sky-types = { path = "../sky-types" }
@@ -18,3 +19,5 @@ sky-units = { path = "../sky-units" }
 proptest = { version = "1", default-features = false, features = ["std"] }
 sky-ast = { path = "../sky-ast" }
 sky-ir-interp = { path = "../sky-ir-interp" }
+sky-lower = { path = "../sky-lower" }
+sky-syntax = { path = "../sky-syntax" }

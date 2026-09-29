@@ -1,0 +1,13 @@
+n = 3
+for x in n:
+    pass
+for x in 3 m:
+    pass
+for x in true:
+    pass
+for x in "abc":
+    pass
+def f(a):
+    return a
+for x in f:
+    pass

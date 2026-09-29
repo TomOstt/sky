@@ -145,6 +145,11 @@ fn attrs(k: &OpKind) -> String {
         OpKind::ConstStr(s) => format!(" {s:?}"),
         OpKind::PowConst { exponent } => format!(" [{exponent}]"),
         OpKind::Call { callee } => format!(" @{callee}"),
+        OpKind::ArrayLiteral { cols: Some(c) } => format!(" [{c}]"),
+        OpKind::Slice { axes } => {
+            let items: Vec<&str> = axes.iter().map(|a| a.text()).collect();
+            format!(" [{}]", items.join(", "))
+        }
         _ => String::new(),
     }
 }
@@ -256,6 +261,27 @@ pub fn count(f: &Function, mnemonic: &str) -> usize {
         .iter()
         .filter(|o| o.kind.mnemonic() == mnemonic)
         .count()
+}
+
+/// How deeply regions nest in `f`: 0 for a function with no control flow,
+/// otherwise the number of regions on the longest path from the body down to
+/// an operation (the verifier's `MAX_REGION_DEPTH` bounds this). Iterative:
+/// the IR it measures may be thousands of levels deep.
+pub fn region_depth(f: &Function) -> usize {
+    // A block's depth is its owner's block depth plus one; blocks are
+    // created after the operation that owns their region, so one pass over
+    // the arena in index order sees every owner first.
+    let mut depth = vec![0usize; f.blocks.len()];
+    let mut deepest = 0;
+    for b in 0..f.blocks.len() {
+        let region = f.blocks[b].parent.expect("a block has a region");
+        depth[b] = match f.regions[region.index()].parent {
+            None => 0,
+            Some(owner) => depth[f.ops[owner.index()].parent.index()] + 1,
+        };
+        deepest = deepest.max(depth[b]);
+    }
+    deepest
 }
 
 /// The operations of the entry block with this mnemonic.

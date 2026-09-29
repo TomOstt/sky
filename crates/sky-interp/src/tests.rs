@@ -5,7 +5,10 @@
 use sky_ast::parse_module;
 use sky_syntax::lex;
 
-use crate::{format_number, run_module, RuntimeEnv, RuntimeError, Value};
+use crate::{
+    format_number, run_module, run_module_with_derivatives, DerivativeHook, DerivativeRequest,
+    RuntimeEnv, RuntimeError, Value,
+};
 
 /// Runs `src` in `env`, returning the last expression's value and the
 /// `print` output.
@@ -577,4 +580,77 @@ fn pi_is_a_dimensionless_prelude_constant() {
         v.map(|v| v.to_string()),
         Some(format_number(std::f64::consts::PI))
     );
+}
+
+// ----- derivative(f, x)(args) -----
+//
+// The interpreter has no AD: it finds the function and the parameter,
+// evaluates the arguments and hands them to a hook (`sky-derive` in
+// `sky run`).
+
+/// Answers with a summary of the request, to show what the interpreter
+/// passed: `name/param#wrt args... [globals]`.
+struct Echo;
+
+impl DerivativeHook for Echo {
+    fn derivative(
+        &mut self,
+        r: &DerivativeRequest<'_>,
+        out: &mut dyn std::io::Write,
+    ) -> Result<Value, RuntimeError> {
+        let args: Vec<String> = r.args.iter().map(ToString::to_string).collect();
+        let k = (r.globals)("k").map_or("none".to_string(), |v| v.to_string());
+        writeln!(
+            out,
+            "{}/{}#{} [{}] k={k}",
+            r.func.name,
+            r.func.params[r.wrt],
+            r.wrt,
+            args.join(", ")
+        )
+        .unwrap();
+        Ok(Value::scalar(r.wrt as f64))
+    }
+}
+
+fn run_with_echo(src: &str) -> Result<(Value, String), RuntimeError> {
+    let lexed = lex(src).expect("lexes");
+    let (module, errors) = parse_module(&lexed.tokens, src);
+    assert!(errors.is_empty());
+    let mut out = Vec::new();
+    let mut env = RuntimeEnv::new();
+    let v = run_module_with_derivatives(
+        &module,
+        src,
+        &mut env,
+        &mut out,
+        &Default::default(),
+        &mut Echo,
+    )?;
+    Ok((v.expect("a value"), String::from_utf8(out).unwrap()))
+}
+
+#[test]
+fn a_derivative_call_reaches_the_hook_with_the_function_parameter_and_arguments() {
+    let (v, out) =
+        run_with_echo("k = 7\ndef f(a, b):\n    return a\nk = 8\nderivative(f, b)(1 + 1, 3 * 4)\n")
+            .expect("runs");
+    // The parameter's position, the arguments evaluated in the caller, and
+    // the module's current names.
+    assert_eq!(out, "f/b#1 [2, 12] k=8\n");
+    assert_eq!(v, Value::scalar(1.0));
+}
+
+#[test]
+fn without_a_hook_a_derivative_is_a_runtime_error() {
+    let e = err("def f(a):\n    return a\nderivative(f, a)(1)");
+    assert_eq!(e.message, "this run cannot evaluate derivatives");
+}
+
+#[test]
+fn a_user_binding_named_derivative_shadows_the_builtin() {
+    let (v, out) =
+        run_with_echo("def derivative(a, b):\n    return a + b\nderivative(1, 2)\n").expect("runs");
+    assert_eq!(out, "");
+    assert_eq!(v, Value::scalar(3.0));
 }

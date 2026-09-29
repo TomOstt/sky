@@ -69,6 +69,7 @@ const KINDS: &[TokenKind] = {
         Keyword(Kw::While),
         Keyword(Kw::For),
         Keyword(Kw::In),
+        Keyword(Kw::As),
         Keyword(Kw::Import),
         Keyword(Kw::Pass),
         Keyword(Kw::Break),

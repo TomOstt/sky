@@ -1,0 +1,2 @@
+# An exponent form is not a decimal literal; the exponent is not a constant.
+a = (4 m)^1e-1

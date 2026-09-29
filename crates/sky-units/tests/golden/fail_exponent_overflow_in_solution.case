@@ -1,0 +1,2 @@
+# ?a^(1/i64::MAX) = L² would need ?a = L^(2·i64::MAX).
+unify ?a^(1/9223372036854775807) with L^2

@@ -33,3 +33,11 @@ Expressions:
 
 To regenerate every `.expected` from the current output, run
 `SKY_BLESS=1 cargo test -p sky-units --test golden`, then review the diff.
+
+Exponent overflow (a numerator or denominator beyond `i64`) is reported as
+`error: dimension exponent too large`, from either building an expression or
+unifying. It is never a panic.
+
+These cases exercise the `sky-units` library directly. User-facing cases move
+to `tests/ui/` once `sky check` parses units; the cases here then stay only
+as library-level tests.

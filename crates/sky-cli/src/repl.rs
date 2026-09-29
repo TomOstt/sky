@@ -273,6 +273,9 @@ fn analyze_tail(session: &Session, src: &str, text: &str) -> FrontEnd {
         module: module_out,
         env: env_out,
         cholesky_solves: solves,
+        // The REPL runs each input on the tree-walker; `sky run`'s SIR
+        // engine is the only reader of the checker's result here.
+        checked: None,
         ir: None,
         ok,
     }

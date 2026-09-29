@@ -978,6 +978,7 @@ fn repl_continues_inside_open_brackets() {
         err(&o).contains("<repl>:1:10: error: cannot add length and time"),
         "{}",
         err(&o)
+    );
 }
 
 // ---- the two engines of `sky run` ----
@@ -1304,6 +1305,7 @@ fn repl_commands_help_and_quit() {
     assert_eq!(out(&o), "4\n");
 }
 
+#[test]
 fn a_computed_range_bound_is_still_checked_at_run_time() {
     // SIR cannot stop a run with the message `range` gives for 2.5, so the
     // loop stays on the tree-walker under `auto`, which fails as before.

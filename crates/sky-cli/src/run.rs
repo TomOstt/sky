@@ -7,13 +7,17 @@
 //!
 //! * SIR: lower to SIR, run the default optimization pipeline with
 //!   verification, and execute on the SIR reference interpreter
-//!   (`sky_ir_interp`). This is the default, as `docs/design/ir.md` plans:
-//!   the IR interpreter becomes the executor once it passes every run test.
-//! * the tree-walking interpreter over the AST (`sky_interp`), kept as the
-//!   oracle the differential tests compare SIR against, and as the fallback
+//!   (`sky_ir_interp`). `docs/design/ir.md` plans for it to become the
+//!   executor; it is not the default yet because, measured with
+//!   `sky-bench`, it is slower than the tree-walker today (about 1.6× on a
+//!   scalar loop, 2.5× on calls) and gives nothing a user can see in
+//!   return. The default flips when SIR is the faster engine (roadmap
+//!   Phase 4).
+//! * the tree-walking interpreter over the AST (`sky_interp`): the default,
+//!   the oracle the differential tests compare SIR against, and the fallback
 //!   for the programs SIR cannot express yet.
 //!
-//! `--engine=auto` (the default) picks SIR and falls back to the tree-walker
+//! `--engine=auto` picks SIR and falls back to the tree-walker
 //! on a `LowerError`, silently: the program is valid, it is only that one
 //! engine cannot run it yet. `--engine=ast` and `--engine=sir` force one, for
 //! debugging and differential use; a forced SIR run of a program that does
@@ -39,9 +43,10 @@ use crate::ir::{prepare_run, Runnable};
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Engine {
     /// SIR, falling back to the tree-walker when the program does not lower.
-    #[default]
     Auto,
-    /// The AST tree-walker.
+    /// The AST tree-walker: the default until SIR is faster (see the module
+    /// docs).
+    #[default]
     Ast,
     /// SIR only: a program that does not lower is an error.
     Sir,

@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use sky_diag::SourceFile;
-use sky_interp::{run_module, RuntimeEnv};
+use sky_interp::{run_module_with, RuntimeEnv};
 use sky_project::SystemIdentity;
 
 use crate::frontend::analyze;
@@ -62,7 +62,7 @@ fn run_source(path: &str, src: &str) -> ExitCode {
         closed: false,
     };
     let mut env = RuntimeEnv::with_prelude();
-    let result = run_module(&module, src, &mut env, &mut out);
+    let result = run_module_with(&module, src, &mut env, &mut out, &front.cholesky_solves);
     let _ = out.flush();
     match result {
         Ok(_) => ExitCode::SUCCESS,

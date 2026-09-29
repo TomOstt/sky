@@ -141,9 +141,21 @@ fn overflow_and_arrays_are_runtime_errors() {
     assert_eq!(o.status.code(), Some(1));
     assert!(err(&o).contains("error: arithmetic overflow"));
 
-    let o = run_script("arrays", "x = 1\nprint(x[0])\n");
+    // A variable index past the end is a runtime error, on the index.
+    let o = run_script("arrays", "v = [1, 2, 3]\ni = 3\nprint(v[i])\n");
     assert_eq!(o.status.code(), Some(1));
-    assert!(err(&o).contains("arrays are not supported by the interpreter yet"));
+    assert!(
+        err(&o).contains("index 3 is out of bounds for axis 0 with length 3"),
+        "{}",
+        err(&o)
+    );
+    let o = run_script("singular", "print([[1, 2], [2, 4]]⁻¹)\n");
+    assert_eq!(o.status.code(), Some(1));
+    assert!(
+        err(&o).contains("error: the matrix is singular"),
+        "{}",
+        err(&o)
+    );
 }
 
 #[test]
@@ -260,7 +272,7 @@ fn repl_runtime_error_rolls_back_that_line_only() {
     assert_eq!(out(&o), "1\n1\n");
     let e = err(&o);
     assert!(e.contains("division by zero"), "{e}");
-    assert!(e.contains("arrays are not supported"), "{e}");
+    assert!(e.contains("`c` is declared but has no value"), "{e}");
 }
 
 #[test]
@@ -390,4 +402,120 @@ fn runaway_recursion_is_an_error_not_a_crash() {
             "nesting {nesting}: {e}"
         );
     }
+}
+
+#[test]
+fn arrays_run_and_print_as_sky() {
+    let o = run_script(
+        "arrays_basic",
+        "v = [1 m, 2 m, 3 m]\nA = [[1, 2], [3, 4]]\nprint(v)\nprint(A @ [1, 1])\n\
+         print(v[1:] * 2, len(v), identity(2))\nprint(zeros(2))\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(
+        out(&o),
+        "[1 m, 2 m, 3 m]\n[3, 7]\n[4 m, 6 m] 3 [[1, 0], [0, 1]]\n[0, 0]\n"
+    );
+}
+
+/// The numbers in printed output such as `[0.1 m, 0.2 m]`.
+fn numbers(text: &str) -> Vec<f64> {
+    text.split(|c: char| !(c.is_ascii_digit() || "+-.e".contains(c)))
+        .filter_map(|t| t.parse().ok())
+        .collect()
+}
+
+#[test]
+fn spring_system_displacements_in_metres() {
+    // Two springs in series, fixed at the left: K u = f. K is declared
+    // Symmetric (proven from the entries), so u = K⁻¹ f is the general
+    // inverse; the displacements come out in metres.
+    let src = "\
+K: Symmetric Matrix[2, 2] N/m = [[2000 N/m, -1000 N/m], [-1000 N/m, 1000 N/m]]
+f: Vector[2] N = [0 N, 100 N]
+u = K⁻¹ @ f
+print(u)
+print(u[1] / 1 mm)
+";
+    let o = run_script("spring", src);
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "[0.1 m, 0.2 m]\n200\n");
+}
+
+#[test]
+fn positive_definite_stiffness_is_solved_by_cholesky() {
+    // Declaring PositiveDefinite (proven from the entries) makes `K⁻¹ @ f`
+    // a Cholesky solve: `sky check --explain` says so, and `sky run`
+    // honours it.
+    let src = "\
+K: PositiveDefinite Matrix[2, 2] N/m = [[2000 N/m, -1000 N/m], [-1000 N/m, 1000 N/m]]
+f: Vector[2] N = [0 N, 100 N]
+u = K⁻¹ @ f
+print(u)
+";
+    let dir = scratch("spring_pd");
+    let file = dir.join("prog.sky");
+    fs::write(&file, src).unwrap();
+    let explain = Command::new(env!("CARGO_BIN_EXE_sky"))
+        .args(["check", "--explain"])
+        .arg(&file)
+        .current_dir(&dir)
+        .output()
+        .expect("run sky");
+    assert!(
+        err(&explain).contains("rewritten to a Cholesky solve"),
+        "{}",
+        err(&explain)
+    );
+    let o = Command::new(env!("CARGO_BIN_EXE_sky"))
+        .arg("run")
+        .arg(&file)
+        .current_dir(&dir)
+        .output()
+        .expect("run sky");
+    fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(err(&o), "");
+    let u = numbers(&out(&o));
+    assert_eq!(u.len(), 2, "{}", out(&o));
+    assert!(
+        (u[0] - 0.1).abs() < 1e-12 && (u[1] - 0.2).abs() < 1e-12,
+        "{u:?}"
+    );
+    assert!(out(&o).trim_end().ends_with(" m]"), "{}", out(&o));
+}
+
+#[test]
+fn a_dimension_error_inside_a_literal_stops_the_run() {
+    let o = run_script("literal_dim", "print(1)\nv = [1 m, 2 s]\n");
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(out(&o), "", "nothing runs when the check fails");
+    assert!(err(&o).contains("array elements must have the same dimension"));
+}
+
+#[test]
+fn repl_echoes_arrays() {
+    let o = repl("v = [1 m, 2 m]\nv\nv[0]\n[[1, 2], [3, 4]]⁻¹\n");
+    assert_eq!(err(&o), "");
+    let printed = out(&o);
+    let mut lines = printed.lines();
+    assert_eq!(lines.next(), Some("[1 m, 2 m]"));
+    assert_eq!(lines.next(), Some("1 m"));
+    let inv = numbers(lines.next().unwrap());
+    let want = [-2.0, 1.0, 1.5, -0.5];
+    assert_eq!(inv.len(), 4);
+    assert!(
+        inv.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-14),
+        "{inv:?}"
+    );
+}
+
+#[test]
+fn repl_solves_with_a_positive_definite_input_it_was_given_a_value() {
+    let o = repl("K: PositiveDefinite Matrix[2, 2] = [[4, 1], [1, 3]]\nK⁻¹ @ [1, 2]\n");
+    assert_eq!(err(&o), "");
+    let x = numbers(&out(&o));
+    assert!(
+        (x[0] - 1.0 / 11.0).abs() < 1e-15 && (x[1] - 7.0 / 11.0).abs() < 1e-15,
+        "{x:?}"
+    );
 }

@@ -14,7 +14,7 @@ use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::process::ExitCode;
 
 use sky_diag::SourceFile;
-use sky_interp::{run_module, RuntimeEnv, Value};
+use sky_interp::{run_module_with, RuntimeEnv, Value};
 use sky_syntax::MAX_SOURCE_BYTES;
 use sky_types::Env;
 
@@ -121,7 +121,13 @@ fn eval_input(session: &mut Session, src: &str, out: &mut impl Write) {
         _ => return,
     };
     let snapshot = session.values.clone();
-    match run_module(&module, src, &mut session.values, out) {
+    match run_module_with(
+        &module,
+        src,
+        &mut session.values,
+        out,
+        &front.cholesky_solves,
+    ) {
         Ok(value) => {
             session.types = front.env;
             match value {

@@ -196,6 +196,17 @@ pub static CONSTANTS: &[Constant] = &[
         true,
         "the standard acceleration of gravity",
     ),
+    // π is mathematics, not physics, but it is a named dimensionless value and
+    // this table is the one place both preludes (checker and interpreter) read,
+    // so it lives here. `π` is U+03C0, which is NFKC-stable.
+    constant(
+        "π",
+        Some("pi"),
+        Dimension::DIMENSIONLESS,
+        std::f64::consts::PI,
+        true,
+        "the ratio of a circle's circumference to its diameter",
+    ),
 ];
 
 /// Looks a constant up by its Unicode or ASCII spelling (case-sensitive).
@@ -244,6 +255,13 @@ mod tests {
         for not_constant in ["e", "σ", "ℏ", "ε₀", "μ₀", "C", "H", "K_B", "hBar", ""] {
             assert!(lookup_constant(not_constant).is_none(), "{not_constant}");
         }
+    }
+
+    #[test]
+    fn pi_is_a_dimensionless_constant_under_both_spellings() {
+        assert_eq!(lookup_constant("π"), lookup_constant("pi"));
+        assert_eq!(value("pi"), std::f64::consts::PI);
+        assert!(dim("π").is_dimensionless());
     }
 
     #[test]

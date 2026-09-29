@@ -67,6 +67,7 @@
 
 mod analysis;
 mod emit;
+mod math_rules;
 mod rules;
 
 #[cfg(test)]

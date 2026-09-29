@@ -61,6 +61,6 @@ For `x = A⁻¹ b` (op `solve`), never differentiate the algorithm. The adjoints
 
 * Unknown types are rejected with a clear error when the derivative flows through them, never treated dynamically (a dynamic derivative would have no static unit).
 * The derivative of an `if` at its discontinuity is the taken arm's derivative; conditions never contribute.
-* A general power `a ^ e` differentiates in `a` today; the `e` tangent needs `ln`, which arrives with `OpKind::Math`. `rules.rs` holds the rule and the rules for every math function, ready to paste.
+* A general power `a ^ e` differentiates in both `a` and `e` (`r * ln(a) * te`). Every math function has a rule (`math_rules.rs`, table in the header of `rules.rs`); `floor`, `ceil` and `round` have a zero tangent, `abs`, `min` and `max` take the one-sided slope of the arm that runs, and a rule that divides by zero at the edge of a domain (`sqrt` at 0) fails there as the primal does.
 * A call with several dependent arguments calls one derivative per argument. A directional-derivative function (all tangents in one call) would avoid that for recursion and is a later optimization.
 * Arrays are out of scope until the interpreter runs them; the adjoint rules for `matmul`, `transpose` and `solve` go in with array AD.

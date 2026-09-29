@@ -10,7 +10,7 @@ use sky_ir::{
     CmpOp, Function, FunctionBuilder, Module, NumberType, OpKind, RegionId, Repr, Type, ValueId,
 };
 use sky_ir_interp::{call, Value};
-use sky_units::{Dimension, Rational};
+use sky_units::{Dimension, MathFn, Rational};
 
 use crate::{derivative, derivative_functions, differentiate_into, AdError};
 
@@ -155,6 +155,9 @@ fn check(m: &Module, func: &str, wrt: usize, args: &[f64], exact: f64) {
 fn check_with(m: &Module, func: &str, wrt: usize, args: &[f64], exact: f64, fd: bool) {
     let mut m = m.clone();
     let name = differentiate_into(&mut m, func, wrt).expect("differentiates");
+    if let Err(errors) = sky_ir::verify(&m) {
+        panic!("the derivative is ill-typed SIR: {errors:?}");
+    }
     let out = run(&m, &name, args);
     assert_eq!(out.len(), 2);
     let original = run(&m, func, args);
@@ -286,10 +289,193 @@ fn general_pow_with_constant_exponent_value() {
     let r = b.op(OpKind::Pow, &[x, y]);
     let m = module(vec![b.ret(r)]);
     check(&m, "f", 0, &[2.0, 3.5], 3.5 * 2f64.powf(2.5));
-    // wrt the exponent needs ln: a clear error, not a wrong answer.
-    let e = derivative(&m, "f", 1).unwrap_err();
-    assert!(matches!(e, AdError::Unsupported { .. }), "{e}");
-    assert!(e.to_string().contains("ln"), "{e}");
+    // wrt the exponent: r * ln(a).
+    check(&m, "f", 1, &[2.0, 3.5], 2f64.powf(3.5) * 2f64.ln());
+}
+
+#[test]
+fn general_pow_with_both_depending_on_x() {
+    // f = x ^ x: x^x * (ln x + 1).
+    let mut b = B::new("f", vec![num()]);
+    let x = b.param(0);
+    let r = b.op(OpKind::Pow, &[x, x]);
+    let m = module(vec![b.ret(r)]);
+    let at = 1.7f64;
+    check(&m, "f", 0, &[at], at.powf(at) * (at.ln() + 1.0));
+}
+
+// ----- math functions -----
+
+/// `f(x) = op(x)` on a dimensionless parameter.
+fn math1(f: MathFn) -> Module {
+    let mut b = B::new("f", vec![num()]);
+    let x = b.param(0);
+    let r = b.op(OpKind::Math(f), &[x]);
+    module(vec![b.ret(r)])
+}
+
+/// `f(a, b) = op(a, b)` on two dimensionless parameters.
+fn math2(f: MathFn) -> Module {
+    let mut b = B::new("f", vec![num(), num()]);
+    let (x, y) = (b.param(0), b.param(1));
+    let r = b.op(OpKind::Math(f), &[x, y]);
+    module(vec![b.ret(r)])
+}
+
+#[test]
+fn unary_math_matches_the_exact_derivative_and_a_finite_difference() {
+    type Case = (MathFn, f64, fn(f64) -> f64);
+    let cases: [Case; 16] = [
+        (MathFn::Sqrt, 2.5, |x| 0.5 / x.sqrt()),
+        (MathFn::Cbrt, 3.0, |x| 1.0 / (3.0 * x.cbrt().powi(2))),
+        (MathFn::Abs, -1.5, |_| -1.0),
+        (MathFn::Abs, 2.0, |_| 1.0),
+        (MathFn::Exp, 0.7, f64::exp),
+        (MathFn::Log, 2.2, |x| 1.0 / x),
+        (MathFn::Log10, 2.2, |x| 1.0 / (x * std::f64::consts::LN_10)),
+        (MathFn::Log2, 2.2, |x| 1.0 / (x * std::f64::consts::LN_2)),
+        (MathFn::Sin, 0.9, f64::cos),
+        (MathFn::Cos, 0.9, |x| -x.sin()),
+        (MathFn::Tan, 0.4, |x| 1.0 / (x.cos() * x.cos())),
+        (MathFn::Asin, 0.3, |x| 1.0 / (1.0 - x * x).sqrt()),
+        (MathFn::Acos, 0.3, |x| -1.0 / (1.0 - x * x).sqrt()),
+        (MathFn::Atan, 1.3, |x| 1.0 / (1.0 + x * x)),
+        (MathFn::Floor, 2.5, |_| 0.0),
+        (MathFn::Round, 2.4, |_| 0.0),
+    ];
+    for (f, x, exact) in cases {
+        check(&math1(f), "f", 0, &[x], exact(x));
+    }
+    check(&math1(MathFn::Ceil), "f", 0, &[2.5], 0.0);
+}
+
+#[test]
+fn chain_rule_through_math() {
+    // f(x) = sin(x^2) * exp(-x): (2x cos(x^2) - sin(x^2)) e^-x
+    let mut b = B::new("f", vec![num()]);
+    let x = b.param(0);
+    let x2 = b.powc(x, 2, 1);
+    let s = b.op(OpKind::Math(MathFn::Sin), &[x2]);
+    let nx = b.op(OpKind::Neg, &[x]);
+    let e = b.op(OpKind::Math(MathFn::Exp), &[nx]);
+    let r = b.mul(s, e);
+    let m = module(vec![b.ret(r)]);
+    let at = 0.8f64;
+    let exact = (2.0 * at * (at * at).cos() - (at * at).sin()) * (-at).exp();
+    check(&m, "f", 0, &[at], exact);
+}
+
+#[test]
+fn binary_math_matches_the_exact_derivative_and_a_finite_difference() {
+    let (y, x) = (1.2f64, 0.7f64);
+    let d = x * x + y * y;
+    check(&math2(MathFn::Atan2), "f", 0, &[y, x], x / d);
+    check(&math2(MathFn::Atan2), "f", 1, &[y, x], -y / d);
+    check(&math2(MathFn::Hypot), "f", 0, &[3.0, 4.0], 3.0 / 5.0);
+    check(&math2(MathFn::Hypot), "f", 1, &[3.0, 4.0], 4.0 / 5.0);
+    // min and max: the operand that is chosen.
+    check(&math2(MathFn::Min), "f", 0, &[1.0, 2.0], 1.0);
+    check(&math2(MathFn::Min), "f", 1, &[1.0, 2.0], 0.0);
+    check(&math2(MathFn::Min), "f", 0, &[3.0, 2.0], 0.0);
+    check(&math2(MathFn::Min), "f", 1, &[3.0, 2.0], 1.0);
+    check(&math2(MathFn::Max), "f", 0, &[1.0, 2.0], 0.0);
+    check(&math2(MathFn::Max), "f", 1, &[1.0, 2.0], 1.0);
+    check(&math2(MathFn::Max), "f", 0, &[3.0, 2.0], 1.0);
+    check(&math2(MathFn::Max), "f", 1, &[3.0, 2.0], 0.0);
+}
+
+#[test]
+fn binary_math_with_both_operands_depending_on_x() {
+    // atan2(x, 2x + 1) and hypot(x, 2x) = sqrt(5) |x|.
+    let mut b = B::new("f", vec![num()]);
+    let x = b.param(0);
+    let two = b.c(2.0);
+    let one = b.c(1.0);
+    let t = b.mul(two, x);
+    let u = b.add(t, one);
+    let r = b.op(OpKind::Math(MathFn::Atan2), &[x, u]);
+    let m = module(vec![b.ret(r)]);
+    let at = 0.9f64;
+    let (dy, dx) = (1.0, 2.0);
+    let (yy, xx) = (at, 2.0 * at + 1.0);
+    check(&m, "f", 0, &[at], (xx * dy - yy * dx) / (xx * xx + yy * yy));
+
+    let mut b = B::new("g", vec![num()]);
+    let x = b.param(0);
+    let two = b.c(2.0);
+    let t = b.mul(two, x);
+    let r = b.op(OpKind::Math(MathFn::Hypot), &[x, t]);
+    let m = module(vec![b.ret(r)]);
+    check(&m, "g", 0, &[-1.5], -(5f64).sqrt());
+}
+
+#[test]
+fn math_tangents_have_the_right_dimension() {
+    let len = dimty(Dimension::LENGTH);
+    let area = dimty(Dimension::LENGTH.pow_int(2).unwrap());
+    let per_len = dimty(Dimension::LENGTH.inverse().unwrap());
+    let dimless = num();
+    // (function, parameter types, result type, tangent wrt parameter 0)
+    let cases: Vec<(MathFn, Vec<Type>, Type, Type)> = vec![
+        // sqrt(area) is a length; d/d(area) is 1/length.
+        (
+            MathFn::Sqrt,
+            vec![area.clone()],
+            len.clone(),
+            per_len.clone(),
+        ),
+        // abs(length) is a length; its slope is dimensionless.
+        (MathFn::Abs, vec![len.clone()], len.clone(), dimless.clone()),
+        // hypot(a, b): both lengths, a length; slope dimensionless.
+        (
+            MathFn::Hypot,
+            vec![len.clone(), len.clone()],
+            len.clone(),
+            dimless.clone(),
+        ),
+        // min(a, b): slope dimensionless.
+        (
+            MathFn::Min,
+            vec![len.clone(), len.clone()],
+            len.clone(),
+            dimless.clone(),
+        ),
+        // atan2(y, x): dimensionless result, slope wrt a length is 1/length.
+        (
+            MathFn::Atan2,
+            vec![len.clone(), len.clone()],
+            dimless.clone(),
+            per_len.clone(),
+        ),
+    ];
+    for (f, params, result, tangent) in cases {
+        let mut b = FunctionBuilder::new("f", params.clone(), vec![result.clone()], sp());
+        let args: Vec<ValueId> = b.params().to_vec();
+        let r = b.op1(OpKind::Math(f), args, result, sp());
+        b.op(OpKind::Return, vec![r], vec![], sp());
+        let m = module(vec![b.finish()]);
+        let d = derivative(&m, "f", 0).expect("differentiates");
+        let got = number_type_of(&d.results[1]).dim;
+        let want = number_type_of(&tangent).dim;
+        assert_eq!(got, want, "{f:?}");
+        let mut full = m.clone();
+        full.functions.push(d);
+        if let Err(errors) = sky_ir::verify(&full) {
+            panic!("{f:?}: ill-typed derivative: {errors:?}");
+        }
+    }
+}
+
+#[test]
+fn math_domain_edges_fail_like_the_primal() {
+    // d sqrt(x) at 0 divides by zero; asin at 1 too.
+    for (f, x) in [(MathFn::Sqrt, 0.0), (MathFn::Asin, 1.0), (MathFn::Log, 0.0)] {
+        let mut m = math1(f);
+        let name = differentiate_into(&mut m, "f", 0).unwrap();
+        let args = vec![Value::scalar(x)];
+        let e = sky_ast::with_deep_stack(|| call(&m, &name, args, &mut Vec::new()));
+        assert!(e.is_err(), "{f:?} at {x}");
+    }
 }
 
 // ----- control flow -----

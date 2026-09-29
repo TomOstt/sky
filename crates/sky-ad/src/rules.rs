@@ -15,43 +15,34 @@
 //! | `a * b` | `ta*b + a*tb` |
 //! | `a / b` | `(ta - r*tb) / b` |
 //! | `a ^ e` (constant `e`) | `(e * a^(e-1)) * ta` |
-//! | `a ^ e` (computed `e`) | `(e * a^(e-1)) * ta`; `tb` needs `ln` |
+//! | `a ^ e` (computed `e`) | `(e * a^(e-1)) * ta + (r * ln a) * te` |
 //! | `a⁻¹` | `-(r*r) * ta` |
 //! | comparisons, `not`, constants | none (Bool or constant) |
 //!
-//! # Rules ready to paste for `OpKind::Math`
+//! # Math functions
 //!
-//! The e-graph work adds `OpKind::Math(f)` (one operand `a`, one result
-//! `r = f(a)`). Each function is one more arm of [`Diff::tangent_rule`]
-//! that builds `d = f'(a)` and returns `d * ta` (or a cheaper form below).
-//! `a` is dimensionless for everything except `sqrt` and `abs`, so `tr` has
-//! the dimension `1/dim(x) * dim(a)`, which is `tangent_ty(r)` when
-//! `dim(r) = 1`; for `sqrt` it is `dim(a)^(1/2) / dim(x)`, again `tangent_ty(r)`.
+//! `OpKind::Math(f)` has one arm here and its rules in `math_rules.rs`. For
+//! `r = f(a)` with tangent `ta`:
 //!
-//! | `f` | `tr` | notes |
-//! |---|---|---|
-//! | `sqrt` | `ta / (2 * r)` | `ta` has `dim(a)/dim(x)`, `r` has `dim(a)^½`, so the quotient is `dim(r)/dim(x)`; fails at `a = 0` (division by zero), as `a^½` does |
-//! | `exp` | `r * ta` | reuses the result |
-//! | `ln` | `ta / a` | `a` dimensionless |
-//! | `sin` | `cos(a) * ta` | angle in radians, dimensionless |
-//! | `cos` | `-(sin(a)) * ta` | |
-//! | `tan` | `(1 + r*r) * ta` | |
-//! | `asin` | `ta / sqrt(1 - a*a)` | |
-//! | `acos` | `-(ta / sqrt(1 - a*a))` | |
-//! | `atan` | `ta / (1 + a*a)` | |
-//! | `sinh` | `cosh(a) * ta` | |
-//! | `cosh` | `sinh(a) * ta` | |
-//! | `tanh` | `(1 - r*r) * ta` | |
-//! | `abs` | `sign(a) * ta` | `sign` is `if a < 0 { -1 } else { 1 }`; at 0 the right-hand slope is returned |
+//! | `f` | `tr` |
+//! |---|---|
+//! | `sqrt` | `ta / (2r)` |
+//! | `cbrt` | `ta / (3r²)` |
+//! | `abs` | `sign(a) * ta` (`sign(0) = 1`) |
+//! | `exp` | `r * ta` |
+//! | `log`, `log10`, `log2` | `ta / a`, `ta / (a ln 10)`, `ta / (a ln 2)` |
+//! | `sin`, `cos` | `cos(a) * ta`, `-sin(a) * ta` |
+//! | `tan` | `(1 + r²) * ta` |
+//! | `asin`, `acos` | `ta / sqrt(1 - a²)`, its negative |
+//! | `atan` | `ta / (1 + a²)` |
+//! | `atan2(y, x)` | `(x*ty - y*tx) / (x² + y²)` |
+//! | `hypot(a, b)` | `(a*ta + b*tb) / r` |
+//! | `min`, `max` | the tangent of the operand chosen (first on a tie) |
+//! | `floor`, `ceil`, `round` | none (zero) |
 //!
-//! Two-operand functions (`atan2(y, x)`, `hypot`, `min`, `max`) follow the
-//! product rule shape: `atan2`: `(x*ty - y*tx) / (x*x + y*y)`; `hypot`:
-//! `(x*tx + y*ty) / r`; `min`/`max`: the tangent of the operand selected by
-//! the comparison, like `if`.
-//!
-//! The general power `a ^ e` with a tangent for the exponent adds
-//! `r * ln(a) * te` to the rule below (`ln` needs `a > 0`, and `ln(a)` is
-//! dimensionless because a computed exponent needs a dimensionless base).
+//! The general power `a ^ e` adds `r * ln(a) * te` when the exponent has a
+//! tangent (`ln` needs `a > 0`, and `ln(a)` is dimensionless because a
+//! computed exponent needs a dimensionless base).
 
 use sky_ir::{OpData, OpKind, ValueId};
 use sky_units::Rational;
@@ -166,25 +157,33 @@ impl Diff<'_> {
                         "a computed exponent needs a dimensionless base and exponent",
                     ));
                 }
-                if self.tan_of(e).is_some() {
-                    return Err(self.unsupported(
-                        "pow",
-                        "the exponent depends on the differentiated parameter, which needs `ln` \
-                         (rule: add `r * ln(a) * te`, see rules.rs)",
-                    ));
-                }
-                let Some(ta) = self.tan_of(a) else {
+                let (ta, te) = (self.tan_of(a), self.tan_of(e));
+                if ta.is_none() && te.is_none() {
                     return Ok(None);
-                };
-                // tr = e * a^(e-1) * ta, all dimensionless but ta.
-                let (pa, pe) = (self.primal(a)?, self.primal(e)?);
+                }
+                // r = a^e: tr = e * a^(e-1) * ta + r * ln(a) * te, all
+                // dimensionless but the tangents.
+                let (pa, pe, pr) = (self.primal(a)?, self.primal(e)?, self.primal(r)?);
                 let dimless = number_type(sky_units::Dimension::DIMENSIONLESS, self.repr_of(r));
-                let one = self.konst(1.0, dimless.clone(), span);
-                let em1 = self.emit(OpKind::Sub, vec![pe, one], dimless.clone(), span);
-                let pw = self.emit(OpKind::Pow, vec![pa, em1], dimless.clone(), span);
-                let scale = self.emit(OpKind::Mul, vec![pe, pw], dimless, span);
                 let ty = self.tangent_ty(r)?;
-                Ok(Some(self.emit(OpKind::Mul, vec![scale, ta], ty, span)))
+                let base_term = ta.map(|ta| {
+                    let one = self.konst(1.0, dimless.clone(), span);
+                    let em1 = self.emit(OpKind::Sub, vec![pe, one], dimless.clone(), span);
+                    let pw = self.emit(OpKind::Pow, vec![pa, em1], dimless.clone(), span);
+                    let scale = self.emit(OpKind::Mul, vec![pe, pw], dimless.clone(), span);
+                    self.emit(OpKind::Mul, vec![scale, ta], ty.clone(), span)
+                });
+                let exp_term = te.map(|te| {
+                    let ln = OpKind::Math(sky_units::MathFn::Log);
+                    let ln_a = self.emit(ln, vec![pa], dimless.clone(), span);
+                    let scale = self.emit(OpKind::Mul, vec![pr, ln_a], dimless.clone(), span);
+                    self.emit(OpKind::Mul, vec![scale, te], ty.clone(), span)
+                });
+                Ok(match (base_term, exp_term) {
+                    (Some(l), Some(rt)) => Some(self.emit(OpKind::Add, vec![l, rt], ty, span)),
+                    (Some(t), None) | (None, Some(t)) => Some(t),
+                    (None, None) => None,
+                })
             }
             OpKind::Inverse => {
                 // r = 1/a: tr = -(r*r) * ta. r*r has dim(r)^2, times
@@ -213,14 +212,15 @@ impl Diff<'_> {
                 op.kind.mnemonic(),
                 "array differentiation is not supported yet",
             )),
-            // New operations (`OpKind::Math`, ...) get an arm above.
+            OpKind::Math(f) => self.math_tangent(*f, op, r),
+            // New operations get an arm above.
             other => {
                 Err(self.unsupported(other.mnemonic(), "no derivative rule for this operation"))
             }
         }
     }
 
-    fn operands<const N: usize>(&self, op: &OpData) -> Res<[ValueId; N]> {
+    pub(crate) fn operands<const N: usize>(&self, op: &OpData) -> Res<[ValueId; N]> {
         op.operands[..].try_into().map_err(|_| {
             self.malformed(&format!(
                 "`{}` takes {N} operands, found {}",

@@ -1,0 +1,5 @@
+tests/ui/lexer/err_invalid_escape.sky:1:17: error: unknown escape `\q`
+  |
+1 | path = "C:\\temp\q"
+  |                 ^^
+  = help: valid escapes are \\ \" \n \t \r \0

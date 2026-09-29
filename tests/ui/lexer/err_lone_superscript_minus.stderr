@@ -1,0 +1,5 @@
+tests/ui/lexer/err_lone_superscript_minus.sky:1:6: error: unexpected character '⁻' (U+207B)
+  |
+1 | x = A⁻ @ b
+  |      ^
+  = help: the inverse operator is the glyph `⁻¹` (or the function `inv`)

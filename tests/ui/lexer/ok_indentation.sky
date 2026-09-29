@@ -1,0 +1,18 @@
+def classify(x):
+    if x > 0:
+        return 1
+    else:
+        if x == 0:
+            return 0
+
+        # blank and comment-only lines do not change indentation
+# even at column 0
+                # or very deep
+        return 0 - 1
+
+for i in range(3):
+    total = total + i
+equation spring:
+    field u
+    solve u
+y = classify(2)

@@ -1,0 +1,106 @@
+//! Golden tests: runs `sky check` on every `tests/ui/**/*.sky` file and
+//! compares its stderr, byte for byte, with the `.stderr` file next to it
+//! (an empty `.stderr` means the file must check cleanly).
+//!
+//! The exit status must be 1 if the expected output contains an error and
+//! 0 otherwise. Paths are passed relative to the workspace root with `/`
+//! separators, so goldens read `tests/ui/lexer/foo.sky:1:1: ...`.
+//!
+//! To regenerate expectations after an intended change, run
+//! `SKY_BLESS=1 cargo test -p sky-cli --test ui` and review the diff.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("crates/sky-cli is two levels below the workspace root")
+        .to_path_buf()
+}
+
+fn collect_sky_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let mut entries: Vec<_> = fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", dir.display()))
+        .map(|e| e.expect("dir entry").path())
+        .collect();
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            collect_sky_files(&path, out);
+        } else if path.extension().is_some_and(|x| x == "sky") {
+            out.push(path);
+        } else if path.extension().is_some_and(|x| x == "stderr")
+            && !path.with_extension("sky").exists()
+        {
+            panic!("{} has no matching .sky file", path.display());
+        }
+    }
+}
+
+/// True if any diagnostic header in `stderr` has severity `error`.
+fn has_error(stderr: &str) -> bool {
+    stderr.lines().any(|l| {
+        !l.starts_with(' ')
+            && l.splitn(4, ':')
+                .nth(3)
+                .is_some_and(|rest| rest.starts_with(" error:"))
+    })
+}
+
+#[test]
+fn ui() {
+    let root = workspace_root();
+    let mut files = Vec::new();
+    collect_sky_files(&root.join("tests/ui"), &mut files);
+    assert!(!files.is_empty(), "no .sky files under tests/ui");
+
+    let bless = std::env::var_os("SKY_BLESS").is_some();
+    let mut failures = Vec::new();
+    for sky in &files {
+        let rel = sky.strip_prefix(&root).expect("under root");
+        let rel_arg: Vec<_> = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect();
+        let rel_arg = rel_arg.join("/");
+        let output = Command::new(env!("CARGO_BIN_EXE_sky"))
+            .arg("check")
+            .arg(&rel_arg)
+            .current_dir(&root)
+            .output()
+            .expect("run sky");
+        let actual = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+        let expected_path = sky.with_extension("stderr");
+
+        if bless {
+            fs::write(&expected_path, &actual).expect("write .stderr");
+            continue;
+        }
+        let Ok(expected) = fs::read_to_string(&expected_path) else {
+            failures.push(format!("{rel_arg}: missing {}", expected_path.display()));
+            continue;
+        };
+        if actual != expected {
+            failures.push(format!(
+                "{rel_arg}: stderr mismatch\n--- expected\n{expected}--- actual\n{actual}---"
+            ));
+        }
+        let want_code = if has_error(&expected) { 1 } else { 0 };
+        if output.status.code() != Some(want_code) {
+            failures.push(format!(
+                "{rel_arg}: exit status {:?}, expected {want_code}",
+                output.status.code()
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} ui tests failed:\n\n{}",
+        failures.len(),
+        files.len(),
+        failures.join("\n\n")
+    );
+}

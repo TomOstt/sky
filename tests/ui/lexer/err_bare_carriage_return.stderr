@@ -1,0 +1,5 @@
+tests/ui/lexer/err_bare_carriage_return.sky:1:6: error: carriage return (U+000D) not followed by a line feed
+  |
+1 | x = 1?y = 2
+  |      ^
+  = help: use `\n` or `\r\n` line endings

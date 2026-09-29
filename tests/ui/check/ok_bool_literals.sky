@@ -1,4 +1,3 @@
-# `true`/`false` are literal keywords and combine with `not`/`and`/`or`.
+# `true`/`false` are literal keywords and combine with `not`.
 done = false
-done = not done
-ready = true and not done or false
+x = not done

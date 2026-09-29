@@ -45,7 +45,6 @@ fn ok_only_when_there_are_no_errors() {
         "err_depth_257",
         "err_lexer_error_before_parse",
         "err_unit_after_bool",
-        "err_while_not_supported_yet",
     ] {
         let rel = format!("tests/ui/check/{f}.sky");
         let out = sky_check(&rel);

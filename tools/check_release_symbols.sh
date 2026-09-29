@@ -2,7 +2,7 @@
 # Fails if a test-only name (tools/release-symbol-denylist.txt) reaches a
 # release artifact.
 #
-# Builds sky-project and sky-cli in release mode, then scans every workspace
+# Builds every workspace crate in release mode, then scans every workspace
 # artifact that build produced: each rlib, each rlib's embedded lib.rmeta,
 # each standalone .rmeta, and the sky binary, with `strings -a` and `nm -a`.
 # Any deny-listed name found anywhere is an error. A control check requires
@@ -36,7 +36,7 @@ trap 'rm -rf "$tmp"' EXIT
 # Build first, on its own, so a failed build stops the script here (inside a
 # process substitution its exit status would be lost).
 build_json="$tmp/build.json"
-if ! cargo build --release --locked -p sky-project -p sky-cli --message-format=json-render-diagnostics >"$build_json"; then
+if ! cargo build --release --locked --workspace --message-format=json-render-diagnostics >"$build_json"; then
     echo "error: the release build failed" >&2
     exit 2
 fi

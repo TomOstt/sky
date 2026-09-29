@@ -547,7 +547,7 @@ impl<'s> Checker<'s> {
     /// `x` keeps its type either way.
     fn compound_assign(&mut self, id: &Ident, op: CompoundOp, op_span: Span, value: &Expr) {
         let name_expr = Expr {
-            kind: ExprKind::Name(id.clone()),
+            kind: ExprKind::Name(*id),
             span: id.span,
         };
         // Silent lookup: typing `whole` below reports an undefined name once.

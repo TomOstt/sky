@@ -18,8 +18,14 @@ permissions:
 jobs:
   # Third-party actions below are pinned to full commit SHAs so a moved tag
   # can't change what runs in CI. The comment on each line is the tag it was.
+  # macOS too: sky-project's Unix-only paths (openat, fstatat, ownership
+  # checks) behave differently there, and it is a primary developer platform.
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -43,7 +49,7 @@ jobs:
       - run: python3 crates/sky-diag/tools/gen_display_unsafe.py --check
 
   # Test-only names (hooks, constructors) must never reach release builds.
-  # The script builds sky-project and sky-cli in release mode and scans the
+  # The script builds every workspace crate in release mode and scans the
   # rlibs, their metadata, and the sky binary with strings and nm (binutils
   # ships with the runner image) for every name in
   # tools/release-symbol-denylist.txt.
@@ -82,7 +88,7 @@ jobs:
         with:
           toolchain: 1.85.1 # keep in sync with rust-toolchain.toml
           components: rustfmt, clippy
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --locked --all-targets -- -D warnings
       # Stable 1.85.1 is enough to lint the fuzz crate; only `cargo fuzz` needs nightly.
       - run: cargo clippy --manifest-path fuzz/Cargo.toml --locked --all-targets -- -D warnings
 

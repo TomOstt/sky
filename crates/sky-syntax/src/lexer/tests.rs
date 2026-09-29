@@ -346,12 +346,12 @@ fn brackets_must_match() {
 #[test]
 fn every_operator_ascii_forms() {
     assert_eq!(
-        texts("( ) [ ] , : = . -> + - * / ^ @ +- == != < <= > >=\n"),
+        texts("( ) [ ] , : = . -> + - * / ^ @ == != < <= > >=\n"),
         [
             (LParen, "("), (RParen, ")"), (LBracket, "["), (RBracket, "]"),
             (Comma, ","), (Colon, ":"), (Assign, "="), (Dot, "."), (Arrow, "->"),
             (Plus, "+"), (Minus, "-"), (Star, "*"), (Slash, "/"), (Caret, "^"),
-            (At, "@"), (PlusMinus, "+-"), (Eq, "=="), (Ne, "!="), (Lt, "<"),
+            (At, "@"), (Eq, "=="), (Ne, "!="), (Lt, "<"),
             (Le, "<="), (Gt, ">"), (Ge, ">="), (Newline, "\n"), (Eof, ""),
         ]
     );
@@ -360,9 +360,9 @@ fn every_operator_ascii_forms() {
 #[test]
 fn every_operator_glyph_forms() {
     assert_eq!(
-        texts("± ⁻¹ ∂ ∇ ≤ ≥ ≠\n"),
+        texts("⁻¹ ∂ ∇ ≤ ≥ ≠\n"),
         [
-            (PlusMinus, "±"), (Inverse, "⁻¹"), (Partial, "∂"), (Nabla, "∇"),
+            (Inverse, "⁻¹"), (Partial, "∂"), (Nabla, "∇"),
             (Le, "≤"), (Ge, "≥"), (Ne, "≠"), (Newline, "\n"), (Eof, ""),
         ]
     );
@@ -374,7 +374,7 @@ fn operators_without_spaces_use_longest_match() {
     assert_eq!(line("a=-b\n"), [Ident, Assign, Minus, Ident]);
     assert_eq!(line("a<=b>=c\n"), [Ident, Le, Ident, Ge, Ident]);
     assert_eq!(line("f(x)->y\n"), [Ident, LParen, Ident, RParen, Arrow, Ident]);
-    assert_eq!(line("a+-b\n"), [Ident, PlusMinus, Ident]);
+    assert_eq!(line("a+-b\n"), [Ident, Plus, Minus, Ident]);
     assert_eq!(line("a+ -b\n"), [Ident, Plus, Minus, Ident]);
     assert_eq!(line("a- >b\n"), [Ident, Minus, Gt, Ident]);
     assert_eq!(line("a**b\n"), [Ident, Star, Star, Ident]);
@@ -386,18 +386,31 @@ fn glyph_comparisons_map_to_ascii_kinds() {
     assert_eq!(line("a ≤ b"), line("a <= b"));
     assert_eq!(line("a ≥ b"), line("a >= b"));
     assert_eq!(line("a ≠ b"), line("a != b"));
-    assert_eq!(line("a ± b"), line("a +- b"));
+}
+
+/// Sky v0.1 has no uncertainty: `+-` is `a + (-b)` as in Python, and the
+/// glyph `±` is rejected with help rather than lexed as an operator.
+#[test]
+fn plus_minus_is_plus_then_minus_and_glyph_is_rejected() {
+    assert_eq!(
+        texts("a+-b\n")[..4],
+        [(Ident, "a"), (Plus, "+"), (Minus, "-"), (Ident, "b")]
+    );
+    assert_eq!(line("a+-b\n"), line("a + -b\n"));
+    assert_eq!(line("5.31 +- 0.02 kg\n"), [Float, Plus, Minus, Float, Ident]);
+    assert_eq!(line("a+--b\n"), [Ident, Plus, Minus, Minus, Ident]);
+    assert_eq!(line("f(x)+->y\n"), [Ident, LParen, Ident, RParen, Plus, Arrow, Ident]);
+
+    let e = assert_err("m = 5.31 ± 0.02 kg\n", LexErrorKind::UnexpectedChar, "±");
+    assert_eq!(e.diagnostic.message, "unexpected character '±' (U+00B1)");
+    assert_eq!(e.diagnostic.help, ["uncertainty (±) is not supported in v0.1"]);
+    assert_err("a±b\n", LexErrorKind::UnexpectedChar, "±");
 }
 
 #[test]
 fn spec_examples() {
     assert_eq!(line("d = 3\n"), [Ident, Assign, Int]);
     assert_eq!(texts("10 km\n")[..2], [(Int, "10"), (Ident, "km")]);
-    assert_eq!(
-        texts("5.31 ± 0.02 kg\n")[..4],
-        [(Float, "5.31"), (PlusMinus, "±"), (Float, "0.02"), (Ident, "kg")]
-    );
-    assert_eq!(line("5.31 +- 0.02 kg\n"), [Float, PlusMinus, Float, Ident]);
     assert_eq!(
         texts("x = A⁻¹ @ b\n")[..6],
         [(Ident, "x"), (Assign, "="), (Ident, "A"), (Inverse, "⁻¹"), (At, "@"), (Ident, "b")]
@@ -646,7 +659,7 @@ def position(x0, v, t) -> Length:
     return x0 + v * t   # trailing
 
 def energy(m, ψ):
-    E = ħ * ω ± 0.1 eV
+    E = ħ * ω + 0.1 eV
     if E ≥ 0 J:
         M = [[1.0, 2.0],
              [3.0, 4.0]]

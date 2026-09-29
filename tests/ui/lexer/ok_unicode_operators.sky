@@ -5,8 +5,6 @@ x = A⁻¹ @ b
 x = inv(A) @ b
 g = ∇φ
 g = grad(φ)
-m = 5.31 ± 0.02 kg
-m = 5.31 +- 0.02 kg
 ok = a ≤ b
 ok = a <= b
 ok = a ≥ b

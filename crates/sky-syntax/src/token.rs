@@ -58,8 +58,6 @@ pub enum TokenKind {
     Caret,
     /// `@` (matrix product)
     At,
-    /// `±` or ASCII `+-`
-    PlusMinus,
     /// The glyph `⁻¹` (ASCII spelling is the stdlib function `inv`).
     Inverse,
     /// The glyph `∂` (ASCII spelling is the stdlib function `d`).

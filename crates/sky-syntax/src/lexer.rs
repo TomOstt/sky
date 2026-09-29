@@ -32,7 +32,9 @@
 //!   whose indentation uses tabs where the enclosing block uses spaces (or
 //!   the reverse);
 //! - a dedent to a column that matches no enclosing block;
-//! - unterminated strings, unknown escapes, unmatched or mismatched brackets.
+//! - unterminated strings, unknown escapes, unmatched or mismatched brackets;
+//! - the glyph `±`: uncertainty is not part of Sky v0.1. The ASCII sequence
+//!   `+-` is simply `Plus` then `Minus`, so `a+-b` is `a + (-b)` as in Python.
 
 use std::collections::HashSet;
 
@@ -198,6 +200,7 @@ fn unexpected_char_help(c: char) -> Option<&'static str> {
         '\u{2212}' => "for subtraction, use ASCII `-`",
         '×' | '\u{22C5}' | '·' => "for multiplication, use `*` (or `@` for matrix product)",
         '÷' => "for division, use `/`",
+        '±' => "uncertainty (±) is not supported in v0.1",
         '⁻' => "the inverse operator is the glyph `⁻¹` (or the function `inv`)",
         '!' => "for \"not equal\", use `!=` or `≠`",
         '\'' | '‘' | '’' | '“' | '”' => "strings use ASCII double quotes: \"...\"",
@@ -351,11 +354,9 @@ impl<'a> Lexer<'a> {
                 '<' => TokenKind::Lt,
                 '>' if self.eat('=') => TokenKind::Ge,
                 '>' => TokenKind::Gt,
-                '+' if self.eat('-') => TokenKind::PlusMinus,
                 '+' => TokenKind::Plus,
                 '-' if self.eat('>') => TokenKind::Arrow,
                 '-' => TokenKind::Minus,
-                '±' => TokenKind::PlusMinus,
                 '≤' => TokenKind::Le,
                 '≥' => TokenKind::Ge,
                 '≠' => TokenKind::Ne,

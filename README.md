@@ -6,7 +6,7 @@ See `spec/v0.1.md` for the v0.1 scope.
 
 ## Status
 
-`sky check` lexes, parses and type-checks a file, and reports every error with source spans. It checks units (with SI prefixes and physical constants), symbolic tensor shapes, and matrix properties, through functions, `if` and `while`. `sky run` runs a file that checks cleanly, and `sky repl` is an interactive session; both print values in SI units.
+`sky check` lexes, parses and type-checks a file, and reports every error with source spans. It checks units (with SI prefixes and physical constants), symbolic tensor shapes, and matrix properties, through functions, `if` and `while`. `sky run` runs a file that checks cleanly, and `sky repl` is an interactive session; both print values in SI units. Vectors and matrices are written as literals (`[1 m, 2 m]`, `[[1, 2], [3, 4]]`), indexed and sliced, multiplied with `@`, inverted with `⁻¹`, and printed as Sky.
 
 ```sky
 def kinetic(m: kg, v: m/s) -> J:
@@ -16,9 +16,10 @@ print(kinetic(2 kg, 3 m/s))      # 9 J
 E = 1 g * c^2                    # c, h, ħ, k_B, G, ... are predefined
 y = 3 m + 2 s                    # error: cannot add length and time
 
-K: PositiveDefinite Matrix[N, N] N/m   # arrays are checked, not run yet
-f: Vector[3] N
+K: PositiveDefinite Matrix[2, 2] N/m = [[2000 N/m, -1000 N/m], [-1000 N/m, 1000 N/m]]
+f: Vector[2] N = [0 N, 100 N]
 u = K⁻¹ @ f                      # --explain: rewritten to a Cholesky solve
+print(u)                         # about [0.1 m, 0.2 m]
 ```
 
 ```
@@ -45,7 +46,8 @@ Exit status: `0` ok; `1` diagnostics with at least one error (including a refuse
 
 Not there yet:
 - `for` loops and `import`
-- arrays at run time (the interpreter runs scalars, Bools, strings and functions; the checker already handles vectors, matrices and tensors)
+- transpose (`Aᵀ`), rank-3 tensor literals, negative indices, and array writes (arrays are immutable)
+- inputs: a declaration without a value (`K: PositiveDefinite Matrix[N, N]`) is checked but has nothing to read it from at run time
 - multi-line input in the REPL
 - everything in [`ROADMAP.md`](ROADMAP.md) beyond v0.1
 

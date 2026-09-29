@@ -1,0 +1,3 @@
+(= x true)
+(= y (not false))
+(= z (or true (paren (+ (unit 3 m) (unit 2 s)))))

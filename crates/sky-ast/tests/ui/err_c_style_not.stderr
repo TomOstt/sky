@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_c_style_not.sky:2:6: error: unexpected character '!' (U+0021)
+  |
+2 | ok = !a
+  |      ^
+  = help: for logical negation, use `not`; for "not equal", use `!=` or `≠`

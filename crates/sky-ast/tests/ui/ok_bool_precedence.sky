@@ -1,0 +1,13 @@
+# `and`, `or`, `not`, Python-style: `or` < `and` < `not` < comparisons.
+p = not a < b
+q = a < b and b < c
+r = not not x
+s = a and b or c
+t = a or b and c
+u = a and b and c
+v = a or b or c
+w = not a and b or not c
+y = not (a and b)
+z = f(not a, b or c)
+k = x.and or x.not
+m = -(not x)

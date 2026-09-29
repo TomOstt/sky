@@ -4,20 +4,36 @@
 //!
 //! | level | operators                      | assoc |
 //! |-------|--------------------------------|-------|
-//! | 1     | `== != < <= > >=`              | none: `a < b < c` is an error |
-//! | 2     | `+ -`                          | left  |
-//! | 3     | `* / @`                        | left  |
-//! | 4     | prefix `- + ∂ ∇`               | prefix |
-//! | 5     | `^`                            | right; its right operand may be prefix (`2^-1`) |
-//! | 6     | postfix `⁻¹`, call, index, `.` | postfix (tightest) |
+//! | 1     | `or`                           | left (one flat `BoolOp` node per run) |
+//! | 2     | `and`                          | left (one flat `BoolOp` node per run) |
+//! | 3     | prefix `not`                   | prefix; not allowed as an operand of a tighter operator (`-not x`) |
+//! | 4     | `== != < <= > >=`              | none: `a < b < c` is an error |
+//! | 5     | `+ -`                          | left  |
+//! | 6     | `* / @`                        | left  |
+//! | 7     | prefix `- + ∂ ∇`               | prefix |
+//! | 8     | `^`                            | right; its right operand may be prefix (`2^-1`) |
+//! | 9     | postfix `⁻¹`, call, index, `.` | postfix (tightest) |
 //!
 //! Infix entries are `(left_bp, right_bp)`. Left-associative operators use
 //! `right = left + 1`; right-associative `^` uses `right = left - 1`.
 //! `-x^2` is `-(x^2)` because `^`'s left bp (51) beats prefix bp (40).
 //! Non-associativity of comparisons is enforced by the parser, not the table.
+//! `not`'s operand is parsed at bp 7, so it takes whole comparisons but
+//! stops at `and`/`or`.
 
-use crate::ast::{BinaryOp, UnaryOp};
-use sky_syntax::TokenKind;
+use crate::ast::{BinaryOp, BoolOp, UnaryOp};
+use sky_syntax::{Kw, TokenKind};
+
+/// `and` and `or`, parsed as flat runs (see `ExprKind::BoolOp`).
+pub const BOOL: &[(TokenKind, BoolOp, u8, u8)] = &[
+    (TokenKind::Keyword(Kw::Or), BoolOp::Or, 2, 3),
+    (TokenKind::Keyword(Kw::And), BoolOp::And, 4, 5),
+];
+
+/// Binding power of prefix `not`: looser than comparisons (10), tighter
+/// than `and` (4). An operand position that requires more (e.g. after `-`
+/// or `+`) can't start with `not`.
+pub const NOT_BP: u8 = 7;
 
 pub const INFIX: &[(TokenKind, BinaryOp, u8, u8)] = &[
     (TokenKind::Eq, BinaryOp::Eq, 10, 11),
@@ -39,6 +55,7 @@ pub const PREFIX: &[(TokenKind, UnaryOp, u8)] = &[
     (TokenKind::Plus, UnaryOp::Pos, 40),
     (TokenKind::Partial, UnaryOp::Partial, 40),
     (TokenKind::Nabla, UnaryOp::Nabla, 40),
+    (TokenKind::Keyword(Kw::Not), UnaryOp::Not, NOT_BP),
 ];
 
 /// Binding power of every postfix form: `⁻¹`, `(`, `[`, `.`.
@@ -47,6 +64,12 @@ pub const POSTFIX_BP: u8 = 60;
 pub fn infix_binding_power(kind: TokenKind) -> Option<(BinaryOp, u8, u8)> {
     INFIX
         .iter()
+        .find(|entry| entry.0 == kind)
+        .map(|&(_, op, l, r)| (op, l, r))
+}
+
+pub fn bool_binding_power(kind: TokenKind) -> Option<(BoolOp, u8, u8)> {
+    BOOL.iter()
         .find(|entry| entry.0 == kind)
         .map(|&(_, op, l, r)| (op, l, r))
 }
@@ -75,6 +98,14 @@ mod tests {
         let prefix = prefix_binding_power(TokenKind::Minus)
             .map(|(_, bp)| bp)
             .unwrap_or(0);
+        let bool_l = |k| bool_binding_power(k).map(|(_, l, _)| l).unwrap_or(0);
+        let bool_r = |k| bool_binding_power(k).map(|(_, _, r)| r).unwrap_or(0);
+        let or = TokenKind::Keyword(Kw::Or);
+        let and = TokenKind::Keyword(Kw::And);
+        assert!(bool_l(or) < bool_l(and));
+        // Left-assoc runs: the right operand stops at the same operator.
+        assert!(bool_r(or) > bool_l(or) && bool_r(and) > bool_l(and));
+        assert!(bool_r(and) <= NOT_BP && NOT_BP < lbp(TokenKind::Lt));
         assert!(lbp(TokenKind::Lt) < lbp(TokenKind::Plus));
         assert!(lbp(TokenKind::Plus) < lbp(TokenKind::Star));
         assert!(lbp(TokenKind::Star) < prefix);

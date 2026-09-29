@@ -18,7 +18,8 @@ mod sexpr;
 pub mod stack;
 
 pub use ast::{
-    BinaryOp, BoolOp, Expr, ExprKind, Ident, Literal, Module, Stmt, StmtKind, UnaryOp, UnitExpr,
+    AssignTarget, BinaryOp, BoolOp, CompoundOp, Expr, ExprKind, Ident, IndexItem, Literal, Module,
+    Stmt, StmtKind, UnaryOp, UnitExpr,
 };
 pub use parser::{parse_expr, parse_module, ParseError, MAX_DEPTH, MAX_UNIT_FACTORS};
 pub use sky_syntax::{Kw, Span, Token, TokenKind};

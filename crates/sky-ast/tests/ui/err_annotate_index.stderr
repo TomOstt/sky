@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_annotate_index.sky:1:1: error: invalid annotation target: only a plain name can have a type annotation
+  |
+1 | A[0]: T = 1
+  | ^^^^
+  |     - because of this

@@ -1,0 +1,6 @@
+(+= A B)
+(*= (index A i j) 2)
+(^= x 2)
+(@= P F)
+(-= t (unit 1 s))
+(/= (attr v x) n)

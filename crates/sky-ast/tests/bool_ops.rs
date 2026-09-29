@@ -331,16 +331,13 @@ fn bool_literals_are_not_binding_targets() {
             Some("`true` and `false` are Bool literals, not names")
         );
     }
-    // A keyword attribute is an ordinary attribute: reading it is fine, and
-    // assigning to it fails like any attribute target (plain names only).
+    // A keyword attribute is an ordinary attribute, for reading and as an
+    // assignment target (the checker, not the parser, rejects the write).
     assert_eq!(common::module_sexpr("y = x.true"), "(= y (attr x true))");
-    for src in ["x.true = 1", "x.flag = 1"] {
-        let errors = common::module_errors(src);
-        assert_eq!(errors.len(), 1, "{src:?}: {errors:#?}");
-        assert_eq!(
-            errors[0].message,
-            "invalid assignment target: only a plain name can be assigned in Sky v0.1"
-        );
-        assert_eq!(at(src, errors[0].span), &src[..6]);
-    }
+    assert_eq!(common::module_sexpr("x.true = 1"), "(= (attr x true) 1)");
+    assert_eq!(common::module_sexpr("x.flag = 1"), "(= (attr x flag) 1)");
+    assert_eq!(
+        common::module_sexpr("x.false += 1"),
+        "(+= (attr x false) 1)"
+    );
 }

@@ -1,0 +1,6 @@
+crates/sky-ast/tests/ui/err_assign_to_call.sky:1:1: error: cannot assign to a function call `f(x)`
+  |
+1 | f(x) = 1
+  | ^^^^
+  |      - because of this
+  = help: only a name (`x`), an index (`A[i]`), or an attribute (`a.b`) can be assigned to

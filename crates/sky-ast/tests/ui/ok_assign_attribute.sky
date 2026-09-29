@@ -1,0 +1,6 @@
+# Attribute targets parse (the v0.1 checker rejects the write). A keyword is
+# allowed after `.`, so `x.true = 1` is an attribute target like `x.flag`.
+a.b = x
+x.true = 1
+x.flag = 1
+a.b.c += 1

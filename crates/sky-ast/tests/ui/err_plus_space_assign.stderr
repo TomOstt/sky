@@ -1,0 +1,4 @@
+crates/sky-ast/tests/ui/err_plus_space_assign.sky:2:4: error: expected an expression, found `=`
+  |
+2 | a+ =b
+  |    ^

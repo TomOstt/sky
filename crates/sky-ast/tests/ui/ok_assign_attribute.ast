@@ -1,0 +1,4 @@
+(= (attr a b) x)
+(= (attr x true) 1)
+(= (attr x flag) 1)
+(+= (attr (attr a b) c) 1)

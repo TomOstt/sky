@@ -75,6 +75,21 @@ pub enum TokenKind {
     /// `>=` or `≥`
     Ge,
 
+    // Compound assignment. Lexed greedily: `x+=1` is `x`, `+=`, `1`, while
+    // `a+ =b` (with a space) is `+` then `=`.
+    /// `+=`
+    PlusAssign,
+    /// `-=`
+    MinusAssign,
+    /// `*=`
+    StarAssign,
+    /// `/=`
+    SlashAssign,
+    /// `^=`
+    CaretAssign,
+    /// `@=`
+    AtAssign,
+
     Keyword(Kw),
 }
 

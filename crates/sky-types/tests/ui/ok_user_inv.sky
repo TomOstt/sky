@@ -1,0 +1,9 @@
+# `inv(x)` is the matrix inverse unless the program defines its own `inv`.
+K: PositiveDefinite Matrix[3, 3]
+a = inv(2 m)
+b = inv(K)
+
+def inv(x):
+    return x
+
+c = inv(2 m)

@@ -23,8 +23,8 @@
 //!   `0..source.len()`.
 
 use sky_ast::{
-    parse_module, with_deep_stack, AssignTarget, Expr, ExprKind, IndexItem, Kw, Module, Span,
-    StmtKind, Token, TokenKind, UnitExpr,
+    parse_module, with_deep_stack, AssignTarget, Block, Expr, ExprKind, IndexItem, Kw, Module,
+    Span, Stmt, StmtKind, Token, TokenKind, TypeExpr, UnitExpr,
 };
 use sky_diag::{Diagnostic, SourceFile};
 
@@ -146,9 +146,65 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
         Target(&'a AssignTarget),
     }
     let mut stack: Vec<Node<'_>> = Vec::new();
-    for stmt in &module.stmts {
+    // Statements are walked with their own worklist too (blocks nest as
+    // deep as MAX_DEPTH, and this walk must not be what overflows).
+    let mut stmts: Vec<&Stmt> = module.stmts.iter().rev().collect();
+    fn push_type<'a>(ty: &'a TypeExpr, stack: &mut Vec<Node<'a>>, f: &mut dyn FnMut(Span)) {
+        f(ty.span);
+        ty.tags.iter().for_each(|t| f(t.span));
+        if let Some(shape) = &ty.shape {
+            f(shape.span);
+            f(shape.kind_span);
+            shape.dims.iter().for_each(|d| f(d.span()));
+        }
+        if let Some(u) = &ty.unit {
+            stack.push(Node::Unit(u));
+        }
+    }
+    fn push_block<'a>(stmts: &mut Vec<&'a Stmt>, block: &'a Block, f: &mut dyn FnMut(Span)) {
+        f(block.span);
+        stmts.extend(block.stmts.iter().rev());
+    }
+    while let Some(stmt) = stmts.pop() {
         f(stmt.span);
         match &stmt.kind {
+            StmtKind::If {
+                branches,
+                else_block,
+            } => {
+                for (cond, block) in branches.iter().rev() {
+                    stack.push(Node::Expr(cond));
+                    push_block(&mut stmts, block, &mut f);
+                }
+                if let Some(block) = else_block {
+                    push_block(&mut stmts, block, &mut f);
+                }
+            }
+            StmtKind::While { cond, body } => {
+                stack.push(Node::Expr(cond));
+                push_block(&mut stmts, body, &mut f);
+            }
+            StmtKind::Def {
+                name,
+                params,
+                ret,
+                body,
+            } => {
+                f(name.span);
+                for p in params {
+                    f(p.span);
+                    f(p.name.span);
+                    if let Some(ty) = &p.ty {
+                        push_type(ty, &mut stack, &mut f);
+                    }
+                }
+                if let Some(ty) = ret {
+                    push_type(ty, &mut stack, &mut f);
+                }
+                push_block(&mut stmts, body, &mut f);
+            }
+            StmtKind::Return(value) => stack.extend(value.iter().map(Node::Expr)),
+            StmtKind::Pass | StmtKind::Break | StmtKind::Continue => {}
             StmtKind::Expr(e) => stack.push(Node::Expr(e)),
             StmtKind::Assign { target, value } => {
                 stack.push(Node::Target(target));
@@ -166,16 +222,7 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
             }
             StmtKind::Binding { name, ty, value } => {
                 f(name.span);
-                f(ty.span);
-                ty.tags.iter().for_each(|t| f(t.span));
-                if let Some(shape) = &ty.shape {
-                    f(shape.span);
-                    f(shape.kind_span);
-                    shape.dims.iter().for_each(|d| f(d.span()));
-                }
-                if let Some(u) = &ty.unit {
-                    stack.push(Node::Unit(u));
-                }
+                push_type(ty, &mut stack, &mut f);
                 if let Some(v) = value {
                     stack.push(Node::Expr(v));
                 }
@@ -229,6 +276,9 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
                         stack.push(Node::Expr(base));
                     }
                     ExprKind::Paren(inner) => stack.push(Node::Expr(inner)),
+                    ExprKind::IfElse { then, cond, else_ } => {
+                        stack.extend([then, cond, else_].map(|e| Node::Expr(e)));
+                    }
                 }
             }
             Node::Item(item) => {
@@ -333,10 +383,15 @@ const KINDS: &[TokenKind] = {
         Keyword(Kw::Def),
         Keyword(Kw::Return),
         Keyword(Kw::If),
+        Keyword(Kw::Elif),
         Keyword(Kw::Else),
+        Keyword(Kw::While),
         Keyword(Kw::For),
         Keyword(Kw::In),
         Keyword(Kw::Import),
+        Keyword(Kw::Pass),
+        Keyword(Kw::Break),
+        Keyword(Kw::Continue),
         Keyword(Kw::Equation),
         Keyword(Kw::Solve),
         Keyword(Kw::Field),

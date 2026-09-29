@@ -1,0 +1,7 @@
+A: Matrix[3,3] {Symmetric} [1]
+B: Matrix[3,3] {Symmetric, PositiveDefinite} [1]
+flag: Bool
+near: Scalar [L]
+nested: Scalar [T]
+pick: Matrix[3,3] {Symmetric} [1]
+x: Scalar [L]

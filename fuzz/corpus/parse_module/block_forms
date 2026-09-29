@@ -1,0 +1,10 @@
+0def f(a, b: Vector[3]) -> Matrix[3, 3]:
+    if a > 0 m:
+        return b
+    elif a < 0 m:
+        pass
+    else:
+        while true:
+            break
+    return
+x = 1 if c else 2 if d else 3

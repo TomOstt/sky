@@ -1,0 +1,5 @@
+# A user binding named `print` shadows the builtin, so `print(1)` calls a
+# number: a check error.
+print = 3
+print(1)
+y = print + 1

@@ -29,7 +29,14 @@ fn stdout(o: &Output) -> String {
 
 #[test]
 fn ok_only_when_there_are_no_errors() {
-    for f in ["ok_parses", "ok_depth_256", "ok_bool_literals"] {
+    for f in [
+        "ok_parses",
+        "ok_depth_256",
+        "ok_bool_literals",
+        "ok_kinetic",
+        "ok_control_flow",
+        "ok_block_depth_256",
+    ] {
         let rel = format!("tests/ui/check/{f}.sky");
         let out = sky_check(&rel);
         assert_eq!(out.status.code(), Some(0), "{rel}");
@@ -38,6 +45,8 @@ fn ok_only_when_there_are_no_errors() {
     for f in [
         "err_superscript_inverse_after_unit",
         "err_depth_257",
+        "err_block_depth_257",
+        "err_control_flow",
         "err_lexer_error_before_parse",
         "err_unit_after_bool",
         "err_unit_mismatch",

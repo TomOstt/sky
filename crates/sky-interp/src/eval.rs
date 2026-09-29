@@ -7,14 +7,18 @@
 use std::io::Write;
 
 use sky_ast::ast::span_text;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use sky_ast::{
-    AssignTarget, BinaryOp, BoolOp, Expr, ExprKind, Literal, Module, Stmt, StmtKind, UnaryOp,
-    UnitExpr,
+    AssignTarget, BinaryOp, Block, BoolOp, Expr, ExprKind, Literal, Module, Stmt, StmtKind,
+    UnaryOp, UnitExpr,
 };
 use sky_diag::Span;
 use sky_syntax::lexer::unescape_str;
 use sky_units::{lookup, Dimension, Rational};
 
+use crate::value::Function;
 use crate::{RuntimeEnv, RuntimeError, Value};
 
 type R<T> = Result<T, RuntimeError>;
@@ -23,6 +27,37 @@ type R<T> = Result<T, RuntimeError>;
 /// exact whenever the true result is representable); larger or fractional
 /// ones use `powf`.
 const POWI_MAX: f64 = 64.0;
+
+/// Most user-function calls active at once, like Python's recursion limit:
+/// a friendly error for runaway recursion.
+pub const MAX_CALL_DEPTH: usize = 1000;
+
+/// How much of the stack the walk may use before it stops with an error.
+/// The walk recurses on the Rust stack, and how much each level costs
+/// depends on the build (a debug build needs several KiB per nested
+/// expression), so a fixed depth count can't be both safe and generous.
+/// Instead every `eval` and block measures how far the stack has grown
+/// since `run_module` started. The budget leaves 1 MiB of
+/// `sky_ast::DEEP_STACK_BYTES` (`run_module` must run under
+/// `with_deep_stack`) for the frames between two checks and for printing.
+const STACK_BUDGET: usize = sky_ast::DEEP_STACK_BYTES - (1 << 20);
+
+/// The address of a local: where the stack is now. Only ever compared with
+/// another such address, never dereferenced.
+#[inline(never)]
+fn stack_position() -> usize {
+    let marker = 0u8;
+    std::hint::black_box(&marker) as *const u8 as usize
+}
+
+/// How a statement finished: normally (with the value of an expression
+/// statement, for the REPL), or by leaving its block early.
+enum Flow {
+    Normal(Option<Value>),
+    Return(Value),
+    Break,
+    Continue,
+}
 
 /// Runs `module` (parsed from `src`) against `env`, writing `print` output
 /// to `out`. Returns the value of the last statement if it is an expression
@@ -37,18 +72,36 @@ pub fn run_module<W: Write>(
     env: &mut RuntimeEnv,
     out: &mut W,
 ) -> Result<Option<Value>, RuntimeError> {
-    let mut it = Interp { src, env, out };
+    let mut it = Interp {
+        src,
+        env,
+        out,
+        frames: Vec::new(),
+        stack_base: stack_position(),
+    };
     let mut last = None;
     for stmt in &module.stmts {
-        last = it.stmt(stmt)?;
+        last = match it.stmt(stmt)? {
+            Flow::Normal(v) => v,
+            // The checker rejects `return`, `break` and `continue` outside a
+            // function or loop, so a checked module never ends up here.
+            Flow::Return(_) | Flow::Break | Flow::Continue => None,
+        };
     }
     Ok(last)
 }
 
 struct Interp<'a> {
     src: &'a str,
+    /// Module-level names.
     env: &'a mut RuntimeEnv,
     out: &'a mut dyn Write,
+    /// The local variables of each active user-function call, innermost
+    /// last. Inside a call, names are read from its frame and then from the
+    /// module (Python's rule); assignments go to the frame.
+    frames: Vec<BTreeMap<String, Value>>,
+    /// [`stack_position`] when the run started; see [`STACK_BUDGET`].
+    stack_base: usize,
 }
 
 fn arrays_unsupported(span: Span) -> RuntimeError {
@@ -70,15 +123,113 @@ impl<'a> Interp<'a> {
         span_text(self.src, span).unwrap_or("")
     }
 
-    fn stmt(&mut self, s: &Stmt) -> R<Option<Value>> {
+    fn lookup(&self, name: &str) -> Option<&Value> {
+        self.frames
+            .last()
+            .and_then(|f| f.get(name))
+            .or_else(|| self.env.get(name))
+    }
+
+    fn assign(&mut self, name: &str, v: Value) {
+        match self.frames.last_mut() {
+            Some(frame) => {
+                frame.insert(name.to_string(), v);
+            }
+            None => self.env.set(name, v),
+        }
+    }
+
+    /// An error if the walk has used up [`STACK_BUDGET`]: deep recursion
+    /// combined with deeply nested expressions ends here, cleanly, rather
+    /// than in a stack overflow.
+    fn check_stack(&self, span: Span) -> R<()> {
+        // Direction-agnostic: the stack grows down on every target Sky
+        // supports, but `abs_diff` doesn't need to know.
+        if self.stack_base.abs_diff(stack_position()) > STACK_BUDGET {
+            return Err(RuntimeError::new(
+                "the program nests too deeply for the interpreter",
+                span,
+            )
+            .with_label("stopped here")
+            .with_note("`sky run` stops before it runs out of stack")
+            .with_help("reduce the recursion depth, or use a `while` loop"));
+        }
+        Ok(())
+    }
+
+    /// Runs a block's statements until one leaves it early.
+    fn block(&mut self, b: &Block) -> R<Flow> {
+        self.check_stack(b.span)?;
+        for s in &b.stmts {
+            match self.stmt(s)? {
+                Flow::Normal(_) => {}
+                other => return Ok(other),
+            }
+        }
+        Ok(Flow::Normal(None))
+    }
+
+    fn stmt(&mut self, s: &Stmt) -> R<Flow> {
         match &s.kind {
-            StmtKind::Expr(e) => Ok(Some(self.eval(e)?)),
+            StmtKind::Expr(e) => Ok(Flow::Normal(Some(self.eval(e)?))),
+            StmtKind::If {
+                branches,
+                else_block,
+            } => {
+                for (cond, block) in branches {
+                    if self.expect_bool("if", cond)? {
+                        return self.block(block);
+                    }
+                }
+                match else_block {
+                    Some(block) => self.block(block),
+                    None => Ok(Flow::Normal(None)),
+                }
+            }
+            StmtKind::While { cond, body } => {
+                while self.expect_bool("while", cond)? {
+                    match self.block(body)? {
+                        Flow::Break => break,
+                        Flow::Normal(_) | Flow::Continue => {}
+                        Flow::Return(v) => return Ok(Flow::Return(v)),
+                    }
+                }
+                Ok(Flow::Normal(None))
+            }
+            StmtKind::Def {
+                name,
+                params,
+                ret: _,
+                body,
+            } => {
+                let name = self.text(name.span);
+                let func = Function {
+                    name: name.to_string(),
+                    params: params
+                        .iter()
+                        .map(|p| self.text(p.name.span).to_string())
+                        .collect(),
+                    body: body.clone(),
+                };
+                self.assign(name, Value::Func(Arc::new(func)));
+                Ok(Flow::Normal(None))
+            }
+            StmtKind::Return(value) => {
+                let v = match value {
+                    Some(e) => self.eval(e)?,
+                    None => Value::None,
+                };
+                Ok(Flow::Return(v))
+            }
+            StmtKind::Pass => Ok(Flow::Normal(None)),
+            StmtKind::Break => Ok(Flow::Break),
+            StmtKind::Continue => Ok(Flow::Continue),
             StmtKind::Assign { target, value } => match target {
                 AssignTarget::Name(id) => {
                     let v = self.eval(value)?;
                     let name = self.text(id.span);
-                    self.env.set(name, v);
-                    Ok(None)
+                    self.assign(name, v);
+                    Ok(Flow::Normal(None))
                 }
                 // The checker rejects these writes (spec: "Statements and
                 // assignment"), so a checked program never gets here.
@@ -94,7 +245,7 @@ impl<'a> Interp<'a> {
             } => match target {
                 AssignTarget::Name(id) => {
                     let name = self.text(id.span);
-                    let Some(cur) = self.env.get(name).cloned() else {
+                    let Some(cur) = self.lookup(name).cloned() else {
                         return Err(RuntimeError::new(
                             format!("cannot find `{name}` in this scope"),
                             id.span,
@@ -104,8 +255,8 @@ impl<'a> Interp<'a> {
                     let rhs = self.eval(value)?;
                     let whole = id.span.join(value.span);
                     let v = self.binary_values(op.binary(), cur, rhs, whole, id.span, value)?;
-                    self.env.set(name, v);
-                    Ok(None)
+                    self.assign(name, v);
+                    Ok(Flow::Normal(None))
                 }
                 AssignTarget::Index { span, .. } | AssignTarget::Attribute { span, .. } => {
                     Err(write_through(*span))
@@ -117,8 +268,8 @@ impl<'a> Interp<'a> {
                 Some(value) => {
                     let v = self.eval(value)?;
                     let name = self.text(name.span);
-                    self.env.set(name, v);
-                    Ok(None)
+                    self.assign(name, v);
+                    Ok(Flow::Normal(None))
                 }
                 // A declaration without a value only makes sense for an
                 // array (the annotation is a shape).
@@ -128,6 +279,7 @@ impl<'a> Interp<'a> {
     }
 
     fn eval(&mut self, e: &Expr) -> R<Value> {
+        self.check_stack(e.span)?;
         match &e.kind {
             ExprKind::Literal(lit) => match lit {
                 Literal::Int(span) | Literal::Float(span) => Ok(Value::scalar(self.number(*span)?)),
@@ -136,7 +288,7 @@ impl<'a> Interp<'a> {
             },
             ExprKind::Name(id) => {
                 let name = self.text(id.span);
-                match self.env.get(name) {
+                match self.lookup(name) {
                     Some(v) => Ok(v.clone()),
                     None => Err(RuntimeError::new(
                         format!("cannot find `{name}` in this scope"),
@@ -240,6 +392,13 @@ impl<'a> Interp<'a> {
                 e.span,
             )),
             ExprKind::Paren(inner) => self.eval(inner),
+            ExprKind::IfElse { then, cond, else_ } => {
+                if self.expect_bool("if", cond)? {
+                    self.eval(then)
+                } else {
+                    self.eval(else_)
+                }
+            }
         }
     }
 
@@ -321,7 +480,7 @@ impl<'a> Interp<'a> {
         // applies the same rule).
         if let ExprKind::Name(id) = &callee.kind {
             let name = self.text(id.span);
-            if self.env.get(name).is_none() {
+            if self.lookup(name).is_none() {
                 match name {
                     "print" => return self.print(args),
                     "inv" => return self.inv(call, args),
@@ -329,13 +488,52 @@ impl<'a> Interp<'a> {
                 }
             }
         }
-        // Nothing but builtins is callable yet, so this reports the
-        // unknown name or the non-function.
-        let f = self.eval(callee)?;
-        Err(
-            RuntimeError::new(format!("cannot call {}", f.kind()), callee.span)
-                .with_label("not a function"),
-        )
+        match self.eval(callee)? {
+            Value::Func(func) => self.call_user(&func, call, args),
+            other => Err(
+                RuntimeError::new(format!("cannot call {}", other.kind()), callee.span)
+                    .with_label("not a function"),
+            ),
+        }
+    }
+
+    /// Calls a user function: arguments are evaluated in the caller's
+    /// scope, then the body runs in a new frame holding the parameters.
+    fn call_user(&mut self, func: &Arc<Function>, call: &Expr, args: &[Expr]) -> R<Value> {
+        if args.len() != func.params.len() {
+            // The checker checks arity; this guards the interpreter anyway.
+            return Err(RuntimeError::new(
+                format!(
+                    "`{}` takes {} argument{}, found {}",
+                    func.name,
+                    func.params.len(),
+                    if func.params.len() == 1 { "" } else { "s" },
+                    args.len()
+                ),
+                call.span,
+            ));
+        }
+        if self.frames.len() >= MAX_CALL_DEPTH {
+            return Err(RuntimeError::new(
+                format!("recursion is too deep: more than {MAX_CALL_DEPTH} nested calls"),
+                call.span,
+            )
+            .with_label(format!("calling `{}` here", func.name))
+            .with_note("`sky run` limits nested calls instead of overflowing the stack")
+            .with_help("check the recursion's base case, or use a `while` loop"));
+        }
+        let mut frame = BTreeMap::new();
+        for (name, a) in func.params.iter().zip(args) {
+            let v = self.eval(a)?;
+            frame.insert(name.clone(), v);
+        }
+        self.frames.push(frame);
+        let flow = self.block(&func.body);
+        self.frames.pop();
+        match flow? {
+            Flow::Return(v) => Ok(v),
+            Flow::Normal(_) | Flow::Break | Flow::Continue => Ok(Value::None),
+        }
     }
 
     /// `print(a, b, ...)`: the values separated by single spaces, then a

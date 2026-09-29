@@ -1,0 +1,16 @@
+# Annotated parameters are checked at calls; size variables in a signature
+# are the function's own, so one function serves several sizes.
+def apply(A: Matrix[N, N], b: Vector[N]) -> Vector[N]:
+    return A @ b
+
+A3: Matrix[3, 3]
+b3: Vector[3]
+A4: Matrix[4, 4]
+b4: Vector[4]
+y3 = apply(A3, b3)
+y4 = apply(A4, b4)
+
+def twice(x):
+    return x + x
+
+t = twice(2 m)

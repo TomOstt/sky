@@ -1,0 +1,8 @@
+# The arms must agree in dimension and shape; the error is on the `else`
+# arm, with the `if` arm labelled.
+v: Vector[3]
+w: Vector[4]
+x = 3 m
+a = 1 m if x > 0 m else 2 s
+b = v if x > 0 m else w
+c = 1 if x > 0 m else true

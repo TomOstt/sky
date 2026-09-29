@@ -1,0 +1,19 @@
+# `N` is 3 after the first branch (whether or not it runs), so the second
+# branch's use of a 4 conflicts; and two branches with different sizes
+# conflict at the merge instead of being unified.
+A: Matrix[N, N]
+c: Vector[3]
+d: Vector[4]
+e: Vector[M]
+if true:
+    r = A @ c
+else:
+    r = A @ d
+if true:
+    s = c
+else:
+    s = d
+if true:
+    u = c
+else:
+    u = e

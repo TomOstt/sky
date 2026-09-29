@@ -158,10 +158,11 @@ fn warnings_print_and_the_run_continues() {
 #[test]
 fn a_user_print_shadows_the_builtin() {
     let o = run_script("shadow", "print = 3\nprint(1)\n");
-    // The checker lets the call through (its type is unknown); running it
-    // fails because a number is not a function.
+    // The user's `print` is a number, so the call is a check error: nothing
+    // runs.
     assert_eq!(o.status.code(), Some(1));
-    assert!(err(&o).contains("cannot call a number"));
+    assert_eq!(out(&o), "");
+    assert!(err(&o).contains("cannot call a dimensionless number"));
 }
 
 #[test]
@@ -319,4 +320,74 @@ fn physical_constants_have_values_in_run_and_repl() {
     let o = repl("k_B * 300 K\nq_e\n");
     assert_eq!(o.status.code(), Some(0), "{}", err(&o));
     assert_eq!(out(&o), "4.141947e-21 J\n1.602176634e-19 C\n");
+}
+
+#[test]
+fn functions_loops_and_conditionals_run() {
+    let src = "\
+def kinetic(m: kg, v: m/s) -> J:
+    return 0.5 * m * v^2
+
+print(kinetic(2 kg, 3 m/s))
+
+def fact(n: Scalar) -> Scalar:
+    if n <= 1:
+        return 1
+    return n * fact(n - 1)
+
+print(fact(10))
+
+total = 0 m
+i = 0
+while true:
+    i += 1
+    if i > 5:
+        break
+    if i == 3:
+        continue
+    total += 1 m
+print(total, i)
+
+speed = 400 m/s
+print(\"supersonic\" if speed > 343 m/s else \"subsonic\")
+";
+    let o = run_script("blocks.sky", src);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert_eq!(out(&o), "9 J\n3628800\n4 m 6\nsupersonic\n");
+}
+
+#[test]
+fn function_locals_do_not_leak_and_globals_are_read() {
+    let src = "\
+g = 2 m
+def f(x: m) -> m:
+    y = x + g
+    return y
+print(f(1 m))
+print(y)
+";
+    // `y` is local to `f`: using it at module level is a check error.
+    let o = run_script("locals.sky", src);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(err(&o).contains("cannot find `y`"), "{}", err(&o));
+    let o = run_script("locals_ok.sky", &src.replace("print(y)\n", ""));
+    assert_eq!(out(&o), "3 m\n");
+}
+
+#[test]
+fn runaway_recursion_is_an_error_not_a_crash() {
+    // Deep nesting inside each recursive call multiplies the stack each
+    // call needs; the interpreter must stop cleanly (exit 1, a diagnostic),
+    // never abort on a stack overflow, in debug and release builds alike.
+    for nesting in [0, 5, 250] {
+        let body = format!("{}loop(n + 1){}", "(".repeat(nesting), ")".repeat(nesting));
+        let src = format!("def loop(n: Scalar) -> Scalar:\n    return {body}\n\nloop(0)\n");
+        let o = run_script("runaway.sky", &src);
+        assert_eq!(o.status.code(), Some(1), "nesting {nesting}: {}", err(&o));
+        let e = err(&o);
+        assert!(
+            e.contains("recursion is too deep") || e.contains("nests too deeply"),
+            "nesting {nesting}: {e}"
+        );
+    }
 }

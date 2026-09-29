@@ -1,0 +1,9 @@
+# A small physics function: units are checked in its body, and calls are
+# checked for arity.
+def kinetic(m, v):
+    return 0.5 * m * v^2
+
+def total(m1, m2, v):
+    return kinetic(m1, v) + kinetic(m2, v)
+
+e = kinetic(2 kg, 3 m/s)

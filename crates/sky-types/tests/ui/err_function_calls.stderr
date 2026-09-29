@@ -1,0 +1,47 @@
+crates/sky-types/tests/ui/err_function_calls.sky:11:1: error: `two` takes 2 arguments, found 1
+   |
+11 | two(1)
+   | ^^^^^^ missing argument `b`
+ 2 | def two(a, b):
+   |     --- `two` is defined here
+
+crates/sky-types/tests/ui/err_function_calls.sky:12:11: error: `two` takes 2 arguments, found 3
+   |
+12 | two(1, 2, 3)
+   |           ^ extra argument
+ 2 | def two(a, b):
+   |     --- `two` is defined here
+
+crates/sky-types/tests/ui/err_function_calls.sky:13:11: error: mismatched shapes: shape mismatch at axis 0: expected N = 3, found 4 (Vector[N] vs Vector[4])
+   |
+13 | apply(A3, b4)
+   |           ^^ this is Vector[4] [1]
+ 5 | def apply(A: Matrix[N, N], b: Vector[N]) -> Vector[N]:
+   |                               --------- expected because of this annotation
+
+crates/sky-types/tests/ui/err_function_calls.sky:14:11: error: mismatched shapes: rank mismatch: expected rank 1 (Vector[N]), found rank 0 (Scalar)
+   |
+14 | apply(A3, 2 m)
+   |           ^^^ this is Scalar [L]
+ 5 | def apply(A: Matrix[N, N], b: Vector[N]) -> Vector[N]:
+   |                               --------- expected because of this annotation
+
+crates/sky-types/tests/ui/err_function_calls.sky:15:7: error: expected a number, found Bool
+   |
+15 | apply(true, b3)
+   |       ^^^^ this is Bool
+ 5 | def apply(A: Matrix[N, N], b: Vector[N]) -> Vector[N]:
+   |              ------------ expected because of this annotation
+
+crates/sky-types/tests/ui/err_function_calls.sky:16:15: error: `apply` takes 2 arguments, found 3
+   |
+16 | apply(A3, b3, b3)
+   |               ^^ extra argument
+ 5 | def apply(A: Matrix[N, N], b: Vector[N]) -> Vector[N]:
+   |     ----- `apply` is defined here
+
+crates/sky-types/tests/ui/err_function_calls.sky:18:1: error: cannot call a length
+   |
+18 | x(1)
+   | ^ this is length
+   = help: only functions defined with `def` can be called

@@ -1,0 +1,15 @@
+# A function body sees names defined above its `def`, and only its own
+# locals escape nowhere.
+def uses_later():
+    return later
+
+later = 1
+
+def defines():
+    inner = 1
+    return inner
+
+x = inner
+p = 1 m
+def reads_outer():
+    return p + 1 s

@@ -1,0 +1,13 @@
+crates/sky-ast/tests/ui/err_missing_colon.sky:1:5: error: expected `:` after `if`, found end of line
+  |
+1 | if x
+  |     ^
+  | -- `if` starts here
+  = help: end the header line with `:`
+
+crates/sky-ast/tests/ui/err_missing_colon.sky:4:9: error: expected `:` after `while`, found `=`
+  |
+4 | while x = 1:
+  |         ^
+  | ----- `while` starts here
+  = help: `=` assigns; to compare, write `==`

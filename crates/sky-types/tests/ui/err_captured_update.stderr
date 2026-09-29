@@ -1,0 +1,15 @@
+crates/sky-types/tests/ui/err_captured_update.sky:5:11: error: `count` belongs to the code around `bump`, so `+=` cannot update it
+  |
+5 |     count += 1
+  |           ^^
+  |     ----- `count` is not assigned in `bump`
+  = note: assigning inside a function binds a new local; it never changes an outer name
+  = help: bind a new name instead: `y = count + …`
+
+crates/sky-types/tests/ui/err_captured_update.sky:6:11: error: `scale` belongs to the code around `bump`, so `*=` cannot update it
+  |
+6 |     scale *= 2
+  |           ^^
+  |     ----- `scale` is not assigned in `bump`
+  = note: assigning inside a function binds a new local; it never changes an outer name
+  = help: bind a new name instead: `y = scale * …`

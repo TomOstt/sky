@@ -97,14 +97,16 @@ fn invalid_targets_and_chained_assignment() {
 }
 
 #[test]
-fn keywords_are_not_supported_yet() {
-    let errors = module_errors("def f(x):\n    return x\nx = 1\n");
-    assert!(
-        errors[0].message.contains("keyword `def`"),
-        "{}",
-        errors[0].message
+fn block_statements_parse_and_unsupported_keywords_say_so() {
+    assert_eq!(
+        common::module_sexpr("def f(x):\n    return x\nx = 1\n"),
+        "(def f (params x) (block (return x)))\n(= x 1)"
     );
-    assert!(errors[0].message.contains("not supported"));
+    let errors = module_errors("for i in x:\n    pass\nx = 1\n");
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert!(errors[0]
+        .message
+        .contains("`for` loops are not supported yet"));
 }
 
 fn tok(kind: TokenKind, start: u32, end: u32) -> Token {

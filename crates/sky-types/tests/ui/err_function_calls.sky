@@ -1,0 +1,18 @@
+# Calls to user functions: arity, annotated arguments, and calling a value.
+def two(a, b):
+    return a + b
+
+def apply(A: Matrix[N, N], b: Vector[N]) -> Vector[N]:
+    return A @ b
+
+A3: Matrix[3, 3]
+b3: Vector[3]
+b4: Vector[4]
+two(1)
+two(1, 2, 3)
+apply(A3, b4)
+apply(A3, 2 m)
+apply(true, b3)
+apply(A3, b3, b3)
+x = 3 m
+x(1)

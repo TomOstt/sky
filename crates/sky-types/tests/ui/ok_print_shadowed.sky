@@ -1,3 +1,0 @@
-print = 3
-print(1)
-y = print + 1

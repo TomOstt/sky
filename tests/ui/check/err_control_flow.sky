@@ -1,0 +1,11 @@
+# A unit mismatch inside a function and inside a branch, a non-Bool
+# condition, and a name that may be undefined.
+def fall(h):
+    drop = 1 m + 2 s
+    return h
+
+speed = 3 m/s
+if speed:
+    gap = 1 m
+w = gap
+mixed = 1 m + 2 s

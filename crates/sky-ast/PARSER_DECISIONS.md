@@ -46,6 +46,7 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 
 | level | operators | associativity |
 |---|---|---|
+| 0 | `a if c else b` | right, in the `else` arm; the condition is an `or` expression (see "Blocks and control flow") |
 | 1 | `or` | left (Eng Lead) |
 | 2 | `and` | left (Eng Lead) |
 | 3 | prefix `not` | prefix (Eng Lead) |
@@ -89,8 +90,8 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 **Other choices:**
 - Type annotations have their own node, `TypeExpr`, and their own grammar: see "Type annotations" below. (They were ordinary index expressions, `Matrix[3, 4]` as an `Index`, until then.)
 - Assignment targets: see "Assignment targets and compound assignment" below. Annotation targets must be plain names.
-- An `Indent` at the start of a line is reported ("indented blocks are not supported yet"), and the line is still parsed. `Dedent` is ignored until blocks exist (PR 2). A keyword where an expression is expected gets "statements and blocks are not supported by the parser yet".
-- **Depth semantics.** `MAX_DEPTH = 256` bounds recursion and AST height, which also keeps recursive `Drop` and printing safe. Each nesting level counts exactly once: a `(`...`)` group, a prefix operator (including `not`), a call, an index, an attribute, a `⁻¹`, each infix operator folded into an operand, and each `and`/`or` run. So 256 nested parens, calls (`f(f(...))`), indexes (`a[a[...]]`), prefix operators, or a 256-operator `^` chain parse, and 257 give "expression is nested too deeply (the limit is 256 levels)". Operators chained at one level count too, so a flat sum of 257 terms (256 `+`) is fine and one more `+` is an error. Error paths and node building are kept out of the recursive functions, so a level costs about 3 KiB of stack in debug builds and under 1 KiB in release; a test parses, prints, and drops 256 levels of each kind on a 1 MiB thread.
+- Blocks: see "Blocks and control flow" below. An `Indent` where a statement should start (nothing opened a block) is "unexpected indentation" and is parsed as a block anyway. A keyword where an expression is expected is "expected an expression, found keyword `while`", with a help line saying that it starts a statement.
+- **Depth semantics.** `MAX_DEPTH = 256` bounds recursion and AST height, which also keeps recursive `Drop` and printing safe. Each nesting level counts exactly once: a `(`...`)` group, a prefix operator (including `not`), a call, an index, an attribute, a `⁻¹`, each infix operator folded into an operand, each `and`/`or` run, each `a if c else b`, and each block. So 256 nested parens, calls (`f(f(...))`), indexes (`a[a[...]]`), prefix operators, or a 256-operator `^` chain parse, and 257 give "expression is nested too deeply (the limit is 256 levels)". Operators chained at one level count too, so a flat sum of 257 terms (256 `+`) is fine and one more `+` is an error. Error paths and node building are kept out of the recursive functions, so a level costs about 3 KiB of stack in debug builds and under 1 KiB in release; a test parses, prints, and drops 256 levels of each kind on a 1 MiB thread.
 - `MAX_UNIT_FACTORS = 64` limits the number of names in one unit literal.
 - `ParseError` has an optional `help` line in addition to the message, primary span, and secondary labels.
 
@@ -118,11 +119,29 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 - **Quoted text** in every new message goes through `cap_quoted` (`Parser::text`).
 - **Downstream:** code that read `Binding.ty` as an `Expr` (the checker's old `annotation()`, `sky-units/tests/unit_vs_shape_var.rs`, `sky-ast/tests/spans.rs`, the fuzz harness's span walk) reads `TypeExpr` now. The checker's `annotation()` resolves tags, shape and unit, and `Env::bind_array` remains for callers that seed names without source.
 
+**Blocks and control flow** (`sky-ast/blocks`; the language rules are in `spec/v0.1.md`, "Blocks and control flow"; the AST is additive, no existing node changed):
+- **AST:** `Block { stmts, span }`, `Param { name, ty, span }`, `StmtKind::{If { branches: Vec<(Expr, Block)>, else_block }, While { cond, body }, Def { name, params, ret, body }, Return(Option<Expr>), Pass, Break, Continue}` and `ExprKind::IfElse { then, cond, else_ }`. A block's span runs from its first statement to the end of its last (no layout tokens); an `if`/`while`/`def` statement runs from its keyword to the end of its last block. Annotations (`Param::ty`, `ret`) are ordinary expressions like a binding's, read through one private helper, `parse_type_annotation`, so the annotation grammar can be swapped in one place.
+- **S-expressions:** `(if c (block ...) c2 (block ...) (else (block ...)))`, `(while c (block ...))`, `(def f (params x (: y T)) (returns R) (block ...))`, `(return e)` / `(return)`, `(pass)`, `(break)`, `(continue)`, `(ifelse c then else)`.
+- **Conditional expression:** level 0 of the table: `Step::Conditional` fires only where `min_bp <= CONDITIONAL_BP (1)`, so it is looser than `or` and never appears under an operator. The condition is parsed at `CONDITIONAL_COND_BP (2)` (an `or` expression), the `else` arm at `CONDITIONAL_BP` (right-associative). `a if c` without `else` is an error with the help "a conditional expression has two arms". It counts one nesting level.
+- **One-line bodies are an error** (`if x: y = 1`), with the help "put the body on its own indented line". Choice: Python accepts it, but one canonical layout keeps spans, diffs and recovery simple and the header's `:` unambiguous next to annotations. The parser still parses the statement after the `:` as the body (never a compound statement: that would recurse without counting depth), so `else:` after it pairs up and there is one error, not two.
+- **Empty blocks** (`:` NEWLINE and no `Indent`) are an error on the `:` with the help "use `pass` for a block that does nothing".
+- **Depth:** a block counts one level and shares the budget with expressions (`depth` carries across, and each statement in a block starts from the block's own depth). 256 nested blocks parse, 257 give one error ("blocks are nested too deeply (the limit is 256 levels)"), and the rest of that block is skipped by an iterative `skip_block_rest`, so 3000 levels are as cheap as 257. A level costs under 2.4 KiB of stack in debug builds (256 levels parse on 600 KiB; a test uses 1 MiB). Clauses of one `if` (`elif`, `else`) are a loop, not recursion, so a 5000-clause chain is fine.
+- **Recovery** resyncs on `Newline`, `Indent`, and `Dedent`:
+  - Simple statements: an error skips to the next `Newline` (which is before any `Indent`/`Dedent`), so block tokens are never eaten.
+  - A bad block header (missing `:`, bad condition, bad `def` signature) skips its line, then, if an `Indent` follows, parses that body anyway and drops it. Errors inside it are still reported, and its `Dedent` is consumed by it and not by the enclosing block.
+  - An unsupported or reserved statement (`for`, `import`, `equation`, ...) is one error, and its block is skipped iteratively.
+  - A bad `elif` header keeps the clauses around it (the `else` is not reported as orphaned).
+  - A stray `Indent` is "unexpected indentation"; its lines are parsed as a block and their statements spliced into the current list, so its `Dedent` ends only itself.
+  - `else`/`elif` with no `if`, and `else if`, have their own messages. `parse_item` returns `None` only with the position on a line boundary, so callers never skip a second line.
+- **Unsupported and reserved:** `for` ("`for` loops are not supported yet"), `import` ("`import` is not supported yet"), default parameter values, and `equation`/`solve`/`field` ("`solve` is reserved for a future version") each get their own message, and they stay attribute names after `.`.
+- **Keywords:** `while`, `elif`, `pass`, `break`, `continue` are new `Kw` variants (lexer). No test or golden used them as identifiers.
+- **Downstream:** exhaustive matches on `StmtKind` and `ExprKind` need the new arms (the checker has them; the fuzz harness walks all of them with an explicit worklist, blocks included). The interpreter should treat `Block` as a plain statement list.
+
 ## Robustness (fuzz target)
 - The parser never panics. All token access is bounds-checked, text goes through `str::get`, and integer conversions are checked.
 - It never calls `Span::new` on token-derived offsets, because that debug-asserts.
 - A missing `Eof` is fine: the end of the slice acts as `Eof`, a zero-width span at the end of the last token (`Span::point(0)` for an empty slice). Tokens after the first `Eof` are ignored.
-- Error recovery: at top level, an error skips to the next `Newline`.
+- Error recovery: an error skips to the next `Newline`; a bad block header also has its body parsed and dropped (its errors are reported), so the `Dedent`s stay matched to their blocks. See "Blocks and control flow".
 
 ## Errors
 - `ParseError { message, span, secondary: Vec<sky_diag::Label>, help: Option<String> }`.

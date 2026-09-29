@@ -1,0 +1,3 @@
+(def kinetic (params m (: v (type (Vector 3)))) (returns (type (Matrix 3 3))) (block (= x m) (return x)))
+(def noop (params) (block (pass)))
+(def early (params x) (block (if x (block (return))) (return x)))

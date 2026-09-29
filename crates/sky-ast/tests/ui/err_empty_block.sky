@@ -1,0 +1,7 @@
+def f():
+x = 1
+if a:
+    if b:
+    y = 2
+else:
+    pass

@@ -1,0 +1,5 @@
+crates/sky-types/tests/ui/err_print_shadowed.sky:4:1: error: cannot call a dimensionless number
+  |
+4 | print(1)
+  | ^^^^^ this is dimensionless
+  = help: only functions defined with `def` can be called

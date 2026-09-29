@@ -1,0 +1,23 @@
+# Names bound in every branch that can fall through keep their type; a
+# branch that ends in `return` takes no part in the merge.
+t: s
+x = 3 m
+if x > 1 m:
+    y = 1 s
+    flag = true
+elif x < 0 m:
+    y = 2 s
+    flag = false
+else:
+    y = 3 s
+    flag = x == 0 m
+z = y + t
+if flag:
+    pass
+
+def clamp(v):
+    if v < 0 m:
+        return 0 m
+    else:
+        kept = v
+    return kept

@@ -2,6 +2,9 @@
 
 use std::fmt::{self, Write as _};
 
+use std::sync::Arc;
+
+use sky_ast::Block;
 use sky_units::{BaseDim, Dimension, Rational, UNITS};
 
 /// A runtime value.
@@ -18,8 +21,21 @@ pub enum Value {
     },
     Bool(bool),
     Str(String),
-    /// What `print(...)` returns. The REPL does not echo it.
+    /// What `print(...)` and a function without a `return` value give.
+    /// The REPL does not echo it.
     None,
+    /// A function defined with `def`.
+    Func(Arc<Function>),
+}
+
+/// A user function: what a call needs to run it. The body is a copy of the
+/// checked AST (the interpreter walks the tree; there is no compiled form
+/// yet).
+#[derive(Debug, PartialEq)]
+pub struct Function {
+    pub name: String,
+    pub params: Vec<String>,
+    pub body: Block,
 }
 
 impl Value {
@@ -42,6 +58,7 @@ impl Value {
             Value::Bool(_) => "a Bool",
             Value::Str(_) => "a string",
             Value::None => "none",
+            Value::Func(_) => "a function",
         }
     }
 
@@ -84,6 +101,7 @@ impl fmt::Display for Value {
                 f.write_char('"')
             }
             Value::None => f.write_str("none"),
+            Value::Func(func) => write!(f, "<function {}>", func.name),
         }
     }
 }

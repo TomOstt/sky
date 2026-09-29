@@ -1,0 +1,9 @@
+def f():
+    def g(x):
+        while true:
+            if x:
+                return x
+            else:
+                break
+        return 0
+    return g

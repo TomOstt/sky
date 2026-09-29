@@ -1,4 +1,5 @@
-//! Typed AST for Sky, with source spans, plus the Pratt expression parser.
+//! Typed AST for Sky, with source spans, plus the parser: a Pratt expression
+//! parser and the statement and block layer above it (`if`, `while`, `def`).
 //!
 //! Entry points: [`parse_expr`] and [`parse_module`]. Both take the lexer's
 //! token slice plus the source text (token text is `source[span]`), return
@@ -18,8 +19,9 @@ mod sexpr;
 pub mod stack;
 
 pub use ast::{
-    AssignTarget, BinaryOp, BoolOp, CompoundOp, DimExpr, Expr, ExprKind, Ident, IndexItem, Literal,
-    Module, ShapeAnn, ShapeKind, Stmt, StmtKind, TypeExpr, UnaryOp, UnitExpr, TAG_NAMES,
+    AssignTarget, BinaryOp, Block, BoolOp, CompoundOp, DimExpr, Expr, ExprKind, Ident, IndexItem,
+    Literal, Module, Param, ShapeAnn, ShapeKind, Stmt, StmtKind, TypeExpr, UnaryOp, UnitExpr,
+    TAG_NAMES,
 };
 pub use parser::{
     parse_expr, parse_module, ParseError, MAX_DEPTH, MAX_QUOTED_BYTES, MAX_QUOTED_CHARS,

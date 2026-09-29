@@ -1,0 +1,9 @@
+if x > 1 m:
+    y = 1
+elif x < 0 m:
+    y = 2
+    z = 3
+else:
+    y = 4
+if a:
+    pass

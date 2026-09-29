@@ -6,12 +6,19 @@ See `spec/v0.1.md` for the v0.1 scope.
 
 ## Status
 
-`sky check` works on straight-line code: it lexes, parses, and type-checks a file and reports every error with source spans. `sky run` runs a file that checks cleanly, and `sky repl` is an interactive session; both print values in SI units.
+`sky check` lexes, parses and type-checks a file, and reports every error with source spans. It checks units (with SI prefixes and physical constants), symbolic tensor shapes, and matrix properties, through functions, `if` and `while`. `sky run` runs a file that checks cleanly, and `sky repl` is an interactive session; both print values in SI units.
 
 ```sky
-v = 3 m / 2 s          # velocity
-g = 9.81 m/s^2
-y = 3 m + 2 s          # error: cannot add length and time
+def kinetic(m: kg, v: m/s) -> J:
+    return 0.5 * m * v^2
+
+print(kinetic(2 kg, 3 m/s))      # 9 J
+E = 1 g * c^2                    # c, h, ħ, k_B, G, ... are predefined
+y = 3 m + 2 s                    # error: cannot add length and time
+
+K: PositiveDefinite Matrix[N, N] N/m   # arrays are checked, not run yet
+f: Vector[3] N
+u = K⁻¹ @ f                      # --explain: rewritten to a Cholesky solve
 ```
 
 ```
@@ -37,10 +44,10 @@ Numbers are always finite: division by zero and overflow are runtime errors, not
 Exit status: `0` ok; `1` diagnostics with at least one error (including a refused project root, or a runtime error in `sky run`); `2` usage error or input that can't be read.
 
 Not there yet:
-- blocks: `def`, `if`, `for`, `import`, and indented code
-- syntax for matrix tags (`PositiveDefinite`, ...) and for the unit of an array's elements, which the checker supports internally
-- physical constants and unit prefixes (the unit table has 17 units)
-- arrays at run time (the interpreter runs scalars, Bools and strings), and multi-line input in the REPL
+- `for` loops and `import`
+- arrays at run time (the interpreter runs scalars, Bools, strings and functions; the checker already handles vectors, matrices and tensors)
+- multi-line input in the REPL
+- everything in [`ROADMAP.md`](ROADMAP.md) beyond v0.1
 
 ## Layout
 

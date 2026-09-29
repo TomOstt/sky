@@ -1,0 +1,66 @@
+crates/sky-types/tests/ui/err_returns.sky:2:1: error: `return` outside a function
+  |
+2 | return 1
+  | ^^^^^^^^ not inside a `def`
+  = help: `return` only works in the body of a `def`
+
+crates/sky-types/tests/ui/err_returns.sky:7:12: error: this `return` gives a time, but an earlier `return` gives a length
+  |
+7 |     return 2 s
+  |            ^^^ this is time
+6 |         return 1 m
+  |                --- this is length
+  = note: `mixed` must return one type
+
+crates/sky-types/tests/ui/err_returns.sky:12:12: error: this `return` gives a value
+   |
+12 |     return 1 m
+   |            ^^^
+11 |         return
+   |         ------ an earlier `return` has no value
+   = help: give every `return` a value, or none
+
+crates/sky-types/tests/ui/err_returns.sky:17:5: error: `return` needs a value
+   |
+17 |     return
+   |     ^^^^^^ no value
+16 |         return 1 m
+   |                --- an earlier `return` gives a length
+   = help: give every `return` a value, or none
+
+crates/sky-types/tests/ui/err_returns.sky:19:5: error: `falls_off` can finish without returning a value
+   |
+19 | def falls_off(x):
+   |     ^^^^^^^^^ some path reaches the end of this function
+21 |         return 1 m
+   |                --- this `return` gives a value
+   = help: end every path with a `return`
+
+crates/sky-types/tests/ui/err_returns.sky:27:12: error: mismatched shapes: shape mismatch at axis 0: expected 4, found 3 (Vector[4] vs Vector[3])
+   |
+27 |     return x
+   |            ^ this is Vector[3] [1]
+26 | def declared_bad(x: Vector[3]) -> Vector[4]:
+   |                                   --------- declared here
+
+crates/sky-types/tests/ui/err_returns.sky:30:12: error: expected a number, found Bool
+   |
+30 |     return true
+   |            ^^^^ this is Bool
+29 | def declared_bool(x: Vector[3]) -> Vector[3]:
+   |                                    --------- declared here
+
+crates/sky-types/tests/ui/err_returns.sky:33:5: error: `return` needs a value
+   |
+33 |     return
+   |     ^^^^^^ no value
+32 | def declared_bare() -> Vector[3]:
+   |                        --------- the function is declared to return this
+   = help: return a value, or remove the `->` annotation
+
+crates/sky-types/tests/ui/err_returns.sky:35:5: error: `declared_falls_off` can finish without returning a value
+   |
+35 | def declared_falls_off() -> Vector[3]:
+   |     ^^^^^^^^^^^^^^^^^^ some path reaches the end of this function
+   |                             --------- declared to return a value here
+   = help: end every path with a `return`

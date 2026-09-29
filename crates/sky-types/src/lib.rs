@@ -6,6 +6,8 @@
 //! * [`check`]: the walk over the parsed AST ([`check_module`],
 //!   [`check_module_with`]), producing `sky-diag` diagnostics and the
 //!   rewrite decisions ([`RewriteSite`]). Everything below is AST-free.
+//!   Blocks, control flow, and functions (scoping, merges, calls to `def`s)
+//!   are in the private `flow` module, documented at its top.
 //! * [`shape`]: symbolic shapes ([`Shape`], [`ShapeDim`]) and equality-only
 //!   unification ([`ShapeUnifier`]). There is no dimension arithmetic such as
 //!   `N+1` in v0.1.
@@ -22,6 +24,7 @@
 #![forbid(unsafe_code)]
 
 pub mod check;
+mod flow;
 pub mod rewrite;
 pub mod rules;
 pub mod scale;
@@ -33,6 +36,7 @@ pub use check::{
     check_module, check_module_with, const_exponent, Checked, Env, RewriteSite, Ty, ValueTy,
     MAX_STORED_REWRITES,
 };
+pub use flow::FuncSig;
 pub use rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 pub use rules::{elementwise, inverse, matmul, transpose, TensorType};
 pub use scale::{negated_tags, scaled_tags};

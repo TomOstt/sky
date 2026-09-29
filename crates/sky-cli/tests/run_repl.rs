@@ -1401,6 +1401,8 @@ fn a_closed_stdout_is_not_a_diagnostic_on_any_engine() {
         assert_eq!(err(&o), "", "{engine}");
         fs::remove_dir_all(&dir).unwrap();
     }
+}
+
 #[test]
 fn run_evaluates_the_gradient_of_a_potential_as_a_force_vector() {
     // U = k (x² + y²) has ∇U = (2 k x, 2 k y): a Vector in N.

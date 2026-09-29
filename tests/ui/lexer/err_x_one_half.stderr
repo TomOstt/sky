@@ -1,0 +1,4 @@
+tests/ui/lexer/err_x_one_half.sky:1:6: error: unexpected character '½' (U+00BD)
+  |
+1 | y = x½
+  |      ^

@@ -1,0 +1,5 @@
+tests/ui/lexer/err_combining_marks_31.sky:2:32: error: too many combining marks in a row (at most 30)
+  |
+2 | x̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀̀ = 1
+  |                                ^ combining mark 31 in a row
+  = note: an identifier may have at most 30 combining marks (characters with a nonzero canonical combining class, counted after decomposition) in a row, the Unicode stream-safe limit (UAX #15)

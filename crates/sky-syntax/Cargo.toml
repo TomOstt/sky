@@ -11,3 +11,6 @@ publish.workspace = true
 sky-diag = { path = "../sky-diag" }
 unicode-ident = "1"
 
+[dev-dependencies]
+# Property tests only; not linked into any shipped artifact.
+proptest = { version = "1", default-features = false, features = ["std"] }

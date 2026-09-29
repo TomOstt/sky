@@ -1,0 +1,6 @@
+tests/ui/lexer/err_nfkc_maybe_combining.sky:1:1: error: identifier is not in Unicode NFKC form
+  |
+1 | à = 1
+  | ^^ not in NFKC form
+  = note: `a\u{0300}` is not in NFKC (Unicode Normalization Form KC), and Sky never normalizes identifiers
+  = help: write it as `à` (`\u{00E0}`)

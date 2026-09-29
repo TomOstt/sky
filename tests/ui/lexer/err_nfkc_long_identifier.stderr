@@ -1,0 +1,6 @@
+tests/ui/lexer/err_nfkc_long_identifier.sky:1:1: error: identifier is not in Unicode NFKC form
+  |
+1 | ﬁaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = 1
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not in NFKC form
+  = note: `\u{FB01}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…` (67 bytes) is not in NFKC (Unicode Normalization Form KC), and Sky never normalizes identifiers
+  = note: the NFKC form is not shown for identifiers longer than 64 characters

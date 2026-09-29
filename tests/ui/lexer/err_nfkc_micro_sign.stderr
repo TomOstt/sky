@@ -1,0 +1,7 @@
+tests/ui/lexer/err_nfkc_micro_sign.sky:1:10: error: identifier is not in Unicode NFKC form
+  |
+1 | size = 5 µm
+  |          ^^ not in NFKC form
+  = note: `\u{00B5}m` is not in NFKC (Unicode Normalization Form KC), and Sky never normalizes identifiers
+  = help: MICRO SIGN U+00B5 is not a letter for identifiers; use GREEK SMALL LETTER MU U+03BC (`μ`)
+  = help: write it as `μm` (`\u{03BC}m`)

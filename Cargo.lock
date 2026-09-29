@@ -181,6 +181,7 @@ dependencies = [
 name = "sky-syntax"
 version = "0.0.1"
 dependencies = [
+ "proptest",
  "sky-diag",
  "unicode-ident",
 ]

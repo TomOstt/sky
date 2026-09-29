@@ -1,0 +1,6 @@
+tests/ui/lexer/err_nfkc_decomposed.sky:2:1: error: identifier is not in Unicode NFKC form
+  |
+2 | é = 2
+  | ^^ not in NFKC form
+  = note: `e\u{0301}` is not in NFKC (Unicode Normalization Form KC), and Sky never normalizes identifiers
+  = help: write it as `é` (`\u{00E9}`)

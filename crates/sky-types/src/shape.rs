@@ -35,6 +35,17 @@ impl ShapeVar {
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    /// A variable with a chosen id, for readers of stored data (the SIR text
+    /// format prints `N#3` and must rebuild exactly that variable). The
+    /// checker uses [`ShapeUnifier::fresh`], which keeps ids unique within
+    /// one unifier; a caller of this function owns that guarantee.
+    pub fn from_parts(id: u64, name: impl Into<Arc<str>>) -> ShapeVar {
+        ShapeVar {
+            id,
+            name: name.into(),
+        }
+    }
 }
 
 impl PartialEq for ShapeVar {

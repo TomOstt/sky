@@ -7,9 +7,9 @@
 //! nested regions, never jumps.
 //!
 //! This crate holds the data model ([`ir`]), the operation set ([`op`]), and
-//! a builder ([`builder`]) used by lowering and tests. The verifier, the
-//! text format, the pass manager, lowering from the checked AST, and the
-//! reference interpreter build on these types.
+//! a builder ([`builder`]) used by lowering and tests, plus the verifier
+//! ([`verify`]) every pass relies on. Lowering from the checked AST and the
+//! reference interpreter build on these.
 //!
 //! # Levels
 //!
@@ -20,8 +20,10 @@
 #![forbid(unsafe_code)]
 
 pub mod builder;
+mod display;
 pub mod ir;
 pub mod op;
+pub mod verify;
 
 pub use builder::FunctionBuilder;
 pub use ir::{
@@ -29,3 +31,4 @@ pub use ir::{
     RegionData, RegionId, Repr, Type, ValueData, ValueDef, ValueId,
 };
 pub use op::{CmpOp, OpKind, OpProperties, SolveMethod};
+pub use verify::{assignable, verify, VerifyError, MAX_REGION_DEPTH};

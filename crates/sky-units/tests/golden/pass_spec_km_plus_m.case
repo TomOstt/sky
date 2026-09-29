@@ -1,0 +1,5 @@
+# spec v0.1 "Unit values": `1 km + 1 m` is length plus length.
+# (The value 1001 is checked in tests/spec_unit_values.rs.)
+unify [km] with [m]
+unify [km] with L
+show [km]

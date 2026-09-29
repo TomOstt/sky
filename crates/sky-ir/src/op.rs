@@ -55,6 +55,169 @@ impl SolveMethod {
     }
 }
 
+/// A mathematical function of `OpKind::Math`. The names are the ones the
+/// checker and the tree-walking interpreter use for the same functions.
+///
+/// Every function takes finite numbers and gives a finite number or fails
+/// at run time; it never gives NaN or infinity (the finite rule of
+/// `sky_interp::arith`). "Fail" below is the run-time error, so the
+/// operation's effect is [`Effect::Fail`] exactly for the functions that
+/// can fail (see [`MathFn::can_fail`]).
+///
+/// | function | operands | result dimension | fails when |
+/// |---|---|---|---|
+/// | `sqrt` | 1, any dimension | halves every exponent | operand < 0 |
+/// | `cbrt` | 1, any dimension | divides every exponent by 3 | never |
+/// | `abs` | 1, any dimension | same | never |
+/// | `exp` | 1, dimensionless | dimensionless | result overflows |
+/// | `log`, `log10`, `log2` | 1, dimensionless | dimensionless | operand <= 0 |
+/// | `sin`, `cos`, `tan`, `atan` | 1, dimensionless | dimensionless | never |
+/// | `asin`, `acos` | 1, dimensionless | dimensionless | operand outside [-1, 1] |
+/// | `atan2(y, x)` | 2, equal dimensions | dimensionless | never (`atan2(0, 0)` is 0) |
+/// | `hypot(x, y)` | 2, equal dimensions | same | result overflows |
+/// | `min`, `max` | 2, equal dimensions | same | never |
+/// | `floor`, `ceil`, `round` | 1, any dimension | same | never |
+///
+/// `round` rounds halves away from zero. `tan` of a finite number is always
+/// finite (no `f64` is exactly a multiple of pi/2). Operands are scalars in
+/// v1, as for the other arithmetic.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum MathFn {
+    Sqrt,
+    Cbrt,
+    Abs,
+    Exp,
+    Log,
+    Log10,
+    Log2,
+    Sin,
+    Cos,
+    Tan,
+    Asin,
+    Acos,
+    Atan,
+    Atan2,
+    Hypot,
+    Min,
+    Max,
+    Floor,
+    Ceil,
+    Round,
+}
+
+impl MathFn {
+    pub const ALL: [MathFn; 20] = [
+        MathFn::Sqrt,
+        MathFn::Cbrt,
+        MathFn::Abs,
+        MathFn::Exp,
+        MathFn::Log,
+        MathFn::Log10,
+        MathFn::Log2,
+        MathFn::Sin,
+        MathFn::Cos,
+        MathFn::Tan,
+        MathFn::Asin,
+        MathFn::Acos,
+        MathFn::Atan,
+        MathFn::Atan2,
+        MathFn::Hypot,
+        MathFn::Min,
+        MathFn::Max,
+        MathFn::Floor,
+        MathFn::Ceil,
+        MathFn::Round,
+    ];
+
+    /// The Sky name (`sqrt`).
+    pub fn name(self) -> &'static str {
+        match self {
+            MathFn::Sqrt => "sqrt",
+            MathFn::Cbrt => "cbrt",
+            MathFn::Abs => "abs",
+            MathFn::Exp => "exp",
+            MathFn::Log => "log",
+            MathFn::Log10 => "log10",
+            MathFn::Log2 => "log2",
+            MathFn::Sin => "sin",
+            MathFn::Cos => "cos",
+            MathFn::Tan => "tan",
+            MathFn::Asin => "asin",
+            MathFn::Acos => "acos",
+            MathFn::Atan => "atan",
+            MathFn::Atan2 => "atan2",
+            MathFn::Hypot => "hypot",
+            MathFn::Min => "min",
+            MathFn::Max => "max",
+            MathFn::Floor => "floor",
+            MathFn::Ceil => "ceil",
+            MathFn::Round => "round",
+        }
+    }
+
+    /// The text-format name: `math.sqrt`.
+    pub fn mnemonic(self) -> &'static str {
+        match self {
+            MathFn::Sqrt => "math.sqrt",
+            MathFn::Cbrt => "math.cbrt",
+            MathFn::Abs => "math.abs",
+            MathFn::Exp => "math.exp",
+            MathFn::Log => "math.log",
+            MathFn::Log10 => "math.log10",
+            MathFn::Log2 => "math.log2",
+            MathFn::Sin => "math.sin",
+            MathFn::Cos => "math.cos",
+            MathFn::Tan => "math.tan",
+            MathFn::Asin => "math.asin",
+            MathFn::Acos => "math.acos",
+            MathFn::Atan => "math.atan",
+            MathFn::Atan2 => "math.atan2",
+            MathFn::Hypot => "math.hypot",
+            MathFn::Min => "math.min",
+            MathFn::Max => "math.max",
+            MathFn::Floor => "math.floor",
+            MathFn::Ceil => "math.ceil",
+            MathFn::Round => "math.round",
+        }
+    }
+
+    /// The function with this Sky name.
+    pub fn from_name(name: &str) -> Option<MathFn> {
+        MathFn::ALL.into_iter().find(|f| f.name() == name)
+    }
+
+    /// How many operands: 2 for `atan2`, `hypot`, `min`, `max`, else 1.
+    pub fn arity(self) -> usize {
+        match self {
+            MathFn::Atan2 | MathFn::Hypot | MathFn::Min | MathFn::Max => 2,
+            _ => 1,
+        }
+    }
+
+    /// Whether the function can fail at run time (domain error or
+    /// overflow), which is what makes its op [`Effect::Fail`].
+    pub fn can_fail(self) -> bool {
+        matches!(
+            self,
+            MathFn::Sqrt
+                | MathFn::Exp
+                | MathFn::Log
+                | MathFn::Log10
+                | MathFn::Log2
+                | MathFn::Asin
+                | MathFn::Acos
+                | MathFn::Hypot
+        )
+    }
+
+    /// `f(a, b) == f(b, a)` exactly. `min` and `max` are not claimed
+    /// commutative: for `-0.0` and `0.0` the two orders could pick
+    /// different zeros.
+    pub fn commutative(self) -> bool {
+        matches!(self, MathFn::Hypot)
+    }
+}
+
 /// An operation kind. "Operands" and "results" below are the `operands`
 /// and `results` of the [`crate::OpData`].
 #[derive(Clone, PartialEq, Debug)]
@@ -99,6 +262,9 @@ pub enum OpKind {
     /// `a⁻¹` / `inv(a)`: one operand, one result. A scalar's reciprocal
     /// (dimension inverted) or a square matrix's inverse.
     Inverse,
+    /// A mathematical function: `arity()` operands (see [`MathFn`] for the
+    /// operands, dimension rule and failures of each), one result.
+    Math(MathFn),
     /// `A @ B`: two operands, one result.
     MatMul,
     /// `Aᵀ`: one operand, one result. Pure: it can't fail. (Running it
@@ -194,6 +360,7 @@ impl OpKind {
             OpKind::Sub => "sub",
             OpKind::Mul => "mul",
             OpKind::Div => "div",
+            OpKind::Math(f) => f.mnemonic(),
             OpKind::Neg => "neg",
             OpKind::PowConst { .. } => "pow.const",
             OpKind::Pow => "pow",
@@ -236,6 +403,10 @@ impl OpKind {
             OpKind::Add | OpKind::Mul => (fail, false, true, true),
             OpKind::Sub | OpKind::Div | OpKind::PowConst { .. } | OpKind::Pow => {
                 (fail, false, false, false)
+            }
+            OpKind::Math(f) => {
+                let e = if f.can_fail() { fail } else { EffectSet::PURE };
+                (e, false, f.commutative(), false)
             }
             // A singular matrix or a zero scalar fails.
             OpKind::Inverse | OpKind::Solve { .. } => (fail, false, false, false),

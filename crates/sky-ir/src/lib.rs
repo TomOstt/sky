@@ -28,4 +28,4 @@ pub use ir::{
     BlockData, BlockId, Edition, Effect, EffectSet, Function, Module, NumberType, OpData, OpId,
     RegionData, RegionId, Repr, Type, ValueData, ValueDef, ValueId,
 };
-pub use op::{CmpOp, OpKind, OpProperties, SolveMethod};
+pub use op::{CmpOp, MathFn, OpKind, OpProperties, SolveMethod};

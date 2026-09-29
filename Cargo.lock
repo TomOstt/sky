@@ -150,6 +150,7 @@ dependencies = [
 name = "sky-cli"
 version = "0.0.1"
 dependencies = [
+ "sky-diag",
  "sky-syntax",
 ]
 
@@ -167,6 +168,10 @@ dependencies = [
 [[package]]
 name = "sky-syntax"
 version = "0.0.1"
+dependencies = [
+ "sky-diag",
+ "unicode-ident",
+]
 
 [[package]]
 name = "sky-types"

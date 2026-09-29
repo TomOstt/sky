@@ -1,0 +1,4 @@
+# "Trojan Source": the RLO below makes the comment display reordered.
+access = "user"
+if access != "none":  # ‮ check admin 
+    grant()

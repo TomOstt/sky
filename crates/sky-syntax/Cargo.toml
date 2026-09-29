@@ -7,4 +7,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+sky-diag = { path = "../sky-diag" }
+unicode-ident = "1"
 

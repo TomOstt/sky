@@ -1,0 +1,24 @@
+tests/ui/lexer/warn_confusables.sky:2:1: warning: identifier `х` contains Cyrillic 'х' (U+0445), which looks like Latin 'x'
+  |
+2 | х = 1
+  | ^ possibly confusable identifier
+
+tests/ui/lexer/warn_confusables.sky:3:1: warning: identifier `xЖ` mixes Latin and Cyrillic scripts
+  |
+3 | xЖ = 2
+  | ^^ possibly confusable identifier
+
+tests/ui/lexer/warn_confusables.sky:4:10: warning: identifier `µm` contains MICRO SIGN U+00B5, which looks like 'μ' (U+03BC); use 'μ' instead
+  |
+4 | size = 5 µm
+  |          ^^ possibly confusable identifier
+
+tests/ui/lexer/warn_confusables.sky:5:9: warning: identifier `K` contains KELVIN SIGN U+212A, which looks like 'K' (U+004B); use 'K' instead
+  |
+5 | T = 300 K
+  |         ^ possibly confusable identifier
+
+tests/ui/lexer/warn_confusables.sky:6:1: warning: identifier `vαlue` contains Greek 'α' (U+03B1), which looks like Latin 'a'
+  |
+6 | vαlue = 3
+  | ^^^^^ possibly confusable identifier

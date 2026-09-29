@@ -1,0 +1,4 @@
+# Cyrillic "а" (U+0430) inside a Latin identifier.
+pаth = 1
+path = 2
+y = pаth

@@ -1,0 +1,5 @@
+tests/ui/lexer/err_unicode_minus.sky:1:7: error: unexpected character '−' (U+2212)
+  |
+1 | y = a − b
+  |       ^
+  = help: for subtraction, use ASCII `-`

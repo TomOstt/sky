@@ -1,0 +1,5 @@
+tests/ui/lexer/err_inconsistent_dedent.sky:4:1: error: unindent does not match any outer indentation level
+  |
+4 |   return 0
+  | ^^ dedented to column 3
+  = help: dedent to the indentation of an enclosing block

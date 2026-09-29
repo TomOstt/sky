@@ -153,6 +153,7 @@ version = "0.0.1"
 dependencies = [
  "sky-ast",
  "sky-diag",
+ "sky-interp",
  "sky-project",
  "sky-syntax",
  "sky-types",

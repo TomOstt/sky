@@ -7,9 +7,10 @@
 //! nested regions, never jumps.
 //!
 //! This crate holds the data model ([`ir`]), the operation set ([`op`]), and
-//! a builder ([`builder`]) used by lowering and tests, plus the verifier
-//! ([`verify`]) and the text format ([`print`] and [`parse`], round-trip
-//! exact) every pass relies on. Lowering from the checked AST and the
+//! a builder ([`builder`]) used by lowering and tests, plus the
+//! infrastructure every pass relies on: the verifier ([`verify`]), the text
+//! format ([`print`] and [`parse`], round-trip exact), and the pass manager
+//! with explanations ([`pass`]). Lowering from the checked AST and the
 //! reference interpreter build on these.
 //!
 //! # Levels
@@ -26,6 +27,7 @@ mod display;
 pub mod ir;
 pub mod op;
 pub mod parse;
+pub mod pass;
 pub mod print;
 pub mod verify;
 
@@ -37,5 +39,8 @@ pub use ir::{
 };
 pub use op::{CmpOp, OpKind, OpProperties, SolveMethod};
 pub use parse::{parse, ParseError};
+pub use pass::{
+    Changed, Explanation, Pass, PassCx, PassError, PassManager, PipelineReport, RuleId,
+};
 pub use print::{print, print_function};
 pub use verify::{assignable, verify, VerifyError, MAX_REGION_DEPTH};

@@ -2,11 +2,15 @@ use std::fs::File;
 use std::path::Path;
 use std::process::ExitCode;
 
-use sky_ast::ParseError;
-use sky_diag::{display_safe, Diagnostic, Severity, SourceFile, Span};
+use sky_diag::{display_safe, SourceFile};
 use sky_project::SystemIdentity;
 
-const USAGE: &str = "usage: sky check [--explain] <file.sky>\n       sky <run|repl> [file]";
+mod frontend;
+mod repl;
+mod run;
+
+const USAGE: &str =
+    "usage: sky check [--explain] <file.sky>\n       sky run <file.sky>\n       sky repl";
 
 /// The `sky` command line.
 ///
@@ -14,11 +18,12 @@ const USAGE: &str = "usage: sky check [--explain] <file.sky>\n       sky <run|re
 ///
 /// The one place the exit codes are defined (the README repeats it):
 ///
-/// * `0`: ok. `sky check` found no error (warnings alone do not fail it).
+/// * `0`: ok. `sky check` found no error (warnings alone do not fail it),
+///   `sky run` finished, or `sky repl` reached end of input.
 /// * `1`: diagnostics with at least one error, whatever the phase: a lexer,
-///   parser or checker error, or a refused project root (a `sky.toml` that
-///   is a link, foreign-owned or world-writable). Also `sky run` and
-///   `sky repl`, which are not implemented yet.
+///   parser or checker error, a runtime error in `sky run`, or a refused
+///   project root (a `sky.toml` that is a link, foreign-owned or
+///   world-writable).
 /// * `2`: a usage error (unknown command, wrong arguments), or an input that
 ///   cannot be read (missing, not a regular file, too large, not UTF-8).
 ///
@@ -38,36 +43,57 @@ fn main() -> ExitCode {
                 eprintln!("{USAGE}");
                 return ExitCode::from(2);
             }
-            // One open, then fstat and a capped read of that handle: only a
-            // regular file of at most sky_syntax::MAX_SOURCE_BYTES is read, and a FIFO
-            // can't block the open. Display escapes the path like the
-            // renderer does, so an ESC or bidi control can't reach the
-            // terminal.
-            let file = match sky_project::open_entry_file(Path::new(path.as_str())) {
-                Ok(f) => f,
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    return ExitCode::from(2);
-                }
-            };
-            let src = match sky_project::read_source(&file, Path::new(path.as_str())) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    return ExitCode::from(2);
-                }
+            let (file, src) = match read_entry(path) {
+                Ok(x) => x,
+                Err(code) => return code,
             };
             check(path, &file, &src, !explain.is_empty())
         }
-        Some("run") | Some("repl") => {
-            eprintln!("not implemented yet");
-            ExitCode::FAILURE
+        Some("run") => {
+            let [path] = &args[1..] else {
+                eprintln!("{USAGE}");
+                return ExitCode::from(2);
+            };
+            if path.starts_with("--") {
+                eprintln!("{USAGE}");
+                return ExitCode::from(2);
+            }
+            let (file, src) = match read_entry(path) {
+                Ok(x) => x,
+                Err(code) => return code,
+            };
+            run::run(path, &file, &src)
+        }
+        Some("repl") => {
+            if args.len() != 1 {
+                eprintln!("{USAGE}");
+                return ExitCode::from(2);
+            }
+            repl::repl()
         }
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
         }
     }
+}
+
+/// Opens and reads the entry file for `check` and `run`. One open, then
+/// fstat and a capped read of that handle: only a regular file of at most
+/// sky_syntax::MAX_SOURCE_BYTES is read, and a FIFO can't block the open.
+/// Display escapes the path like the renderer does, so an ESC or bidi
+/// control can't reach the terminal. On failure the message is printed and
+/// the exit code (2) returned.
+fn read_entry(path: &str) -> Result<(File, String), ExitCode> {
+    let file = sky_project::open_entry_file(Path::new(path)).map_err(|e| {
+        eprintln!("error: {e}");
+        ExitCode::from(2)
+    })?;
+    let src = sky_project::read_source(&file, Path::new(path)).map_err(|e| {
+        eprintln!("error: {e}");
+        ExitCode::from(2)
+    })?;
+    Ok((file, src))
 }
 
 /// `sky check`: finds the project root, then lexes, parses, and type-checks
@@ -102,50 +128,9 @@ fn check(path: &str, file: &File, src: &str, explain: bool) -> ExitCode {
 /// every diagnostic. Returns the rendered diagnostics in source order and
 /// whether none is an error. Runs inside `with_deep_stack`.
 fn check_source(path: &str, src: &str, explain: bool) -> (Vec<String>, bool) {
-    let mut diagnostics: Vec<Diagnostic> = match sky_syntax::lex(src) {
-        Err(e) => e.diagnostics().cloned().collect(),
-        Ok(lexed) => {
-            let (module, errors) = sky_ast::parse_module(&lexed.tokens, src);
-            let mut diagnostics = lexed.warnings;
-            if errors.is_empty() {
-                // Only a module that parsed cleanly is checked, so the
-                // checker never reports on a statement the parser dropped.
-                let checked = sky_types::check_module(&module, src);
-                diagnostics.extend(checked.diagnostics);
-                if explain {
-                    diagnostics.extend(checked.rewrites.iter().map(|r| r.to_diagnostic(src)));
-                    if checked.rewrites_omitted > 0 {
-                        let last = checked.rewrites.last().map_or(Span::point(0), |r| r.span);
-                        diagnostics.push(Diagnostic::note(
-                            format!(
-                                "{} more rewrite{} not shown",
-                                checked.rewrites_omitted,
-                                if checked.rewrites_omitted == 1 {
-                                    ""
-                                } else {
-                                    "s"
-                                }
-                            ),
-                            last,
-                        ));
-                    }
-                }
-            } else {
-                diagnostics.extend(errors.into_iter().map(ParseError::into_diagnostic));
-            }
-            diagnostics
-        }
-    };
-    // Lexer warnings with parse or check errors, interleaved by position.
-    // The sort is stable, so diagnostics at one position keep their order.
-    diagnostics.sort_by_key(|d| d.primary.span.start);
-    let ok = !diagnostics.iter().any(|d| d.severity == Severity::Error);
+    let front = frontend::analyze(src, sky_types::Env::new(), explain);
     // Pass the source unchanged: spans are byte offsets into it, and the
     // renderer escapes terminal-unsafe characters itself (spec/diagnostics.md).
     let file = SourceFile::new(path, src);
-    let rendered = diagnostics
-        .iter()
-        .map(|d| d.render_to_string(&file))
-        .collect();
-    (rendered, ok)
+    (front.render(&file), front.ok)
 }

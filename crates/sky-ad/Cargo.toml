@@ -1,0 +1,19 @@
+[package]
+name = "sky-ad"
+description = "Automatic differentiation for SIR: forward mode as a program transformation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+sky-diag = { path = "../sky-diag" }
+sky-ir = { path = "../sky-ir" }
+sky-units = { path = "../sky-units" }
+
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
+sky-ast = { path = "../sky-ast" }
+sky-ir-interp = { path = "../sky-ir-interp" }
+sky-types = { path = "../sky-types" }

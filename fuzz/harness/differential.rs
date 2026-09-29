@@ -75,7 +75,7 @@ impl<'a> Choices<'a> {
         if n <= 256 {
             self.byte() % n
         } else {
-            (self.byte() << 8 | self.byte()) % n
+            ((self.byte() << 8) | self.byte()) % n
         }
     }
 

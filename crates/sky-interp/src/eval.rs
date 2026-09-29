@@ -28,6 +28,9 @@ use crate::show::show_value;
 use crate::value::Function;
 use crate::{RuntimeEnv, RuntimeError, Value};
 
+#[path = "for_loop.rs"]
+mod for_loop;
+
 /// How a statement finished: normally (with the value of an expression
 /// statement, for the REPL), or by leaving its block early.
 enum Flow {
@@ -166,6 +169,7 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Flow::Normal(None))
             }
+            StmtKind::For { var, iter, body } => self.for_stmt(var, iter, body),
             StmtKind::Def {
                 name,
                 params,

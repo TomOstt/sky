@@ -45,7 +45,7 @@ jobs:
           toolchain: nightly
       - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
-          tool: cargo-fuzz
+          tool: cargo-fuzz@0.13.2
       # Short smoke run on every PR: 60 seconds from the seed corpus.
       # --target is explicit because the prebuilt cargo-fuzz is a musl binary
       # and would otherwise default to the musl target, which ASan rejects.

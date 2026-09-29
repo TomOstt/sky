@@ -5,7 +5,8 @@
 all-features = true
 
 [advisories]
-# Fail on any RustSec advisory (vulnerability, unsound, unmaintained) and on yanked crates.
+# Fail on any RustSec vulnerability or unsound advisory and on yanked crates. Unmaintained
+# advisories fail only for crates the workspace depends on directly (`unmaintained = "workspace"`).
 # To accept a specific advisory, add its ID below with a comment explaining why.
 yanked = "deny"
 unmaintained = "workspace"

@@ -1,0 +1,11 @@
+[package]
+name = "sky-types"
+description = "Type checker for Sky: units, shapes, matrix properties"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sky-ast = { path = "../sky-ast" }
+sky-units = { path = "../sky-units" }

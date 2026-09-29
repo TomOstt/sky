@@ -1,0 +1,10 @@
+[package]
+name = "sky-ast"
+description = "Typed AST for Sky"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sky-syntax = { path = "../sky-syntax" }

@@ -1,0 +1,10 @@
+[package]
+name = "sky-interp"
+description = "Tree-walking interpreter for Sky"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sky-ast = { path = "../sky-ast" }

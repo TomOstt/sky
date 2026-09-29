@@ -19,7 +19,7 @@ pub mod stack;
 
 pub use ast::{
     AssignTarget, BinaryOp, BoolOp, CompoundOp, DimExpr, Expr, ExprKind, Ident, IndexItem, Literal,
-    Module, ShapeAnn, ShapeKind, Stmt, StmtKind, TypeExpr, UnaryOp, UnitExpr,
+    Module, ShapeAnn, ShapeKind, Stmt, StmtKind, TypeExpr, UnaryOp, UnitExpr, TAG_NAMES,
 };
 pub use parser::{
     parse_expr, parse_module, ParseError, MAX_DEPTH, MAX_QUOTED_BYTES, MAX_QUOTED_CHARS,

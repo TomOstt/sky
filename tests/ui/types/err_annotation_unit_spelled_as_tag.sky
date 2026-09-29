@@ -1,4 +1,0 @@
-# A capitalized name followed by another name reads as a matrix property,
-# so a compound unit written with a space lands here: use `*`.
-a: N m
-b: Pa s

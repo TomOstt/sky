@@ -27,6 +27,7 @@ use sky_syntax::{Kw, Span, Token, TokenKind};
 use crate::ast::{
     span_text, AssignTarget, BinaryOp, BoolOp, CompoundOp, DimExpr, Expr, ExprKind, Ident,
     IndexItem, Literal, Module, ShapeAnn, ShapeKind, Stmt, StmtKind, TypeExpr, UnaryOp, UnitExpr,
+    TAG_NAMES,
 };
 use crate::precedence::{
     bool_binding_power, infix_binding_power, is_postfix_start, prefix_binding_power, NOT_BP,
@@ -1221,6 +1222,12 @@ impl<'t, 's> Parser<'t, 's> {
     fn parse_type(&mut self) -> Option<TypeExpr> {
         let start = self.current().span;
         let mut tags = Vec::new();
+        // Capitalized words are tags only when they lead up to a shape word
+        // (`PositiveDefinite Matrix[N, N]`). Otherwise the first word starts
+        // a unit, so `x: N m` gets the unit help (`N*m`) instead of being
+        // read as a matrix property called `N`. Decided once, up front, so
+        // a long line stays linear.
+        let tagged = self.tags_lead_to_shape();
         loop {
             let tok = self.current();
             if tok.kind != TokenKind::Ident {
@@ -1234,8 +1241,7 @@ impl<'t, 's> Parser<'t, 's> {
             if next == Some(TokenKind::LBracket) {
                 return self.fail_unknown_shape(tok);
             }
-            if word.chars().next().is_some_and(char::is_uppercase) && next == Some(TokenKind::Ident)
-            {
+            if tagged && next == Some(TokenKind::Ident) {
                 tags.push(Ident { span: tok.span });
                 self.bump();
                 continue;
@@ -1248,6 +1254,38 @@ impl<'t, 's> Parser<'t, 's> {
                 unit: Some(unit),
             });
         }
+    }
+
+    /// Whether the type starting at the current token begins with matrix
+    /// properties: a run of capitalized names ending in a shape word
+    /// (`Symmetric Diagonal Matrix`), or a known property word
+    /// ([`TAG_NAMES`]) followed by another name (`Symmetric m`, which the
+    /// checker then reports as a property without a shape).
+    fn tags_lead_to_shape(&self) -> bool {
+        if let (Some(first), Some(second)) = (self.nth(0), self.nth(1)) {
+            let word = span_text(self.src, first.span).unwrap_or("");
+            if first.kind == TokenKind::Ident
+                && second.kind == TokenKind::Ident
+                && TAG_NAMES.contains(&word)
+            {
+                return true;
+            }
+        }
+        let mut i = 0;
+        while let Some(tok) = self.nth(i) {
+            if tok.kind != TokenKind::Ident {
+                return false;
+            }
+            let word = span_text(self.src, tok.span).unwrap_or("");
+            if ShapeKind::from_name(word).is_some() {
+                return i > 0;
+            }
+            if !word.chars().next().is_some_and(char::is_uppercase) {
+                return false;
+            }
+            i += 1;
+        }
+        false
     }
 
     /// The rest of a type once its shape word (`Matrix`, ...) is current.

@@ -241,6 +241,12 @@ impl ShapeKind {
     }
 }
 
+/// The matrix-property words of v0.1 (spec "Matrix tags"). The parser uses
+/// them only to read `Symmetric m` as a misplaced property rather than a
+/// unit called `Symmetric`; the checker owns their meaning
+/// (`sky_types::Tag`, which a test keeps in sync with this list).
+pub const TAG_NAMES: [&str; 4] = ["Symmetric", "PositiveDefinite", "Diagonal", "Orthogonal"];
+
 /// The shape part of a type: `Matrix[N, 3]`, or a bare `Scalar`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShapeAnn {

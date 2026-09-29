@@ -1,0 +1,43 @@
+crates/sky-types/tests/ui/err_shape_debugger_swapped.sky:4:7: error: cannot add Matrix[4,3] to Matrix[3,4]
+  |
+4 | C = A + B
+  |       ^ axis 0 differs: 3 vs 4
+  |     - this is Matrix[3,4] [1]
+  |         - this is Matrix[4,3] [1]
+  = note: axis     0  1
+  = note: left     3  4
+  = note: right    4  3
+  = note: differs  ^
+  = note: in a matrix, axis 0 is the rows and axis 1 the columns
+  = help: the shapes would match if the right operand were transposed: Matrix[4,3] would become Matrix[3,4] (there is no transpose syntax yet)
+
+crates/sky-types/tests/ui/err_shape_debugger_swapped.sky:6:7: error: cannot multiply Matrix[3,4] by Matrix[5,4]
+  |
+6 | F = A @ E
+  |       ^ inner dimensions differ: 4 vs 5
+  |     - this is Matrix[3,4] [1]
+  |         - this is Matrix[5,4] [1]
+  = note: `@` contracts the last axis of the left operand with the first axis of the right one: [m, k] @ [k, n] -> [m, n]
+  = note: here [3, *4*] @ [*5*, 4] needs 4 == 5
+  = help: the shapes would match if the right operand were transposed: Matrix[5,4] would become Matrix[4,5] (there is no transpose syntax yet)
+
+crates/sky-types/tests/ui/err_shape_debugger_swapped.sky:7:19: error: declared Matrix[3,4], but the value is Matrix[4,3]
+  |
+7 | G: Matrix[3, 4] = B
+  |                   ^ this is Matrix[4,3] [1]
+  |    ------------ expected because of this annotation
+  = note: axis      0  1
+  = note: declared  3  4
+  = note: value     4  3
+  = note: differs   ^
+  = note: in a matrix, axis 0 is the rows and axis 1 the columns
+  = help: the shapes would match if the value were transposed: Matrix[4,3] would become Matrix[3,4] (there is no transpose syntax yet)
+
+crates/sky-types/tests/ui/err_shape_debugger_swapped.sky:9:7: error: cannot add a vector to a matrix
+  |
+9 | H = A + u
+  |       ^ rank 2 vs rank 1
+  |     - this is Matrix[3,4] [1]
+  |         - this is Vector[3] [1]
+  = note: left: [3, 4] has 2 axes, right: [3] has 1 axis
+  = note: axes are numbered from 0 and have no names yet; only shapes of the same rank can be compared axis by axis

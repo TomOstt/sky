@@ -1,9 +1,13 @@
-crates/sky-types/tests/ui/err_shape_vars_across_branches.sky:11:11: error: `@` inner dimensions differ: 3 vs 4 in Matrix[3,3] @ Vector[4]
+crates/sky-types/tests/ui/err_shape_vars_across_branches.sky:11:11: error: cannot multiply Matrix[3,3] by Vector[4]
    |
 11 |     r = A @ d
-   |           ^
+   |           ^ inner dimensions differ: N = 3 vs 4
    |         - this is Matrix[3,3] [1]
    |             - this is Vector[4] [1]
+   = note: `@` contracts the last axis of the left operand with the first axis of the right one: [m, k] @ [k] -> [m]
+   = note: here [3, *3*] @ [*4*] needs 3 == 4
+   = note: `N` was fixed to 3 at line 9 (`A @ c`)
+   = help: check the size variable `N`: every `N` in a module (or, per call, in a function) stands for one size
 
 crates/sky-types/tests/ui/err_shape_vars_across_branches.sky:15:5: error: `s` is `Vector[4] [1]` here but `Vector[3] [1]` in the other branch
    |

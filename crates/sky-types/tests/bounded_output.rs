@@ -96,7 +96,11 @@ fn huge_size_variable_is_capped_in_types() {
     let c = check(&src, env);
     assert_eq!(c.diagnostics.len(), 1, "{:#?}", c.diagnostics);
     let d = &c.diagnostics[0];
-    assert!(d.message.starts_with("mismatched shapes"), "{}", d.message);
+    assert!(
+        d.message.starts_with("declared as a matrix"),
+        "{}",
+        d.message
+    );
     assert!(checker_text_len(d) < KIB, "{}", checker_text_len(d));
     let ty = c.env.get("A").expect("A is bound").to_string();
     assert!(ty.len() < KIB, "{}", ty.len());

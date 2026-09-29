@@ -137,7 +137,7 @@ z = dot(u, v)
 ";
     let c = check(src);
     assert_eq!(messages(&c).len(), 1, "{:#?}", c.diagnostics);
-    assert!(messages(&c)[0].starts_with("mismatched shapes"));
+    assert!(messages(&c)[0].starts_with("the parameter takes Vector["));
     assert_eq!(ty(&c, "x"), "Vector[3] [1]");
     assert_eq!(ty(&c, "y"), "Vector[4] [1]");
 }

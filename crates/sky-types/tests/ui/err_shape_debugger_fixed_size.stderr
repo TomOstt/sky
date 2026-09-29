@@ -1,0 +1,10 @@
+crates/sky-types/tests/ui/err_shape_debugger_fixed_size.sky:5:7: error: cannot multiply Matrix[3,4] by Matrix[5,2]
+  |
+5 | C = A @ B
+  |       ^ inner dimensions differ: N = 4 vs 5
+  |     - this is Matrix[3,4] [1]
+  |         - this is Matrix[5,2] [1]
+  = note: `@` contracts the last axis of the left operand with the first axis of the right one: [m, k] @ [k, n] -> [m, n]
+  = note: here [3, *4*] @ [*5*, 2] needs 4 == 5
+  = note: `N` was fixed to 4 at line 3 (`Matrix[3, N]` on a value of shape Matrix[3,4])
+  = help: check the size variable `N`: every `N` in a module (or, per call, in a function) stands for one size

@@ -1,0 +1,2 @@
+(= y (attr x true))
+(= z (or (attr x false) (not (attr x true))))

@@ -6,8 +6,8 @@
 //!
 //! # Scoping
 //!
-//! Python's: `if` and `while` bodies share the enclosing scope, and a `def`
-//! opens a new one. After an `if`, the bindings of every branch that can
+//! Python's: `if`, `while` and `for` bodies share the enclosing scope, and a
+//! `def` opens a new one. After an `if`, the bindings of every branch that can
 //! fall through are merged ([`Checker::merge`]): a name bound in all of them
 //! keeps its type (dimension and shape must agree, tags are joined with
 //! [`TagSet::join`]), a name bound in only some becomes *maybe-defined*
@@ -135,7 +135,23 @@ pub(crate) struct FnCtx {
     pub(crate) locals: BTreeSet<String>,
 }
 
-/// One `while` being checked: the states its `break`s and `continue`s left.
+/// How often a loop's body is known to run: it decides which paths leave
+/// the loop (see [`Checker::loop_body`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Runs {
+    /// Maybe never (`while c`, `range(n)` with a variable `n`): the state
+    /// before the loop is one way out, so a name first bound in the body
+    /// is only maybe-defined after it.
+    Maybe,
+    /// At least once (a `for` over an array, which is never empty, or over
+    /// a `range` with constant bounds): the body's own states are the only
+    /// ways out, so what it binds is defined after the loop.
+    AtLeastOnce,
+    /// Until a `break` (`while true`).
+    Forever,
+}
+
+/// One loop being checked: the states its `break`s and `continue`s left.
 #[derive(Default)]
 pub(crate) struct LoopFrame {
     breaks: Vec<Scope>,
@@ -294,18 +310,29 @@ impl Checker<'_> {
         let before = self.env.snapshot();
         let t = self.expr(cond);
         self.condition("while", cond, t);
+        let forever = matches!(
+            strip_parens(cond).kind,
+            ExprKind::Literal(Literal::Bool { value: true, .. })
+        );
+        let runs = if forever { Runs::Forever } else { Runs::Maybe };
+        self.loop_body(span, before, body, runs);
+    }
+
+    /// The body of a loop and the merge of every way out of it, for `while`
+    /// and `for` alike (a `for` is a `while` over an index, see
+    /// [`crate::for_loop`]). `before` is the state on entering the loop,
+    /// which is where the zero-iteration path ends up.
+    pub(crate) fn loop_body(&mut self, span: Span, before: Scope, body: &Block, runs: Runs) {
         self.loops.push(LoopFrame::default());
         self.diverged = false;
         self.block(body);
         let end_diverged = self.diverged;
         let frame = self.loops.pop().unwrap_or_default();
-        let forever = matches!(
-            strip_parens(cond).kind,
-            ExprKind::Literal(Literal::Bool { value: true, .. })
-        );
         let mut paths = Vec::new();
-        if !forever {
-            paths.push(before.clone());
+        if runs != Runs::Forever {
+            if runs == Runs::Maybe {
+                paths.push(before.clone());
+            }
             if !end_diverged {
                 paths.push(self.env.snapshot());
             }
@@ -319,8 +346,10 @@ impl Checker<'_> {
         if self.loops.is_empty() {
             self.error(
                 Diagnostic::error("`break` outside a loop", span)
-                    .with_label("not inside a `while`")
-                    .with_help("`break` only works inside a `while` loop of the same function"),
+                    .with_label("not inside a loop")
+                    .with_help(
+                        "`break` only works inside a `while` or `for` loop of the same function",
+                    ),
             );
         } else {
             let here = self.env.snapshot();
@@ -335,8 +364,10 @@ impl Checker<'_> {
         if self.loops.is_empty() {
             self.error(
                 Diagnostic::error("`continue` outside a loop", span)
-                    .with_label("not inside a `while`")
-                    .with_help("`continue` only works inside a `while` loop of the same function"),
+                    .with_label("not inside a loop")
+                    .with_help(
+                        "`continue` only works inside a `while` or `for` loop of the same function",
+                    ),
             );
         } else {
             let here = self.env.snapshot();

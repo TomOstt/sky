@@ -22,6 +22,13 @@ use crate::check::strip_parens;
 /// memory than that in one array.
 pub const MAX_ARRAY_ELEMENTS: u64 = 1 << 24;
 
+/// The largest magnitude a `range` bound or step may have: 2^53, the last
+/// point below which every integer is an exact `f64`. Loop indices are
+/// `f64` numbers, so a bigger bound would make `i + 1` stall (`i` and `i + 1`
+/// would be the same number). The checker refuses a constant beyond it and
+/// the interpreter a computed one.
+pub const MAX_RANGE_BOUND: i64 = 1 << 53;
+
 /// Why a numeric literal has no `f64` value.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NumberError {

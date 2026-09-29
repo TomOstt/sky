@@ -456,7 +456,7 @@ pub(crate) struct Checker<'s> {
     solves: HashSet<Span>,
     /// The `def`s being checked, innermost last.
     pub(crate) fns: Vec<FnCtx>,
-    /// The `while` loops around the current statement within the current
+    /// The loops around the current statement within the current
     /// function (or the module), innermost last.
     pub(crate) loops: Vec<LoopFrame>,
     /// Whether the statement just checked cannot fall through: it ended in
@@ -690,7 +690,7 @@ impl<'s> Checker<'s> {
     /// predefined constant, warns that it shadows it: allowed (like a Python
     /// builtin), but `c = 3` or `h = 0.1` silently losing the constant is
     /// exactly the surprise this is meant to prevent.
-    fn bind_name(&mut self, id: &Ident, ty: Ty) {
+    pub(crate) fn bind_name(&mut self, id: &Ident, ty: Ty) {
         self.warn_if_shadowing(id);
         let name = self.ident(id);
         self.binding_types.insert(id.span, ty.clone());
@@ -782,6 +782,7 @@ impl<'s> Checker<'s> {
                 else_block,
             } => self.if_stmt(stmt.span, branches, else_block.as_ref()),
             StmtKind::While { cond, body } => self.while_stmt(stmt.span, cond, body),
+            StmtKind::For { var, iter, body } => self.for_stmt(stmt.span, var, iter, body),
             StmtKind::Def {
                 name,
                 params,
@@ -1351,6 +1352,9 @@ impl<'s> Checker<'s> {
                     return t;
                 }
                 if let Some(t) = self.builtin_call(callee, args, e.span) {
+                    return t;
+                }
+                if let Some(t) = self.range_outside_for(callee, args, e.span) {
                     return t;
                 }
                 let callee_ty = self.expr(callee);

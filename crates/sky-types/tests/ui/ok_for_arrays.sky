@@ -1,0 +1,20 @@
+# A vector gives its entries, with the element unit.
+forces: Vector[3] N
+total = 0 N
+for f in forces:
+    total += f
+
+# A matrix gives its rows, which are vectors.
+A: Matrix[2, 3] m
+for row in A:
+    first = row[0]
+    count = len(row)
+
+# The index of a range indexes.
+for i in range(3):
+    picked = forces[i]
+
+# Literals work too, and a loop over an array always runs.
+for x in [1 s, 2 s]:
+    pass
+after = x

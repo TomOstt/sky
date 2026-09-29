@@ -56,10 +56,10 @@ impl Walk<'_> {
                 }
             }
             ExprKind::Call { callee, args } => {
-                // Builtins (`print`, `inv`, the array and math functions) are
+                // Builtins (`print`, `inv`, `range`, the array and math functions) are
                 // recognised by name, so their callee is never typed.
                 let builtin = matches!(&callee.kind, ExprKind::Name(id)
-                    if matches!(&self.src[id.span.range()], "print" | "inv" | "zeros" | "identity" | "len")
+                    if matches!(&self.src[id.span.range()], "print" | "inv" | "zeros" | "identity" | "len" | "range")
                         || sky_units::MathFn::from_name(&self.src[id.span.range()]).is_some())
                     && !self.checked.expr_types.contains_key(&callee.span);
                 self.expr(callee, builtin);
@@ -142,6 +142,24 @@ impl Walk<'_> {
             }
             StmtKind::While { cond, body } => {
                 self.expr(cond, false);
+                self.block(body);
+            }
+            StmtKind::For { iter, body, .. } => {
+                // `for i in range(...)`: the call is a loop header, not a
+                // value, so neither it nor its callee is typed; its
+                // arguments are.
+                match &iter.kind {
+                    ExprKind::Call { callee, args }
+                        if matches!(&callee.kind, ExprKind::Name(id)
+                            if &self.src[id.span.range()] == "range")
+                            && !self.checked.expr_types.contains_key(&callee.span) =>
+                    {
+                        for a in args {
+                            self.expr(a, false);
+                        }
+                    }
+                    _ => self.expr(iter, false),
+                }
                 self.block(body);
             }
             StmtKind::Def { body, .. } => self.block(body),
@@ -246,6 +264,11 @@ r = b.len
 i = inv(2 s)
 j = (3 m)⁻¹
 k = 2 ^ 0.5
+for t in range(1, g(2), 2):
+    w += t * 1 m
+for row in [[1, 2], [3, 4]]:
+    for e in row:
+        w += e * 1 m
 ";
     let n = assert_complete("mixed", src);
     assert!(n > 60, "{n}");

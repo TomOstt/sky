@@ -1,0 +1,16 @@
+n = 3
+# A variable bound may be zero: the loop variable may be unbound after it.
+for i in range(n):
+    inside = i
+print(i)
+print(inside)
+# An empty constant range is the same.
+for e in range(0):
+    pass
+print(e)
+# `break` before the assignment leaves it maybe-defined.
+for k in [1, 2]:
+    if k == 1:
+        break
+    z = 1
+print(z)

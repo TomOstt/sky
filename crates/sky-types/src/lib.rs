@@ -7,7 +7,8 @@
 //!   [`check_module_with`]), producing `sky-diag` diagnostics and the
 //!   rewrite decisions ([`RewriteSite`]). Everything below is AST-free.
 //!   Blocks, control flow, and functions (scoping, merges, calls to `def`s)
-//!   are in the private `flow` module, documented at its top.
+//!   are in the private `flow` module, documented at its top; `for` loops
+//!   are in `for_loop`.
 //! * `display`: `v as unit`, a value shown in a chosen unit (only printed,
 //!   never computed with; private).
 //! * `provenance`: why a name has its dimension, for the derivation notes on
@@ -39,6 +40,7 @@ pub mod check;
 pub mod constant;
 mod display;
 mod flow;
+mod for_loop;
 pub mod linalg;
 pub mod numerics;
 mod provenance;
@@ -56,10 +58,11 @@ pub use check::{
 };
 pub use constant::{
     apply_unit, entry_value, express_in_unit, parse_number, NumberError, UnitError,
-    MAX_ARRAY_ELEMENTS,
+    MAX_ARRAY_ELEMENTS, MAX_RANGE_BOUND,
 };
 pub use display::a_dimension;
 pub use flow::FuncSig;
+pub use for_loop::{range_constants, range_runs_at_least_once};
 pub use rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 pub use rules::{elementwise, inverse, matmul, transpose, TensorType};
 pub use scale::{negated_tags, scaled_tags};

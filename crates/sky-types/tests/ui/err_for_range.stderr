@@ -1,0 +1,54 @@
+crates/sky-types/tests/ui/err_for_range.sky:2:16: error: `range` needs an integer, found `2.5`
+  |
+2 | for i in range(2.5):
+  |                ^^^ not an integer
+  = help: round it first: `round(x)`, `floor(x)` or `ceil(x)`
+
+crates/sky-types/tests/ui/err_for_range.sky:4:16: error: `range` needs a dimensionless integer, found length
+  |
+4 | for i in range(3 m):
+  |                ^^^ this is length
+  = note: a count of steps has no unit
+  = help: divide by a reference quantity and round: e.g. `range(round(t / dt))`
+
+crates/sky-types/tests/ui/err_for_range.sky:6:22: error: the step of `range` cannot be zero
+  |
+6 | for i in range(1, 5, 0):
+  |                      ^ zero step
+  = note: the index would never move, so the loop would never end
+
+crates/sky-types/tests/ui/err_for_range.sky:8:10: error: `range` takes 1 to 3 arguments, found 4
+  |
+8 | for i in range(1, 2, 3, 4):
+  |          ^^^^^^^^^^^^^^^^^ wrong number of arguments
+  = help: write `range(stop)`, `range(start, stop)` or `range(start, stop, step)`
+
+crates/sky-types/tests/ui/err_for_range.sky:10:16: error: `range` needs an integer, found Bool
+   |
+10 | for i in range(true):
+   |                ^^^^ this is Bool
+
+crates/sky-types/tests/ui/err_for_range.sky:12:16: error: `range` needs a number, not an array
+   |
+12 | for i in range([1, 2]):
+   |                ^^^^^^ this is Vector[2] [1]
+   = help: to visit the elements of an array, loop over it: `for x in v:`
+
+crates/sky-types/tests/ui/err_for_range.sky:14:16: error: the bound `10000000000000000` of `range` is too large
+   |
+14 | for i in range(10000000000000000):
+   |                ^^^^^^^^^^^^^^^^^ too large
+   = note: a bound may be at most 2^53 in size, the largest integer an f64 holds exactly
+
+crates/sky-types/tests/ui/err_for_range.sky:16:10: error: `range` takes 1 to 3 arguments, found 0
+   |
+16 | for i in range():
+   |          ^^^^^^^ wrong number of arguments
+   = help: write `range(stop)`, `range(start, stop)` or `range(start, stop, step)`
+
+crates/sky-types/tests/ui/err_for_range.sky:18:5: error: `range` can only be the iterable of a `for` loop
+   |
+18 | r = range(3)
+   |     ^^^^^^^^ not directly after `for i in`
+   = note: `range` is not a value: it only tells a `for` loop what to count
+   = help: write `for i in range(n):`; to make a vector, write its entries

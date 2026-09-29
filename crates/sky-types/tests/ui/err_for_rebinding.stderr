@@ -1,0 +1,7 @@
+crates/sky-types/tests/ui/err_for_rebinding.sky:3:5: error: `i` is a dimensionless number here but a length on another path through the loop
+  |
+3 | for i in range(n):
+  |     ^ this binding has a different type
+2 | i = 3 m
+  | - `i` is a length here
+  = help: give both bindings the same type, or use different names

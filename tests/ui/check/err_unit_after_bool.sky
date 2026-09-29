@@ -1,0 +1,2 @@
+# A unit may only follow a numeric literal, never a Bool.
+x = true m

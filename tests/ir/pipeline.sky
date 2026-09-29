@@ -1,0 +1,13 @@
+# Every pass has something to say: fold (2 * 3), the e-graph (x * 1, -(-t)),
+# dead-code elimination (unused), and the Cholesky solve (A⁻¹ @ b).
+x: m
+t: s
+A: PositiveDefinite Matrix[3, 3]
+b: Vector[3]
+a = 2 * 3
+unused = a * 4
+y = x * 1
+z = -(-t)
+print(a, y, z)
+sol = A⁻¹ @ b
+print(sol)

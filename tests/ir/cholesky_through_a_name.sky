@@ -1,0 +1,8 @@
+# The checker only rewrites the spelled-out `A⁻¹ @ b`. Through a name, only the
+# IR sees that `B` is an inverse, so the `cholesky` pass reports this one
+# itself (in the checker's words). `B` is still computed: `print(B)` uses it.
+A: PositiveDefinite Matrix[3, 3]
+b: Vector[3]
+B = inv(A)
+x = B @ b
+print(x, B)

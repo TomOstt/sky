@@ -111,13 +111,24 @@ trait Pass {
 }
 ```
 
-The pass manager runs a declared pipeline and calls the verifier between passes in debug builds and tests. It can print the IR after each pass (`sky check --emit-ir[=after:<pass>]`) for debugging and golden tests.
+The pass manager runs a declared pipeline and calls the verifier before the first pass and after every pass (always in tests and in `sky check`, in debug builds elsewhere); a failure names the pass that produced the invalid IR. It can print the IR after each pass (`sky check --emit-ir[=<stage>]`, below) for debugging and golden tests. The `level()` method is left out until there is a second level.
 
 v1 ships these passes:
-1. **lower**: checked AST to L1. Uses the checker's types; never re-derives them.
-2. **verify**: SSA dominance, type rules per operation, closed tags, legality by level, and effect consistency.
-3. **cholesky**: `matmul(inverse(A), b)` with PositiveDefinite A becomes `solve[cholesky](A, b)`. This replaces the special case now in `sky-types/src/check.rs` (`cholesky_rewrite`). It must produce the same `--explain` text, or better.
-4. **dce**: removes pure operations whose results are never used, with an explanation when user-written code is removed (idea 30).
+1. **lower**: checked AST to L1. Uses the checker's types; never re-derives them. It infers function effects with the `effects` pass's rule instead of computing them itself.
+2. **verify**: SSA dominance, type rules per operation, closed tags, legality by level, and effect consistency (declared effects include the inferred ones).
+3. **effects** (`sky_ir::effects`): the union over operations and regions, calls taking the callee's effects, recursion by fixed point. Not part of the default pipeline (lowering already ran it); available as a pass that also tightens declarations.
+4. **fold**: constant folding, exact on rationals and bit-identical to the reference interpreter on floats.
+5. **egraph**: rewriting with `egg` under the `Reproducible` contract (exact and conditional rules only).
+6. **dce**: removes pure operations whose results are never used, with an explanation when user-written code is removed (idea 30).
+7. **cholesky**: `matmul(inverse(A), b)` with PositiveDefinite A becomes `solve[cholesky](A, b)`. Its explanation is the checker's sentence for the same rewrite, word for word (`sky_opt::cholesky_text`).
+
+The default pipeline (`sky_opt::default_pipeline`) is 4, 5, 6, 7 in that order: fold first so the e-graph sees constants; the e-graph before dce because it leaves the operations it replaced behind; cholesky last so its `solve` is never rewritten. `sky-opt`'s passes and `sky-egraph`'s rewriting each keep their own record type (`Rewrite`), and convert to `Explanation` in one place each (`Rewrite::explain`, through `PassCx::explain`), so rule ids and texts are unchanged.
+
+### `sky check` and the passes
+
+* `sky check --emit-ir[=<stage>]` prints the SIR text to stdout: `lower` (straight out of lowering), `after:<pass>` (or just the pass name: `fold`, `egraph`, `dce`, `cholesky`), or `final` (the default, the end of the pipeline). With the flag, stdout is only the IR, so it can be piped into a file and parsed back; the `edition:` and `ok` lines go to stderr.
+* `sky check --explain` also shows the passes' explanations, merged with the checker's notes in source order. The checker's Cholesky note is kept as it is (it names the operands by their source text, which SIR does not keep), and the pass's explanation of the same site is dropped, so it is never shown twice. A site only the IR sees (`B = inv(A)`, then `B @ b`) is shown once, from the pass, in the same words.
+* A program that checks but cannot be lowered yet (`sky_lower::LowerError`, today: array literals) is still `ok`. `--emit-ir` prints a note saying why there is no IR and nothing on stdout; `--explain` alone is unchanged.
 
 ### Explanations
 
@@ -126,7 +137,7 @@ Explanation { pass, rule: RuleId, span: Span, before: String, after: String,
               because: [Fact or type property], effect_on_semantics: Unchanged | WithinBound(err) }
 ```
 
-This generalises today's `RewriteSite`. Every explanation is a note diagnostic in `--explain`. `RuleId`s are stable (e.g. `LA-CHOLESKY-001`), so users and documentation can refer to them.
+This generalises the checker's `RewriteSite`. Every explanation is a note diagnostic in `--explain`. A rewrite that removes code has an empty `after`. `RuleId`s are stable (e.g. `LA-CHOLESKY-001`), so users and documentation can refer to them.
 
 ## Rewrites and the e-graph (Phase 2, designed now)
 
@@ -168,17 +179,29 @@ It is parsed by a small hand-written parser that never panics, limits nesting to
 
 | Crate | Contents | Depends on |
 |---|---|---|
-| `sky-ir` | data model, operation table, verifier, text printer and parser, pass manager | sky-units, sky-types (types only), sky-ast (reads the unit text of `show`), sky-diag |
+| `sky-ir` | data model, operation table, verifier, effect inference, text printer and parser, pass manager | sky-units, sky-types (types only), sky-ast (reads the unit text of `show`), sky-diag |
 | `sky-lower` | checked AST to L1 | sky-ast, sky-types, sky-ir |
-| `sky-opt` | passes: cholesky, dce, and later the e-graph and autodiff | sky-ir (and `egg`, from Phase 2) |
+| `sky-opt` | passes: fold, dce, cholesky, and the default pipeline (which includes `sky-egraph`'s pass); later autodiff | sky-ir, sky-egraph |
+| `sky-egraph` | identity-aware e-graph rewriting (`egg`) as a pass | sky-ir |
 | `sky-ir-interp` | reference interpreter | sky-ir, sky-units |
 
 ## Phase 1 milestones
-1. `sky-ir` data model, operation table, verifier, and text print/parse round-trip.
-2. `sky-lower` for every v0.1 construct; `--emit-ir`; golden IR tests.
-3. Reference interpreter; differential tests against sky-interp on every run test.
-4. The Cholesky rewrite and DCE as passes with explanations; delete `cholesky_rewrite` from the checker.
+1. `sky-ir` data model, operation table, verifier, and text print/parse round-trip. Done.
+2. `sky-lower` for every v0.1 construct; `--emit-ir`; golden IR tests. `--emit-ir` and the goldens (`tests/ir/`, run by `crates/sky-cli/tests/emit_ir.rs`) are done; lowering covers everything `sky run` executes except arrays (`LowerError`).
+3. Reference interpreter; differential tests against sky-interp on every run test. Done for everything that lowers; `crates/sky-opt/tests/pipeline.rs` adds "the same output before and after the pipeline".
+4. The Cholesky rewrite and DCE as passes with explanations; delete `cholesky_rewrite` from the checker. The passes and their explanations are done and run in the default pipeline. **The deletion is not done, on purpose** (see below).
 5. `edition` in `sky.toml` and in SIR; the spec defines what an edition may and may not change. (`sky.toml` half done: spec "Editions"; `Edition` lives in `sky-syntax` and `sky-ir` re-exports it.)
+
+### Milestone 4: why `cholesky_rewrite` stays for now
+
+Deleting the checker's `cholesky_rewrite`, `RewriteSite`, `Checked::rewrites` and `Checked::cholesky_solves` needs `--explain` and `sky run` to work without them. Today neither does:
+
+* **`sky run` reads `Checked::cholesky_solves`.** The tree-walking interpreter (and the REPL) does the Cholesky solve at exactly the sites the checker chose. The design keeps the tree-walker until the IR interpreter passes every run test; until `sky run` executes SIR, the site set is part of its input.
+* **Programs with arrays do not lower.** `ok_cholesky_literal` and `ok_literal_tag_proofs` have `--explain` goldens, and SIR has no array values, so only the checker can explain them.
+* **The wording needs source text.** The checker's note names the operands as written (`(K⁻¹)⁻¹ @ (f + f)`). SIR values have names, not use-site spans, so the pass can reproduce the sentence for simple names only (that is what `cholesky_text` does) and the goldens would change for compound operands.
+* **The two see different sites.** The checker rewrites the syntactic `A⁻¹ @ b` only. The pass also rewrites `B = inv(A); B @ b`, which `sky run` computes with an explicit inverse. That is a behaviour difference to decide on when `sky run` moves to SIR, not one to introduce through a deletion.
+
+What was done instead: `--explain` runs the pass pipeline and shows its explanations, the Cholesky pass's explanation joins into the checker's sentence word for word, and the two are deduplicated by span, so both sources agree wherever they overlap. What is left before the checker's rewrite can go: (1) arrays lowered to SIR; (2) `sky run` and the REPL executing SIR, so `solve[cholesky]` is what runs; (3) SIR keeping operand source spans (or explanations taking the source text from the span) so the goldens stay byte for byte. Then `cholesky_rewrite`, `RewriteSite` and `cholesky_solves` are deleted in one change, with `cholesky_text` as the only source of the note.
 
 ## Open questions
 - **Build the IR ourselves or use MLIR directly?** The proposal is our own L1 and L2 in Rust (fast to build, keeps the Rust-only toolchain, Sky-specific types), with MLIR as a possible L3/L4 target in Phase 5 through `melior`. This needs a decision before milestone 1.

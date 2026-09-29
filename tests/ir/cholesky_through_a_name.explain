@@ -1,0 +1,6 @@
+tests/ir/cholesky_through_a_name.sky:6:5: note: `A⁻¹ @ b` is rewritten to a Cholesky solve
+  |
+6 | B = inv(A)
+  |     ^^^^^^
+  = note: rewrite `A⁻¹ @ b` to a Cholesky solve: A is Matrix[3,3] and PositiveDefinite, b is Vector[3]. Factor A = L·Lᵀ (L lower-triangular), solve L·y = b, then Lᵀ·x = y. x = A⁻¹·b is Vector[3]; A⁻¹ is still computed for its other users.
+  = note: applied by the `cholesky` pass

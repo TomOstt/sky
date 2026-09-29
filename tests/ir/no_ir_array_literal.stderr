@@ -1,0 +1,7 @@
+tests/ir/no_ir_array_literal.sky:4:36: note: no IR: array literals are not supported in SIR yet
+  |
+4 | K: PositiveDefinite Matrix[2, 2] = [[4, 1], [1, 3]]
+  |                                    ^^^^^^^^^^^^^^^^
+  = note: `sky run` executes arrays, but SIR has no array values yet, so this program can't be lowered
+  = note: the program checks, but lowering to SIR does not support it yet
+tests/ir/no_ir_array_literal.sky: ok

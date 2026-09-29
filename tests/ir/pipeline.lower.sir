@@ -1,0 +1,18 @@
+sir edition 2026
+
+fn @<main>(%x: num[L; ()], %t: num[T; ()], %A: num[1; (3, 3); {Symmetric, PositiveDefinite}], %b: num[1; (3)]) -> () effects(io, fail) @ 0..292 {
+  %4 = const.float 2 : num[1; ()] @ 208..209
+  %5 = const.float 3 : num[1; ()] @ 212..213
+  %a = mul %4, %5 : num[1; ()] @ 208..213
+  %7 = const.float 4 : num[1; ()] @ 227..228
+  %unused = mul %a, %7 : num[1; ()] @ 223..228
+  %9 = const.float 1 : num[1; ()] @ 237..238
+  %y = mul %x, %9 : num[L; ()] @ 233..238
+  %11 = neg %t : num[T; ()] @ 245..247
+  %z = neg %11 : num[T; ()] @ 243..248
+  print %a, %y, %z @ 249..263
+  %13 = inverse %A : num[1; (3, 3); {Symmetric, PositiveDefinite}] @ 270..276
+  %sol = matmul %13, %b : num[1; (3)] @ 270..280
+  print %sol @ 281..291
+  return @ 0..292
+}

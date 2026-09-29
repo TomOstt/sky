@@ -7,11 +7,13 @@ use sky_project::{Project, SystemIdentity};
 use sky_syntax::Edition;
 
 mod frontend;
+mod ir;
 mod repl;
 mod run;
 
-const USAGE: &str =
-    "usage: sky check [--explain] <file.sky>\n       sky run <file.sky>\n       sky repl";
+const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] <file.sky>\n       sky run <file.sky>\n       sky repl\n\n\
+                     <stage> is `lower`, `final` (the default), or `after:<pass>` for one of\n\
+                     fold, egraph, dce, cholesky";
 
 /// The `sky` command line.
 ///
@@ -35,21 +37,21 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("check") => {
-            let (explain, rest): (Vec<&String>, Vec<&String>) =
-                args[1..].iter().partition(|a| *a == "--explain");
-            let [path] = rest.as_slice() else {
-                eprintln!("{USAGE}");
-                return ExitCode::from(2);
+            let opts = match CheckArgs::parse(&args[1..]) {
+                Ok(o) => o,
+                Err(msg) => {
+                    eprintln!("{USAGE}");
+                    if let Some(msg) = msg {
+                        eprintln!("\nerror: {msg}");
+                    }
+                    return ExitCode::from(2);
+                }
             };
-            if explain.len() > 1 || path.starts_with("--") {
-                eprintln!("{USAGE}");
-                return ExitCode::from(2);
-            }
-            let (file, src) = match read_entry(path) {
+            let (file, src) = match read_entry(&opts.path) {
                 Ok(x) => x,
                 Err(code) => return code,
             };
-            check(path, &file, &src, !explain.is_empty())
+            check(&opts, &file, &src)
         }
         Some("run") => {
             let [path] = &args[1..] else {
@@ -98,12 +100,59 @@ fn read_entry(path: &str) -> Result<(File, String), ExitCode> {
     Ok((file, src))
 }
 
+/// The arguments of `sky check`.
+struct CheckArgs {
+    path: String,
+    explain: bool,
+    /// `--emit-ir[=<stage>]`.
+    emit_ir: Option<ir::Stage>,
+}
+
+impl CheckArgs {
+    /// Parses `sky check`'s arguments (the flags may come before or after
+    /// the file). `Err` is a usage error: the message, if it needs one
+    /// beyond the usage text.
+    fn parse(args: &[String]) -> Result<CheckArgs, Option<String>> {
+        let (mut path, mut explain, mut emit_ir) = (None, false, None);
+        for arg in args {
+            if arg == "--explain" {
+                if std::mem::replace(&mut explain, true) {
+                    return Err(None);
+                }
+            } else if arg == "--emit-ir" || arg.starts_with("--emit-ir=") {
+                let stage = match arg.strip_prefix("--emit-ir=") {
+                    Some(text) => ir::Stage::parse(text).map_err(|e| Some(e.to_string()))?,
+                    None => ir::Stage::default(),
+                };
+                if emit_ir.replace(stage).is_some() {
+                    return Err(None);
+                }
+            } else if arg.starts_with("--") || path.replace(arg.clone()).is_some() {
+                return Err(None);
+            }
+        }
+        match path {
+            Some(path) => Ok(CheckArgs {
+                path,
+                explain,
+                emit_ir,
+            }),
+            None => Err(None),
+        }
+    }
+}
+
 /// `sky check`: finds the project root, then lexes, parses, and type-checks
 /// the file and prints its diagnostics to stderr, in source order,
-/// separated by blank lines. With `explain`, the checker's rewrite
-/// decisions follow as notes. Exits 1 if any diagnostic is an error; prints
-/// `ok` only if none is.
-fn check(path: &str, file: &File, src: &str, explain: bool) -> ExitCode {
+/// separated by blank lines. With `--explain`, the checker's rewrite
+/// decisions and the optimization passes' explanations follow as notes.
+/// With `--emit-ir`, the SIR text goes to stdout (and only that: `edition:`
+/// and `ok` move to stderr, so stdout can be piped into a file and parsed
+/// back). Exits 1 if any diagnostic is an error; prints `ok` only if none
+/// is. A program that checks but cannot be lowered to SIR yet is still
+/// `ok`; `--emit-ir` then prints a note saying why there is no IR.
+fn check(opts: &CheckArgs, file: &File, src: &str) -> ExitCode {
+    let path = opts.path.as_str();
     // Spec v0.1 non-negotiable 2: the root comes only from walking up from
     // the file, never from the cwd or the environment. A refused sky.toml
     // stops the check; its diagnostic goes through the renderer, which
@@ -116,10 +165,17 @@ fn check(path: &str, file: &File, src: &str, explain: bool) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // stdout, not stderr: the `--explain` goldens pin stderr, and this is a
-    // fact about the run, not a diagnostic. After discovery so an invalid
-    // manifest never prints an edition.
-    if explain {
+    // Facts about the run, not diagnostics: stdout (the `--explain` goldens
+    // pin stderr), unless `--emit-ir` owns stdout. After discovery so an
+    // invalid manifest never prints an edition.
+    let facts = |line: String| {
+        if opts.emit_ir.is_some() {
+            eprintln!("{line}");
+        } else {
+            println!("{line}");
+        }
+    };
+    if opts.explain {
         let origin = match &discovery.project {
             Project::Rooted { manifest, .. } => {
                 format!(
@@ -129,16 +185,23 @@ fn check(path: &str, file: &File, src: &str, explain: bool) -> ExitCode {
             }
             Project::SingleFile => "no sky.toml: the latest".to_string(),
         };
-        println!("edition: {} ({origin})", discovery.edition);
+        facts(format!("edition: {} ({origin})", discovery.edition));
     }
     // The whole front end runs in one call on the known-size stack, so the
     // parser's and checker's depth limits hold (and a panic inside
     // propagates unchanged).
-    let (rendered, ok) =
-        sky_ast::with_deep_stack(|| check_source(path, src, explain, discovery.edition));
+    let (rendered, ok, ir_text, internal) =
+        sky_ast::with_deep_stack(|| check_source(path, src, opts, discovery.edition));
     eprint!("{}", rendered.join("\n"));
+    if let Some(text) = ir_text {
+        print!("{text}");
+    }
+    if let Some(message) = internal {
+        eprintln!("{message}");
+        return ExitCode::FAILURE;
+    }
     if ok {
-        println!("{}: ok", display_safe(path));
+        facts(format!("{}: ok", display_safe(path)));
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
@@ -146,12 +209,34 @@ fn check(path: &str, file: &File, src: &str, explain: bool) -> ExitCode {
 }
 
 /// Lexes, parses, and (if parsing succeeded) type-checks `src`, and renders
-/// every diagnostic. Returns the rendered diagnostics in source order and
-/// whether none is an error. Runs inside `with_deep_stack`.
-fn check_source(path: &str, src: &str, explain: bool, edition: Edition) -> (Vec<String>, bool) {
-    let front = frontend::analyze(src, sky_types::Env::with_prelude(), explain, edition);
+/// every diagnostic. Returns the rendered diagnostics in source order,
+/// whether none is an error, the IR text `--emit-ir` asked for (if the
+/// program has IR), and the message of an internal error (a pass produced
+/// invalid IR: a bug, never the program's fault). Runs inside
+/// `with_deep_stack`.
+fn check_source(
+    path: &str,
+    src: &str,
+    opts: &CheckArgs,
+    edition: Edition,
+) -> (Vec<String>, bool, Option<String>, Option<String>) {
+    let front = frontend::analyze_ir(
+        src,
+        sky_types::Env::with_prelude(),
+        opts.explain,
+        opts.emit_ir.is_some(),
+        edition,
+    );
     // Pass the source unchanged: spans are byte offsets into it, and the
     // renderer escapes terminal-unsafe characters itself (spec/diagnostics.md).
     let file = SourceFile::new(path, src);
-    (front.render(&file), front.ok)
+    let (mut text, mut internal) = (None, None);
+    match (&front.ir, &opts.emit_ir) {
+        (Some(ir::Outcome::Ready(ready)), Some(stage)) => {
+            text = Some(ready.text(stage).to_string());
+        }
+        (Some(ir::Outcome::Internal(message)), _) => internal = Some(message.clone()),
+        _ => {}
+    }
+    (front.render(&file), front.ok, text, internal)
 }

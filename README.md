@@ -28,7 +28,8 @@ print(v as kg)                   # error: cannot show a velocity in kg
 
 ```
 sky check file.sky            # diagnostics on stderr; exit 1 on any error
-sky check --explain file.sky  # also show the edition and rewrite decisions (A⁻¹ @ b → Cholesky solve)
+sky check --explain file.sky  # also show the edition, the checker's rewrites (A⁻¹ @ b → Cholesky solve) and what the optimization passes did
+sky check --emit-ir file.sky  # print the program's IR (SIR text) on stdout; --emit-ir=lower, =after:fold|egraph|dce|cholesky, =final
 sky run file.sky              # check, then run; only a clean file runs. print() writes to stdout
 sky repl                      # one line at a time; expressions echo their value
 ```
@@ -48,6 +49,14 @@ sky> v as km/h
 ```
 
 `as` is only for showing: `v as km/h` is a display value that `print` and the REPL write, not a number to compute with, so `(v as km/h) + 1` is an error. To compute with kilometres per hour, divide by the unit: `v / (1 km/h)`. See "Showing values in a unit" in `spec/v0.1.md`.
+
+`--emit-ir` prints the program after lowering to SIR (`=lower`), after one pass of the default pipeline (`=after:fold`, `egraph`, `dce`, `cholesky`), or at the end (the default). With it, stdout is only the IR (the `edition:` and `ok` lines go to stderr). A program that checks but cannot be lowered yet (arrays) is still `ok`, with a note saying why there is no IR. `--explain` merges each pass's explanations (rule id, before and after, the reasons) with the checker's notes in source order. For example, `x: m` then `y = x * 1` gives:
+
+```
+f.sky:2:5: note: [ALG-001] `x * 1` is rewritten to `x`
+  = note: applied by the `egraph` pass
+  = note: because multiplying a finite float by 1 gives it back bit for bit, and cannot overflow
+```
 
 Numbers are always finite: division by zero and overflow are runtime errors, not `inf` or `NaN`. See "Running programs" in `spec/v0.1.md`. The REPL keeps no session file.
 
@@ -79,9 +88,15 @@ crates/
   sky-types/    type checker (units, shapes, matrix properties)
   sky-project/  project root discovery, sky.toml manifest, import resolution
   sky-interp/   tree-walking interpreter
+  sky-ir/       SIR: data model, verifier, effects, text format, pass manager
+  sky-lower/    checked AST to SIR
+  sky-opt/      passes (fold, dce, cholesky) and the default pipeline
+  sky-egraph/   e-graph rewriting as a pass
+  sky-ir-interp/  reference interpreter for SIR
   sky-cli/      the `sky` command: check, run, repl
 spec/           grammar, typing rules, diagnostic format
 tests/ui/       golden diagnostic tests for `sky check`
+tests/ir/       golden tests for `sky check --emit-ir` and the pass explanations
 fuzz/           cargo-fuzz targets for the lexer, parser and manifest
 ```
 

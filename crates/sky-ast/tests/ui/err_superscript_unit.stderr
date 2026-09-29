@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_superscript_unit.sky:2:12: error: unexpected character '²' (U+00B2)
+  |
+2 | area = 10 m²
+  |            ^
+  = help: superscript and subscript digits are not part of identifiers or numbers

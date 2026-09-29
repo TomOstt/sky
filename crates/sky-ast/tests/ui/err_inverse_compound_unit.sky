@@ -1,0 +1,2 @@
+# `⁻¹` after the last factor of a compound unit is rejected too.
+g = 9.8 m/s⁻¹

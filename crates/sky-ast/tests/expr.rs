@@ -188,3 +188,54 @@ fn unicode_comparison_glyphs() {
 fn leading_and_trailing_newlines_are_skipped_by_parse_expr() {
     check(&[("\n\na + b\n\n", "(+ a b)")]);
 }
+
+#[test]
+fn inverse_is_never_lowered_to_a_power() {
+    use sky_ast::{parse_expr, BinaryOp, ExprKind, Literal, UnaryOp};
+
+    // `A⁻¹ @ b`: a MatMul whose left operand is an Inverse node, which the
+    // checker needs to rewrite it to a Cholesky solve.
+    let src = "A⁻¹ @ b";
+    let (expr, errors) = parse_expr(&common::lex(src), src);
+    assert!(errors.is_empty(), "{errors:#?}");
+    let expr = expr.expect("expression");
+    let ExprKind::Binary {
+        op: BinaryOp::MatMul,
+        lhs,
+        ..
+    } = &expr.kind
+    else {
+        panic!("not a MatMul: {expr:#?}");
+    };
+    let ExprKind::Inverse { operand, op_span } = &lhs.kind else {
+        panic!("left operand is not an Inverse: {lhs:#?}");
+    };
+    assert_eq!(common::at(src, operand.span), "A");
+    assert_eq!(common::at(src, *op_span), "⁻¹");
+
+    // `A^-1`: a plain Pow whose exponent is the expression `-1`.
+    let src = "A^-1";
+    let (expr, errors) = parse_expr(&common::lex(src), src);
+    assert!(errors.is_empty(), "{errors:#?}");
+    let expr = expr.expect("expression");
+    let ExprKind::Binary {
+        op: BinaryOp::Pow,
+        lhs,
+        rhs,
+        ..
+    } = &expr.kind
+    else {
+        panic!("not a Pow: {expr:#?}");
+    };
+    assert!(matches!(lhs.kind, ExprKind::Name(_)), "{lhs:#?}");
+    let ExprKind::Unary {
+        op: UnaryOp::Neg,
+        operand,
+        ..
+    } = &rhs.kind
+    else {
+        panic!("exponent is not `-1`: {rhs:#?}");
+    };
+    assert!(matches!(operand.kind, ExprKind::Literal(Literal::Int(_))));
+    assert_eq!(common::at(src, rhs.span), "-1");
+}

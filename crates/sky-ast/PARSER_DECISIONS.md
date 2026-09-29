@@ -26,6 +26,12 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 - **`10 m/2` is an error.** Once `*`, `/` or `^` touches both neighbours, it belongs to the unit, so what follows must be unit syntax. The help line says to put spaces around the operator to divide the quantity.
 - **`a = b = c` (chained assignment) is an error.**
 
+**Also signed off by Eng Lead** (review of #9):
+- **`⁻¹` directly after a unit is an error.** `10 km⁻¹` would otherwise read as `(10 km)⁻¹` = 0.1/km, while readers expect 10/km; both have the same dimension, so the checker could not catch it. This also fires after the last factor of a compound unit (`9.8 m/s⁻¹`, `1 kg*m⁻¹`) and with a space before the glyph (`10 km ⁻¹`). The error is on the `⁻¹` token, with the unit as a secondary label and the help line "write `10 km^-1` for per-km, or `(10 km)⁻¹`" (number and unit taken from the source; compound units say "to invert `s`"). `(10 km)⁻¹` and `A⁻¹` stay valid. Superscript exponents (`10 m²`, `10 m⁻²`) never reach the parser: the lexer rejects superscript digits and a lone `⁻`.
+- **`⁻¹` is never lowered to `^`.** `A⁻¹ @ b` is `MatMul(Inverse(A), b)`, and `A^-1` stays `Pow(A, Neg(1))`; the `ok_inverse_node` golden pins both trees.
+- **`x**2` is an error:** two adjacent `*` tokens give "`**` is not an operator" with help "Sky writes powers as `^`" (also inside units: `10 m**2`). Separated stars (`x * *2`) are a plain missing-operand error.
+- **`i64::MIN` exponents are accepted:** `m^-9223372036854775808` parses (the magnitude is read as `u64` and negated with a checked subtraction); one below it is an error.
+
 ## Needs sign-off
 
 **Precedence.** The table is in `src/precedence.rs`, lowest to highest:
@@ -56,9 +62,8 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 **Other choices:**
 - Type annotations are ordinary expressions (`Matrix[3, 4]` is an `Index`). The checker rejects `Matrix[N+1]`.
 - Assignment and annotation targets must be plain names. `A[0] = 1` and `a.b = 1` are errors.
-- `10 km⁻¹` is `Inverse(10 km)`: postfix applies to the quantity, not to the unit.
 - An `Indent` at the start of a line is reported ("indented blocks are not supported yet"), and the line is still parsed. `Dedent` is ignored until blocks exist (PR 2). A keyword where an expression is expected gets "statements and blocks are not supported by the parser yet".
-- `MAX_DEPTH = 256` bounds recursion and AST height. It also counts operators chained at one level, so a flat sum of more than ~255 terms is an error. This is what keeps recursive `Drop` and printing safe.
+- **Depth semantics.** `MAX_DEPTH = 256` bounds recursion and AST height, which also keeps recursive `Drop` and printing safe. Each nesting level counts exactly once: a `(`...`)` group, a prefix operator, a call, an index, an attribute, a `⁻¹`, and each infix operator folded into an operand. So 256 nested parens, calls (`f(f(...))`), indexes (`a[a[...]]`), prefix operators, or a 256-operator `^` chain parse, and 257 give "expression is nested too deeply (the limit is 256 levels)". Operators chained at one level count too, so a flat sum of 257 terms (256 `+`) is fine and one more `+` is an error. Error paths and node building are kept out of the recursive functions, so a level costs about 3 KiB of stack in debug builds and under 1 KiB in release; a test parses, prints, and drops 256 levels of each kind on a 1 MiB thread.
 - `MAX_UNIT_FACTORS = 64` limits the number of names in one unit literal.
 - `ParseError` has an optional `help` line in addition to the message, primary span, and secondary labels.
 
@@ -76,6 +81,7 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 - `crates/sky-ast/tests/ui_parser.rs` lexes each `*.sky` with `sky_syntax::lex` and parses it with `parse_module`.
 - It renders the lexer's diagnostics and the parse errors with sky-diag's renderer (`spec/diagnostics.md` format), passing the raw source to `SourceFile::new`. Diagnostics are joined by blank lines.
 - It compares the result byte for byte with the sibling `.stderr` (empty means clean). `ok_*` files must have no error, and `err_*` files at least one.
+- A file may also have a `.ast` sibling holding `Module::to_sexpr` (one statement per line), which pins the tree shape and not just the absence of errors (e.g. `ok_inverse_node.ast`: `(= x (@ (inverse A) b))`).
 - They are crate-local (like `crates/sky-units/tests/golden/`) because `sky check` doesn't run the parser yet, and the sky-cli harness runs `sky check` on everything under `tests/ui/`. They move to `tests/ui/parser/` when `sky check` parses.
 - `sky-cli` and `sky check` are unchanged in this PR.
 - Regenerate with `SKY_BLESS=1 cargo test -p sky-ast --test ui_parser`.

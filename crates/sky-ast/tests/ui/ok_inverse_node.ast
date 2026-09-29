@@ -1,0 +1,2 @@
+(= x (@ (inverse A) b))
+(= y (^ A (neg 1)))

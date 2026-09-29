@@ -242,3 +242,54 @@ fn keywords_are_attribute_names_only_after_a_dot() {
         "expected an attribute name after `.`, found `(`"
     );
 }
+
+fn nested(kind: &str, n: usize) -> String {
+    match kind {
+        "paren" => format!("{}x{}", "(".repeat(n), ")".repeat(n)),
+        "call" => format!("{}x{}", "f(".repeat(n), ")".repeat(n)),
+        "index" => format!("{}0{}", "a[".repeat(n), "]".repeat(n)),
+        "power" => format!("x{}", "^x".repeat(n)),
+        "prefix" => format!("{}x", "-".repeat(n)),
+        "sum" => format!("x{}", " + x".repeat(n)),
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn each_nesting_level_counts_once() {
+    assert_eq!(MAX_DEPTH, 256);
+    for kind in ["paren", "call", "index", "power", "prefix", "sum"] {
+        let ok = nested(kind, MAX_DEPTH as usize);
+        let errors = expr_errors(&ok);
+        assert!(errors.is_empty(), "{kind} x{MAX_DEPTH}: {errors:#?}");
+
+        let too_deep = nested(kind, MAX_DEPTH as usize + 1);
+        let errors = expr_errors(&too_deep);
+        assert_eq!(errors.len(), 1, "{kind} x{}: {errors:#?}", MAX_DEPTH + 1);
+        assert_eq!(
+            errors[0].message, "expression is nested too deeply (the limit is 256 levels)",
+            "{kind}"
+        );
+    }
+}
+
+#[test]
+fn max_depth_fits_in_a_small_stack() {
+    // Parse, print, and drop MAX_DEPTH levels on a 1 MiB stack, half the
+    // 2 MiB default for spawned threads. Debug builds use the most stack per
+    // level: about 3 KiB, so 256 levels need under 768 KiB (release needs
+    // under 256 KiB).
+    let handle = std::thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(|| {
+            for kind in ["paren", "call", "index", "power", "prefix"] {
+                for n in [MAX_DEPTH as usize, MAX_DEPTH as usize + 1, 10_000] {
+                    let src = nested(kind, n);
+                    let (module, _) = parse_module(&lex(&src), &src);
+                    let _ = module.to_sexpr(&src);
+                }
+            }
+        })
+        .expect("spawn");
+    handle.join().expect("no stack overflow");
+}

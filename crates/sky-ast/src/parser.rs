@@ -22,11 +22,16 @@
 use sky_diag::{Diagnostic, Label};
 use sky_syntax::{Span, Token, TokenKind};
 
-use crate::ast::{span_text, Expr, ExprKind, Ident, Literal, Module, Stmt, StmtKind, UnitExpr};
+use crate::ast::{
+    span_text, BinaryOp, Expr, ExprKind, Ident, Literal, Module, Stmt, StmtKind, UnaryOp, UnitExpr,
+};
 use crate::precedence::{infix_binding_power, is_postfix_start, prefix_binding_power, POSTFIX_BP};
 
-/// Maximum nesting: recursive sub-expressions plus operators folded into one
-/// operand chain. `(((x)))` uses 4; `a + b + c` uses 3.
+/// Maximum nesting depth. Each level counts once: a `(`...`)` group, a prefix
+/// operator, a call, an index, an attribute, a `⁻¹`, and each infix operator
+/// folded into an operand. `x` uses 0, `(((x)))` 3, `f(g(x))` 2, `a^b^c` 2,
+/// and `a + b + c` 2. The count bounds both recursion and AST height (which
+/// keeps recursive `Drop` and printing safe).
 pub const MAX_DEPTH: u32 = 256;
 
 /// Maximum number of unit names in one unit literal (`kg*m/s^2` has 3).
@@ -238,11 +243,7 @@ impl<'t, 's> Parser<'t, 's> {
     fn enter(&mut self, span: Span) -> Option<()> {
         self.depth = self.depth.saturating_add(1);
         if self.depth > MAX_DEPTH {
-            self.errors.push(ParseError::new(
-                format!("expression is nested too deeply (the limit is {MAX_DEPTH} levels)"),
-                span,
-            ));
-            return None;
+            return self.fail_too_deep(span);
         }
         Some(())
     }
@@ -341,74 +342,127 @@ impl<'t, 's> Parser<'t, 's> {
         result
     }
 
+    /// Depth is counted where nesting happens (group, prefix, and each
+    /// folded operator), not on entry here, so a level never counts twice.
+    ///
+    /// This and the other functions on the recursive path (`parse_operand`,
+    /// `parse_paren`, `parse_delimited`) keep few locals: token checks and
+    /// node building live in non-inlined helpers, so a nesting level costs
+    /// little stack even in debug builds.
     fn expr_bp_inner(&mut self, min_bp: u8) -> Option<Expr> {
-        self.enter(self.current().span)?;
-        let mut lhs = self.parse_prefix()?;
+        let mut lhs = self.parse_operand()?;
         // A comparison already folded at this level: comparisons are
         // non-associative, so a second one is an error.
         let mut prev_comparison: Option<Span> = None;
         loop {
-            let tok = self.current();
-            if is_postfix_start(tok.kind) {
-                if POSTFIX_BP < min_bp {
-                    break;
+            lhs = match self.next_step(min_bp, &mut prev_comparison)? {
+                Step::Done => return Some(lhs),
+                Step::Infix { op, op_span, r_bp } => {
+                    self.parse_infix_rhs(lhs, op, op_span, r_bp)?
                 }
-                self.enter(tok.span)?;
-                lhs = self.parse_postfix(lhs)?;
-                continue;
-            }
-            let Some((op, l_bp, r_bp)) = infix_binding_power(tok.kind) else {
-                break;
+                Step::Inverse(op_span) => inverse(lhs, op_span),
+                Step::Attribute(name) => attribute(lhs, name),
+                Step::Call(open) => self.parse_call(lhs, open)?,
+                Step::Index(open) => self.parse_index(lhs, open)?,
             };
-            if l_bp < min_bp {
-                break;
-            }
-            self.bump();
-            if op.is_comparison() {
-                if let Some(prev) = prev_comparison {
-                    self.errors.push(
-                        ParseError::new(
-                            "comparison operators cannot be chained in Sky v0.1",
-                            tok.span,
-                        )
-                        .with_secondary(prev, "previous comparison")
-                        .with_help("compare two values at a time"),
-                    );
-                }
-                prev_comparison = Some(tok.span);
+        }
+    }
+
+    fn parse_infix_rhs(
+        &mut self,
+        lhs: Expr,
+        op: BinaryOp,
+        op_span: Span,
+        r_bp: u8,
+    ) -> Option<Expr> {
+        let rhs = self.expr_bp(r_bp)?;
+        Some(binary(op, op_span, lhs, rhs))
+    }
+
+    fn parse_call(&mut self, callee: Expr, open: Span) -> Option<Expr> {
+        let (args, close) = self.parse_delimited(open, TokenKind::RParen)?;
+        Some(call(callee, args, close))
+    }
+
+    fn parse_index(&mut self, base: Expr, open: Span) -> Option<Expr> {
+        let (indices, close) = self.parse_delimited(open, TokenKind::RBracket)?;
+        Some(index(base, indices, close))
+    }
+
+    /// Looks at the token after a complete operand and decides what, if
+    /// anything, extends it. Consumes the operator (and an attribute name)
+    /// and counts the nesting level.
+    #[inline(never)]
+    fn next_step(&mut self, min_bp: u8, prev_comparison: &mut Option<Span>) -> Option<Step> {
+        let tok = self.current();
+        if is_postfix_start(tok.kind) {
+            if POSTFIX_BP < min_bp {
+                return Some(Step::Done);
             }
             self.enter(tok.span)?;
-            let rhs = self.expr_bp(r_bp)?;
-            lhs = Expr {
-                span: lhs.span.join(rhs.span),
-                kind: ExprKind::Binary {
-                    op,
-                    op_span: tok.span,
-                    lhs: Box::new(lhs),
-                    rhs: Box::new(rhs),
-                },
+            self.bump();
+            return match tok.kind {
+                TokenKind::Inverse => Some(Step::Inverse(tok.span)),
+                TokenKind::LParen => Some(Step::Call(tok.span)),
+                TokenKind::LBracket => Some(Step::Index(tok.span)),
+                TokenKind::Dot => {
+                    let name = self.current();
+                    // Any keyword may be an attribute name (`linalg.solve`),
+                    // signed off by Eng Lead. Only here: a bare keyword is
+                    // still not a name.
+                    if !matches!(name.kind, TokenKind::Ident | TokenKind::Keyword(_)) {
+                        return self.fail_attribute_name(name, tok.span);
+                    }
+                    self.bump();
+                    Some(Step::Attribute(Ident { span: name.span }))
+                }
+                // Unreachable by construction; report instead of panicking.
+                _ => self.fail_expected_expression(tok),
             };
         }
-        Some(lhs)
-    }
-
-    fn parse_prefix(&mut self) -> Option<Expr> {
-        let tok = self.current();
-        if let Some((op, r_bp)) = prefix_binding_power(tok.kind) {
-            self.bump();
-            let operand = self.expr_bp(r_bp)?;
-            return Some(Expr {
-                span: tok.span.join(operand.span),
-                kind: ExprKind::Unary {
-                    op,
-                    op_span: tok.span,
-                    operand: Box::new(operand),
-                },
-            });
+        let Some((op, l_bp, r_bp)) = infix_binding_power(tok.kind) else {
+            return Some(Step::Done);
+        };
+        if l_bp < min_bp {
+            return Some(Step::Done);
         }
-        self.parse_atom()
+        self.bump();
+        // `x**2`: two adjacent `*` tokens.
+        let next = self.current();
+        if op == BinaryOp::Mul && next.kind == TokenKind::Star && tok.span.end == next.span.start {
+            return self.fail_double_star(tok.span.join(next.span));
+        }
+        if op.is_comparison() {
+            if let Some(prev) = *prev_comparison {
+                self.report_chained_comparison(tok.span, prev);
+            }
+            *prev_comparison = Some(tok.span);
+        }
+        self.enter(tok.span)?;
+        Some(Step::Infix {
+            op,
+            op_span: tok.span,
+            r_bp,
+        })
     }
 
+    /// A prefix operator applied to an operand, a group, or an atom.
+    fn parse_operand(&mut self) -> Option<Expr> {
+        let tok = self.current();
+        if tok.kind == TokenKind::LParen {
+            return self.parse_paren();
+        }
+        let Some((op, r_bp)) = prefix_binding_power(tok.kind) else {
+            return self.parse_atom();
+        };
+        self.bump();
+        self.enter(tok.span)?;
+        let operand = self.expr_bp(r_bp)?;
+        Some(unary(op, tok.span, operand))
+    }
+
+    /// A literal, unit literal, or name. Never recurses into `expr_bp`.
+    #[inline(never)]
     fn parse_atom(&mut self) -> Option<Expr> {
         let tok = self.current();
         let literal = |kind| Expr {
@@ -439,119 +493,31 @@ impl<'t, 's> Parser<'t, 's> {
                     span: tok.span,
                 })
             }
-            TokenKind::LParen => {
-                self.bump();
-                let inner = self.expr_bp(0)?;
-                let close = self.expect_closing(TokenKind::RParen, tok.span, &inner, "`)`")?;
-                Some(Expr {
-                    span: tok.span.join(close),
-                    kind: ExprKind::Paren(Box::new(inner)),
-                })
-            }
-            _ => {
-                let message = match tok.kind {
-                    TokenKind::Keyword(kw) => format!(
-                        "expected an expression, found keyword `{}`; statements and blocks are not supported by the parser yet",
-                        kw.as_str()
-                    ),
-                    _ => format!("expected an expression, found {}", self.describe(tok)),
-                };
-                self.errors.push(ParseError::new(message, tok.span));
-                None
-            }
+            _ => self.fail_expected_expression(tok),
         }
     }
 
-    /// Called with the operator token current; `lhs` is the operand so far.
-    fn parse_postfix(&mut self, lhs: Expr) -> Option<Expr> {
-        let tok = self.bump();
-        match tok.kind {
-            TokenKind::Inverse => Some(Expr {
-                span: lhs.span.join(tok.span),
-                kind: ExprKind::Inverse {
-                    operand: Box::new(lhs),
-                    op_span: tok.span,
-                },
-            }),
-            TokenKind::Dot => {
-                let name = self.current();
-                // Any keyword may be an attribute name (`linalg.solve`),
-                // signed off by Eng Lead. Only here: a bare keyword is still
-                // not a name.
-                let is_name = matches!(name.kind, TokenKind::Ident | TokenKind::Keyword(_));
-                if !is_name {
-                    self.errors.push(
-                        ParseError::new(
-                            format!(
-                                "expected an attribute name after `.`, found {}",
-                                self.describe(name)
-                            ),
-                            name.span,
-                        )
-                        .with_secondary(tok.span, "attribute access"),
-                    );
-                    return None;
-                }
-                self.bump();
-                Some(Expr {
-                    span: lhs.span.join(name.span),
-                    kind: ExprKind::Attribute {
-                        base: Box::new(lhs),
-                        name: Ident { span: name.span },
-                    },
-                })
-            }
-            TokenKind::LParen => {
-                let (args, close) =
-                    self.parse_delimited(tok.span, TokenKind::RParen, "`)`", true)?;
-                Some(Expr {
-                    span: lhs.span.join(close),
-                    kind: ExprKind::Call {
-                        callee: Box::new(lhs),
-                        args,
-                    },
-                })
-            }
-            TokenKind::LBracket => {
-                let (indices, close) =
-                    self.parse_delimited(tok.span, TokenKind::RBracket, "`]`", false)?;
-                Some(Expr {
-                    span: lhs.span.join(close),
-                    kind: ExprKind::Index {
-                        base: Box::new(lhs),
-                        indices,
-                    },
-                })
-            }
-            _ => {
-                // Unreachable by construction; report instead of panicking.
-                self.errors.push(ParseError::new(
-                    format!("unexpected {}", self.describe(tok)),
-                    tok.span,
-                ));
-                None
-            }
+    /// `( expr )` with the `(` current.
+    fn parse_paren(&mut self) -> Option<Expr> {
+        let open = self.bump().span;
+        self.enter(open)?;
+        let inner = self.expr_bp(0)?;
+        if self.peek() != TokenKind::RParen {
+            return self.fail_unclosed(&inner, open, "(", "`)`");
         }
+        let close = self.bump().span;
+        Some(paren(open, inner, close))
     }
 
     /// Comma-separated expressions after an opening delimiter (already
     /// consumed), up to and including `close`. A trailing comma is allowed.
-    fn parse_delimited(
-        &mut self,
-        open: Span,
-        close: TokenKind,
-        close_str: &str,
-        allow_empty: bool,
-    ) -> Option<(Vec<Expr>, Span)> {
+    /// Calls (`close` = `)`) may be empty; indexing (`]`) may not.
+    fn parse_delimited(&mut self, open: Span, close: TokenKind) -> Option<(Vec<Expr>, Span)> {
         let mut items = Vec::new();
         if self.peek() == close {
             let c = self.bump();
-            if !allow_empty {
-                self.errors.push(ParseError::new(
-                    "expected at least one index between `[` and `]`",
-                    open.join(c.span),
-                ));
-                return None;
+            if close == TokenKind::RBracket {
+                return self.fail_empty_index(open.join(c.span));
             }
             return Some((items, c.span));
         }
@@ -570,30 +536,108 @@ impl<'t, 's> Parser<'t, 's> {
                 items.push(item);
                 break;
             }
-            let open_str = if close == TokenKind::RParen { "(" } else { "[" };
-            let err = self
-                .unexpected_after(&item, &format!("`,` or {close_str}"))
-                .with_secondary(open, format!("unclosed `{open_str}`"));
-            self.errors.push(err);
-            return None;
+            let (open_str, expected) = if close == TokenKind::RParen {
+                ("(", "`,` or `)`")
+            } else {
+                ("[", "`,` or `]`")
+            };
+            return self.fail_unclosed(&item, open, open_str, expected);
         }
         let c = self.bump();
         Some((items, c.span))
     }
 
-    fn expect_closing(
+    // ----- error paths -----
+    //
+    // Kept out of line (`#[cold]`, `#[inline(never)]`) so their temporaries
+    // don't enlarge the frames of the recursive functions above: that keeps
+    // `MAX_DEPTH` levels well within a small stack, even in debug builds.
+    // Each pushes one error and returns `None`.
+
+    #[cold]
+    #[inline(never)]
+    fn fail_too_deep<T>(&mut self, span: Span) -> Option<T> {
+        self.errors.push(ParseError::new(
+            format!("expression is nested too deeply (the limit is {MAX_DEPTH} levels)"),
+            span,
+        ));
+        None
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn fail_double_star<T>(&mut self, span: Span) -> Option<T> {
+        self.errors.push(
+            ParseError::new("`**` is not an operator", span).with_help("Sky writes powers as `^`"),
+        );
+        None
+    }
+
+    /// Recoverable: records the error and lets parsing continue.
+    #[cold]
+    #[inline(never)]
+    fn report_chained_comparison(&mut self, at: Span, prev: Span) {
+        self.errors.push(
+            ParseError::new("comparison operators cannot be chained in Sky v0.1", at)
+                .with_secondary(prev, "previous comparison")
+                .with_help("compare two values at a time"),
+        );
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn fail_expected_expression<T>(&mut self, tok: Token) -> Option<T> {
+        let message = match tok.kind {
+            TokenKind::Keyword(kw) => format!(
+                "expected an expression, found keyword `{}`; statements and blocks are not supported by the parser yet",
+                kw.as_str()
+            ),
+            _ => format!("expected an expression, found {}", self.describe(tok)),
+        };
+        self.errors.push(ParseError::new(message, tok.span));
+        None
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn fail_attribute_name<T>(&mut self, name: Token, dot: Span) -> Option<T> {
+        self.errors.push(
+            ParseError::new(
+                format!(
+                    "expected an attribute name after `.`, found {}",
+                    self.describe(name)
+                ),
+                name.span,
+            )
+            .with_secondary(dot, "attribute access"),
+        );
+        None
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn fail_empty_index<T>(&mut self, span: Span) -> Option<T> {
+        self.errors.push(ParseError::new(
+            "expected at least one index between `[` and `]`",
+            span,
+        ));
+        None
+    }
+
+    /// `last` is complete but the next token is not `close` (or `,` inside
+    /// a call or index).
+    #[cold]
+    #[inline(never)]
+    fn fail_unclosed<T>(
         &mut self,
-        close: TokenKind,
-        open: Span,
         last: &Expr,
-        close_str: &str,
-    ) -> Option<Span> {
-        if self.peek() == close {
-            return Some(self.bump().span);
-        }
+        open: Span,
+        open_str: &str,
+        expected: &str,
+    ) -> Option<T> {
         let err = self
-            .unexpected_after(last, close_str)
-            .with_secondary(open, "unclosed `(`");
+            .unexpected_after(last, expected)
+            .with_secondary(open, format!("unclosed `{open_str}`"));
         self.errors.push(err);
         None
     }
@@ -657,6 +701,7 @@ impl<'t, 's> Parser<'t, 's> {
 
     fn parse_unit_literal(&mut self, value: Literal) -> Option<Expr> {
         let mut unit = self.parse_unit_factor()?;
+        self.reject_inverse_after_unit(&value, &unit, &unit)?;
         let mut factors = 1usize;
         loop {
             let op = self.current();
@@ -671,6 +716,9 @@ impl<'t, 's> Parser<'t, 's> {
                 break; // Spaced operator: ordinary arithmetic on the quantity.
             }
             self.bump();
+            if is_mul && next.kind == TokenKind::Star {
+                return self.fail_double_star(op.span.join(next.span));
+            }
             if next.kind != TokenKind::Ident {
                 let verb = if is_mul { "multiply" } else { "divide" };
                 self.errors.push(
@@ -701,11 +749,13 @@ impl<'t, 's> Parser<'t, 's> {
             let rhs = self.parse_unit_factor()?;
             let span = unit.span().join(rhs.span());
             let (lhs, rhs) = (Box::new(unit), Box::new(rhs));
+            let factor = (*rhs).clone();
             unit = if is_mul {
                 UnitExpr::Mul { lhs, rhs, span }
             } else {
                 UnitExpr::Div { lhs, rhs, span }
             };
+            self.reject_inverse_after_unit(&value, &unit, &factor)?;
         }
         // `5 kg m`: compound units need `*`, never juxtaposition.
         let tok = self.current();
@@ -728,6 +778,43 @@ impl<'t, 's> Parser<'t, 's> {
             span: value.span().join(unit.span()),
             kind: ExprKind::UnitLiteral { value, unit },
         })
+    }
+
+    /// `⁻¹` right after a unit (`10 km⁻¹`, `9.8 m/s⁻¹`) is an error: it would
+    /// invert the whole quantity (0.1/km), while readers expect 10/km, and
+    /// the dimension is the same either way, so the checker can't catch it.
+    /// `unit` is the unit so far and `factor` its last factor.
+    fn reject_inverse_after_unit(
+        &mut self,
+        value: &Literal,
+        unit: &UnitExpr,
+        factor: &UnitExpr,
+    ) -> Option<()> {
+        let tok = self.current();
+        if tok.kind != TokenKind::Inverse {
+            return Some(());
+        }
+        let number = self.text(value.span());
+        let unit_text = self.text(unit.span());
+        let help = match factor {
+            UnitExpr::Name(name) if matches!(unit, UnitExpr::Name(_)) => format!(
+                "write `{number} {unit_text}^-1` for per-{}, or `({number} {unit_text})⁻¹`",
+                self.text(name.span)
+            ),
+            UnitExpr::Name(name) => format!(
+                "write `{number} {unit_text}^-1` to invert `{}`, or `({number} {unit_text})⁻¹`",
+                self.text(name.span)
+            ),
+            _ => format!(
+                "put a single exponent after `^` (e.g. `s^-2`), or write `({number} {unit_text})⁻¹`"
+            ),
+        };
+        self.errors.push(
+            ParseError::new("`⁻¹` cannot follow a unit", tok.span)
+                .with_secondary(factor.span(), "unit")
+                .with_help(help),
+        );
+        None
     }
 
     /// `IDENT (~"^"~ exponent)?` with the `IDENT` current.
@@ -865,9 +952,12 @@ impl<'t, 's> Parser<'t, 's> {
 
     fn int_exponent(&mut self, tok: Token, negative: bool) -> Option<i64> {
         let magnitude = self.uint_exponent(tok)?;
-        let value = i64::try_from(magnitude)
-            .ok()
-            .map(|v| if negative { -v } else { v });
+        // `0 - magnitude` reaches i64::MIN, which `-(magnitude as i64)` can't.
+        let value = if negative {
+            0i64.checked_sub_unsigned(magnitude)
+        } else {
+            i64::try_from(magnitude).ok()
+        };
         if value.is_none() {
             self.errors.push(ParseError::new(
                 format!(
@@ -878,6 +968,100 @@ impl<'t, 's> Parser<'t, 's> {
             ));
         }
         value
+    }
+}
+
+/// What extends an operand; see `Parser::next_step`.
+enum Step {
+    Done,
+    Infix {
+        op: BinaryOp,
+        op_span: Span,
+        r_bp: u8,
+    },
+    Inverse(Span),
+    Attribute(Ident),
+    /// Holds the span of the opening `(` or `[`, already consumed.
+    Call(Span),
+    Index(Span),
+}
+
+// Node builders, out of line so the recursive parser frames stay small.
+
+#[inline(never)]
+fn binary(op: BinaryOp, op_span: Span, lhs: Expr, rhs: Expr) -> Expr {
+    Expr {
+        span: lhs.span.join(rhs.span),
+        kind: ExprKind::Binary {
+            op,
+            op_span,
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+        },
+    }
+}
+
+#[inline(never)]
+fn unary(op: UnaryOp, op_span: Span, operand: Expr) -> Expr {
+    Expr {
+        span: op_span.join(operand.span),
+        kind: ExprKind::Unary {
+            op,
+            op_span,
+            operand: Box::new(operand),
+        },
+    }
+}
+
+#[inline(never)]
+fn paren(open: Span, inner: Expr, close: Span) -> Expr {
+    Expr {
+        span: open.join(close),
+        kind: ExprKind::Paren(Box::new(inner)),
+    }
+}
+
+#[inline(never)]
+fn inverse(operand: Expr, op_span: Span) -> Expr {
+    Expr {
+        span: operand.span.join(op_span),
+        kind: ExprKind::Inverse {
+            operand: Box::new(operand),
+            op_span,
+        },
+    }
+}
+
+#[inline(never)]
+fn attribute(base: Expr, name: Ident) -> Expr {
+    Expr {
+        span: base.span.join(name.span),
+        kind: ExprKind::Attribute {
+            base: Box::new(base),
+            name,
+        },
+    }
+}
+
+#[inline(never)]
+fn call(callee: Expr, args: Vec<Expr>, close: Span) -> Expr {
+    Expr {
+        span: callee.span.join(close),
+        kind: ExprKind::Call {
+            callee: Box::new(callee),
+            args,
+        },
+    }
+}
+
+#[inline(never)]
+fn index(base: Expr, indices: Vec<Expr>, close: Span) -> Expr {
+    Expr {
+        span: base.span.join(close),
+        kind: ExprKind::Index {
+            base: Box::new(base),
+            indices,
+        },
     }
 }
 

@@ -1,0 +1,2 @@
+# `10 m²` never produces a quantity: the lexer rejects superscript digits.
+area = 10 m²

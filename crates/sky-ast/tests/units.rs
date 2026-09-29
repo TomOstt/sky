@@ -222,3 +222,107 @@ fn huge_exponents_are_errors_not_panics() {
         ),
     ]);
 }
+
+#[test]
+fn inverse_directly_after_a_unit_is_an_error() {
+    let src = "10 km⁻¹";
+    let err = one_error(src);
+    assert_eq!(err.message, "`⁻¹` cannot follow a unit");
+    assert_eq!(common::at(src, err.span), "⁻¹");
+    assert_eq!(common::at(src, err.secondary[0].span), "km");
+    assert_eq!(
+        err.help.as_deref(),
+        Some("write `10 km^-1` for per-km, or `(10 km)⁻¹`")
+    );
+
+    for (src, help) in [
+        (
+            "9.8 m/s⁻¹",
+            "write `9.8 m/s^-1` to invert `s`, or `(9.8 m/s)⁻¹`",
+        ),
+        (
+            "1 kg*m⁻¹",
+            "write `1 kg*m^-1` to invert `m`, or `(1 kg*m)⁻¹`",
+        ),
+        (
+            "10 m^2⁻¹",
+            "put a single exponent after `^` (e.g. `s^-2`), or write `(10 m^2)⁻¹`",
+        ),
+        ("10 km ⁻¹", "write `10 km^-1` for per-km, or `(10 km)⁻¹`"),
+        ("f(10 km⁻¹)", "write `10 km^-1` for per-km, or `(10 km)⁻¹`"),
+    ] {
+        let err = one_error(src);
+        assert_eq!(err.message, "`⁻¹` cannot follow a unit", "{src:?}");
+        assert_eq!(common::at(src, err.span), "⁻¹", "{src:?}");
+        assert_eq!(err.help.as_deref(), Some(help), "{src:?}");
+    }
+}
+
+#[test]
+fn inverse_of_a_quantity_or_name_stays_valid() {
+    check(&[
+        ("(10 km)⁻¹", "(inverse (paren (unit 10 km)))"),
+        ("10 km^-1", "(unit 10 (^ km -1))"),
+        ("A⁻¹", "(inverse A)"),
+        ("A⁻¹ @ b", "(@ (inverse A) b)"),
+        ("10 km * A⁻¹", "(* (unit 10 km) (inverse A))"),
+    ]);
+}
+
+#[test]
+fn superscript_exponents_never_produce_a_quantity() {
+    // The lexer rejects superscript digits and a lone `⁻`, so `10 m²` and
+    // `10 m⁻²` never reach the parser as a unit literal.
+    for src in ["10 m²", "10 m⁻²", "x = 10 m²\n", "a = 3 s⁻²\n"] {
+        let err = sky_syntax::lex(src).expect_err(src);
+        assert_eq!(
+            err.kind,
+            sky_syntax::LexErrorKind::UnexpectedChar,
+            "{src:?}"
+        );
+    }
+}
+
+#[test]
+fn i64_min_exponent_is_accepted() {
+    check(&[
+        (
+            "1 m^-9223372036854775808",
+            "(unit 1 (^ m -9223372036854775808))",
+        ),
+        (
+            "1 m^(-9223372036854775808/3)",
+            "(unit 1 (^ m -9223372036854775808/3))",
+        ),
+    ]);
+    for src in ["1 m^-9223372036854775809", "1 m^(-9223372036854775809/3)"] {
+        let err = one_error(src);
+        assert!(
+            err.message.contains("not a valid 64-bit integer"),
+            "{src:?}: {}",
+            err.message
+        );
+    }
+}
+
+#[test]
+fn double_star_suggests_caret() {
+    for (src, span) in [
+        ("x**2", "**"),
+        ("x ** 2", "**"),
+        ("10 m**2", "**"),
+        ("2 kg*m**2", "**"),
+    ] {
+        let err = one_error(src);
+        assert_eq!(err.message, "`**` is not an operator", "{src:?}");
+        assert_eq!(
+            err.help.as_deref(),
+            Some("Sky writes powers as `^`"),
+            "{src:?}"
+        );
+        assert_eq!(common::at(src, err.span), span, "{src:?}");
+    }
+    // Separated stars are just a missing operand.
+    let err = one_error("x * *2");
+    assert_eq!(err.message, "expected an expression, found `*`");
+}

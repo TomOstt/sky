@@ -31,7 +31,7 @@ sky check file.sky            # diagnostics on stderr; exit 1 on any error
 sky check --explain file.sky  # also show the edition, the checker's rewrites (A⁻¹ @ b → Cholesky solve) and what the optimization passes did
 sky check --emit-ir file.sky  # print the program's IR (SIR text) on stdout; --emit-ir=lower, =after:fold|egraph|dce|cholesky, =final
 sky run file.sky              # check, then run; only a clean file runs. print() writes to stdout
-sky repl                      # one line at a time; expressions echo their value
+sky repl                      # expressions echo their value; blocks (def, if, while, for) continue on `...` lines until an empty line
 ```
 
 ```
@@ -46,7 +46,16 @@ error: division by zero   (rendered with the source span, like any diagnostic)
 sky> v = 90 km/h
 sky> v as km/h
 90 km/h
+sky> def area(w: m, h: m) -> m^2:
+...      return w * h
+...
+sky> area(3 m, 4 m)
+12 m^2
+sky> derivative(area, w)(3 m, 4 m)
+4 m
 ```
+
+A line that ends in `:`, or leaves a `(` or `[` open, continues on a `...` line; a block ends at an empty line. A failing input changes nothing, however many lines it has. `:help` and `:quit` (or Ctrl-D) are the only commands.
 
 `as` is only for showing: `v as km/h` is a display value that `print` and the REPL write, not a number to compute with, so `(v as km/h) + 1` is an error. To compute with kilometres per hour, divide by the unit: `v / (1 km/h)`. See "Showing values in a unit" in `spec/v0.1.md`.
 

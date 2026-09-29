@@ -188,8 +188,7 @@ dependencies = [
 name = "sky-types"
 version = "0.0.1"
 dependencies = [
- "sky-ast",
- "sky-units",
+ "proptest",
 ]
 
 [[package]]

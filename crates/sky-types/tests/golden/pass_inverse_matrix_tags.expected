@@ -1,0 +1,4 @@
+inv(P) : Matrix[4,4] {Symmetric, PositiveDefinite}
+inv(Q) : Matrix[4,4] {Orthogonal}
+transpose(Q) : Matrix[4,4] {Orthogonal}
+inv(D) : Matrix[2,2] {Symmetric, Diagonal}

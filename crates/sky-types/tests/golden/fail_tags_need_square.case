@@ -1,0 +1,2 @@
+# Every tag implies a square matrix.
+let A = Matrix[3,4] PositiveDefinite

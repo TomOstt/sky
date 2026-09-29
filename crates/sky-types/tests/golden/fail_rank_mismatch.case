@@ -1,0 +1,4 @@
+# Elementwise ops need equal shapes, including equal rank.
+let A = Matrix[3,3]
+let v = Vector[3]
+show A + v

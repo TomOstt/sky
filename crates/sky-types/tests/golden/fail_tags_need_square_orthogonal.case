@@ -1,0 +1,2 @@
+# Every tag implies a square matrix: Orthogonal on Matrix[3,4] is an error.
+let A = Matrix[3,4] Orthogonal

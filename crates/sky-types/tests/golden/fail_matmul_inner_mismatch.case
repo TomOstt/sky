@@ -1,0 +1,4 @@
+# Spec v0.1 L17: a shape mismatch in @ is a compile error.
+let A = Matrix[3,4]
+let B = Matrix[5,8]
+show A @ B

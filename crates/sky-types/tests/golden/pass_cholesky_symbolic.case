@@ -1,0 +1,4 @@
+# The rewrite also applies to symbolic shapes and a matrix of right-hand sides.
+let A = Matrix[N,N] PositiveDefinite
+let B = Matrix[N,K]
+explain inv(A) @ B

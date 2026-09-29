@@ -1,0 +1,2 @@
+let A = Matrix[3,4]
+show inv(A)

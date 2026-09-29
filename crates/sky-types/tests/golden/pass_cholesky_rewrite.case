@@ -1,0 +1,5 @@
+# Spec v0.1 L18: A⁻¹ @ b with a positive-definite A becomes a Cholesky solve.
+let A = Matrix[3,3] PositiveDefinite
+let b = Vector[3]
+show A⁻¹ @ b
+explain A⁻¹ @ b

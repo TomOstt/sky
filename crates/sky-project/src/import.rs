@@ -143,19 +143,23 @@ pub fn resolve_import(
     stdlib: &[&str],
     identity: &dyn Identity,
 ) -> Result<Module, ImportError> {
-    resolve_with_hook(module, project, stdlib, identity, &mut |_| {})
+    resolve_inner(module, project, stdlib, identity, |_| {})
 }
 
-/// [`resolve_import`], calling `after_dir(path)` each time a directory handle
-/// (the root, then each directory on the way) has been opened and checked,
-/// before the next `openat`. Tests use it to change the filesystem at a
-/// precise point; in `resolve_import` it does nothing.
-pub(crate) fn resolve_with_hook(
+/// The one implementation behind [`resolve_import`] and the race tests' hook
+/// entry point (defined in the `#[cfg(test)]` child module, so it does not
+/// exist in non-test builds).
+///
+/// `after_dir(path)` runs each time a directory handle (the root, then each
+/// directory on the way) has been opened and checked, before the next
+/// `openat`. Generic over the hook, so in non-test builds the only instance
+/// is `resolve_import`'s no-op closure.
+fn resolve_inner(
     module: &str,
     project: &Project,
     stdlib: &[&str],
     identity: &dyn Identity,
-    after_dir: &mut dyn FnMut(&Path),
+    after_dir: impl FnMut(&Path),
 ) -> Result<Module, ImportError> {
     let segments = parse_module_path(module)?;
     let top = segments[0];
@@ -285,7 +289,7 @@ mod rooted {
         is_stdlib: bool,
         root: &Path,
         euid: u32,
-        after_dir: &mut dyn FnMut(&Path),
+        mut after_dir: impl FnMut(&Path),
     ) -> Result<Option<ProjectModule>, ImportError> {
         let mut dir = walk::open_root(root).map_err(|e| root_open_error(module, root, e))?;
         check_dir_handle(module, &dir, root, euid)?;
@@ -402,7 +406,7 @@ mod rooted {
         _is_stdlib: bool,
         _root: &Path,
         _euid: u32,
-        _after_dir: &mut dyn FnMut(&Path),
+        _after_dir: impl FnMut(&Path),
     ) -> Result<Option<ProjectModule>, ImportError> {
         Err(ImportError::Unsupported {
             module: module.to_string(),

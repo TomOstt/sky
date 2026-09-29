@@ -75,6 +75,21 @@ fn swap_dir_for_symlink(t: &TempDir, root: &Path) {
     symlink(t.0.join("evil"), root.join("physics")).unwrap();
 }
 
+/// The hook-taking entry point: `resolve_import` plus `after_dir`, which runs
+/// after each directory handle is opened and checked, before the next
+/// `openat`. Defined here, in the `#[cfg(test)]` module, so neither it nor
+/// its name exists in release builds; it shares `resolve_inner` with
+/// `resolve_import`.
+fn resolve_with_hook(
+    module: &str,
+    project: &Project,
+    stdlib: &[&str],
+    identity: &dyn Identity,
+    after_dir: &mut dyn FnMut(&Path),
+) -> Result<Module, ImportError> {
+    resolve_inner(module, project, stdlib, identity, after_dir)
+}
+
 fn resolve(
     project: &Project,
     euid: &Euid,

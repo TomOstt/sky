@@ -1,0 +1,6 @@
+// Every form of type in one signature.
+sir edition 2026
+
+fn @types(%a: bool, %b: str, %c: nothing, %d: unknown, %e: num[1; ()], %f: num[L·T⁻²; (3)], %g: num[L^(1/2)·M^(-3/2)·Θ¹⁰; (2, 0); exact], %h: num[L²·M·T⁻²; (N#3, N#3); {Symmetric, Diagonal}; f64], %i: num[M; ("my var"#7); f32]) -> (bool) {
+  return %a
+}

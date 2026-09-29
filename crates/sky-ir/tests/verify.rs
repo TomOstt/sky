@@ -18,7 +18,7 @@ fn errors(m: &Module) -> Vec<VerifyError> {
 #[track_caller]
 fn accepts(m: &Module) {
     if let Err(e) = verify(m) {
-        panic!("expected a valid module, got {e:#?}\n{m:#?}");
+        panic!("expected a valid module, got {e:#?}\n{}", sky_ir::print(m));
     }
 }
 
@@ -27,8 +27,9 @@ fn rejects(m: &Module, needle: &str) -> Vec<VerifyError> {
     let e = errors(m);
     assert!(
         e.iter().any(|e| e.message.contains(needle)),
-        "no error containing {needle:?}; got {:#?}\n{m:#?}",
-        e.iter().map(|e| e.message.clone()).collect::<Vec<_>>()
+        "no error containing {needle:?}; got {:#?}\n{}",
+        e.iter().map(|e| e.message.clone()).collect::<Vec<_>>(),
+        sky_ir::print(m)
     );
     e
 }

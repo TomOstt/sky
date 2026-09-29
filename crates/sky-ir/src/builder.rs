@@ -59,6 +59,12 @@ impl FunctionBuilder {
         self.func.effects = effects;
     }
 
+    /// Changes the source span of `op` (the parser learns it after the
+    /// operation's regions).
+    pub fn set_op_span(&mut self, op: OpId, span: Span) {
+        self.func.ops[op.index()].span = span;
+    }
+
     /// Names a value for printing (`%x`).
     pub fn set_name(&mut self, v: ValueId, name: impl Into<String>) {
         self.func.values[v.index()].name = Some(name.into());

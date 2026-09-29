@@ -1,4 +1,0 @@
-# `^` needs a scalar base in v0.1, so `v^2` on a vector is an error.
-# env: v: Vector[3] unit m/s
-m = 2 kg
-k = 0.5 * m * v^2

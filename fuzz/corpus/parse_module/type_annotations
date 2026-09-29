@@ -1,0 +1,9 @@
+0t: s
+v: Vector[3] m/s
+A: PositiveDefinite Matrix[N, N]
+K: Symmetric Diagonal Matrix[3, 3] N/m
+x: Scalar
+M: Tensor[B, T, D,] kg
+bad1: Matrix[N+1]
+bad2: Matrix[3,3] PositiveDefinite m s
+bad3: 5 m

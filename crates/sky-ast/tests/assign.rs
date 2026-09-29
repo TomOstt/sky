@@ -36,7 +36,7 @@ fn targets_print_as_specified() {
         ("x -= 1", "(-= x 1)"),
         ("x /= 2 s", "(/= x (unit 2 s))"),
         ("a.b[0].c = 1", "(= (attr (index (attr a b) 0) c) 1)"),
-        ("x: Real = 1", "(: x Real 1)"),
+        ("x: Real = 1", "(: x (type (unit Real)) 1)"),
     ] {
         assert_eq!(module_sexpr(src), tree, "{src:?}");
     }

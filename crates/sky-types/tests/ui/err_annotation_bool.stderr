@@ -1,0 +1,13 @@
+crates/sky-types/tests/ui/err_annotation_bool.sky:2:19: error: expected a number, found Bool
+  |
+2 | A: Matrix[3, 3] = true
+  |                   ^^^^ this is Bool
+  |    ------------ expected because of this annotation
+  = note: v0.1 has no truthiness: a Bool is never a number
+
+crates/sky-types/tests/ui/err_annotation_bool.sky:3:8: error: expected a number, found Bool
+  |
+3 | x: m = true
+  |        ^^^^ this is Bool
+  |    - expected because of this annotation
+  = note: v0.1 has no truthiness: a Bool is never a number

@@ -1,0 +1,9 @@
+# The checker only knows properties it can prove: `B` was not declared
+# PositiveDefinite, and adding two positive-definite matrices is not yet
+# something it can prove.
+B: Matrix[3, 3]
+C: PositiveDefinite Matrix[3, 3] = B
+S: Symmetric Matrix[3, 3]
+D: PositiveDefinite Matrix[3, 3] = S
+A: PositiveDefinite Matrix[3, 3]
+E: PositiveDefinite Matrix[3, 3] = A @ A

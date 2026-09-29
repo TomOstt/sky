@@ -1,0 +1,48 @@
+crates/sky-ast/tests/ui/err_annotation_units.sky:3:6: error: unexpected name `s` after the unit `m`
+  |
+3 | a: m s
+  |      ^
+  |    - unit
+  = help: compound units are written with `*` and no spaces: `m*s`
+
+crates/sky-ast/tests/ui/err_annotation_units.sky:4:6: error: a unit's `/` cannot have spaces around it
+  |
+4 | b: m / s
+  |      ^
+  |    - unit so far
+  = help: write the unit without spaces: `m/s`
+
+crates/sky-ast/tests/ui/err_annotation_units.sky:5:6: error: a unit's `^` cannot have spaces around it
+  |
+5 | c: m ^2
+  |      ^
+  |    - unit
+  = help: write the exponent with no spaces: `m^2`, `m^-1`, or `m^(1/2)`
+
+crates/sky-ast/tests/ui/err_annotation_units.sky:6:5: error: `⁻¹` cannot follow a unit
+  |
+6 | d: m⁻¹
+  |     ^^
+  |    - unit
+  = help: write a negative exponent instead: `m^-1` (no spaces)
+
+crates/sky-ast/tests/ui/err_annotation_units.sky:7:7: error: expected a unit name after `*` in a unit, found end of line
+  |
+7 | e: kg*
+  |       ^
+  |      - no spaces around this, so it is part of the unit
+  = help: write a unit name after `*`, e.g. `m/s` or `kg*m`
+
+crates/sky-ast/tests/ui/err_annotation_units.sky:8:16: error: unexpected name `s` after the unit `m`
+  |
+8 | f: Vector[3] m s
+  |                ^
+  |              - unit
+  = help: compound units are written with `*` and no spaces: `m*s`
+
+crates/sky-ast/tests/ui/err_annotation_units.sky:9:6: error: expected a unit name after `/` in a unit, found integer literal `2`
+  |
+9 | g: m/2
+  |      ^
+  |     - no spaces around this, so it is part of the unit
+  = help: write a unit name after `/`, e.g. `m/s` or `kg*m`

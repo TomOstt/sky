@@ -1,10 +1,11 @@
 //! `N` is both a unit (the newton) and a common shape-variable name
 //! (`Matrix[N, N]`). The parser tells them apart by position only: a unit is
-//! an identifier directly after a numeric literal (`10 N`), and everything
-//! else is a name. These tests pin that, so adding `N` to the unit table
-//! cannot change how `Matrix[N, N]` parses.
+//! an identifier directly after a numeric literal (`10 N`) or in a type
+//! annotation outside `[...]` (`f: N`); inside a shape's brackets, and
+//! everywhere else, it is a name. These tests pin that, so adding `N` to the
+//! unit table cannot change how `Matrix[N, N]` parses.
 
-use sky_ast::{ast::span_text, Expr, ExprKind, IndexItem, Module, StmtKind, UnitExpr};
+use sky_ast::{ast::span_text, DimExpr, Expr, ExprKind, Module, StmtKind, UnitExpr};
 use sky_units::{lookup, Dimension};
 
 fn parse(src: &str) -> Module {
@@ -51,18 +52,48 @@ fn n_in_a_shape_annotation_is_a_name_not_a_unit() {
         let StmtKind::Binding { ty, .. } = &stmt.kind else {
             panic!("{stmt:?}");
         };
-        let ExprKind::Index { items, .. } = &ty.kind else {
-            panic!("{ty:?}");
-        };
-        let dims: Vec<&Expr> = items.iter().filter_map(IndexItem::as_expr).collect();
-        assert_eq!(dims.len(), 2, "{ty:?}");
-        for ix in dims {
-            let ExprKind::Name(id) = &ix.kind else {
-                panic!("shape dim is not a plain name: {ix:?}");
+        let shape = ty.shape.as_ref().expect("a shape");
+        assert_eq!(shape.dims.len(), 2, "{ty:?}");
+        assert!(ty.unit.is_none(), "{ty:?}");
+        for dim in &shape.dims {
+            let DimExpr::Name(id) = dim else {
+                panic!("shape dim is not a plain name: {dim:?}");
             };
             assert_eq!(span_text(src, id.span), Some("N"));
         }
     }
+}
+
+#[test]
+fn a_lone_n_or_k_after_the_colon_is_a_unit() {
+    // A bare name is always a unit (newtons, kelvin), never a size
+    // variable: those only exist inside `[...]`. And after a shape, `N` is
+    // the unit of the elements while the `N`s inside are size variables.
+    let src = "f: N\nt: K\nA: Matrix[N, N] N\n";
+    let m = parse(src);
+    let units: Vec<&UnitExpr> = m
+        .stmts
+        .iter()
+        .map(|s| match &s.kind {
+            StmtKind::Binding { ty, .. } => ty.unit.as_ref().expect("a unit"),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    for (u, want) in units.iter().zip(["N", "K", "N"]) {
+        let UnitExpr::Name(id) = u else {
+            panic!("{u:?}")
+        };
+        assert_eq!(span_text(src, id.span), Some(want));
+        assert!(lookup(want).is_some());
+    }
+    let StmtKind::Binding { ty, .. } = &m.stmts[0].kind else {
+        panic!()
+    };
+    assert!(ty.shape.is_none());
+    let StmtKind::Binding { ty, .. } = &m.stmts[2].kind else {
+        panic!()
+    };
+    assert_eq!(ty.shape.as_ref().map(|s| s.dims.len()), Some(2));
 }
 
 #[test]
@@ -89,20 +120,15 @@ fn a_value_named_n_and_the_unit_n_coexist() {
 }
 
 #[test]
-fn a_unit_literal_inside_a_shape_is_not_a_shape_variable() {
-    // `Matrix[2 N, N]` parses its first dim as the quantity "2 newtons".
-    // The checker must reject it as a shape dimension, never read it as the
-    // variable N.
+fn a_unit_literal_inside_a_shape_is_a_parse_error() {
+    // `Matrix[2 N, N]`: a dimension is an integer or a name, so "2 newtons"
+    // is never read as the variable N.
     let src = "A: Matrix[2 N, N]\n";
-    let m = parse(src);
-    let StmtKind::Binding { ty, .. } = &m.stmts[0].kind else {
-        panic!();
-    };
-    let ExprKind::Index { items, .. } = &ty.kind else {
-        panic!();
-    };
-    let dims: Vec<&Expr> = items.iter().filter_map(IndexItem::as_expr).collect();
-    assert_eq!(dims.len(), 2, "{ty:?}");
-    assert_eq!(unit_name(dims[0], src), "N");
-    assert!(matches!(dims[1].kind, ExprKind::Name(_)));
+    let lexed = sky_syntax::lex(src).expect("lexes");
+    let (_, errors) = sky_ast::parse_module(&lexed.tokens, src);
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert!(
+        errors[0].message.contains("expected `,` or `]`"),
+        "{errors:#?}"
+    );
 }

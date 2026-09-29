@@ -1,0 +1,4 @@
+# Symmetric is not enough for the Cholesky rewrite: the `.explain` is empty.
+S: Symmetric Matrix[3, 3]
+b: Vector[3]
+x = S⁻¹ @ b

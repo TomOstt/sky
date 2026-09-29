@@ -1,0 +1,5 @@
+# Matrix properties apply to square matrices only.
+A: Symmetric Matrix[3, 4]
+v: Diagonal Vector[3]
+x: PositiveDefinite Scalar
+y: Symmetric m

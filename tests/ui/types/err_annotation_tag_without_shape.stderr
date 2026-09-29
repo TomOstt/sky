@@ -1,0 +1,5 @@
+tests/ui/types/err_annotation_tag_without_shape.sky:2:4: error: matrix property `Symmetric` needs a shape
+  |
+2 | A: Symmetric
+  |    ^^^^^^^^^
+  = help: write a square matrix type: `Symmetric Matrix[N, N]`

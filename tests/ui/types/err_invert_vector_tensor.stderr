@@ -1,0 +1,11 @@
+tests/ui/types/err_invert_vector_tensor.sky:3:6: error: cannot invert a vector
+  |
+3 | w = v⁻¹
+  |      ^^
+  |     - this is Vector[3] [1]
+
+tests/ui/types/err_invert_vector_tensor.sky:4:6: error: cannot invert a rank-3 tensor
+  |
+4 | u = T⁻¹
+  |      ^^
+  |     - this is Tensor[2,2,2] [1]

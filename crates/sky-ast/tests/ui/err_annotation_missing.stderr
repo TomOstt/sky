@@ -1,0 +1,17 @@
+crates/sky-ast/tests/ui/err_annotation_missing.sky:2:3: error: expected a type, found end of line
+  |
+2 | x:
+  |   ^
+  = help: a type is a unit like `m/s`, a shape like `Matrix[3, 3]`, or both: `Vector[3] m/s`
+
+crates/sky-ast/tests/ui/err_annotation_missing.sky:3:4: error: expected a type, found `(`
+  |
+3 | y: (m)
+  |    ^
+  = help: a type is a unit like `m/s`, a shape like `Matrix[3, 3]`, or both: `Vector[3] m/s`
+
+crates/sky-ast/tests/ui/err_annotation_missing.sky:4:4: error: expected a type, found `-`
+  |
+4 | z: -m
+  |    ^
+  = help: a type is a unit like `m/s`, a shape like `Matrix[3, 3]`, or both: `Vector[3] m/s`

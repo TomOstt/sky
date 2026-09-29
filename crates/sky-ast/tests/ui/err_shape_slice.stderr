@@ -1,0 +1,6 @@
+crates/sky-ast/tests/ui/err_shape_slice.sky:1:14: error: a shape dimension cannot be a slice
+  |
+1 | B: Matrix[3, :]
+  |              ^
+  |          - in this shape
+  = help: write dimensions as integers or size-variable names: `Matrix[N, 3]`

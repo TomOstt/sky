@@ -1,8 +1,0 @@
-# env: D: Matrix[3,3] Diagonal
-# env: E: Matrix[3,3] Diagonal
-x = 5 m
-x += 2 m
-x -= 1 m
-x *= 2
-x /= 4
-D @= E

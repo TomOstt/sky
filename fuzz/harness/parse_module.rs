@@ -166,7 +166,16 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
             }
             StmtKind::Binding { name, ty, value } => {
                 f(name.span);
-                stack.push(Node::Expr(ty));
+                f(ty.span);
+                ty.tags.iter().for_each(|t| f(t.span));
+                if let Some(shape) = &ty.shape {
+                    f(shape.span);
+                    f(shape.kind_span);
+                    shape.dims.iter().for_each(|d| f(d.span()));
+                }
+                if let Some(u) = &ty.unit {
+                    stack.push(Node::Unit(u));
+                }
                 if let Some(v) = value {
                     stack.push(Node::Expr(v));
                 }

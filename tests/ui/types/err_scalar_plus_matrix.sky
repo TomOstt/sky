@@ -1,0 +1,6 @@
+# No broadcasting between a scalar and an array.
+A: Matrix[3, 3]
+w = A + 2
+x = A - 2
+y = 2 + A
+z = 2 - A

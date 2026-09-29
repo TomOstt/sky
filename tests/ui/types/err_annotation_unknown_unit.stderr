@@ -1,0 +1,10 @@
+tests/ui/types/err_annotation_unknown_unit.sky:2:14: error: unknown unit `meters`
+  |
+2 | a: Vector[3] meters
+  |              ^^^^^^
+  = help: did you mean `m`?
+
+tests/ui/types/err_annotation_unknown_unit.sky:3:4: error: unknown unit `furlongs`
+  |
+3 | b: furlongs
+  |    ^^^^^^^^

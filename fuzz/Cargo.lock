@@ -82,6 +82,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "sky-ast"
+version = "0.0.1"
+dependencies = [
+ "sky-diag",
+ "sky-syntax",
+]
+
+[[package]]
 name = "sky-diag"
 version = "0.0.1"
 
@@ -90,6 +98,7 @@ name = "sky-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
+ "sky-ast",
  "sky-diag",
  "sky-syntax",
 ]

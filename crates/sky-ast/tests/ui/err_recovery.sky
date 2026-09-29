@@ -1,0 +1,4 @@
+# After an error the parser skips to the next line and keeps going.
+x = 1 +
+y = 2
+z = 3 3

@@ -6,7 +6,7 @@
 //! `f(a)` → `(call f a)`, `M[3, 4]` → `(index M 3 4)`, `a.b` → `(attr a b)`,
 //! `(a)` → `(paren a)`, `x = 1` → `(= x 1)`, `A: T = v` → `(: A T v)`.
 
-use sky_diag::Span;
+use sky_syntax::Span;
 
 use crate::ast::{span_text, Expr, ExprKind, Module, Stmt, StmtKind, UnitExpr};
 

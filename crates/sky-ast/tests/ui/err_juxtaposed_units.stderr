@@ -1,0 +1,6 @@
+crates/sky-ast/tests/ui/err_juxtaposed_units.sky:1:10: error: unexpected name `m` after the unit `kg`
+  |
+1 | f = 5 kg m
+  |          ^
+  |       -- unit
+  = help: compound units are written with `*` and no spaces: `kg*m`

@@ -18,8 +18,9 @@ fn empty_input_is_an_error_for_parse_expr() {
 
 #[test]
 fn unclosed_paren_points_at_the_opener() {
-    let src = "(a + b";
-    let errors = expr_errors(src);
+    // The lexer rejects an unclosed `(` itself; drop the `)` to reach the parser.
+    let src = "(a + b)";
+    let errors = common::tokens_errors(&common::lex_prefix(src, 4), src);
     assert_eq!(errors.len(), 1);
     let e = &errors[0];
     assert_eq!(e.message, "expected `)`, found end of input");
@@ -31,12 +32,12 @@ fn unclosed_paren_points_at_the_opener() {
 
 #[test]
 fn unclosed_call_and_index() {
-    for (src, want) in [
-        ("f(a, b", "expected `,` or `)`, found end of input"),
-        ("Matrix[3, 4", "expected `,` or `]`, found end of input"),
-        ("f(a b)", "unexpected name `b` after an expression; a unit may only follow a numeric literal"),
+    for (src, keep, want) in [
+        ("f(a, b)", 5, "expected `,` or `)`, found end of input"),
+        ("Matrix[3, 4]", 5, "expected `,` or `]`, found end of input"),
+        ("f(a b)", usize::MAX, "unexpected name `b` after an expression; a unit may only follow a numeric literal"),
     ] {
-        let errors = expr_errors(src);
+        let errors = common::tokens_errors(&common::lex_prefix(src, keep), src);
         assert_eq!(errors.len(), 1, "{src:?}");
         assert_eq!(errors[0].message, want);
     }
@@ -45,15 +46,16 @@ fn unclosed_call_and_index() {
 #[test]
 fn dangling_operators() {
     for (src, want, span_text) in [
-        ("a +", "expected an expression, found end of input", ""),
+        ("a +", "expected an expression, found end of line", ""),
         ("* a", "expected an expression, found `*`", "*"),
         ("a * / b", "expected an expression, found `/`", "/"),
-        ("-", "expected an expression, found end of input", ""),
+        ("-", "expected an expression, found end of line", ""),
         ("f(,)", "expected an expression, found `,`", ","),
-        ("a.", "expected an attribute name after `.`, found end of input", ""),
+        ("a.", "expected an attribute name after `.`, found end of line", ""),
         ("a.3", "expected an attribute name after `.`, found integer literal `3`", "3"),
         ("M[]", "expected at least one index between `[` and `]`", "[]"),
-        (")", "expected an expression, found `)`", ")"),
+        ("= b", "expected an expression, found `=`", "="),
+        ("(,)", "expected an expression, found `,`", ","),
     ] {
         let errors = expr_errors(src);
         assert_eq!(errors.len(), 1, "{src:?}: {errors:#?}");
@@ -159,9 +161,23 @@ fn long_unit_chains_are_bounded() {
 }
 
 #[test]
-fn keywords_are_not_attribute_names() {
-    // `solve` is a keyword, so `linalg.solve` does not parse (see PARSER_DECISIONS.md).
-    let errors = expr_errors("linalg.solve(A, b)");
-    assert_eq!(errors.len(), 1);
-    assert_eq!(errors[0].message, "expected an attribute name after `.`, found keyword `solve`");
+fn keywords_are_attribute_names_only_after_a_dot() {
+    // Signed off by Eng Lead: any keyword may follow `.`.
+    assert_eq!(
+        common::sexpr("linalg.solve(A, b)"),
+        "(call (attr linalg solve) A b)"
+    );
+    assert_eq!(common::sexpr("x.if"), "(attr x if)");
+    assert_eq!(common::sexpr("a.def.for.field"), "(attr (attr (attr a def) for) field)");
+    assert_eq!(common::module_sexpr("y = eq.equation[0]\n"), "(= y (index (attr eq equation) 0))");
+
+    // A bare keyword is still not a name.
+    for src in ["solve = 1", "x = solve", "f(solve)", "if"] {
+        let errors = common::module_errors(src);
+        assert_eq!(errors.len(), 1, "{src:?}: {errors:#?}");
+        assert!(errors[0].message.contains("found keyword"), "{src:?}: {}", errors[0].message);
+    }
+    // Only a name or keyword may follow `.`.
+    let errors = expr_errors("x.(y)");
+    assert_eq!(errors[0].message, "expected an attribute name after `.`, found `(`");
 }

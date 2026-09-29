@@ -13,11 +13,9 @@ pub mod ast;
 pub mod parser;
 pub mod precedence;
 mod sexpr;
-pub mod token;
 
 pub use ast::{
     BinaryOp, Expr, ExprKind, Ident, Literal, Module, Stmt, StmtKind, UnaryOp, UnitExpr,
 };
 pub use parser::{parse_expr, parse_module, ParseError, MAX_DEPTH, MAX_UNIT_FACTORS};
-pub use sky_diag::Span;
-pub use token::{Kw, Token, TokenKind};
+pub use sky_syntax::{Kw, Span, Token, TokenKind};

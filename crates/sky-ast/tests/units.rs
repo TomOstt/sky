@@ -13,12 +13,35 @@ fn check(cases: &[(&str, &str)]) {
 fn simple_unit_literals() {
     check(&[
         ("10 km", "(unit 10 km)"),
-        ("10km", "(unit 10 km)"),
         ("9.8 m", "(unit 9.8 m)"),
         ("1e3 m", "(unit 1e3 m)"),
         ("3 d", "(unit 3 d)"),
         ("1 eV", "(unit 1 eV)"),
     ]);
+}
+
+#[test]
+fn number_glued_to_a_name_is_still_a_unit_for_the_parser() {
+    // The lexer rejects `10km` ("put a space before the unit"), but the
+    // parser only sees tokens: Int directly followed by Ident is a unit.
+    assert!(sky_syntax::lex("10km").is_err());
+    let src = "10km";
+    let tokens = [
+        sky_ast::Token { kind: sky_ast::TokenKind::Int, span: sky_ast::Span::new(0, 2) },
+        sky_ast::Token { kind: sky_ast::TokenKind::Ident, span: sky_ast::Span::new(2, 4) },
+    ];
+    let (expr, errors) = sky_ast::parse_expr(&tokens, src);
+    assert!(errors.is_empty());
+    assert_eq!(expr.unwrap().to_sexpr(src), "(unit 10 km)");
+}
+
+#[test]
+fn unclosed_rational_exponent() {
+    // The lexer rejects `1 m^(1/2` itself; drop the `)` to reach the parser.
+    let src = "1 m^(1/2)";
+    let errors = common::tokens_errors(&common::lex_prefix(src, 7), src);
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].message.contains("malformed rational"), "{}", errors[0].message);
 }
 
 #[test]
@@ -130,7 +153,6 @@ fn malformed_unit_parts_are_errors() {
         ("3 s^2^3", "cannot be chained"),
         ("1 m^(1)", "malformed rational"),
         ("1 m^(1/)", "malformed rational"),
-        ("1 m^(1/2", "malformed rational"),
         ("1 m^( 1/2)", "malformed rational"),
         ("1 m^(1 /2)", "malformed rational"),
         ("1 m^(1/x)", "malformed rational"),

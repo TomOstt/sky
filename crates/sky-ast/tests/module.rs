@@ -64,7 +64,7 @@ fn empty_module_is_fine() {
 
 #[test]
 fn recovery_skips_to_the_next_line() {
-    let src = "x = (1 +\ny = 2\nz = 3 3\nw = 4\n";
+    let src = "x = 1 +\ny = 2\nz = 3 3\nw = 4\n";
     let tokens = common::lex(src);
     let (module, errors) = parse_module(&tokens, src);
     assert_eq!(module.to_sexpr(src), "(= y 2)\n(= w 4)");

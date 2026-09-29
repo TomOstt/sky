@@ -13,8 +13,9 @@ fn first_diagnostic(src: &str) -> Diagnostic {
 
 #[test]
 fn conversion_keeps_everything() {
-    let src = "x = (a + b\n";
-    let (_, errors) = parse_module(&lex(src), src);
+    // The real lexer rejects an unclosed `(`, so drop the `)` by hand.
+    let src = "x = (a + b)\n";
+    let (_, errors) = parse_module(&common::lex_prefix(src, 6), src);
     let err = errors[0].clone();
     let diag = err.clone().into_diagnostic();
     assert_eq!(diag.severity, Severity::Error);
@@ -27,16 +28,17 @@ fn conversion_keeps_everything() {
 }
 
 #[test]
-fn renders_unclosed_paren() {
-    let src = "x = (a + b\n";
+fn renders_chained_comparison() {
+    let src = "c = a < b < d\n";
     let file = SourceFile::new("demo.sky", src);
     assert_eq!(
         first_diagnostic(src).render_to_string(&file),
-        "demo.sky:1:11: error: expected `)`, found end of line\n  \
+        "demo.sky:1:11: error: comparison operators cannot be chained in Sky v0.1\n  \
          |\n\
-         1 | x = (a + b\n  \
+         1 | c = a < b < d\n  \
          |           ^\n  \
-         |     - unclosed `(`\n"
+         |       - previous comparison\n  \
+         = help: compare two values at a time\n"
     );
 }
 

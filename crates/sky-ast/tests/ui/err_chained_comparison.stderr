@@ -1,0 +1,6 @@
+crates/sky-ast/tests/ui/err_chained_comparison.sky:1:12: error: comparison operators cannot be chained in Sky v0.1
+  |
+1 | ok = a < b < c
+  |            ^
+  |        - previous comparison
+  = help: compare two values at a time

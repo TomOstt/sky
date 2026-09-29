@@ -1,0 +1,10 @@
+# Unit literals: `*`, `/`, `^` join the unit only with no spaces around them.
+d = 10 km
+g = 9.8 m/s^2
+F = 1 kg*m/s^2
+n = 1 Hz^(1/2)
+rho = 1 kg*m^(-3/2)
+a = 3 s^-2
+v = 10 km / 30 min
+w = 10 m / t
+k = 2 * km

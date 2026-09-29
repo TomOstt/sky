@@ -6,7 +6,7 @@
 //! and leaves room for a lossless CST later (the CST will own trivia; the AST
 //! stays a typed view with spans).
 
-use sky_diag::Span;
+use sky_syntax::Span;
 
 /// `source[span]`, or `None` if the span is out of bounds, inverted, or not on
 /// a `char` boundary. Never panics.

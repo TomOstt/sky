@@ -19,13 +19,13 @@
     clippy::indexing_slicing
 )]
 
-use sky_diag::{Diagnostic, Label, Span};
+use sky_diag::{Diagnostic, Label};
+use sky_syntax::{Span, Token, TokenKind};
 
 use crate::ast::{
     span_text, Expr, ExprKind, Ident, Literal, Module, Stmt, StmtKind, UnitExpr,
 };
 use crate::precedence::{infix_binding_power, is_postfix_start, prefix_binding_power, POSTFIX_BP};
-use crate::token::{Token, TokenKind};
 
 /// Maximum nesting: recursive sub-expressions plus operators folded into one
 /// operand chain. `(((x)))` uses 4; `a + b + c` uses 3.
@@ -477,7 +477,11 @@ impl<'t, 's> Parser<'t, 's> {
             }),
             TokenKind::Dot => {
                 let name = self.current();
-                if name.kind != TokenKind::Ident {
+                // Any keyword may be an attribute name (`linalg.solve`),
+                // signed off by Eng Lead. Only here: a bare keyword is still
+                // not a name.
+                let is_name = matches!(name.kind, TokenKind::Ident | TokenKind::Keyword(_));
+                if !is_name {
                     self.errors.push(
                         ParseError::new(
                             format!(

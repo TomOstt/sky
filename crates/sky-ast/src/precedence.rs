@@ -17,7 +17,7 @@
 //! Non-associativity of comparisons is enforced by the parser, not the table.
 
 use crate::ast::{BinaryOp, UnaryOp};
-use crate::token::TokenKind;
+use sky_syntax::TokenKind;
 
 pub const INFIX: &[(TokenKind, BinaryOp, u8, u8)] = &[
     (TokenKind::Eq, BinaryOp::Eq, 10, 11),

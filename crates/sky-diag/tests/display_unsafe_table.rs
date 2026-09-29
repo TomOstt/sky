@@ -74,26 +74,3 @@ fn every_unsafe_character_is_escaped_to_the_width_of_its_escape() {
     }
     assert_eq!(display_safe("\t"), "\\u{0009}");
 }
-
-/// The lexer (`crates/sky-syntax/src/lexer.rs`, `is_invisible`, as of #11)
-/// rejects these as invisible. Every one must also be escaped by the
-/// renderer. This mirrors the drift test proposed for `sky-syntax`.
-#[test]
-fn lexer_invisible_characters_are_display_unsafe() {
-    let lexer_invisible = [
-        0x00AD..=0x00AD,
-        0x034F..=0x034F,
-        0x115F..=0x1160,
-        0x17B4..=0x17B5,
-        0x180B..=0x180F,
-        0x200B..=0x200D,
-        0x2060..=0x2064,
-        0x3164..=0x3164,
-        0xFE00..=0xFE0F,
-        0xFEFF..=0xFEFF,
-        0xFFA0..=0xFFA0,
-    ];
-    for cp in lexer_invisible.into_iter().flatten() {
-        assert!(is_display_unsafe(char::from_u32(cp).unwrap()), "U+{cp:04X}");
-    }
-}

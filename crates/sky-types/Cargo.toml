@@ -10,3 +10,7 @@ publish.workspace = true
 [dependencies]
 sky-ast = { path = "../sky-ast" }
 sky-units = { path = "../sky-units" }
+
+[dev-dependencies]
+# Property tests only; not linked into any shipped artifact.
+proptest = { version = "1", default-features = false, features = ["std"] }

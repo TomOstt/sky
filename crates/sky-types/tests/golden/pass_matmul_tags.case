@@ -1,0 +1,10 @@
+# Matmul keeps only Diagonal·Diagonal and Orthogonal·Orthogonal.
+let S = Matrix[3,3] Symmetric
+let P = Matrix[3,3] PositiveDefinite
+let D = Matrix[3,3] Diagonal
+let Q = Matrix[3,3] Orthogonal
+show S @ S
+show P @ P
+show D @ D
+show Q @ Q
+show D @ Q

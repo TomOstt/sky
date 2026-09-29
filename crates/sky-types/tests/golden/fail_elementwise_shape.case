@@ -1,0 +1,3 @@
+let A = Matrix[3,4]
+let B = Matrix[3,5]
+show A - B

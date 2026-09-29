@@ -71,7 +71,8 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 - **AST:** `Literal::Bool { value: bool, span: Span }`, a new variant of the existing `Literal` enum, not a new `ExprKind`. All literal leaves stay in one place, `Literal::span()` covers it, and the checker types literals in one `match`. Unlike numbers and strings it carries its value, because there's nothing to decode. S-expressions print `true`/`false`.
 - **Downstream:** adding a variant breaks exhaustive `match`es on `Literal`. `sky-types/check-walk` has one (`check.rs`, `Literal::Int(_) | Literal::Float(_)` / `Literal::Str(_)`), which needs a `Literal::Bool { .. }` arm when it merges main.
 - A unit can't follow a Bool: the unit-literal rule only starts after `Int`/`Float`, so `true m` is "unexpected name `m` after an expression; a unit may only follow a numeric literal".
-- They stay attribute names after `.` (`x.true`). `true = 1` is an invalid assignment target.
+- They stay attribute names after `.` (`y = x.true` parses). Assigning to that attribute (`x.true = 1`) fails like every attribute target (`x.flag = 1`), because targets are plain names in v0.1.
+- `true = 1`, `false = 0`, and `true: Bool` are errors on the literal: "cannot assign to `true`" / "cannot annotate `true`", with the help "`true` and `false` are Bool literals, not names". Other non-name targets keep the generic "invalid assignment target" message.
 - `True`/`False` are ordinary identifiers, and the parser does nothing special with them. The checker should give an undefined `True`/`False` the help "Sky writes booleans as `true`/`false`" (Dinesh's side).
 
 **AST shape:**
@@ -96,7 +97,7 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 ## Robustness (fuzz target)
 - The parser never panics. All token access is bounds-checked, text goes through `str::get`, and integer conversions are checked.
 - It never calls `Span::new` on token-derived offsets, because that debug-asserts.
-- A missing `Eof` is fine, and tokens after the first `Eof` are ignored.
+- A missing `Eof` is fine: the end of the slice acts as `Eof`, a zero-width span at the end of the last token (`Span::point(0)` for an empty slice). Tokens after the first `Eof` are ignored.
 - Error recovery: at top level, an error skips to the next `Newline`.
 
 ## Errors

@@ -1,0 +1,1 @@
+explain: rewrite `A⁻¹ @ b` to a Cholesky solve: A is Matrix[N,N] and PositiveDefinite, b is Matrix[N,K]. Factor A = L·Lᵀ (L lower-triangular), solve L·y = b, then Lᵀ·x = y. x = A⁻¹·b is Matrix[N,K], and A⁻¹ is never formed.

@@ -1,0 +1,5 @@
+# A symbolic Matrix[N,N] is solved from a known shape.
+let A = Matrix[N,N]
+let B = Matrix[3,7]
+show A @ B
+show A

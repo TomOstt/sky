@@ -1,0 +1,2 @@
+let T = Tensor[2,2,2]
+show T⁻¹

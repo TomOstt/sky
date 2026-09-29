@@ -1,0 +1,7 @@
+# Library level only: `cholesky_rewrite` rewrites an explicit inverse, never
+# a power (even ^-1) and never plain A. In Sky source the checker rejects
+# `A^-1` on a matrix before any rewrite decision (#19).
+let A = Matrix[3,3] PositiveDefinite
+let b = Vector[3]
+explain A^-1 @ b
+explain A @ b

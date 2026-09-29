@@ -709,6 +709,22 @@ fn invisible_characters_break_identifiers() {
     assert_err("a\u{00AD}b = 1\n", LexErrorKind::UnexpectedChar, "\u{00AD}");
 }
 
+#[test]
+fn hangul_fillers_cannot_start_an_identifier() {
+    // XID_Start, but they render as nothing: `\u{3164} = 1` would bind a
+    // variable whose name is invisible.
+    for c in ['\u{115F}', '\u{1160}', '\u{3164}', '\u{FFA0}'] {
+        let s = c.to_string();
+        let e = assert_err(&format!("{c} = 1\n"), LexErrorKind::UnexpectedChar, &s);
+        assert_eq!(
+            e.diagnostic.help,
+            ["invisible characters are not allowed in source code"]
+        );
+        assert_err(&format!("x = {c}y\n"), LexErrorKind::UnexpectedChar, &s);
+        assert_err(&format!("a{c}b = 1\n"), LexErrorKind::UnexpectedChar, &s);
+    }
+}
+
 // ---- numbers --------------------------------------------------------------
 
 #[test]
@@ -910,6 +926,25 @@ fn lexer_rejected_invisible_and_bidi_chars_are_display_unsafe() {
     // 38 invisible characters plus 12 bidi controls. Update this when either
     // set changes; it keeps the loop above from silently checking nothing.
     assert_eq!(rejected, 50);
+}
+
+/// The predicates the drift test uses are the ones `lex` enforces.
+#[test]
+fn drift_test_predicates_match_lexer_behaviour() {
+    for c in (0..=0x10FFFFu32).filter_map(char::from_u32) {
+        if crate::source::is_bidi_control(c) {
+            // Rejected anywhere, even in a comment.
+            let e = lex(&format!("x = 1 # {c}\n")).unwrap_err();
+            assert_eq!(e.kind, LexErrorKind::BidiControl, "U+{:04X}", c as u32);
+        } else if is_invisible(c) && c != '\u{FEFF}' {
+            // Rejected inside an identifier and as a token of its own.
+            // (U+FEFF is skipped only as a leading BOM; covered elsewhere.)
+            for src in [format!("a{c}b = 1\n"), format!("x = {c}1\n")] {
+                let e = lex(&src).unwrap_err();
+                assert_eq!(e.kind, LexErrorKind::UnexpectedChar, "U+{:04X}", c as u32);
+            }
+        }
+    }
 }
 
 #[test]

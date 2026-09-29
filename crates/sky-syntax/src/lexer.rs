@@ -26,8 +26,9 @@
 //! - bidirectional control characters anywhere, including comments and
 //!   strings (Trojan Source, spec v0.1 non-negotiable 4);
 //! - a lone `\r` not followed by `\n`;
-//! - invisible characters (e.g. ZERO WIDTH JOINER), even where `XID_Continue`
-//!   would allow them, and `·` (U+00B7) inside identifiers;
+//! - invisible characters (e.g. ZERO WIDTH JOINER, HANGUL FILLER), even
+//!   where `XID_Start` or `XID_Continue` would allow them, and `·` (U+00B7)
+//!   inside identifiers;
 //! - tabs and spaces mixed in one line's indentation, or an indented line
 //!   whose indentation uses tabs where the enclosing block uses spaces (or
 //!   the reverse);
@@ -220,7 +221,10 @@ fn is_invisible(c: char) -> bool {
 }
 
 fn is_ident_start(c: char) -> bool {
-    c == '_' || unicode_ident::is_xid_start(c)
+    // The Hangul fillers (U+115F, U+1160, U+3164, U+FFA0) are XID_Start but
+    // render as nothing, so an identifier could otherwise start with (or be
+    // entirely) an invisible character.
+    c == '_' || (unicode_ident::is_xid_start(c) && !is_invisible(c))
 }
 
 fn is_ident_continue(c: char) -> bool {

@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_slice_step_only.sky:1:4: error: slice steps (`start:stop:step`) are not supported in Sky v0.1
+  |
+1 | A[::2]
+  |    ^
+  |   - slice

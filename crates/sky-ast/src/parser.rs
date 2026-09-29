@@ -19,7 +19,9 @@
     clippy::indexing_slicing
 )]
 
-use sky_diag::{Diagnostic, Label};
+use std::borrow::Cow;
+
+use sky_diag::{display_safe, Diagnostic, Label};
 use sky_syntax::{Kw, Span, Token, TokenKind};
 
 use crate::ast::{
@@ -44,9 +46,14 @@ pub const MAX_DEPTH: u32 = 256;
 /// Maximum number of unit names in one unit literal (`kg*m/s^2` has 3).
 pub const MAX_UNIT_FACTORS: usize = 64;
 
-/// Source text quoted in a diagnostic is cut to this many characters (then
-/// `…`), so a huge name or expression can't make a huge message.
+/// Source text quoted in a diagnostic is cut to at most this many
+/// characters, or [`MAX_QUOTED_BYTES`] bytes after escaping, whichever comes
+/// first (then `…`), so a huge name or expression can't make a huge message.
 pub const MAX_QUOTED_CHARS: usize = 64;
+
+/// The byte cap on quoted source text, counted after escaping (see
+/// [`MAX_QUOTED_CHARS`]).
+pub const MAX_QUOTED_BYTES: usize = 128;
 
 /// A syntax error. Maps one-to-one onto a [`sky_diag::Diagnostic`] with
 /// severity `error` via [`ParseError::into_diagnostic`] or `From`.
@@ -225,10 +232,9 @@ impl<'t, 's> Parser<'t, 's> {
             .map(|t| t.span)
     }
 
-    /// Source text for a diagnostic: the first line only, at most
-    /// [`MAX_QUOTED_CHARS`] characters, with `…` where it was cut.
-    fn text(&self, span: Span) -> String {
-        quoted(span_text(self.src, span).unwrap_or("?"))
+    /// Source text for a diagnostic: see [`cap_quoted`].
+    fn text(&self, span: Span) -> Cow<'s, str> {
+        cap_quoted(span_text(self.src, span).unwrap_or("?"))
     }
 
     fn skip_newlines(&mut self) {
@@ -266,6 +272,8 @@ impl<'t, 's> Parser<'t, 's> {
     fn parse_stmt(&mut self) -> Option<Stmt> {
         let first = self.expr_bp(0)?;
         let tok = self.current();
+        // The statement's own `=` or compound operator, for chain errors.
+        let mut first_op = None;
         let stmt = match (tok.kind, compound_op(tok.kind)) {
             (TokenKind::Colon, _) => {
                 self.bump();
@@ -277,6 +285,7 @@ impl<'t, 's> Parser<'t, 's> {
                 )?;
                 let ty = self.expr_bp(0)?;
                 let value = if self.peek() == TokenKind::Assign {
+                    first_op = Some(self.current());
                     self.bump();
                     Some(self.expr_bp(0)?)
                 } else {
@@ -289,6 +298,7 @@ impl<'t, 's> Parser<'t, 's> {
                 }
             }
             (TokenKind::Assign, _) => {
+                first_op = Some(tok);
                 self.bump();
                 let start = first.span;
                 let target = self.assign_target(first, tok.span)?;
@@ -299,6 +309,7 @@ impl<'t, 's> Parser<'t, 's> {
                 }
             }
             (_, Some(op)) => {
+                first_op = Some(tok);
                 self.bump();
                 let start = first.span;
                 let target = self.assign_target(first, tok.span)?;
@@ -318,7 +329,7 @@ impl<'t, 's> Parser<'t, 's> {
                 kind: StmtKind::Expr(first),
             },
         };
-        self.expect_stmt_end(&stmt)?;
+        self.expect_stmt_end(&stmt, first_op)?;
         Some(stmt)
     }
 
@@ -378,7 +389,8 @@ impl<'t, 's> Parser<'t, 's> {
         None
     }
 
-    fn expect_stmt_end(&mut self, stmt: &Stmt) -> Option<()> {
+    /// `first_op` is the statement's own `=` or compound operator, if any.
+    fn expect_stmt_end(&mut self, stmt: &Stmt, first_op: Option<Token>) -> Option<()> {
         let tok = self.current();
         match tok.kind {
             TokenKind::Newline => {
@@ -386,14 +398,9 @@ impl<'t, 's> Parser<'t, 's> {
                 Some(())
             }
             TokenKind::Eof => Some(()),
-            TokenKind::Assign => {
-                self.errors.push(ParseError::new(
-                    "chained assignment (`a = b = c`) is not supported",
-                    tok.span,
-                ));
-                None
+            kind if kind == TokenKind::Assign || compound_op(kind).is_some() => {
+                self.fail_assign_after(stmt, first_op, tok)
             }
-            kind if compound_op(kind).is_some() => self.fail_compound_after(stmt, tok),
             _ => {
                 let last = match &stmt.kind {
                     StmtKind::Expr(e) => e,
@@ -863,23 +870,40 @@ impl<'t, 's> Parser<'t, 's> {
         None
     }
 
-    /// A compound assignment operator (current) after a complete statement.
+    /// `=` or a compound assignment operator (`tok`, current) after a
+    /// complete statement whose own operator is `first_op`.
     #[cold]
     #[inline(never)]
-    fn fail_compound_after(&mut self, stmt: &Stmt, tok: Token) -> Option<()> {
+    fn fail_assign_after(
+        &mut self,
+        stmt: &Stmt,
+        first_op: Option<Token>,
+        tok: Token,
+    ) -> Option<()> {
         let op = symbol(tok.kind);
-        let err = match &stmt.kind {
-            StmtKind::Binding { name, .. } => {
-                ParseError::new(format!("`{op}` cannot follow a type annotation"), tok.span)
-                    .with_help(format!(
-                "annotate with `{name}: T = ...`, then write `{name} {op} ...` on its own line",
-                name = self.text(name.span)
-            ))
-            }
-            _ => ParseError::new(
-                "chained assignment (`x += y += z`) is not supported",
+        let err = match (&stmt.kind, first_op) {
+            // `x: T += 1`: an annotation without a value.
+            (
+                StmtKind::Binding {
+                    name, value: None, ..
+                },
+                _,
+            ) => ParseError::new(format!("`{op}` cannot follow a type annotation"), tok.span)
+                .with_help(format!(
+                    "annotate with `{name}: T = ...`, then write `{name} {op} ...` on its own line",
+                    name = self.text(name.span)
+                )),
+            (_, Some(first)) => ParseError::new(
+                format!(
+                    "chained assignment (`{}` then `{op}`) is not supported",
+                    symbol(first.kind)
+                ),
                 tok.span,
-            ),
+            )
+            .with_secondary(first.span, "first assignment"),
+            // Unreachable: only an assignment or binding can be followed
+            // by an assignment operator here.
+            (_, None) => ParseError::new(format!("unexpected `{op}`"), tok.span),
         };
         self.errors.push(err);
         None
@@ -1469,15 +1493,48 @@ fn compound_op(kind: TokenKind) -> Option<CompoundOp> {
     })
 }
 
-/// `text` for quoting in a diagnostic: its first line, cut to
-/// [`MAX_QUOTED_CHARS`] characters, with `…` if anything was dropped.
-fn quoted(text: &str) -> String {
-    let line = text.split(['\n', '\r']).next().unwrap_or("");
-    let mut out: String = line.chars().take(MAX_QUOTED_CHARS).collect();
-    if out.len() < text.len() {
-        out.push('…');
+/// `s` for quoting in a diagnostic: its first line, with display-unsafe
+/// characters escaped exactly as the renderer escapes them
+/// ([`sky_diag::display_safe`], e.g. U+202E becomes `\u{202E}`), cut to at
+/// most [`MAX_QUOTED_CHARS`] characters and [`MAX_QUOTED_BYTES`] bytes of
+/// escaped text, then `…` if anything was dropped. Borrowed when nothing
+/// was escaped or cut.
+///
+/// Escaping happens one character at a time, before counting: a character
+/// is added only if its whole escape fits, so the cut never splits an
+/// escape (`\u{20`) or a UTF-8 sequence. Never escape-then-truncate. The
+/// result is already display-safe, so the renderer leaves it unchanged.
+///
+/// Deliberately minimal (no grapheme awareness): the shared `display_safe`
+/// follow-up is meant to replace this and the identical helper in #19.
+fn cap_quoted(s: &str) -> Cow<'_, str> {
+    let mut out = String::new();
+    let mut buf = [0u8; 4];
+    let mut escaped = false;
+    for (kept, (i, c)) in s.char_indices().enumerate() {
+        if c == '\n' || c == '\r' {
+            break;
+        }
+        let piece = display_safe(c.encode_utf8(&mut buf));
+        if kept == MAX_QUOTED_CHARS || out.len() + piece.len() > MAX_QUOTED_BYTES {
+            break;
+        }
+        escaped |= matches!(piece, Cow::Owned(_));
+        out.push_str(&piece);
+        if i + c.len_utf8() == s.len() {
+            // Everything fit.
+            return if escaped {
+                Cow::Owned(out)
+            } else {
+                Cow::Borrowed(s)
+            };
+        }
     }
-    out
+    if s.is_empty() {
+        return Cow::Borrowed(s);
+    }
+    out.push('…');
+    Cow::Owned(out)
 }
 
 /// Decimal digits (with optional `_` separators) to `u64`; `None` on
@@ -1542,7 +1599,115 @@ fn symbol(kind: TokenKind) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_u64;
+    use std::borrow::Cow;
+
+    use super::{cap_quoted, parse_u64, MAX_QUOTED_BYTES, MAX_QUOTED_CHARS};
+
+    /// `q` without its trailing `…`, checked against both caps.
+    fn body(q: &str) -> &str {
+        let b = q.strip_suffix('…').unwrap_or(q);
+        assert!(b.len() <= MAX_QUOTED_BYTES, "{} bytes: {q}", b.len());
+        assert!(!b.contains('…'));
+        b
+    }
+
+    #[test]
+    fn cap_quoted_100k_math_italic_x() {
+        // U+1D465 is 4 bytes: the byte cap (32 chars) comes before the
+        // char cap (64).
+        let src = "𝑥".repeat(100_000);
+        let q = cap_quoted(&src);
+        assert_eq!(body(&q), "𝑥".repeat(32));
+        assert!(q.ends_with('…'));
+    }
+
+    #[test]
+    fn cap_quoted_100k_rtl_override() {
+        // U+202E is escaped to the 8-byte `\u{202E}`: 16 escapes are exactly
+        // 128 bytes, and no raw override survives.
+        let src = "\u{202E}".repeat(100_000);
+        let q = cap_quoted(&src);
+        assert_eq!(body(&q), "\\u{202E}".repeat(16));
+        assert!(q.ends_with('…'));
+        assert!(!q.contains('\u{202E}'));
+    }
+
+    #[test]
+    fn cap_quoted_never_ends_partway_through_an_escape() {
+        // Every ASCII prefix length 0..=8 shifts where the 128-byte cut
+        // lands inside the escape sequence; the escape must be dropped
+        // whole, never cut to `\u{20`.
+        for pad in 0..=8 {
+            for unsafe_char in ['\u{202E}', '\u{E0041}', '\t', '\u{1B}'] {
+                let src = "a".repeat(pad) + &unsafe_char.to_string().repeat(100);
+                let q = cap_quoted(&src);
+                let b = body(&q);
+                let tail = b.trim_start_matches('a');
+                let esc = sky_diag::display_safe(&unsafe_char.to_string()).into_owned();
+                assert_ne!(esc, unsafe_char.to_string());
+                // Only whole escapes after the padding.
+                assert_eq!(tail.len() % esc.len(), 0, "pad {pad}: {q}");
+                assert_eq!(tail, esc.repeat(tail.len() / esc.len()), "pad {pad}: {q}");
+                // And as many as fit.
+                assert!(b.len() + esc.len() > MAX_QUOTED_BYTES, "pad {pad}: {q}");
+                assert!(b.ends_with('}'), "pad {pad}: {q}");
+            }
+        }
+    }
+
+    #[test]
+    fn cap_quoted_cjk() {
+        // 3-byte chars: 42 fit in 128 bytes, the 43rd would need 129.
+        let src = "漢".repeat(100_000);
+        let q = cap_quoted(&src);
+        assert_eq!(body(&q), "漢".repeat(42));
+        assert!(q.ends_with('…'));
+        assert_eq!(
+            cap_quoted(&("漢".repeat(42) + "ab")),
+            "漢".repeat(42) + "ab"
+        );
+        assert_eq!(
+            cap_quoted(&("漢".repeat(42) + "abc")),
+            "漢".repeat(42) + "ab…"
+        );
+    }
+
+    #[test]
+    fn cap_quoted_boundaries() {
+        // Char cap.
+        let n = MAX_QUOTED_CHARS;
+        assert_eq!(cap_quoted(&"a".repeat(n)), "a".repeat(n));
+        assert_eq!(cap_quoted(&"a".repeat(n + 1)), "a".repeat(n) + "…");
+        // 64 two-byte chars are exactly 128 bytes: both caps met, no cut.
+        assert_eq!(cap_quoted(&"é".repeat(64)), "é".repeat(64));
+        assert_eq!(cap_quoted(&"é".repeat(65)), "é".repeat(64) + "…");
+        // Byte cap: exactly 128 bytes fits; 129 cuts on a char boundary.
+        assert_eq!(cap_quoted(&"𝑥".repeat(32)), "𝑥".repeat(32));
+        assert_eq!(
+            cap_quoted(&("a".to_owned() + &"𝑥".repeat(32))),
+            "a".to_owned() + &"𝑥".repeat(31) + "…"
+        );
+        assert_eq!(cap_quoted(&"\u{202E}".repeat(16)), "\\u{202E}".repeat(16));
+        assert_eq!(
+            cap_quoted(&"\u{202E}".repeat(17)),
+            "\\u{202E}".repeat(16) + "…"
+        );
+        // First line only.
+        assert_eq!(cap_quoted("ab\ncd"), "ab…");
+        assert_eq!(cap_quoted("ab\r\ncd"), "ab…");
+        assert_eq!(cap_quoted("\nab"), "…");
+    }
+
+    #[test]
+    fn cap_quoted_borrows_when_unchanged() {
+        for s in ["", "x", "A⁻¹ @ ∂ħ", &"a".repeat(64), &"𝑥".repeat(32)] {
+            assert!(matches!(cap_quoted(s), Cow::Borrowed(b) if b == s), "{s:?}");
+        }
+        for s in ["a\tb", "\u{202E}", &"a".repeat(65), "a\nb"] {
+            assert!(matches!(cap_quoted(s), Cow::Owned(_)), "{s:?}");
+        }
+        assert_eq!(cap_quoted("a\tb"), "a\\u{0009}b");
+    }
 
     #[test]
     fn parse_u64_is_checked() {

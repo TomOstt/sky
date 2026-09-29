@@ -2,7 +2,7 @@
 
 mod common;
 use common::{at, lex, module_errors, module_sexpr, sexpr};
-use sky_ast::{parse_module, BinaryOp, CompoundOp, MAX_DEPTH};
+use sky_ast::{parse_module, BinaryOp, CompoundOp, MAX_DEPTH, MAX_QUOTED_BYTES};
 
 #[test]
 fn compound_op_maps_to_its_binary_op() {
@@ -169,38 +169,44 @@ fn annotations_need_a_plain_name() {
     assert_eq!(errors.len(), 1, "{errors:#?}");
     assert_eq!(errors[0].message, "`+=` cannot follow a type annotation");
     assert_eq!(at(src, errors[0].span), "+=");
+    // With a value, the binding's `=` came first: that is a chain.
+    let src = "x: T = 1 += 2";
+    let errors = module_errors(src);
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert_eq!(
+        errors[0].message,
+        "chained assignment (`=` then `+=`) is not supported"
+    );
+    assert_eq!(at(src, errors[0].span), "+=");
 }
 
 #[test]
 fn chained_assignments_are_errors() {
-    for (src, message, op) in [
-        (
-            "a = b = c",
-            "chained assignment (`a = b = c`) is not supported",
-            "=",
-        ),
-        (
-            "x += y += z",
-            "chained assignment (`x += y += z`) is not supported",
-            "+=",
-        ),
-        (
-            "a = b += c",
-            "chained assignment (`x += y += z`) is not supported",
-            "+=",
-        ),
-        (
-            "x += y = z",
-            "chained assignment (`a = b = c`) is not supported",
-            "=",
-        ),
+    // The message names the real operators: the statement's own (labelled
+    // "first assignment") and the one that follows (the primary span).
+    for (src, first, second) in [
+        ("a = b = c", "=", "="),
+        ("x += y += z", "+=", "+="),
+        ("a = b += c", "=", "+="),
+        ("x += y = z", "+=", "="),
+        ("x -= y *= z", "-=", "*="),
+        ("A[i] ^= 2 @= B", "^=", "@="),
+        ("x: T = 1 = 2", "=", "="),
+        ("x: T = 1 /= 2", "=", "/="),
     ] {
         let errors = module_errors(src);
         assert_eq!(errors.len(), 1, "{src:?}: {errors:#?}");
-        assert_eq!(errors[0].message, message, "{src:?}");
-        let tail = &src[errors[0].span.start as usize..];
-        assert!(tail.starts_with(op), "{src:?}");
-        assert_eq!(at(src, errors[0].span), op);
+        assert_eq!(
+            errors[0].message,
+            format!("chained assignment (`{first}` then `{second}`) is not supported"),
+            "{src:?}"
+        );
+        assert_eq!(at(src, errors[0].span), second, "{src:?}");
+        let labels = &errors[0].secondary;
+        assert_eq!(labels.len(), 1, "{src:?}: {labels:#?}");
+        assert_eq!(labels[0].message.as_deref(), Some("first assignment"));
+        assert_eq!(at(src, labels[0].span), first, "{src:?}");
+        assert!(labels[0].span.end <= errors[0].span.start, "{src:?}");
     }
 }
 
@@ -263,6 +269,88 @@ fn quoted_target_text_is_bounded() {
     let errors = module_errors(&src);
     assert!(errors[0].message.len() < 200);
     assert!(errors[0].help.as_deref().unwrap().len() < 300);
+}
+
+/// The error for `{name}(x) = 1`, with tokens built by hand so that names
+/// the lexer rejects (bidi controls) or may normalize still reach the
+/// parser: `Ident LParen Ident RParen Assign Int Eof`.
+fn call_target_error(name: &str) -> (String, sky_ast::ParseError) {
+    let src = format!("{name}(x) = 1");
+    let n = name.len() as u32;
+    let tokens: Vec<_> = lex("f(x) = 1")
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut t)| {
+            if i == 0 {
+                t.span.end = n;
+            } else {
+                t.span.start += n - 1;
+                t.span.end += n - 1;
+            }
+            t
+        })
+        .collect();
+    let (_, errors) = parse_module(&tokens, &src);
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    let err = errors.into_iter().next().unwrap();
+    assert_eq!(err.span.range(), 0..src.len() - 4);
+    (src, err)
+}
+
+/// The quoted part of `message` (between the last pair of backticks),
+/// without its `…`, checked against the byte cap.
+fn quoted_body(message: &str) -> &str {
+    assert!(message.len() < 200, "{} bytes: {message}", message.len());
+    let inner = message.strip_suffix('`').expect(message);
+    let open = inner.rfind('`').expect(message);
+    let body = &inner[open + 1..];
+    let body = body.strip_suffix('…').expect(message);
+    assert!(
+        body.len() <= MAX_QUOTED_BYTES,
+        "{} bytes: {message}",
+        body.len()
+    );
+    body
+}
+
+#[test]
+fn quoted_100k_math_italic_x_is_byte_capped() {
+    let (_, err) = call_target_error(&"𝑥".repeat(100_000));
+    // 4-byte chars: 32 fit in 128 bytes, before the 64-char cap.
+    assert_eq!(quoted_body(&err.message), "𝑥".repeat(32));
+}
+
+#[test]
+fn quoted_100k_rtl_override_is_escaped_then_capped() {
+    let (_, err) = call_target_error(&"\u{202E}".repeat(100_000));
+    // Escaped as the renderer would (8 bytes each): 16 fit in 128 bytes.
+    assert_eq!(quoted_body(&err.message), "\\u{202E}".repeat(16));
+    assert!(!err.message.contains('\u{202E}'));
+    // Rendering leaves the already-escaped text as it is.
+    let diag = err.into_diagnostic();
+    assert_eq!(sky_diag::display_safe(&diag.message), diag.message);
+}
+
+#[test]
+fn quoted_text_never_ends_partway_through_an_escape() {
+    for pad in 0..=8 {
+        let name = "a".repeat(pad) + &"\u{202E}".repeat(1000);
+        let (_, err) = call_target_error(&name);
+        let body = quoted_body(&err.message);
+        let tail = body.strip_prefix(&"a".repeat(pad) as &str).unwrap();
+        assert_eq!(
+            tail,
+            "\\u{202E}".repeat(tail.len() / 8),
+            "pad {pad}: {body}"
+        );
+        assert!(body.len() + 8 > MAX_QUOTED_BYTES, "pad {pad}: {body}");
+    }
+}
+
+#[test]
+fn quoted_100k_cjk_is_byte_capped() {
+    let (_, err) = call_target_error(&"漢".repeat(100_000));
+    assert_eq!(quoted_body(&err.message), "漢".repeat(42));
 }
 
 #[test]

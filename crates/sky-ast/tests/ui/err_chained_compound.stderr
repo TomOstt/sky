@@ -1,4 +1,5 @@
-crates/sky-ast/tests/ui/err_chained_compound.sky:1:8: error: chained assignment (`x += y += z`) is not supported
+crates/sky-ast/tests/ui/err_chained_compound.sky:1:8: error: chained assignment (`+=` then `+=`) is not supported
   |
 1 | x += y += z
   |        ^^
+  |   -- first assignment

@@ -1,0 +1,6 @@
+crates/sky-ast/tests/ui/err_assign_to_unit_literal.sky:1:1: error: cannot assign to a unit literal `10 m`
+  |
+1 | 10 m = x
+  | ^^^^
+  |      - because of this
+  = help: only a name (`x`), an index (`A[i]`), or an attribute (`a.b`) can be assigned to

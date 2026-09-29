@@ -2,7 +2,17 @@ name: CI
 on:
   push:
     branches: [main]
+    # Docs- and spec-only changes cost CI minutes without testing anything.
+    # A change that also touches code or tests still runs everything.
+    paths-ignore: ['spec/**', '**/*.md']
   pull_request:
+    paths-ignore: ['spec/**', '**/*.md']
+# A newer push to the same PR cancels its older run: each merge of main into
+# a branch otherwise bills a full run that nobody reads. Pushes to main are
+# grouped by commit, so every main commit keeps its own complete run.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:

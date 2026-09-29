@@ -11,6 +11,11 @@ use std::collections::HashSet;
 
 use sky_diag::{Severity, Span};
 use sky_interp::{run_module_with, RuntimeEnv};
+use sky_diag::Severity;
+use std::collections::HashSet;
+
+use sky_derive::SirDerivatives;
+use sky_interp::{run_module_with_derivatives, RuntimeEnv};
 
 /// What running a program did: its stdout, and the message of the runtime
 /// error that stopped it, if any.
@@ -39,13 +44,23 @@ fn parse_checked(src: &str) -> (sky_ast::Module, HashSet<Span>) {
     (module, checked.cholesky_solves)
 }
 
-/// The `sky run` side: exactly what `sky-cli`'s `run` does after checking.
+/// The `sky run` side: exactly what `sky-cli`'s `run` does after checking
+/// (a derivative runs on SIR through `sky-derive`, as in `sky run`).
 fn run_tree_walker(src: &str) -> Outcome {
     let (module, solves) = parse_checked(src);
     sky_ast::with_deep_stack(|| {
         let mut out = Vec::new();
         let mut env = RuntimeEnv::with_prelude();
         let result = run_module_with(&module, src, &mut env, &mut out, &solves);
+        let mut derivatives = SirDerivatives::new(&module, src);
+        let result = run_module_with_derivatives(
+            &module,
+            src,
+            &mut env,
+            &mut out,
+            &HashSet::new(),
+            &mut derivatives,
+        );
         Outcome {
             stdout: String::from_utf8(out).expect("utf-8 output"),
             error: result.err().map(|e| e.message.clone()),
@@ -194,6 +209,20 @@ print(\"done\")
 ";
     let o = assert_same(src);
     assert_eq!(o.stdout, "0\n1\n2\n2\n3\n4\n10\n6\n2\ndone\n");
+// ----- derivative(f, x)(args) -----
+//
+// `sky run` evaluates a derivative by lowering the function to SIR and
+// running `sky_ad`'s derivative in this crate's interpreter; the lowered
+// program calls that same function. The two paths must print the same bytes.
+
+const POSITION: &str = "def x(t: s) -> m:\n    return 5 m/s^2 * t^2\n";
+
+#[test]
+fn the_derivative_of_a_position_is_a_velocity_in_both_engines() {
+    let o = assert_same(&format!(
+        "{POSITION}print(x(2 s))\nprint(derivative(x, t)(2 s))\n"
+    ));
+    assert_eq!(o.stdout, "20 m\n20 m/s\n");
     assert_eq!(o.error, None);
 }
 
@@ -486,6 +515,41 @@ print(best, best[0] if i > 2 else best[1])
     assert_eq!(
         o.stdout.lines().next(),
         Some("[3, 6] 25 3 5"),
+fn derivatives_with_several_parameters_and_module_names() {
+    let o = assert_same(
+        "g = 9.5 m/s^2\n\
+         def fall(t: s, m0: kg) -> J:\n    return 0.5 * m0 * (g * t)^2\n\
+         g = 10 m/s^2\n\
+         print(derivative(fall, t)(2 s, 3 kg))\n\
+         print(derivative(fall, m0)(2 s, 3 kg))\n",
+    );
+    // E = m g² t²/2: dE/dt = m g² t = 600 W, dE/dm = g² t²/2 = 200 J/kg
+    assert_eq!(o.stdout, "600 W\n200 m^2/s^2\n");
+}
+
+#[test]
+fn derivatives_through_control_flow_loops_and_recursion() {
+    let o = assert_same(
+        "def cube(a: m) -> m^3:\n    return a * a * a\n\
+         def steps(t: s) -> m:\n    if t > 1 s:\n        return 3 m/s * t\n    return 1 m\n\
+         def triple(a: m) -> m:\n    total = 0 m\n    i = 0\n    while i < 3:\n        total = total + a\n        i += 1\n    return total\n\
+         print(derivative(cube, a)(2 m), derivative(steps, t)(0.5 s), derivative(steps, t)(2 s))\n\
+         print(derivative(triple, a)(2 m))\n",
+    );
+    assert_eq!(o.stdout, "12 m^2 0 m/s 3 m/s\n3\n");
+}
+
+#[test]
+fn derivatives_of_math_functions() {
+    let o = assert_same(
+        "def wave(t: s) -> m:\n    return 2 m * sin(2 * pi * 0.25 Hz * t)\n\
+         def decay(t: s) -> m:\n    return 2 m * exp(-t / 4 s) + sqrt(t / 1 s) * 1 m\n\
+         print(derivative(wave, t)(0 s))\n\
+         print(derivative(decay, t)(4 s))\n",
+    );
+    assert_eq!(o.error, None);
+    assert!(
+        o.stdout.starts_with("3.141592653589793 m/s\n"),
         "{}",
         o.stdout
     );
@@ -619,4 +683,31 @@ fn other_array_runtime_errors_agree() {
 fn a_matrix_declared_without_a_value_is_an_input_nothing_supplies() {
     let o = assert_same("A: Matrix[2, 2]\nprint(A[0, 0])\n");
     assert_eq!(o.error.as_deref(), Some("`A` is declared but has no value"));
+}
+fn a_second_derivative_is_the_derivative_of_a_function_that_calls_the_first() {
+    let o = assert_same(&format!(
+        "{POSITION}def v(t: s) -> m/s:\n    return derivative(x, t)(t)\n\
+         print(v(2 s))\nprint(derivative(v, t)(2 s))\n"
+    ));
+    assert_eq!(o.stdout, "20 m/s\n10 m/s^2\n");
+}
+
+#[test]
+fn the_function_prints_once_per_derivative() {
+    let o = assert_same(
+        "def f(t: s) -> m:\n    print(\"called\")\n    return 2 m/s * t\n\
+         print(derivative(f, t)(1 s))\n",
+    );
+    assert_eq!(o.stdout, "called\n2 m/s\n");
+}
+
+#[test]
+fn a_derivative_that_fails_fails_the_same_way() {
+    // The slope of sqrt at 0 is infinite: division by zero, in both.
+    let o = assert_same(
+        "def root(a: m^2) -> m:\n    return sqrt(a)\n\
+         print(1)\nprint(derivative(root, a)(0 m^2))\n",
+    );
+    assert_eq!(o.stdout, "1\n");
+    assert_eq!(o.error.as_deref(), Some("division by zero"));
 }

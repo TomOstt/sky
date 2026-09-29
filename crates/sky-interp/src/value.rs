@@ -5,6 +5,7 @@ use std::fmt::{self, Write as _};
 use std::sync::Arc;
 
 use sky_ast::Block;
+use sky_diag::Span;
 use sky_units::{BaseDim, Dimension, Rational, UNITS};
 
 /// A runtime value.
@@ -49,6 +50,10 @@ pub enum Value {
 #[derive(Debug, PartialEq)]
 pub struct Function {
     pub name: String,
+    /// The span of the function's name in its `def`: which `def` of the
+    /// program this is (two `def`s may share a name), the key the checker
+    /// and lowering use.
+    pub def_span: Span,
     pub params: Vec<String>,
     pub body: Block,
 }

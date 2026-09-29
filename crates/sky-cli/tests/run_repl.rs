@@ -772,4 +772,50 @@ fn run_a_loop_variable_after_a_loop_that_may_not_run_is_a_check_error() {
     );
     assert_eq!(o.status.code(), Some(1));
     assert!(err(&o).contains("4:7: error: `i` may be undefined here"));
+#[test]
+fn run_evaluates_a_derivative_with_its_unit() {
+    // x(t) = 5 m/s^2 t^2: x'(2 s) = 20 m/s, x''(2 s) = 10 m/s^2.
+    let o = run_script(
+        "derivative",
+        "def x(t: s) -> m:\n    return 5 m/s^2 * t^2\n\
+         def v(t: s) -> m/s:\n    return derivative(x, t)(t)\n\
+         print(x(2 s))\n\
+         print(derivative(x, t)(2 s))\n\
+         print(derivative(v, t)(2 s))\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "20 m\n20 m/s\n10 m/s^2\n");
+    assert!(o.status.success());
+}
+
+#[test]
+fn a_derivative_unit_error_is_a_check_error_and_nothing_runs() {
+    let o = run_script(
+        "derivative_unit",
+        "def x(t: s) -> m:\n    return 5 m/s^2 * t^2\n\
+         print(\"before\")\n\
+         print(x(2 s) + derivative(x, t)(2 s))\n",
+    );
+    assert_eq!(out(&o), "");
+    assert!(
+        err(&o).contains("cannot add length and velocity"),
+        "{}",
+        err(&o)
+    );
+    assert_eq!(o.status.code(), Some(1));
+}
+
+#[test]
+fn a_derivative_that_fails_is_a_runtime_error_on_the_call() {
+    // The slope of sqrt at 0 is infinite: division by zero, reported where
+    // the derivative was asked for, after the output before it.
+    let o = run_script(
+        "derivative_domain",
+        "def root(a: m^2) -> m:\n    return sqrt(a)\n\
+         print(derivative(root, a)(4 m^2))\n\
+         print(derivative(root, a)(0 m^2))\n",
+    );
+    assert_eq!(out(&o), "0.25 m^-1\n");
+    assert!(err(&o).contains("division by zero"), "{}", err(&o));
+    assert_eq!(o.status.code(), Some(1));
 }

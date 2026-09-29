@@ -246,6 +246,17 @@ impl std::error::Error for LowerError {}
 /// Lowers `module` (parsed from `src` and checked without errors, with
 /// `checked` the checker's result for it) to SIR. The module is unverified.
 pub fn lower(module: &Ast, src: &str, checked: &Checked) -> Result<Module, LowerError> {
+    lower_with_defs(module, src, checked).map(|(m, _)| m)
+}
+
+/// [`lower`], and which SIR function each `def` became: the span of the
+/// `def`'s name (the key of `Checked::funcs`, and `Function::def_span` in
+/// the interpreter) to the function's name in the module.
+pub fn lower_with_defs(
+    module: &Ast,
+    src: &str,
+    checked: &Checked,
+) -> Result<(Module, HashMap<Span, String>), LowerError> {
     let main = FnState {
         b: Builder::new(Module::MAIN.to_string(), module.span),
         scope: Default::default(),
@@ -280,6 +291,7 @@ pub fn lower(module: &Ast, src: &str, checked: &Checked) -> Result<Module, Lower
         st,
         mut out,
         derivatives,
+        fns,
         ..
     } = lw;
     out.sort_by_key(|(start, _)| *start);
@@ -299,6 +311,11 @@ pub fn lower(module: &Ast, src: &str, checked: &Checked) -> Result<Module, Lower
     // owns that rule (`sky_ir::effects`), lowering does not repeat it.
     let _ = sky_ir::effects::infer_effects(&mut module);
     Ok(module)
+    let defs = fns
+        .into_iter()
+        .map(|(def, info)| (def, info.name))
+        .collect();
+    Ok((module, defs))
 }
 
 /// Lexes, parses, checks and lowers `src`: the whole path from source text

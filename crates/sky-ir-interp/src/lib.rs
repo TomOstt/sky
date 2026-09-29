@@ -135,3 +135,16 @@ pub fn call(
 ) -> Result<Vec<Value>, IrRuntimeError> {
     machine::call(module, name, args, out)
 }
+
+/// [`call`] for a run nested in another interpreter (`sky run` evaluating a
+/// derivative): `stack` is that interpreter's meter, so both share one
+/// stack budget instead of each spending a whole one.
+pub fn call_metered(
+    module: &Module,
+    name: &str,
+    args: Vec<Value>,
+    out: &mut dyn Write,
+    stack: sky_interp::arith::StackMeter,
+) -> Result<Vec<Value>, IrRuntimeError> {
+    machine::call_metered(module, name, args, out, stack)
+}

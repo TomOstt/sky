@@ -40,6 +40,7 @@
 
 pub mod arith;
 pub mod array;
+mod derivative;
 mod env;
 mod error;
 mod eval;
@@ -58,12 +59,13 @@ mod show_tests;
 mod tests;
 
 pub use arith::MAX_CALL_DEPTH;
+pub use derivative::{DerivativeHook, DerivativeRequest};
 pub use env::RuntimeEnv;
 pub use error::{ErrorDetails, RuntimeError};
-pub use eval::{run_module, run_module_with};
+pub use eval::{run_module, run_module_with, run_module_with_derivatives};
 pub use literal::{number_literal, unit_literal_si};
 pub use show::{show_unit_text, show_value};
 /// The dense numerics, shared with the checker (see `sky_types::linalg`).
 pub use sky_types::linalg;
 pub use sky_units::Dimension;
-pub use value::{format_number, si_unit, Value};
+pub use value::{format_number, si_unit, Function, Value};

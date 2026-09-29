@@ -1,0 +1,21 @@
+[package]
+name = "sky-derive"
+description = "Evaluates derivative(f, x)(args) for the tree-walking interpreter through SIR automatic differentiation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+sky-ad = { path = "../sky-ad" }
+sky-ast = { path = "../sky-ast" }
+sky-diag = { path = "../sky-diag" }
+sky-interp = { path = "../sky-interp" }
+sky-ir = { path = "../sky-ir" }
+sky-ir-interp = { path = "../sky-ir-interp" }
+sky-lower = { path = "../sky-lower" }
+sky-types = { path = "../sky-types" }
+
+[dev-dependencies]
+sky-syntax = { path = "../sky-syntax" }

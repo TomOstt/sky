@@ -353,12 +353,28 @@ name = "sky-cli"
 version = "0.0.1"
 dependencies = [
  "sky-ast",
+ "sky-derive",
  "sky-diag",
  "sky-interp",
  "sky-ir",
  "sky-lower",
  "sky-opt",
  "sky-project",
+ "sky-syntax",
+ "sky-types",
+]
+
+[[package]]
+name = "sky-derive"
+version = "0.0.1"
+dependencies = [
+ "sky-ad",
+ "sky-ast",
+ "sky-diag",
+ "sky-interp",
+ "sky-ir",
+ "sky-ir-interp",
+ "sky-lower",
  "sky-syntax",
  "sky-types",
 ]
@@ -413,6 +429,7 @@ version = "0.0.1"
 dependencies = [
  "proptest",
  "sky-ast",
+ "sky-derive",
  "sky-diag",
  "sky-interp",
  "sky-ir",

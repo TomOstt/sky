@@ -23,6 +23,7 @@ use crate::arith::{
     ArithOp, StackMeter, MAX_CALL_DEPTH, R,
 };
 use crate::array::{self, Ix};
+use crate::derivative::DerivativeHook;
 use crate::literal::{number_literal, unit_literal_si};
 use crate::show::show_value;
 use crate::value::Function;
@@ -70,6 +71,32 @@ pub fn run_module_with<W: Write>(
     out: &mut W,
     solves: &HashSet<Span>,
 ) -> Result<Option<Value>, RuntimeError> {
+    run(module, src, env, out, solves, None)
+}
+
+/// Like [`run_module_with`], and evaluates `derivative(f, x)(args)` with
+/// `hook` (see [`DerivativeHook`]); without one, a derivative is a runtime
+/// error, because the interpreter has no automatic differentiation of its
+/// own.
+pub fn run_module_with_derivatives<W: Write>(
+    module: &Module,
+    src: &str,
+    env: &mut RuntimeEnv,
+    out: &mut W,
+    solves: &HashSet<Span>,
+    hook: &mut dyn DerivativeHook,
+) -> Result<Option<Value>, RuntimeError> {
+    run(module, src, env, out, solves, Some(hook))
+}
+
+fn run<'a, W: Write>(
+    module: &Module,
+    src: &'a str,
+    env: &'a mut RuntimeEnv,
+    out: &'a mut W,
+    solves: &'a HashSet<Span>,
+    derivatives: Option<&'a mut dyn DerivativeHook>,
+) -> Result<Option<Value>, RuntimeError> {
     let mut it = Interp {
         src,
         env,
@@ -77,6 +104,7 @@ pub fn run_module_with<W: Write>(
         solves,
         frames: Vec::new(),
         stack: StackMeter::new(),
+        derivatives,
     };
     let mut last = None;
     for stmt in &module.stmts {
@@ -90,11 +118,11 @@ pub fn run_module_with<W: Write>(
     Ok(last)
 }
 
-struct Interp<'a> {
+pub(crate) struct Interp<'a> {
     src: &'a str,
     /// Module-level names.
-    env: &'a mut RuntimeEnv,
-    out: &'a mut dyn Write,
+    pub(crate) env: &'a mut RuntimeEnv,
+    pub(crate) out: &'a mut dyn Write,
     /// The `A⁻¹ @ b` sites to solve by Cholesky; see [`run_module_with`].
     solves: &'a HashSet<Span>,
     /// The local variables of each active user-function call, innermost
@@ -102,15 +130,17 @@ struct Interp<'a> {
     /// module (Python's rule); assignments go to the frame.
     frames: Vec<BTreeMap<String, Value>>,
     /// Where the run started; see [`crate::arith::STACK_BUDGET`].
-    stack: StackMeter,
+    pub(crate) stack: StackMeter,
+    /// What evaluates `derivative(f, x)(args)`, if the caller has one.
+    pub(crate) derivatives: Option<&'a mut dyn DerivativeHook>,
 }
 
 impl<'a> Interp<'a> {
-    fn text(&self, span: Span) -> &'a str {
+    pub(crate) fn text(&self, span: Span) -> &'a str {
         span_text(self.src, span).unwrap_or("")
     }
 
-    fn lookup(&self, name: &str) -> Option<&Value> {
+    pub(crate) fn lookup(&self, name: &str) -> Option<&Value> {
         self.frames
             .last()
             .and_then(|f| f.get(name))
@@ -176,9 +206,11 @@ impl<'a> Interp<'a> {
                 ret: _,
                 body,
             } => {
+                let name_span = name.span;
                 let name = self.text(name.span);
                 let func = Function {
                     name: name.to_string(),
+                    def_span: name_span,
                     params: params
                         .iter()
                         .map(|p| self.text(p.name.span).to_string())
@@ -256,7 +288,7 @@ impl<'a> Interp<'a> {
         }
     }
 
-    fn eval(&mut self, e: &Expr) -> R<Value> {
+    pub(crate) fn eval(&mut self, e: &Expr) -> R<Value> {
         self.check_stack(e.span)?;
         match &e.kind {
             ExprKind::Literal(lit) => match lit {
@@ -383,6 +415,9 @@ impl<'a> Interp<'a> {
     }
 
     fn call(&mut self, call: &Expr, callee: &Expr, args: &[Expr]) -> R<Value> {
+        if let Some(derivative) = self.derivative_call(call, callee, args) {
+            return derivative;
+        }
         // Builtins are looked up only if the program has not bound the
         // name itself, so a user's own `print` or `inv` wins (the checker
         // applies the same rule).

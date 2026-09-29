@@ -213,11 +213,23 @@ pub(crate) fn call(
     args: Vec<Value>,
     out: &mut dyn Write,
 ) -> R<Vec<Value>> {
+    call_metered(module, name, args, out, StackMeter::new())
+}
+
+/// [`call`] measuring the stack from `stack`, a meter another interpreter
+/// started, so a run nested in it stays inside one budget.
+pub(crate) fn call_metered(
+    module: &Module,
+    name: &str,
+    args: Vec<Value>,
+    out: &mut dyn Write,
+    stack: StackMeter,
+) -> R<Vec<Value>> {
     let mut m = Machine {
         module,
         out,
         depth: 0,
-        stack: StackMeter::new(),
+        stack,
         #[cfg(test)]
         fuel: u64::MAX,
     };

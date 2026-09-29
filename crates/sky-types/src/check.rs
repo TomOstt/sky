@@ -310,6 +310,29 @@ impl<'s> Checker<'s> {
         )
     }
 
+    /// Whether `t` is a matrix whose two dimensions are known to be equal
+    /// (the same number, or the same shape variable).
+    fn is_square_matrix(&self, t: &TensorType) -> bool {
+        match self.env.shapes.apply(t.shape()).dims() {
+            [rows, cols] => rows == cols,
+            _ => false,
+        }
+    }
+
+    /// `e`'s source text, parenthesized unless it is an atom (a name,
+    /// literal, unit literal, call, index, attribute, or parenthesized
+    /// expression), so it can be spliced into a larger suggested expression
+    /// such as `(K⁻¹)⁻¹` or `(-2) * ones(A)`.
+    fn operand_text(&self, e: &Expr) -> String {
+        let text = self.text(e.span);
+        match e.kind {
+            ExprKind::Binary { .. } | ExprKind::Unary { .. } | ExprKind::Inverse { .. } => {
+                format!("({text})")
+            }
+            _ => text.to_string(),
+        }
+    }
+
     fn stmt(&mut self, kind: &StmtKind) {
         match kind {
             StmtKind::Expr(e) => {
@@ -674,6 +697,7 @@ impl<'s> Checker<'s> {
             if let Some(rewrite) =
                 cholesky_rewrite(MatmulLhs::Inverse(&av.ty), &rv.ty, &self.env.shapes)
             {
+                let rewrite = self.name_operands(rewrite, operand, rhs);
                 self.rewrites.push(RewriteSite {
                     span,
                     matrix: operand.span,
@@ -693,6 +717,26 @@ impl<'s> Checker<'s> {
                 );
                 Ty::Unknown
             }
+        }
+    }
+
+    /// Replaces the explanation's placeholder names `A` and `b` with the
+    /// operands' source text: `K is Matrix[3,3] and PositiveDefinite, f is
+    /// Vector[3]`. In formulas a compound operand is parenthesized.
+    fn name_operands(&self, rewrite: Rewrite, matrix: &Expr, rhs: &Expr) -> Rewrite {
+        let Rewrite::CholeskySolve { a, b, result, .. } = rewrite;
+        let (a_text, b_text) = (self.text(matrix.span), self.text(rhs.span));
+        let (a_f, b_f) = (self.operand_text(matrix), self.operand_text(rhs));
+        let explanation = format!(
+            "rewrite `{a_f}⁻¹ @ {b_f}` to a Cholesky solve: {a_text} is {a} and PositiveDefinite, \
+             {b_text} is {b}. Factor {a_f} = L·Lᵀ (L lower-triangular), solve L·y = {b_f}, \
+             then Lᵀ·x = y. x = {a_f}⁻¹·{b_f} is {result}, and {a_f}⁻¹ is never formed."
+        );
+        Rewrite::CholeskySolve {
+            a,
+            b,
+            result,
+            explanation,
         }
     }
 
@@ -894,7 +938,7 @@ impl<'s> Checker<'s> {
                 } else {
                     (&lv, le, re)
                 };
-                let (a, c) = (self.text(arr_e.span), self.text(sc_e.span));
+                let a = self.text(arr_e.span);
                 let noun = rank_noun(arr.ty.shape().rank());
                 let message = match (op, left_scalar) {
                     (BinaryOp::Add, false) => format!("cannot add a scalar to a {noun}"),
@@ -902,23 +946,33 @@ impl<'s> Checker<'s> {
                     (_, false) => format!("cannot subtract a scalar from a {noun}"),
                     (_, true) => format!("cannot subtract a {noun} from a scalar"),
                 };
-                let help = if left_scalar {
-                    format!(
-                        "write `{c} * ones({a}) {sym} {a}` for every element, or `I {sym} {a}` for the identity"
-                    )
+                let c = self.operand_text(sc_e);
+                let (ones, identity) = if left_scalar {
+                    (format!("{c} * ones({a}) {sym} {a}"), format!("I {sym} {a}"))
                 } else {
-                    format!(
-                        "write `{a} {sym} {c} * ones({a})` for every element, or `{a} {sym} I` for the identity"
-                    )
+                    (format!("{a} {sym} {c} * ones({a})"), format!("{a} {sym} I"))
                 };
+                let sc = if left_scalar { &lv } else { &rv };
                 let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
-                self.error(
-                    Diagnostic::error(message, op_span)
-                        .with_label("no broadcasting between a scalar and an array")
-                        .with_secondary(le.span, ll)
-                        .with_secondary(re.span, rl)
-                        .with_help(help),
-                );
+                let mut d = Diagnostic::error(message, op_span)
+                    .with_label("no broadcasting between a scalar and an array")
+                    .with_secondary(le.span, ll)
+                    .with_secondary(re.span, rl);
+                if sc.dim != arr.dim {
+                    // Neither rewrite would type-check, so don't offer one.
+                    d = d.with_note(format!(
+                        "the dimensions differ as well: {} and {}",
+                        describe(&sc.dim),
+                        describe(&arr.dim)
+                    ));
+                } else if self.is_square_matrix(&arr.ty) {
+                    d = d.with_help(format!(
+                        "write `{ones}` for every element, or `{identity}` for the identity"
+                    ));
+                } else {
+                    d = d.with_help(format!("write `{ones}` for every element"));
+                }
+                self.error(d);
                 return Ty::Unknown;
             }
         }
@@ -1081,6 +1135,66 @@ mod tests {
         let d = &c.diagnostics[0];
         assert_eq!(d.primary.span, span_of(src, "^-1"));
         assert_eq!(d.help, vec!["write `A⁻¹` or `inv(A)`".to_string()]);
+    }
+
+    #[test]
+    fn rewrite_explanation_uses_operand_text() {
+        let mut env = Env::new();
+        env.bind_array(
+            "K",
+            Shape::matrix(3u64, 3u64),
+            TagSet::of(Tag::PositiveDefinite),
+            Dimension::DIMENSIONLESS,
+        )
+        .unwrap();
+        env.bind_array(
+            "f",
+            Shape::vector(3u64),
+            TagSet::EMPTY,
+            Dimension::DIMENSIONLESS,
+        )
+        .unwrap();
+        let c = check_src("u = K⁻¹ @ f\n", env);
+        let text = c.rewrites[0].rewrite.explanation();
+        assert!(
+            text.contains("K is Matrix[3,3] and PositiveDefinite, f is Vector[3]"),
+            "{text}"
+        );
+        assert!(!text.contains(" A ") && !text.contains(" b "), "{text}");
+    }
+
+    #[test]
+    fn identity_is_suggested_only_for_square_matrices() {
+        let mut env = pd_env();
+        env.bind_array(
+            "v",
+            Shape::vector(3u64),
+            TagSet::EMPTY,
+            Dimension::DIMENSIONLESS,
+        )
+        .unwrap();
+        env.bind_array(
+            "M",
+            Shape::matrix(3u64, 4u64),
+            TagSet::EMPTY,
+            Dimension::DIMENSIONLESS,
+        )
+        .unwrap();
+        let c = check_src("x = A + 2\ny = v + 2\nz = M + 2\nw = 2 m + b\n", env);
+        let help: Vec<Vec<String>> = c.diagnostics.iter().map(|d| d.help.clone()).collect();
+        assert_eq!(
+            help,
+            vec![
+                vec![
+                    "write `A + 2 * ones(A)` for every element, or `A + I` for the identity"
+                        .to_string()
+                ],
+                vec!["write `v + 2 * ones(v)` for every element".to_string()],
+                vec!["write `M + 2 * ones(M)` for every element".to_string()],
+                // b is in metres too: the `ones` form applies, `I` doesn't.
+                vec!["write `2 m * ones(b) + b` for every element".to_string()],
+            ]
+        );
     }
 
     #[test]

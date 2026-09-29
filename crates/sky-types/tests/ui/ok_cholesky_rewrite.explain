@@ -1,13 +1,27 @@
-crates/sky-types/tests/ui/ok_cholesky_rewrite.sky:5:5: note: `A⁻¹ @ b` is rewritten to a Cholesky solve
+crates/sky-types/tests/ui/ok_cholesky_rewrite.sky:8:5: note: `A⁻¹ @ b` is rewritten to a Cholesky solve
   |
-5 | x = A⁻¹ @ b
+8 | x = A⁻¹ @ b
   |     ^^^^^^^
   |     - positive definite
   = note: rewrite `A⁻¹ @ b` to a Cholesky solve: A is Matrix[3,3] and PositiveDefinite, b is Vector[3]. Factor A = L·Lᵀ (L lower-triangular), solve L·y = b, then Lᵀ·x = y. x = A⁻¹·b is Vector[3], and A⁻¹ is never formed.
 
-crates/sky-types/tests/ui/ok_cholesky_rewrite.sky:6:5: note: `inv(A) @ b` is rewritten to a Cholesky solve
+crates/sky-types/tests/ui/ok_cholesky_rewrite.sky:9:5: note: `inv(A) @ b` is rewritten to a Cholesky solve
   |
-6 | y = inv(A) @ b
+9 | y = inv(A) @ b
   |     ^^^^^^^^^^
   |         - positive definite
   = note: rewrite `A⁻¹ @ b` to a Cholesky solve: A is Matrix[3,3] and PositiveDefinite, b is Vector[3]. Factor A = L·Lᵀ (L lower-triangular), solve L·y = b, then Lᵀ·x = y. x = A⁻¹·b is Vector[3], and A⁻¹ is never formed.
+
+crates/sky-types/tests/ui/ok_cholesky_rewrite.sky:10:5: note: `K⁻¹ @ f` is rewritten to a Cholesky solve
+   |
+10 | u = K⁻¹ @ f
+   |     ^^^^^^^
+   |     - positive definite
+   = note: rewrite `K⁻¹ @ f` to a Cholesky solve: K is Matrix[3,3] and PositiveDefinite, f is Vector[3]. Factor K = L·Lᵀ (L lower-triangular), solve L·y = f, then Lᵀ·x = y. x = K⁻¹·f is Vector[3], and K⁻¹ is never formed.
+
+crates/sky-types/tests/ui/ok_cholesky_rewrite.sky:11:5: note: `inv(K⁻¹) @ (f + f)` is rewritten to a Cholesky solve
+   |
+11 | w = inv(K⁻¹) @ (f + f)
+   |     ^^^^^^^^^^^^^^^^^^
+   |         --- positive definite
+   = note: rewrite `(K⁻¹)⁻¹ @ (f + f)` to a Cholesky solve: K⁻¹ is Matrix[3,3] and PositiveDefinite, (f + f) is Vector[3]. Factor (K⁻¹) = L·Lᵀ (L lower-triangular), solve L·y = (f + f), then Lᵀ·x = y. x = (K⁻¹)⁻¹·(f + f) is Vector[3], and (K⁻¹)⁻¹ is never formed.

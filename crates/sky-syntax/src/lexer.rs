@@ -284,7 +284,9 @@ fn unexpected_char_help(c: char) -> Option<&'static str> {
         '÷' => "for division, use `/`",
         '±' => "uncertainty (±) is not supported in v0.1",
         '⁻' => "the inverse operator is the glyph `⁻¹` (or the function `inv`)",
-        '!' => "for \"not equal\", use `!=` or `≠`",
+        '!' => "for logical negation, use `not`; for \"not equal\", use `!=` or `≠`",
+        '&' => "for logical and, use `and`",
+        '|' => "for logical or, use `or`",
         '\'' | '‘' | '’' | '“' | '”' => "strings use ASCII double quotes: \"...\"",
         '\\' => "backslash line continuation is not supported; wrap the expression in ( )",
         '₀'..='₉' | '⁰' | '¹' | '²' | '³' | '⁴'..='⁹' => {

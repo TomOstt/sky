@@ -1,0 +1,2 @@
+# Sky spells logical or as `or`.
+ok = a || b

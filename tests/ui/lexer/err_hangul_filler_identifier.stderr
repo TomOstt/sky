@@ -1,0 +1,5 @@
+tests/ui/lexer/err_hangul_filler_identifier.sky:1:1: error: unexpected character U+3164
+  |
+1 | \u{3164} = 1
+  | ^^^^^^^^
+  = help: invisible characters are not allowed in source code

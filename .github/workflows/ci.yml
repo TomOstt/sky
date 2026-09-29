@@ -17,8 +17,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: 1.85.1 # keep in sync with rust-toolchain.toml
-          components: rustfmt, clippy
-      - run: cargo test --workspace
+      # --locked: fail instead of silently updating Cargo.lock.
+      - run: cargo test --workspace --locked
+
+  # The escaped-character table in sky-diag is generated from pinned Unicode
+  # data (SHA-256 checked); fail if the committed table or its verbatim-record
+  # fixture no longer match what the generator produces. Needs only python3,
+  # which the runner image has.
+  unicode-table:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: python3 crates/sky-diag/tools/gen_display_unsafe.py --check
 
   fmt:
     runs-on: ubuntu-latest

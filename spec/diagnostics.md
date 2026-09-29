@@ -35,9 +35,9 @@ The gutter is as wide as the largest line number shown in the diagnostic. Line n
 - A span is a half-open range of byte offsets `start..end` into the file's UTF-8 text.
 - Lines are separated by `\n`, and lines and columns are 1-based.
 - **Columns count Unicode scalar values,** not bytes and not display cells. `∂`, `ħ`, and each of `⁻` and `¹` count as one column. Display width is not computed, so wide or combining characters before a span can shift the markers in a terminal.
-- **Tabs** are printed as-is in the source line. In the underline row's indent, each character before the span becomes a tab if it is a tab, 8 spaces if it is escaped (see [Terminal safety](#terminal-safety)), and a space otherwise, so the markers line up under the displayed line at any tab width. A tab inside a span gets one marker.
+- **Tabs** are printed as-is in the source line. In every other field they are escaped (see [Terminal safety](#terminal-safety)). In the underline row's indent, each character before the span becomes a tab if it is a tab, as many spaces as its escape is long if it is escaped, and a space otherwise, so the markers line up under the displayed line at any tab width. A tab inside a span gets one marker.
 - **CRLF:** a `\r` directly before a `\n` belongs to the line terminator. It is never printed, never counted as a column, and never underlined. A lone `\r` is not a line terminator: it counts as one column and is displayed escaped.
-- **Marker count:** one marker per displayed column of the span on its line, where an escaped character is 8 columns, so a span covering an escaped character underlines its whole escape. There is always at least one, so a zero-width span, a span at end of file, and a span that covers only a line terminator each get exactly one marker, at the column where the span starts.
+- **Marker count:** one marker per displayed column of the span on its line, where an escaped character counts as the length of its escape (8 or 9 columns), so a span covering an escaped character underlines its whole escape. There is always at least one, so a zero-width span, a span at end of file, and a span that covers only a line terminator each get exactly one marker, at the column where the span starts.
 - **End of file:** a span at end of file points just past the last character. If the file ends in `\n`, that position is column 1 of the empty line after it.
 - **Multi-line spans** are underlined on their first line only, from the span's start to the end of that line.
 - All spans in one diagnostic refer to the same file.
@@ -54,16 +54,20 @@ Rendering never fails on a bad span. Spans are clamped as follows:
 
 Diagnostics echo source text and messages that may contain characters able to change how a terminal shows the output (Trojan Source reordering, ANSI escape sequences, hidden text). Every string the renderer prints is therefore escaped: the file name, the message, the source lines, labels, notes, and help lines. The only exception is the renderer's own line breaks.
 
-These characters are replaced by a visible `\u{XXXX}` escape, using four uppercase hex digits (for example `\u{202E}` or `\u{001B}`):
+The following characters are replaced by a visible escape: `\u{`, then the code point in uppercase hex with at least four digits, then `}`. For example `\u{202E}`, `\u{001B}`, `\u{0009}`, or `\u{E0041}`. The set is defined by Unicode **18.0.0** properties:
 
-- C0 controls U+0000–U+001F except tab, including ESC, `\r`, and `\n`;
-- DEL U+007F and the C1 controls U+0080–U+009F, including CSI U+009B;
-- bidi controls U+202A–U+202E, U+2066–U+2069, U+200E, U+200F, and U+061C;
-- zero-width and invisible characters U+200B–U+200D, U+2060, and U+FEFF.
+- every code point with `Default_Ignorable_Code_Point` (from `DerivedCoreProperties.txt`), including unassigned ones. This covers soft hyphen, combining grapheme joiner, Hangul fillers (U+115F, U+1160, U+3164, U+FFA0), Mongolian variation selectors and vowel separator, zero-width characters, bidi controls, invisible operators, variation selectors (U+FE00–U+FE0F and U+E0100–U+E01EF), and tag characters (U+E0000–U+E0FFF);
+- every code point with General_Category `Cf` (format), such as U+0600–U+0605, U+FFF9–U+FFFB, and U+13430–U+1343F;
+- U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR;
+- C0 controls U+0000–U+001F except tab, including ESC, `\r`, and `\n`; DEL U+007F; and the C1 controls U+0080–U+009F, including CSI U+009B.
 
-All other characters are printed unchanged, including tab and non-ASCII such as `∂`, `⁻¹`, and `ħ`. A backslash is not escaped, so source text that literally contains `\u{202E}` looks the same as an escaped U+202E.
+**Tabs** are kept in source lines only, where the underline indent copies them so the markers still line up. Everywhere else (the file name, message, labels, notes, and help lines) a tab is escaped as `\u{0009}`, because a tab inside a single-line field can shift the rest of the line in a terminal.
 
-Escaping affects only the displayed text. Offsets and the header's `<line>:<col>` still refer to the unescaped source, counted as described above. In the underline row an escaped character is 8 columns wide (the length of `\u{XXXX}`), so the markers line up under the escaped text:
+All other characters are printed unchanged, including non-ASCII such as `∂`, `⁻¹`, and `ħ`. A backslash is not escaped, so source text that literally contains `\u{202E}` looks the same as an escaped U+202E.
+
+The set is generated into `crates/sky-diag/src/display_unsafe_table.rs` from the pinned Unicode version by `crates/sky-diag/tools/gen_display_unsafe.py`. Moving to a new Unicode version changes this spec.
+
+Escaping affects only the displayed text. Offsets and the header's `<line>:<col>` still refer to the unescaped source, counted as described above. In the underline row an escaped character is as wide as its escape: 8 columns for U+0000–U+FFFF (`\u{XXXX}`) and 9 for U+10000–U+FFFFF (`\u{XXXXX}`). So the markers line up under the escaped text:
 
 ```text
 demo.sky:2:25: error: bidirectional control character \u{202E} is not allowed
@@ -72,7 +76,7 @@ demo.sky:2:25: error: bidirectional control character \u{202E} is not allowed
   |                         ^^^^^^^^ bidi control here
 ```
 
-`sky_diag::display_safe` implements this escaping. Tools that print other untrusted text, such as a path in a status line, should use it too. Source text must never be escaped before rendering, because spans would then point at the wrong bytes.
+`sky_diag::display_safe` implements this escaping, with tabs escaped as for the single-line fields, and `sky_diag::is_display_unsafe` exposes the set without tab. Tools that print other untrusted text, such as a path in a status line, should use `display_safe` too. Source text must never be escaped before rendering, because spans would then point at the wrong bytes.
 
 ## Output
 

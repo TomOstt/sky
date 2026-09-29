@@ -1,0 +1,4 @@
+# `not` binds more loosely than every other operator except `and`/`or`.
+a = -not x
+b = x < not y
+c = 2^not x

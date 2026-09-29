@@ -292,6 +292,28 @@ pub fn all_ops() -> Module {
         ),
         sp(0, 0),
     );
+    // A fused kernel: the row scaled by a scalar, one element at a time.
+    let (kernel, _) = b.op(
+        OpKind::Fused,
+        vec![row, two],
+        vec![num(
+            Dimension::LENGTH,
+            Shape::vector(2),
+            TagSet::EMPTY,
+            Repr::Unchosen,
+        )],
+        sp(52, 60),
+    );
+    let here = b.insertion_block();
+    let region = b.add_region(kernel);
+    let body = b.add_block(region, vec![len(), one()]);
+    b.set_insertion_block(body);
+    let [elem, factor] = b.func().block(body).args[..] else {
+        unreachable!()
+    };
+    let scaled = b.op1(OpKind::Mul, vec![elem, factor], len(), sp(0, 0));
+    b.op(OpKind::Yield, vec![scaled], vec![], sp(0, 0));
+    b.set_insertion_block(here);
     let zs = b.op1(OpKind::Zeros, vec![two], vector(2), sp(0, 0));
     let zm = b.op1(
         OpKind::Zeros,

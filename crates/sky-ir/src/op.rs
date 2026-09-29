@@ -329,6 +329,48 @@ pub enum OpKind {
     /// array fails, which a typed operand never is.
     Len,
 
+    // ----- fusion -----
+    /// A fused elementwise kernel: a tree of elementwise array operations
+    /// (`add`, `sub`, `mul`, `div`, `neg`) computed one element at a time,
+    /// so the intermediate arrays are never built. It is what the `fuse`
+    /// pass makes; the loop over the elements is implied, and no machine
+    /// code is chosen (a backend emits one kernel per `fused`).
+    ///
+    /// * **Operands**: `k >= 1` values, each an array or a scalar. All the
+    ///   arrays have one shape, and at least one operand is an array. A
+    ///   scalar operand is broadcast: every element sees the same value (as
+    ///   in the scaling `A * s`).
+    /// * **Result**: one array of that shape; its dimension is the dimension
+    ///   of the value the body yields.
+    /// * **Region**: one, with one block whose arguments are the per-element
+    ///   values, one per operand in order, each a scalar of the operand's
+    ///   dimension (a scalar operand's argument has the operand's own
+    ///   type). The block holds scalar operations and ends in a `yield` of
+    ///   one value: the result's element. The body is self-contained: its
+    ///   operations use only its own arguments and results, and none may
+    ///   have a region, print, or call. Every operation in it is pure or can
+    ///   fail, and the verifier enforces all of that.
+    /// * **Meaning**: element `i` of the result is what the body computes
+    ///   when its arguments are element `i` of each array operand (and the
+    ///   scalar operands as they are). Each body operation is evaluated
+    ///   exactly as the operation of the same kind is on numbers, except
+    ///   `neg`, which is `0 - x` as on arrays (a zero stays `+0`, where a
+    ///   scalar `neg` of `0` gives `-0`), so that a fused chain is
+    ///   bit-identical to the array operations it replaced.
+    /// * **Failure order**: the unfused chain computes one operation at a
+    ///   time over all the elements, so the failure it reports is that of
+    ///   the *first operation in program order* that fails at any element.
+    ///   `fused` has the same rule, whatever the order a backend visits
+    ///   elements in: if several body operations fail at some elements, the
+    ///   error is the one of the earliest failing operation *in body order*
+    ///   (the error's message and span belong to the operation, not to the
+    ///   element). A backend may stop as soon as it knows no earlier
+    ///   operation can fail, and must not stop before.
+    /// * **Effects**: those of the body: `Fail` if any operation in it can
+    ///   fail, else none (like `if` and `while`, the contents decide, so
+    ///   [`OpKind::properties`] says pure and the passes look inside).
+    Fused,
+
     // ----- comparison and logic -----
     /// Two operands (scalars of equal dimension, two Bools, or two
     /// strings for `eq`/`ne`), one Bool result.
@@ -445,6 +487,7 @@ impl OpKind {
             OpKind::Zeros => "zeros",
             OpKind::Identity => "identity",
             OpKind::Len => "len",
+            OpKind::Fused => "fused",
             OpKind::Cmp(c) => match c {
                 CmpOp::Eq => "cmp.eq",
                 CmpOp::Ne => "cmp.ne",
@@ -502,9 +545,9 @@ impl OpKind {
             | OpKind::Zeros
             | OpKind::Identity
             | OpKind::Len => (fail, false, false, false),
-            // Control flow has the effects of its regions; the verifier and
-            // passes compute those from the contents.
-            OpKind::If | OpKind::While => (EffectSet::PURE, false, false, false),
+            // Control flow and `fused` have the effects of their regions;
+            // the verifier and passes compute those from the contents.
+            OpKind::If | OpKind::While | OpKind::Fused => (EffectSet::PURE, false, false, false),
             OpKind::Yield | OpKind::Condition | OpKind::Return => {
                 (EffectSet::PURE, true, false, false)
             }

@@ -49,6 +49,8 @@ mod machine;
 mod math;
 
 #[cfg(test)]
+mod fused_tests;
+#[cfg(test)]
 mod tests;
 
 use std::fmt;

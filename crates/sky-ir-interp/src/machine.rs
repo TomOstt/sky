@@ -375,6 +375,7 @@ impl<'m> Machine<'m, '_> {
                 act.define(op, results)
             }
             OpKind::Print => self.print(act, op),
+            OpKind::Fused => fused_op(act, op),
             _ => pure_op(act, op),
         }
     }
@@ -631,6 +632,7 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
         // them here; the arm keeps this `match` exhaustive.
         OpKind::If
         | OpKind::While
+        | OpKind::Fused
         | OpKind::Call { .. }
         | OpKind::Print
         | OpKind::Yield
@@ -640,6 +642,141 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             s,
         )),
     }
+}
+
+/// `fused` (see `OpKind::Fused`): runs the scalar body once per element.
+///
+/// Each body operation is [`pure_op`], the code an unfused scalar operation
+/// runs, which calls `sky_interp::arith`: for a finite `f64` every array
+/// operation there is that same scalar computation per entry, so the
+/// entries are bit-identical. The one exception is `neg`, which on arrays is
+/// `0 - x` (see [`body_op`]).
+///
+/// The failure a chain of array operations reports is that of the first
+/// operation, in program order, that fails at any element. Visiting elements
+/// in order and stopping at the first failure could report a later
+/// operation's failure at an earlier element instead. So a failure at body
+/// operation `k` is remembered, and the remaining elements are run only up
+/// to operation `k` (`limit`): an earlier operation failing at a later
+/// element replaces it. The error left at the end is the earliest failing
+/// operation's, which is the unfused chain's. (An error names its operation's
+/// message and span, never an element.)
+fn fused_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
+    let s = op.span;
+    let [region] = regions(op)?;
+    let entry = act.entry_of(region, s)?;
+    let block = act.block(entry, s)?;
+    let Some((&last, body)) = block.ops.split_last() else {
+        return Err(IrRuntimeError::malformed("the body of `fused` is empty", s));
+    };
+    let last = act.op(last, s)?;
+    let (OpKind::Yield, &[yielded]) = (&last.kind, &last.operands[..]) else {
+        return Err(IrRuntimeError::malformed(
+            "the body of `fused` must end in a `yield` of one value",
+            s,
+        ));
+    };
+    if block.args.len() != op.operands.len() {
+        return Err(IrRuntimeError::malformed(
+            format!(
+                "the body of `fused` takes {} arguments, given {}",
+                block.args.len(),
+                op.operands.len()
+            ),
+            s,
+        ));
+    }
+    let inputs = act.values(&op.operands, s)?;
+    // The shape of the arrays; scalars broadcast.
+    let mut shape: Option<&Vec<usize>> = None;
+    for input in &inputs {
+        match input {
+            Value::Array { dims, .. } => match shape {
+                Some(d) if d != dims => {
+                    return Err(IrRuntimeError::malformed(
+                        "the array operands of `fused` differ in shape",
+                        s,
+                    ))
+                }
+                _ => shape = Some(dims),
+            },
+            Value::Number { .. } => {}
+            other => {
+                return Err(IrRuntimeError::malformed(
+                    format!("`fused` takes numbers, found {}", other.kind()),
+                    s,
+                ))
+            }
+        }
+    }
+    let Some(dims) = shape else {
+        return Err(IrRuntimeError::malformed(
+            "`fused` needs an array operand",
+            s,
+        ));
+    };
+    let count: usize = dims.iter().product();
+    let mut data = Vec::with_capacity(count);
+    let mut out_dim = None;
+    let mut limit = body.len();
+    let mut failure: Option<IrRuntimeError> = None;
+    for i in 0..count {
+        for (arg, input) in block.args.iter().zip(&inputs) {
+            let element = match input {
+                Value::Array { data, dim, .. } => Value::number(data[i], *dim),
+                scalar => scalar.clone(),
+            };
+            act.set(*arg, element, s)?;
+        }
+        let mut failed = false;
+        for (k, id) in body[..limit].iter().enumerate() {
+            if let Err(e) = body_op(act, act.op(*id, s)?) {
+                (limit, failure, failed) = (k, Some(e), true);
+                break;
+            }
+        }
+        if limit == 0 {
+            break;
+        }
+        if failed || failure.is_some() {
+            continue;
+        }
+        match act.get(yielded, s)? {
+            Value::Number { value, dim } => {
+                out_dim.get_or_insert(*dim);
+                data.push(*value);
+            }
+            other => {
+                return Err(IrRuntimeError::malformed(
+                    format!("`fused` must yield a number, found {}", other.kind()),
+                    s,
+                ))
+            }
+        }
+    }
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    let Some(dim) = out_dim else {
+        return Err(IrRuntimeError::malformed("`fused` computed no element", s));
+    };
+    let dims = dims.clone();
+    act.define(op, vec![Value::array(dims, data, dim)])
+}
+
+/// One operation of a `fused` body: [`pure_op`], except that `neg` is `0 - x`
+/// as `sky_interp::array::negate` computes it, so that a zero stays `+0` and
+/// the entry is bit-identical to the array `neg` the body replaced.
+fn body_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
+    if let OpKind::Neg = op.kind {
+        let [a] = fixed(op)?;
+        let v = match act.get(a, op.span)?.clone() {
+            Value::Number { value, dim } => Value::number(0.0 - value, dim),
+            other => sign(true, other, op.span)?,
+        };
+        return act.define(op, vec![v]);
+    }
+    pure_op(act, op)
 }
 
 fn arith_op(act: &mut Act<'_>, op: &OpData, kind: ArithOp) -> R<()> {

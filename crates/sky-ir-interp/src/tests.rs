@@ -1211,6 +1211,7 @@ mod fuzz {
             23 => OpKind::Condition,
             24 => OpKind::Return,
             25 => OpKind::Print,
+            28 => OpKind::Fused,
             27 => OpKind::Show {
                 unit: ["m", "km/h", "", "kg*m^2/s^2", "not a unit"][x as usize % 5].into(),
             },

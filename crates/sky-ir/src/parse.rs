@@ -779,6 +779,7 @@ impl<'a> Parser<'a> {
             "zeros" => OpKind::Zeros,
             "identity" => OpKind::Identity,
             "len" => OpKind::Len,
+            "fused" => OpKind::Fused,
             "cmp.eq" => OpKind::Cmp(CmpOp::Eq),
             "cmp.ne" => OpKind::Cmp(CmpOp::Ne),
             "cmp.lt" => OpKind::Cmp(CmpOp::Lt),

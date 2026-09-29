@@ -25,9 +25,10 @@
 //!   in its `after` region: values cross through the region arguments).
 //! * **Region shape.** v1 regions have exactly one block; every block ends
 //!   in exactly one terminator, its last operation; `return` ends the
-//!   function body, `yield` ends `if` arms and `while` `after` regions,
-//!   `condition` ends `while` `before` regions; `if` and `while` follow the
-//!   rules in [`crate::op`].
+//!   function body, `yield` ends `if` arms, `while` `after` regions and
+//!   `fused` bodies, `condition` ends `while` `before` regions; `if`,
+//!   `while` and `fused` follow the rules in [`crate::op`]. A `fused` body
+//!   is scalar-only, pure or failing only, without regions or captures.
 //! * **Types per operation.** Operand and result counts, dimensions
 //!   (`checked_mul`, `pow_rat`, ...), shapes (through [`sky_types::rules`],
 //!   so the checker's rules and the verifier's cannot drift), calls against
@@ -47,6 +48,7 @@
 //!   the other checks establish.
 
 mod arrays;
+mod fused;
 
 use std::fmt;
 
@@ -192,6 +194,8 @@ fn push(errors: &mut Vec<VerifyError>, e: VerifyError) {
 enum Ctx {
     Body,
     IfArm,
+    /// The body of a `fused`: scalar operations ending in `yield`.
+    FusedBody,
     WhileBefore,
     WhileAfter,
 }
@@ -200,7 +204,7 @@ impl Ctx {
     fn terminator(self) -> &'static str {
         match self {
             Ctx::Body => "return",
-            Ctx::IfArm | Ctx::WhileAfter => "yield",
+            Ctx::IfArm | Ctx::FusedBody | Ctx::WhileAfter => "yield",
             Ctx::WhileBefore => "condition",
         }
     }
@@ -529,6 +533,7 @@ impl<'a> FnVerifier<'a> {
         let region_ctx: &[Ctx] = match op.kind {
             OpKind::If => &[Ctx::IfArm, Ctx::IfArm],
             OpKind::While => &[Ctx::WhileBefore, Ctx::WhileAfter],
+            OpKind::Fused => &[Ctx::FusedBody],
             _ => &[],
         };
         if op.regions.len() != region_ctx.len() {
@@ -622,6 +627,7 @@ impl<'a> FnVerifier<'a> {
                 (None, Some(1))
             }
             OpKind::If => (Some(1), None),
+            OpKind::Fused => (None, Some(1)),
             OpKind::While => (None, Some(op.operands.len())),
             OpKind::Yield | OpKind::Return | OpKind::Print => (None, Some(0)),
             OpKind::Condition => (None, Some(0)),
@@ -719,6 +725,7 @@ impl<'a> FnVerifier<'a> {
             }
             OpKind::If => self.check_if(o, op),
             OpKind::While => self.check_while(o, op),
+            OpKind::Fused => self.check_fused(o, op),
             OpKind::Yield | OpKind::Condition | OpKind::Return => {
                 // Their operand rules are checked by the owner (the `if`,
                 // the `while`, or the function) once its regions are walked.

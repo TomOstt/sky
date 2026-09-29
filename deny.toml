@@ -1,0 +1,48 @@
+# cargo-deny configuration for Sky. Runs in CI on every PR and push to main.
+# Docs: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+all-features = true
+
+[advisories]
+# Fail on any RustSec vulnerability or unsound advisory and on yanked crates. Unmaintained
+# advisories fail only for crates the workspace depends on directly (`unmaintained = "workspace"`).
+# To accept a specific advisory, add its ID below with a comment explaining why.
+yanked = "deny"
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+# Every dependency must be compatible with Sky's Apache-2.0 license.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+]
+confidence-threshold = 0.9
+# Keep the list ready for common permissive licenses without warning when one isn't used yet.
+unused-allowed-license = "allow"
+
+# NCSA (LLVM's old license) is allowed only for the fuzzing harness, which never ships in Sky.
+[[licenses.exceptions]]
+crate = "libfuzzer-sys"
+allow = ["NCSA"]
+
+[bans]
+multiple-versions = "warn"
+# Registry dependencies must name a version; workspace path dependencies are exempt.
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+# Only crates.io. A git or alternate-registry dependency needs an explicit entry here.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

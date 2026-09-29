@@ -1,0 +1,28 @@
+[package]
+name = "sky-fuzz"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+sky-syntax = { path = "../crates/sky-syntax" }
+sky-diag = { path = "../crates/sky-diag" }
+
+# Keep the fuzz crate out of the main workspace so stable `cargo test --workspace` never builds it.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "lex"
+path = "fuzz_targets/lex.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

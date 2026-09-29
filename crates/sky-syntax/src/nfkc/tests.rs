@@ -1,5 +1,6 @@
 use super::*;
 use crate::lexer::{is_ident_continue, is_ident_start};
+use std::cell::Cell;
 
 const CONFORMANCE: &str = include_str!("../../tests/data/nfkc-conformance.txt");
 
@@ -21,6 +22,10 @@ fn hex(s: &str) -> String {
 fn unicode_version_is_the_pinned_one() {
     assert_eq!(UNICODE_VERSION, (18, 0, 0));
     assert_eq!(UNICODE_VERSION, sky_diag::DISPLAY_UNSAFE_UNICODE_VERSION);
+    // The identifier tables (`unicode-ident`, whose Cargo requirement is
+    // just "1") must be the same Unicode version as the NFKC tables, or a
+    // `cargo update` could move XID to a newer version than NFKC.
+    assert_eq!(UNICODE_VERSION, unicode_ident::UNICODE_VERSION);
     let (a, b, c) = UNICODE_VERSION;
     assert!(CONFORMANCE
         .lines()
@@ -172,4 +177,98 @@ fn tables_are_sorted() {
     assert!(COMPOSITION
         .windows(2)
         .all(|w| (w[0].0, w[0].1) < (w[1].0, w[1].1)));
+}
+
+/// Counts allocations made by the current thread, so the fast-path test
+/// below is not disturbed by tests running in parallel.
+mod alloc_count {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    pub struct Counting;
+
+    thread_local! {
+        static COUNT: Cell<usize> = const { Cell::new(0) };
+    }
+
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let _ = COUNT.try_with(|c| c.set(c.get() + 1));
+            // SAFETY: forwarded unchanged to the system allocator.
+            unsafe { System.alloc(layout) }
+        }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: forwarded unchanged to the system allocator.
+            unsafe { System.dealloc(ptr, layout) }
+        }
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            let _ = COUNT.try_with(|c| c.set(c.get() + 1));
+            // SAFETY: forwarded unchanged to the system allocator.
+            unsafe { System.realloc(ptr, layout, new_size) }
+        }
+    }
+
+    #[global_allocator]
+    static GLOBAL: Counting = Counting;
+
+    /// Allocations made by `f` on this thread.
+    pub fn count<T>(f: impl FnOnce() -> T) -> (usize, T) {
+        let before = COUNT.with(Cell::get);
+        let out = f();
+        (COUNT.with(Cell::get) - before, out)
+    }
+}
+
+/// The check the lexer runs on every non-ASCII identifier allocates nothing
+/// when the quick check answers Yes (the common case) or No; only a Maybe
+/// answer builds the NFKC form to compare.
+#[test]
+fn fast_path_allocates_nothing() {
+    for s in [
+        "caf\u{00E9}",
+        "\u{03BC}m",
+        "\u{0127}",
+        "\u{AC00}\u{AC01}",
+        "\u{0394}t_max",
+        "x_1",
+    ] {
+        let (n, yes) = alloc_count::count(|| is_nfkc(s));
+        assert!(yes, "{s:?}");
+        assert_eq!(n, 0, "is_nfkc({s:?}) allocated");
+        let (n, _) = alloc_count::count(|| quick_check(s));
+        assert_eq!(n, 0, "quick_check({s:?}) allocated");
+    }
+    for s in ["\u{FB01}", "e\u{0301}\u{0323}"] {
+        let (n, yes) = alloc_count::count(|| is_nfkc(s));
+        assert!(!yes);
+        assert_eq!(n, 0, "is_nfkc({s:?}) allocated");
+    }
+    // Maybe does allocate (the NFKC form); documents the known cost.
+    let (n, _) = alloc_count::count(|| is_nfkc("x\u{0300}"));
+    assert!(n > 0);
+    // In the lexer, an NFKC-Yes identifier costs no more allocations than
+    // an ASCII one of the same shape.
+    let (ascii, _) = alloc_count::count(|| crate::lex("cafe = 1\n").unwrap());
+    let (yes, _) = alloc_count::count(|| crate::lex("caf\u{00E9} = 1\n").unwrap());
+    assert_eq!(ascii, yes);
+}
+
+/// Normalizing one starter followed by out-of-order combining marks (the
+/// canonical-ordering worst case) takes a number of steps bounded by
+/// n log n: counted as `ccc` lookups, not time, so the test is not flaky.
+#[test]
+fn canonical_ordering_is_n_log_n() {
+    for n in [1_000usize, 16_000, 256_000] {
+        let mut s = String::from("a");
+        for i in 0..n {
+            s.push(if i % 2 == 0 { '\u{0301}' } else { '\u{0323}' });
+        }
+        CCC_LOOKUPS.with(|c| c.set(0));
+        let out = nfkc(&s);
+        let lookups = CCC_LOOKUPS.with(Cell::get);
+        // 220s sort before 230s; `a` + U+0323 composes to U+1EA1.
+        assert!(out.starts_with('\u{1EA1}'));
+        let bound = 8 * n * (usize::BITS - n.leading_zeros()) as usize;
+        assert!(lookups <= bound, "n={n}: {lookups} ccc lookups > {bound}");
+    }
 }

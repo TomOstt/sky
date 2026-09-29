@@ -1314,7 +1314,7 @@ fn decomposed_identifier_is_rejected_not_normalized() {
     let src = "\u{00E9} = 1\ne\u{0301} = 2\n";
     let e = assert_non_nfkc(src, "e\u{0301}");
     assert_eq!(e.diagnostic.primary.span, Span::new(7, 10));
-    assert_eq!(e.diagnostic.help, ["write it in NFKC form: `\\u{00E9}`"]);
+    assert_eq!(e.diagnostic.help, ["write it as `\u{00E9}` (`\\u{00E9}`)"]);
     assert_eq!(lexed("\u{00E9} = 1\n").tokens[0].kind, Ident);
 }
 
@@ -1330,7 +1330,7 @@ fn compatibility_variants_are_rejected() {
         let e = assert_non_nfkc(src, ident);
         assert_eq!(
             e.diagnostic.help.last().unwrap(),
-            &format!("write it in NFKC form: `{nf}`")
+            &format!("write it as `{nf}`")
         );
     }
 }
@@ -1361,7 +1361,7 @@ fn micro_kelvin_and_planck_signs_name_the_intended_letter() {
         e.diagnostic.help,
         [
             "MICRO SIGN U+00B5 is not a letter for identifiers; use GREEK SMALL LETTER MU U+03BC (`\u{03BC}`)",
-            "write it in NFKC form: `\\u{03BC}m`",
+            "write it as `\u{03BC}m` (`\\u{03BC}m`)",
         ]
     );
     let e = assert_non_nfkc("T = 300 \u{212A}\n", "\u{212A}");
@@ -1369,7 +1369,7 @@ fn micro_kelvin_and_planck_signs_name_the_intended_letter() {
         e.diagnostic.help,
         [
             "KELVIN SIGN U+212A is not a letter for identifiers; use LATIN CAPITAL LETTER K U+004B (`K`)",
-            "write it in NFKC form: `K`",
+            "write it as `K`",
         ]
     );
     let e = assert_non_nfkc("E = \u{210F} * w\n", "\u{210F}");
@@ -1377,7 +1377,7 @@ fn micro_kelvin_and_planck_signs_name_the_intended_letter() {
         e.diagnostic.help,
         [
             "PLANCK CONSTANT OVER TWO PI U+210F is not a letter for identifiers; use LATIN SMALL LETTER H WITH STROKE U+0127 (`\u{0127}`)",
-            "write it in NFKC form: `\\u{0127}`",
+            "write it as `\u{0127}` (`\\u{0127}`)",
         ]
     );
     // The intended letters themselves are fine.
@@ -1391,11 +1391,11 @@ fn nfkc_maybe_characters_are_compared_in_full() {
     // COMBINING GRAVE ACCENT is NFKC_QC=Maybe: after `a` it composes to `à`,
     // after `x` (no precomposed form) it is fine.
     let e = assert_non_nfkc("a\u{0300} = 1\n", "a\u{0300}");
-    assert_eq!(e.diagnostic.help, ["write it in NFKC form: `\\u{00E0}`"]);
+    assert_eq!(e.diagnostic.help, ["write it as `\u{00E0}` (`\\u{00E0}`)"]);
     assert_eq!(lexed("x\u{0300} = 1\n").tokens[0].kind, Ident);
     // Hangul jamo compose into a syllable.
     let e = assert_non_nfkc("\u{1100}\u{1161} = 1\n", "\u{1100}\u{1161}");
-    assert_eq!(e.diagnostic.help, ["write it in NFKC form: `\\u{AC00}`"]);
+    assert_eq!(e.diagnostic.help, ["write it as `\u{AC00}` (`\\u{AC00}`)"]);
     assert_eq!(lexed("\u{AC00} = 1\n").tokens[0].kind, Ident);
 }
 
@@ -1575,4 +1575,178 @@ mod nfkc_properties {
             }
         }
     }
+}
+
+/// The lexer's `NFKC_NON_IDENTIFIER` exceptions are computed here from the
+/// Unicode data and the lexer's own banned-character rules: every
+/// identifier character (before the exceptions) whose NFKC form contains a
+/// banned character or anything else that is not an identifier character.
+/// Exactly those are rejected, as unexpected characters.
+#[test]
+fn nfkc_non_identifier_list_is_exactly_the_computed_set() {
+    let mut computed = Vec::new();
+    for c in (0..=0x10FFFFu32).filter_map(char::from_u32) {
+        if !is_ident_continue_base(c) && !is_ident_start_base(c) {
+            continue;
+        }
+        let n = crate::nfkc::nfkc(&c.to_string());
+        let mut chars = n.chars();
+        let ok = if is_ident_start_base(c) {
+            chars.next().is_some_and(is_ident_start_base) && chars.all(is_ident_continue_base)
+        } else {
+            n.chars().all(is_ident_continue_base)
+        };
+        if !ok {
+            computed.push(c);
+        }
+    }
+    assert_eq!(
+        computed, NFKC_NON_IDENTIFIER,
+        "the identifier characters whose NFKC form is not an identifier changed \
+         (Unicode data or the banned set changed): review NFKC_NON_IDENTIFIER in \
+         crates/sky-syntax/src/lexer.rs and update it to the computed list"
+    );
+    // The exceptions are not NFKC themselves, so they cannot appear in the
+    // NFKC form of another character (no fixpoint needed).
+    for &c in NFKC_NON_IDENTIFIER {
+        assert!(!crate::nfkc::is_nfkc(&c.to_string()), "U+{:04X}", c as u32);
+        for src in [
+            format!("{c}x = 1\n"),
+            format!("a{c}b = 1\n"),
+            format!("y = x{c}\n"),
+        ] {
+            let s = c.to_string();
+            let e = assert_err(&src, LexErrorKind::UnexpectedChar, &s);
+            assert_eq!(
+                e.diagnostic.help,
+                ["its NFKC form is not a valid identifier (`ŀ` is `l·`, and `·` reads as multiplication)"]
+            );
+        }
+    }
+}
+
+/// The span and the carets are the raw source bytes of the identifier, not
+/// offsets or widths of its (longer or shorter) NFKC form.
+#[test]
+fn non_nfkc_carets_point_at_the_raw_source() {
+    // `ﬁ` is 3 bytes and 1 column; its NFKC `fi` is 2 bytes and 2 columns.
+    // U+FDF8 is 3 bytes and 1 column; its NFKC form is 4 Arabic letters.
+    for (src, start, ident, carets) in [
+        ("x = \u{FB01}le + 1\n", 4, "\u{FB01}le", "    ^^^"),
+        ("y = 2\nz = a\u{FDF8}b\n", 10, "a\u{FDF8}b", "    ^^^"),
+        (
+            "q = e\u{0301}\u{0323}x\n",
+            4,
+            "e\u{0301}\u{0323}x",
+            "    ^^^^",
+        ),
+    ] {
+        let e = assert_non_nfkc(src, ident);
+        let span = e.diagnostic.primary.span;
+        assert_eq!(span.range(), start..start + ident.len(), "{src:?}");
+        let file = sky_diag::SourceFile::new("t.sky", src);
+        let out = e.diagnostic.render_to_string(&file);
+        let caret_line = out
+            .lines()
+            .find(|l| l.contains('^'))
+            .unwrap()
+            .split_once("| ")
+            .unwrap()
+            .1;
+        assert_eq!(caret_line, format!("{carets} not in NFKC form"), "{out}");
+    }
+}
+
+/// An identifier that is both non-NFKC and next to an invisible character
+/// produces exactly one error: whichever comes first in the source, and no
+/// warnings.
+#[test]
+fn non_nfkc_and_invisible_character_give_one_error() {
+    for (src, kind, at) in [
+        (
+            "e\u{0301}\u{200D}x = 1\n",
+            LexErrorKind::NonNfkcIdentifier,
+            "e\u{0301}",
+        ),
+        (
+            "\u{FB01}\u{FE0F} = 1\n",
+            LexErrorKind::NonNfkcIdentifier,
+            "\u{FB01}",
+        ),
+        (
+            "a\u{200D}\u{FB01} = 1\n",
+            LexErrorKind::UnexpectedChar,
+            "\u{200D}",
+        ),
+        (
+            "x = \u{E0100}\u{00B5}\n",
+            LexErrorKind::UnexpectedChar,
+            "\u{E0100}",
+        ),
+    ] {
+        let e = assert_err(src, kind, at);
+        assert!(e.warnings.is_empty(), "{src:?}: {:?}", e.warnings);
+        assert_eq!(e.diagnostics().count(), 1, "{src:?}");
+    }
+}
+
+#[test]
+fn micro_sign_in_a_unit_gets_the_micro_sign_help() {
+    let e = assert_non_nfkc("d = 10 \u{00B5}m\n", "\u{00B5}m");
+    assert_eq!(
+        e.diagnostic.help,
+        [
+            "MICRO SIGN U+00B5 is not a letter for identifiers; use GREEK SMALL LETTER MU U+03BC (`\u{03BC}`)",
+            "write it as `\u{03BC}m` (`\\u{03BC}m`)",
+        ]
+    );
+    // Compound units too: the unit name is still an identifier token.
+    assert_non_nfkc("v = 3 \u{00B5}m/s\n", "\u{00B5}m");
+}
+
+/// A 1 MiB non-NFKC identifier gets a small diagnostic: the note and help
+/// spell out at most 64 characters, and the NFKC form is not computed.
+#[test]
+fn huge_non_nfkc_identifier_has_a_bounded_diagnostic() {
+    let mut src = String::from("x = a");
+    while src.len() < 1 << 20 {
+        src.push_str("\u{0301}\u{0323}");
+    }
+    src.push('\n');
+    let e = lex(&src).unwrap_err();
+    assert_eq!(e.kind, LexErrorKind::NonNfkcIdentifier);
+    assert_eq!(e.diagnostic.primary.span.range(), 4..src.len() - 1);
+    let text: usize = e
+        .diagnostic
+        .notes
+        .iter()
+        .chain(&e.diagnostic.help)
+        .map(String::len)
+        .sum();
+    assert!(text < 1024, "{text} bytes of note and help");
+    assert!(e.diagnostic.notes[0].contains("more characters)"));
+    assert!(
+        e.diagnostic.help[0].starts_with("write it in NFKC form (not shown for an identifier of ")
+    );
+    // Up to the limit the NFKC form is shown, truncated to 64 characters.
+    let long = format!("x = \u{FB01}{}\n", "a".repeat(200));
+    let e = lex(&long).unwrap_err();
+    assert!(e.diagnostic.help[0].starts_with("write it as `fiaaa"));
+    assert!(e.diagnostic.help[0].ends_with("…` (138 more characters)"));
+}
+
+#[test]
+fn write_as_help_shows_characters_and_escapes() {
+    assert_eq!(
+        write_as_help("\u{03BC}m"),
+        "write it as `\u{03BC}m` (`\\u{03BC}m`)"
+    );
+    assert_eq!(write_as_help("fi"), "write it as `fi`");
+    // Anything the renderer would escape is shown only as escapes (not
+    // reachable from `lex` with the pinned data: the NFKC form of an
+    // identifier has no invisible characters).
+    assert_eq!(
+        write_as_help("a\u{200D}b"),
+        "write it in NFKC form: `a\\u{200D}b`"
+    );
 }

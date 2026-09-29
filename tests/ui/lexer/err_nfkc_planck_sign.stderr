@@ -4,4 +4,4 @@ tests/ui/lexer/err_nfkc_planck_sign.sky:1:5: error: identifier is not in Unicode
   |     ^ not in NFKC form
   = note: `\u{210F}` is not in NFKC (Unicode Normalization Form KC), and Sky never normalizes identifiers
   = help: PLANCK CONSTANT OVER TWO PI U+210F is not a letter for identifiers; use LATIN SMALL LETTER H WITH STROKE U+0127 (`ħ`)
-  = help: write it in NFKC form: `\u{0127}`
+  = help: write it as `ħ` (`\u{0127}`)

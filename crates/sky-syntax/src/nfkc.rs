@@ -57,8 +57,16 @@ fn in_ranges(ranges: &[(u32, u32)], c: u32) -> bool {
         .is_ok()
 }
 
+#[cfg(test)]
+thread_local! {
+    /// [`ccc`] calls on this thread, for the step-bound test.
+    pub(crate) static CCC_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Canonical_Combining_Class.
 pub(crate) fn ccc(c: u32) -> u8 {
+    #[cfg(test)]
+    CCC_LOOKUPS.with(|n| n.set(n.get() + 1));
     match CCC.binary_search_by(|&(lo, hi, _)| {
         if hi < c {
             Ordering::Less

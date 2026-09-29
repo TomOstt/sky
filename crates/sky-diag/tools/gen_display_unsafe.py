@@ -56,6 +56,9 @@ Outputs (all checked in; paths relative to the repository root):
       NFKC facts from NormalizationTest.txt: `source;nfkc` (or just `nfkc`
       when it is its own NFKC), one per line, as space-separated hex code
       points
+  crates/sky-syntax/tests/data/nfkc-part1.txt
+      the code points in Part 1 of NormalizationTest.txt, as hex ranges
+      (`lo..hi`, or `cp`); every other code point is its own NFKC
 
 Usage (from crates/sky-diag; output paths do not depend on the cwd):
   python3 tools/gen_display_unsafe.py             # download and regenerate
@@ -123,6 +126,7 @@ INVISIBLE_RS = os.path.join(SYNTAX_CRATE, "src", "invisible_table.rs")
 INVISIBLE_SOURCE_TXT = os.path.join(SYNTAX_CRATE, "tests", "data", "ucd-default-ignorable.txt")
 NFKC_RS = os.path.join(SYNTAX_CRATE, "src", "nfkc_table.rs")
 NFKC_CONFORMANCE_TXT = os.path.join(SYNTAX_CRATE, "tests", "data", "nfkc-conformance.txt")
+NFKC_PART1_TXT = os.path.join(SYNTAX_CRATE, "tests", "data", "nfkc-part1.txt")
 QC_RECORD = re.compile(r"^([0-9A-F]{4,6})(?:\.\.([0-9A-F]{4,6}))?\s*;\s*(NFKC_QC)\s*;\s*([NM])\s*(#.*)?$")
 # Hangul syllable constants (Unicode section 3.12).
 S_BASE, L_BASE, V_BASE, T_BASE = 0xAC00, 0x1100, 0x1161, 0x11A7
@@ -450,6 +454,41 @@ def render_nfkc_conformance(text):
     return "\n".join(out)
 
 
+def render_nfkc_part1(text):
+    """The code points of the Part 1 (character by character) test lines.
+
+    UAX #15 conformance: every code point X not listed in Part 1 must satisfy
+    X == NFKC(X) (and the same for the other forms).
+    """
+    points, part = set(), None
+    for line in text.splitlines():
+        if line.startswith("@Part"):
+            part = line.split()[0]
+            continue
+        if part != "@Part1" or not line or line.startswith("#"):
+            continue
+        c1 = line.split(";")[0].split()
+        if len(c1) != 1:
+            sys.exit(f"NormalizationTest.txt: Part 1 line is not one code point: {line!r}")
+        points.add(int(c1[0], 16))
+    if not points:
+        sys.exit("NormalizationTest.txt: no Part 1 lines")
+    v = version()
+    rel, digest = NFKC_SOURCES["NormalizationTest.txt"]
+    out = [
+        f"# Code points in Part 1 of the Unicode {v} NormalizationTest.txt",
+        "# (tools/gen_display_unsafe.py in crates/sky-diag), as hex ranges",
+        "# `lo..hi` or single code points. Every code point not listed is its",
+        f"# own NFKC. {len(points)} code points.",
+        f"#   {rel} sha256 {digest}",
+        "",
+    ]
+    for lo, hi in ranges_of(points):
+        out.append(f"{lo:04X}" if lo == hi else f"{lo:04X}..{hi:04X}")
+    out.append("")
+    return "\n".join(out)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true", help="fail if outputs are stale")
@@ -477,6 +516,7 @@ def main():
         INVISIBLE_SOURCE_TXT: render_invisible_source(dcp_lines),
         NFKC_RS: render_nfkc_table(qc_no, qc_maybe, ccc_ranges(ccc), decomp, compose),
         NFKC_CONFORMANCE_TXT: render_nfkc_conformance(nfkc_test),
+        NFKC_PART1_TXT: render_nfkc_part1(nfkc_test),
     }
     stale = []
     for path, text in outputs.items():

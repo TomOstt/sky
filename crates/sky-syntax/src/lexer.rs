@@ -774,16 +774,21 @@ fn escape_non_ascii(s: &str) -> String {
     out
 }
 
-/// How many characters of an identifier the non-NFKC error spells out.
+/// How many characters of a string the non-NFKC error spells out.
 const SHOWN_CHARS: usize = 64;
-/// Longest identifier (in characters) whose NFKC form the error computes and
-/// shows. A keyword's NFKC preimage has at most as many characters as the
-/// keyword, so longer identifiers need no keyword check either.
-const NORMALIZE_FOR_HELP_MAX_CHARS: usize = 256;
+/// Longest identifier (in characters) that gets the full non-NFKC error:
+/// the whole identifier quoted, its NFKC form computed and shown, and the
+/// keyword check. Longer identifiers get an escaped prefix and their byte
+/// length only, so a 16 MiB identifier neither costs a normalization nor
+/// makes a message the size of the source. No longer identifier can
+/// normalize to a keyword: keywords are at most 8 ASCII characters, every
+/// character's NFKD is non-empty, and composition only produces non-ASCII
+/// characters, so an ASCII NFKC form has at least as many characters as
+/// the identifier.
+const FULL_NFKC_HELP_MAX_CHARS: usize = 64;
 
 /// [`escape_non_ascii`] of at most [`SHOWN_CHARS`] characters of `s` in
-/// backticks, then how many were left out. Keeps the diagnostic for a
-/// 16 MiB identifier small.
+/// backticks, then how many were left out.
 fn quote_escaped(s: &str) -> String {
     match s.char_indices().nth(SHOWN_CHARS) {
         None => format!("`{}`", escape_non_ascii(s)),
@@ -799,26 +804,16 @@ fn quote_escaped(s: &str) -> String {
 /// themselves, then their escapes (`write it as `μm` (`\u{03BC}m`)`). ASCII
 /// needs no escapes. If `n` had a character the renderer escapes (none do
 /// with the pinned data, since the lexer bans invisible characters), only
-/// the escapes are shown.
+/// the escapes are shown. Not truncated: `n` is the NFKC form of at most
+/// [`FULL_NFKC_HELP_MAX_CHARS`] characters, and one character's NFKC form
+/// has at most 18 characters.
 fn write_as_help(n: &str) -> String {
     if n.chars().any(sky_diag::is_display_unsafe) {
-        return format!("write it in NFKC form: {}", quote_escaped(n));
-    }
-    let (shown, more) = match n.char_indices().nth(SHOWN_CHARS) {
-        None => (n, String::new()),
-        Some((cut, _)) => (
-            &n[..cut],
-            format!(" ({} more characters)", n[cut..].chars().count()),
-        ),
-    };
-    let ellipsis = if more.is_empty() { "" } else { "…" };
-    if n.is_ascii() {
-        format!("write it as `{shown}{ellipsis}`{more}")
+        format!("write it in NFKC form: {}", quote_escaped(n))
+    } else if n.is_ascii() {
+        format!("write it as `{n}`")
     } else {
-        format!(
-            "write it as `{shown}{ellipsis}` (`{}{ellipsis}`){more}",
-            escape_non_ascii(shown)
-        )
+        format!("write it as `{n}` (`{}`)", escape_non_ascii(n))
     }
 }
 
@@ -863,28 +858,49 @@ fn is_identifier(s: &str) -> bool {
 /// The error for an identifier that is not in NFKC. The NFKC form is only
 /// used to write the message; the source is never normalized.
 fn non_nfkc_diagnostic(text: &str, span: Span) -> Diagnostic {
-    let mut diag = Diagnostic::error("identifier is not in Unicode NFKC form", span)
-        .with_label("not in NFKC form")
+    let diag = Diagnostic::error("identifier is not in Unicode NFKC form", span)
+        .with_label("not in NFKC form");
+    let long_prefix = text.char_indices().nth(FULL_NFKC_HELP_MAX_CHARS);
+    let Some((cut, _)) = long_prefix else {
+        return short_non_nfkc_diagnostic(diag, text);
+    };
+    let diag = diag
         .with_note(format!(
-            "{} is not in NFKC (Unicode Normalization Form KC), and Sky never normalizes identifiers",
-            quote_escaped(text)
+            "`{}…` ({} bytes) is not in NFKC (Unicode Normalization Form KC), and Sky never normalizes identifiers",
+            escape_non_ascii(&text[..cut]),
+            text.len()
+        ))
+        .with_note(format!(
+            "the NFKC form is not shown for identifiers longer than {FULL_NFKC_HELP_MAX_CHARS} characters"
         ));
-    let chars = text.chars().count();
-    let normalized = (chars <= NORMALIZE_FOR_HELP_MAX_CHARS).then(|| nfkc::nfkc(text));
-    if let Some(normalized) = &normalized {
-        // XID_Start/XID_Continue are closed under NFKC and the lexer bans
-        // the exceptions (`NFKC_NON_IDENTIFIER`), so the NFKC form of an
-        // identifier is always an identifier; tests check this for every
-        // identifier character. No user-facing message for the impossible
-        // case.
-        debug_assert!(
-            is_identifier(normalized),
-            "NFKC form {normalized:?} of identifier {text:?} is not an identifier"
-        );
-        if let Some(kw) = Kw::from_ident(normalized) {
-            return diag.with_help(format!("did you mean `{}`", kw.as_str()));
-        }
+    intended_letter_help(diag, text)
+}
+
+/// The full non-NFKC error for an identifier of at most
+/// [`FULL_NFKC_HELP_MAX_CHARS`] characters.
+fn short_non_nfkc_diagnostic(diag: Diagnostic, text: &str) -> Diagnostic {
+    let diag = diag.with_note(format!(
+        "{} is not in NFKC (Unicode Normalization Form KC), and Sky never normalizes identifiers",
+        quote_escaped(text)
+    ));
+    let normalized = nfkc::nfkc(text);
+    // XID_Start/XID_Continue are closed under NFKC and the lexer bans the
+    // exceptions (`NFKC_NON_IDENTIFIER`), so the NFKC form of an identifier
+    // is always an identifier; tests check this for every identifier
+    // character. No user-facing message for the impossible case.
+    debug_assert!(
+        is_identifier(&normalized),
+        "NFKC form {normalized:?} of identifier {text:?} is not an identifier"
+    );
+    if let Some(kw) = Kw::from_ident(&normalized) {
+        return diag.with_help(format!("did you mean `{}`", kw.as_str()));
     }
+    intended_letter_help(diag, text).with_help(write_as_help(&normalized))
+}
+
+/// Help for each compatibility letter in `text` that has an intended letter
+/// ([`INTENDED_LETTERS`]); at most one help per entry.
+fn intended_letter_help(mut diag: Diagnostic, text: &str) -> Diagnostic {
     for &(c, name, intended, intended_name) in INTENDED_LETTERS {
         if text.contains(c) {
             diag = diag.with_help(format!(
@@ -893,12 +909,7 @@ fn non_nfkc_diagnostic(text: &str, span: Span) -> Diagnostic {
             ));
         }
     }
-    match normalized {
-        Some(n) => diag.with_help(write_as_help(&n)),
-        None => diag.with_help(format!(
-            "write it in NFKC form (not shown for an identifier of {chars} characters)"
-        )),
-    }
+    diag
 }
 
 fn describe_escape(c: char) -> String {

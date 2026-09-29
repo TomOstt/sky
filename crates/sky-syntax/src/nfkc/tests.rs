@@ -109,6 +109,103 @@ fn nfkc_preserves_xid_for_every_identifier_character() {
     );
 }
 
+const PART1: &str = include_str!("../../tests/data/nfkc-part1.txt");
+
+/// UAX #15 conformance for the code points NormalizationTest.txt does not
+/// list: every code point not in Part 1 is its own NFKC.
+#[test]
+fn every_code_point_not_in_part_1_is_its_own_nfkc() {
+    let mut part1 = Vec::new();
+    for line in PART1
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+    {
+        let (lo, hi) = line.split_once("..").unwrap_or((line, line));
+        let lo = u32::from_str_radix(lo, 16).unwrap();
+        let hi = u32::from_str_radix(hi, 16).unwrap();
+        assert!(
+            lo <= hi && part1.last().is_none_or(|&(_, h)| h < lo),
+            "{line}"
+        );
+        part1.push((lo, hi));
+    }
+    let listed: u32 = part1.iter().map(|&(lo, hi)| hi - lo + 1).sum();
+    assert!(PART1.contains(&format!("own NFKC. {listed} code points.")));
+    let in_part1 = |c: u32| {
+        part1
+            .binary_search_by(|&(lo, hi)| {
+                if hi < c {
+                    std::cmp::Ordering::Less
+                } else if lo > c {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .is_ok()
+    };
+    let mut checked = 0;
+    let mut failures = Vec::new();
+    for c in (0..=0x10FFFFu32).filter_map(char::from_u32) {
+        if in_part1(c as u32) {
+            continue;
+        }
+        checked += 1;
+        let s = c.to_string();
+        let n = nfkc(&s);
+        if n != s || !is_nfkc(&s) {
+            failures.push(format!("U+{:04X} -> {}", c as u32, hex(&n)));
+        }
+    }
+    assert_eq!(checked, 0x110000 - 0x800 - listed as usize);
+    assert!(
+        failures.is_empty(),
+        "{} failures: {failures:?}",
+        failures.len()
+    );
+}
+
+/// NFKC composes a starter and a mark into a composite, so every composite
+/// must keep an identifier an identifier: wherever `a b` can appear in an
+/// identifier, so can the composite `c` (checked for all 961 pairs of
+/// `COMPOSITION`, at the start and in the middle of an identifier).
+#[test]
+fn every_composite_keeps_an_identifier_valid() {
+    assert_eq!(crate::nfkc_table::COMPOSITION.len(), 961);
+    let mut failures = Vec::new();
+    let mut identifier_pairs = 0;
+    for &(a, b, c) in crate::nfkc_table::COMPOSITION {
+        let [a, b, c] = [a, b, c].map(|x| char::from_u32(x).unwrap());
+        identifier_pairs += usize::from(is_ident_continue(a) && is_ident_continue(b));
+        if is_ident_start(a) && is_ident_continue(b) && !is_ident_start(c) {
+            failures.push(format!("start: {a:?} {b:?} -> {c:?}"));
+        }
+        if is_ident_continue(a) && is_ident_continue(b) && !is_ident_continue(c) {
+            failures.push(format!("continue: {a:?} {b:?} -> {c:?}"));
+        }
+        // And the normalizer really produces it, still an identifier.
+        for pre in ["", "x"] {
+            let s = format!("{pre}{a}{b}");
+            let mut it = s.chars();
+            if !(it.next().is_some_and(is_ident_start) && it.all(is_ident_continue)) {
+                continue;
+            }
+            let n = nfkc(&s);
+            let mut it = n.chars();
+            if !(it.next().is_some_and(is_ident_start) && it.all(is_ident_continue)) {
+                failures.push(format!("{s:?} -> {n:?} is not an identifier"));
+            }
+        }
+    }
+    // The other 53 have a non-identifier part (`<` U+0338 -> U+226E, ...).
+    assert_eq!(identifier_pairs, 908);
+    assert!(
+        failures.is_empty(),
+        "{} failures: {failures:?}",
+        failures.len()
+    );
+}
+
 /// XID_Start and XID_Continue are closed under NFKC, and so are the
 /// lexer's identifier rules (which exclude invisible characters and `·`):
 /// for every identifier character, an identifier start normalizes to one

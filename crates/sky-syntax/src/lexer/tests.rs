@@ -1704,18 +1704,21 @@ fn micro_sign_in_a_unit_gets_the_micro_sign_help() {
     assert_non_nfkc("v = 3 \u{00B5}m/s\n", "\u{00B5}m");
 }
 
-/// A 1 MiB non-NFKC identifier gets a small diagnostic: the note and help
-/// spell out at most 64 characters, and the NFKC form is not computed.
+/// A non-NFKC identifier as long as the source limit allows gets a small
+/// diagnostic: an escaped prefix and the byte length, no NFKC form (so no
+/// normalization of 16 MiB) and no keyword check.
 #[test]
 fn huge_non_nfkc_identifier_has_a_bounded_diagnostic() {
-    let mut src = String::from("x = a");
-    while src.len() < 1 << 20 {
-        src.push_str("\u{0301}\u{0323}");
+    let mut src = String::from("a");
+    while src.len() + 4 < crate::MAX_SOURCE_BYTES {
+        src.push_str("\u{0301}\u{0316}");
     }
     src.push('\n');
+    assert!(src.len() <= crate::MAX_SOURCE_BYTES);
+    assert!(src.len() > crate::MAX_SOURCE_BYTES - 5);
     let e = lex(&src).unwrap_err();
     assert_eq!(e.kind, LexErrorKind::NonNfkcIdentifier);
-    assert_eq!(e.diagnostic.primary.span.range(), 4..src.len() - 1);
+    assert_eq!(e.diagnostic.primary.span.range(), 0..src.len() - 1);
     let text: usize = e
         .diagnostic
         .notes
@@ -1724,15 +1727,40 @@ fn huge_non_nfkc_identifier_has_a_bounded_diagnostic() {
         .map(String::len)
         .sum();
     assert!(text < 1024, "{text} bytes of note and help");
-    assert!(e.diagnostic.notes[0].contains("more characters)"));
-    assert!(
-        e.diagnostic.help[0].starts_with("write it in NFKC form (not shown for an identifier of ")
+    assert!(e.diagnostic.help.is_empty(), "{:?}", e.diagnostic.help);
+    assert!(e.diagnostic.notes[0].starts_with("`a\\u{0301}\\u{0316}"));
+    assert!(e.diagnostic.notes[0].contains(&format!("…` ({} bytes) is not in NFKC", src.len() - 1)));
+}
+
+/// 64 characters still get the full help; 65 get the short form.
+#[test]
+fn full_nfkc_help_stops_at_64_characters() {
+    let at_limit = format!("\u{FB01}{}", "a".repeat(FULL_NFKC_HELP_MAX_CHARS - 1));
+    let e = lex(&at_limit).unwrap_err();
+    assert_eq!(
+        e.diagnostic.help,
+        [format!(
+            "write it as `fi{}`",
+            "a".repeat(FULL_NFKC_HELP_MAX_CHARS - 1)
+        )]
     );
-    // Up to the limit the NFKC form is shown, truncated to 64 characters.
-    let long = format!("x = \u{FB01}{}\n", "a".repeat(200));
-    let e = lex(&long).unwrap_err();
-    assert!(e.diagnostic.help[0].starts_with("write it as `fiaaa"));
-    assert!(e.diagnostic.help[0].ends_with("…` (138 more characters)"));
+    let over = format!("{at_limit}a");
+    let e = lex(&over).unwrap_err();
+    assert_eq!(e.kind, LexErrorKind::NonNfkcIdentifier);
+    assert!(e.diagnostic.help.is_empty());
+    assert_eq!(
+        e.diagnostic.notes[0],
+        format!(
+            "`\\u{{FB01}}{}…` ({} bytes) is not in NFKC (Unicode Normalization Form KC), and Sky never normalizes identifiers",
+            "a".repeat(FULL_NFKC_HELP_MAX_CHARS - 1),
+            over.len()
+        )
+    );
+    // The compatibility-letter help is short and still given.
+    let micro = format!("\u{00B5}{}", "m".repeat(FULL_NFKC_HELP_MAX_CHARS));
+    let e = lex(&micro).unwrap_err();
+    assert_eq!(e.diagnostic.help.len(), 1);
+    assert!(e.diagnostic.help[0].starts_with("MICRO SIGN U+00B5"));
 }
 
 #[test]

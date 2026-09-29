@@ -1,0 +1,13 @@
+# The exactness analysis (sky_ir::exact). Each operation below can fail by
+# its kind, but the analysis proves it cannot with these operands: `spare`
+# is dead and goes, `gap` and `ratio` are decided by the e-graph, and the
+# folded sums say what they are over the reals.
+def halve(x: m) -> m:
+    spare = x / 2
+    return x * 0.5
+
+root = sqrt(2)
+gap = sqrt(3) - sqrt(3)
+ratio = sqrt(5) / sqrt(5)
+print(halve(3 m), gap, ratio)
+print(1/3 + 1/6, 0.1 + 0.2)

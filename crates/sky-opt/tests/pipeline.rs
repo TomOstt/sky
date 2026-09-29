@@ -271,6 +271,113 @@ fn a_fused_kernel_fails_with_the_error_of_the_first_failing_operation() {
     assert!(report.explanations.iter().any(|x| x.rule == "FUSE-001"));
 }
 
+// ----- exactness: what the analysis lets the passes do -----
+
+const EXACT_SRC: &str = "def halve(x: m) -> m:\n    spare = x / 2\n    return x * 0.5\n\
+     root = sqrt(2)\ngap = sqrt(3) - sqrt(3)\nratio = sqrt(5) / sqrt(5)\n\
+     print(halve(3 m), gap, ratio)\nprint(1/3 + 1/6, 0.1 + 0.2)\n";
+
+#[test]
+fn operations_that_provably_cannot_fail_are_removed_and_the_proof_is_the_reason() {
+    let (o, report) = same_before_and_after(EXACT_SRC);
+    assert_eq!(o.stdout, "1.5 m 0 1\n0.5 0.30000000000000004\n");
+    assert_eq!(o.error, None);
+    let rules: Vec<&str> = report.explanations.iter().map(|x| x.rule).collect();
+    // `x / 2` and `sqrt(2)` are dead and cannot fail.
+    assert_eq!(
+        rules.iter().filter(|r| **r == "DCE-002").count(),
+        2,
+        "{rules:?}"
+    );
+    let dce: Vec<&Explanation> = report
+        .explanations
+        .iter()
+        .filter(|x| x.rule == "DCE-002")
+        .collect();
+    assert!(
+        dce.iter()
+            .any(|x| x.because[1].contains("the divisor is 2 (never zero)")),
+        "{dce:#?}"
+    );
+    assert!(
+        dce.iter()
+            .any(|x| x.because[1].contains("inside the domain of `sqrt`")),
+        "{dce:#?}"
+    );
+    // The e-graph decides the two self-operations the facts make safe.
+    assert!(rules.contains(&"ALG-003"), "{rules:?}");
+    assert!(rules.contains(&"ALG-010"), "{rules:?}");
+}
+
+#[test]
+fn fold_says_what_a_result_is_over_the_reals() {
+    let (_, report) = same_before_and_after(EXACT_SRC);
+    let fold: Vec<&Explanation> = report
+        .explanations
+        .iter()
+        .filter(|x| x.pass == "fold")
+        .collect();
+    let sum = fold
+        .iter()
+        .find(|x| x.after == "0.5")
+        .expect("1/3 + 1/6 is folded");
+    assert!(
+        sum.because.iter().any(|b| {
+            b
+            == "over the reals the result is exactly 1/2, and the f64 result is exactly that value"
+        }),
+        "{sum:#?}"
+    );
+    let third = fold
+        .iter()
+        .find(|x| x.after == "0.3333333333333333")
+        .unwrap();
+    assert!(
+        third
+            .because
+            .iter()
+            .any(|b| b.contains("exactly 1/3") && b.contains("rounded")),
+        "{third:#?}"
+    );
+    // 0.1 is the binary number nearest to a tenth, not 1/10, so there is no
+    // "exactly 3/10" to claim.
+    let tenths = fold
+        .iter()
+        .find(|x| x.after == "0.30000000000000004")
+        .unwrap();
+    assert!(
+        tenths.because.iter().all(|b| !b.contains("3/10")),
+        "{tenths:#?}"
+    );
+}
+
+#[test]
+fn operations_that_can_still_fail_are_kept_and_keep_failing() {
+    // x / 0.5 doubles x: it overflows for a large x, so the dead division
+    // must stay and fail.
+    let (o, _) = same_before_and_after(
+        "def grow(x: m) -> m:\n    spare = x / 0.5\n    return x\nprint(grow(1e308 m))\n",
+    );
+    assert_eq!(o.error.map(|e| e.0).as_deref(), Some("arithmetic overflow"));
+    // 1 / x fails for x = 0; sqrt(x) for a negative x; x * 2 can overflow.
+    for (body, err) in [
+        ("1 m / x", "division by zero"),
+        ("sqrt(x)", "`sqrt` of a negative number has no real value"),
+        ("x * 2", "arithmetic overflow"),
+    ] {
+        let arg = if body.starts_with("sqrt") {
+            "0 m - 4 m"
+        } else if body.starts_with("1") {
+            "0 m"
+        } else {
+            "1e308 m"
+        };
+        let src = format!("def f(x: m):\n    spare = {body}\n    return x\nprint(f({arg}))\n");
+        let (o, _) = same_before_and_after(&src);
+        assert_eq!(o.error.map(|e| e.0).as_deref(), Some(err), "{src}");
+    }
+}
+
 // ----- the pipeline and its adapters -----
 
 #[test]

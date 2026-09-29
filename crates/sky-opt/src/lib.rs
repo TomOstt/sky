@@ -33,6 +33,8 @@ mod util;
 #[cfg(test)]
 mod differential;
 #[cfg(test)]
+mod exact_tests;
+#[cfg(test)]
 mod fuse_tests;
 #[cfg(test)]
 mod tests;

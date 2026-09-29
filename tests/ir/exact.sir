@@ -1,0 +1,19 @@
+sir edition 2026
+
+fn @<main>() -> () effects(io, fail, call) @ 0..455 {
+  %gap = const.float 0 : num[1; ()] @ 353..370
+  %ratio = const.float 1 : num[1; ()] @ 379..396
+  %2 = const.float 3 : num[L; ()] @ 409..412
+  %3 = call @halve(%2) : num[L; ()] @ 403..413
+  print %3, %gap, %ratio @ 397..426
+  %4 = const.float 0.5 : num[1; ()] @ 433..442
+  %5 = const.float 0.30000000000000004 : num[1; ()] @ 444..453
+  print %4, %5 @ 427..454
+  return @ 0..455
+}
+
+fn @halve(%x: num[L; ()]) -> (num[L; ()]) effects(fail) @ 272..330 {
+  %1 = const.float 0.5 : num[1; ()] @ 327..330
+  %2 = mul %x, %1 : num[L; ()] @ 323..330
+  return %2 @ 272..330
+}

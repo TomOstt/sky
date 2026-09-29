@@ -460,6 +460,76 @@ fn unused_if_with_a_failing_region_is_kept() {
 }
 
 #[test]
+fn unused_operations_the_analysis_proves_infallible_are_removed_with_the_proof() {
+    // f(x, y): the operations that cannot fail for any finite x go; `x / y`
+    // (zero divisor), `x + x` (overflow) and `x * 2` (overflow) stay.
+    let mut b = FunctionBuilder::new("f", vec![num(), num()], vec![], sp());
+    let [x, y] = b.params()[..] else {
+        unreachable!()
+    };
+    let two = rat(&mut b, 2, 1);
+    let half = rat(&mut b, 1, 2);
+    let by_two = b.op1(OpKind::Div, vec![x, two], num(), sp());
+    b.set_name(by_two, "by_two");
+    b.op1(OpKind::Mul, vec![x, half], num(), sp());
+    b.op1(OpKind::Div, vec![x, y], num(), sp());
+    b.op1(OpKind::Add, vec![x, x], num(), sp());
+    b.op1(OpKind::Mul, vec![x, two], num(), sp());
+    b.op(OpKind::Return, vec![], vec![], sp());
+    let mut m = module_of(b.finish());
+    let rws = dce(&mut m);
+    verify(&m).unwrap();
+    assert_eq!(
+        entry_mnemonics(&m.functions[0]),
+        ["const.rational", "div", "add", "mul", "return"],
+        "the constants the kept operations use stay, and so do those three"
+    );
+    assert_eq!(rws.len(), 1, "only the named division is news: {rws:?}");
+    assert_eq!(rws[0].rule, "DCE-002");
+    assert_eq!(rws[0].before, "%by_two = div %0, %2");
+    assert_eq!(rws[0].because[0], "`by_two` is never used");
+    assert!(
+        rws[0].because[1]
+            .starts_with("`div` can fail in general, but not here: the divisor is 2 (never zero)"),
+        "{:?}",
+        rws[0].because
+    );
+}
+
+#[test]
+fn an_unused_if_whose_arms_cannot_fail_is_removed_even_if_they_could_by_kind() {
+    // if c { x / 2 } else { sqrt(2) } with the result unused.
+    let mut b = FunctionBuilder::new("f", vec![Type::Bool, num()], vec![], sp());
+    let [c, x] = b.params()[..] else {
+        unreachable!()
+    };
+    let (iff, res) = b.op(OpKind::If, vec![c], vec![num()], sp());
+    b.set_name(res[0], "picked");
+    let outer = b.insertion_block();
+    for arm in 0..2 {
+        let r = b.add_region(iff);
+        let blk = b.add_block(r, vec![]);
+        b.set_insertion_block(blk);
+        let two = rat(&mut b, 2, 1);
+        let v = if arm == 0 {
+            b.op1(OpKind::Div, vec![x, two], num(), sp())
+        } else {
+            b.op1(OpKind::Math(sky_ir::MathFn::Sqrt), vec![two], num(), sp())
+        };
+        b.op(OpKind::Yield, vec![v], vec![], sp());
+    }
+    b.set_insertion_block(outer);
+    b.op(OpKind::Return, vec![], vec![], sp());
+    let mut m = module_of(b.finish());
+    let rws = dce(&mut m);
+    verify(&m).unwrap();
+    assert_eq!(entry_mnemonics(&m.functions[0]), ["return"]);
+    assert_eq!(rws.len(), 1);
+    assert_eq!(rws[0].rule, "DCE-002");
+    assert_eq!(rws[0].because.len(), 3, "the `if` and one proof per arm");
+}
+
+#[test]
 fn dead_code_inside_a_kept_region_is_removed() {
     // The `if` result is used (returned); a dead constant in an arm is not.
     let mut b = FunctionBuilder::new("f", vec![Type::Bool, num()], vec![num()], sp());

@@ -16,7 +16,7 @@ use sky_ast::{
 };
 use sky_diag::Span;
 use sky_syntax::lexer::unescape_str;
-use sky_units::{lookup, Dimension, Rational};
+use sky_units::{lookup, Dimension, MathFn, Rational};
 
 use crate::arith::{
     arith, arity_mismatch, arrays_unsupported, equal, expect_bool, order, overflow, pow,
@@ -414,7 +414,11 @@ impl<'a> Interp<'a> {
                 match name {
                     "print" => return self.print(args),
                     "inv" => return self.inv(call, args),
-                    _ => {}
+                    _ => {
+                        if let Some(f) = MathFn::from_name(name) {
+                            return self.math(f, call, args);
+                        }
+                    }
                 }
             }
         }
@@ -477,6 +481,17 @@ impl<'a> Interp<'a> {
             .write_all(line.as_bytes())
             .map_err(|e| RuntimeError::new(format!("cannot write output: {e}"), span))?;
         Ok(Value::None)
+    }
+
+    /// A builtin math function: arguments left to right, then the shared
+    /// evaluation in `math`.
+    fn math(&mut self, f: MathFn, call: &Expr, args: &[Expr]) -> R<Value> {
+        let vals = args
+            .iter()
+            .map(|a| self.eval(a))
+            .collect::<R<Vec<Value>>>()?;
+        let spans: Vec<Span> = args.iter().map(|a| a.span).collect();
+        crate::math::apply(f, &vals, call.span, &spans)
     }
 
     /// `inv(x)`: the function spelling of `x⁻¹`.

@@ -1,10 +1,15 @@
 # sky-types golden tests
 
-Run by `tests/golden.rs` (`cargo test -p sky-types --test golden`). These
-exercise the shape, tag, and rewrite rules directly, because the parser
-(#9) and the `tests/ui/` harness don't exist yet. **User-facing cases move to
-`tests/ui/` once `sky check` parses shapes and tags.** The cases here then
-stay only as library-level tests.
+Run by `tests/golden.rs` (`cargo test -p sky-types --test golden`). These are
+**library-level** tests: they exercise the shape, tag, and rewrite rules
+directly, with a tiny case language of their own, not Sky source.
+
+User-facing behaviour is pinned by the checker goldens that walk the real AST
+(`crates/sky-types/tests/ui/`, added by #19), and those move to `tests/ui/`
+once `sky check` type-checks. Rules that only exist at the checker level live
+there, not here: scalar scaling (`c * A`, `A * c`, `A / c`), unary minus
+(`-A`), the `A ± c` and `c / A` errors, the `A^-1`-on-a-matrix error, and
+source spans in diagnostics.
 
 Each `NAME.case` has a sibling `NAME.expected` holding the exact output.
 
@@ -33,7 +38,10 @@ explain LHS @ RHS          # prints "explain: <rewrite explanation>" or "explain
   (elementwise), `inv(A)` and `A⁻¹` (inverse), `transpose(A)` and `Aᵀ`, and
   parentheses.
 - In `explain`, `inv(X)` or `X⁻¹` on the left is the explicit inverse. `X^N`
-  is a power, which is never rewritten, even for `N = -1`.
+  is a power, which is never rewritten, even for `N = -1`. This is a
+  library-level guarantee of `cholesky_rewrite` (`pass_power_no_rewrite`).
+  In Sky source the checker never gets that far: `A^-1` on a matrix is an
+  error there (#19).
 
 To regenerate every `.expected` from the current output, run
 `SKY_BLESS=1 cargo test -p sky-types --test golden`, then review the diff.

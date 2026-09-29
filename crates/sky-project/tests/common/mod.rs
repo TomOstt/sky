@@ -13,6 +13,10 @@ pub struct TempDir(PathBuf);
 
 impl TempDir {
     pub fn new(name: &str) -> Self {
+        // The mode checks refuse world-writable directories: don't let an
+        // unusual umask (e.g. 000) make the fixtures themselves unsafe.
+        // SAFETY: umask has no preconditions and cannot fail.
+        unsafe { libc::umask(0o022) };
         static N: AtomicUsize = AtomicUsize::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
         let dir =

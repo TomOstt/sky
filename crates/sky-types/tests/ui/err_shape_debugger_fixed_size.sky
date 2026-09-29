@@ -1,0 +1,5 @@
+# `N` is fixed to 4 by a declared value, then meets a 5.
+Q: Matrix[3, 4]
+A: Matrix[3, N] = Q
+B: Matrix[5, 2]
+C = A @ B

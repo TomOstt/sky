@@ -1,0 +1,12 @@
+crates/sky-types/tests/ui/err_shape_debugger_call.sky:9:15: error: the parameter takes Vector[3], but the argument is Vector[4]
+  |
+9 | r = apply(A3, b4)
+  |               ^^ this is Vector[4] [1]
+2 | def apply(A: Matrix[N, N], b: Vector[N]) -> Vector[N]:
+  |                               --------- expected because of this annotation
+  = note: axis       0
+  = note: parameter  N = 3
+  = note: argument   4
+  = note: differs    ^
+  = note: `N` was fixed to 3 at line 9 (`A` of `apply` given `A3`)
+  = help: check the size variable `N`: every `N` in a module (or, per call, in a function) stands for one size

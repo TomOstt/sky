@@ -29,6 +29,7 @@ pub mod rewrite;
 pub mod rules;
 pub mod scale;
 pub mod shape;
+mod shape_diag;
 pub mod tag_ops;
 pub mod tags;
 
@@ -41,7 +42,8 @@ pub use rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 pub use rules::{elementwise, inverse, matmul, transpose, TensorType};
 pub use scale::{negated_tags, scaled_tags};
 pub use shape::{
-    DimConflict, DimValue, Shape, ShapeDim, ShapeError, ShapeErrorKind, ShapeUnifier, ShapeVar,
+    Binding, DimConflict, DimValue, Origin, Shape, ShapeContext, ShapeDim, ShapeError,
+    ShapeErrorKind, ShapeUnifier, ShapeVar, Transpose, MAX_BINDINGS_PER_VAR,
 };
 /// Most characters of user source text quoted in one place (see
 /// [`sky_diag::display_capped`]).

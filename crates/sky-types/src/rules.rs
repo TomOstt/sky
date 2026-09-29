@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use crate::shape::{Shape, ShapeError, ShapeErrorKind, ShapeUnifier};
+use crate::shape::{Shape, ShapeError, ShapeErrorKind, ShapeUnifier, Transpose};
 use crate::tag_ops::{tag_result, TagOp};
 use crate::tags::{matmul_tags, preserved_by_inverse, preserved_by_transpose, TagSet};
 
@@ -116,10 +116,11 @@ pub fn matmul(
     };
     u.unify_dim(k_left, k_right).map_err(|c| -> ShapeError {
         ShapeErrorKind::MatmulInner {
-            lhs: l.clone(),
-            rhs: r.clone(),
+            lhs: u.apply(l),
+            rhs: u.apply(r),
             left: c.expected,
             right: c.found,
+            transpose: matmul_transpose_fix(u, l, r),
         }
         .into()
     })?;
@@ -132,6 +133,30 @@ pub fn matmul(
         shape: Shape::new(out),
         tags,
     })
+}
+
+/// Which operand, transposed, would make `l @ r` valid, for matrix @ matrix
+/// only and only when certain: the solved dimensions that would meet are
+/// equal (the same size or the same variable), not merely unifiable, so a
+/// suggestion never depends on a guess about a free variable.
+fn matmul_transpose_fix(u: &ShapeUnifier, l: &Shape, r: &Shape) -> Option<Transpose> {
+    let ([m, k], [k2, n]) = (l.dims(), r.dims()) else {
+        return None;
+    };
+    let (m, k, k2, n) = (
+        u.apply_dim(m),
+        u.apply_dim(k),
+        u.apply_dim(k2),
+        u.apply_dim(n),
+    );
+    // `Aᵀ @ B` contracts A's rows with B's rows; `A @ Bᵀ` contracts A's
+    // columns with B's columns.
+    match (m == k2, k == n) {
+        (true, true) => Some(Transpose::Either),
+        (true, false) => Some(Transpose::Left),
+        (false, true) => Some(Transpose::Right),
+        (false, false) => None,
+    }
 }
 
 /// An elementwise operator (`+`, `-`, …): both shapes must be equal (no
@@ -235,7 +260,7 @@ mod tests {
         let err = matmul(&mut u, &ty(Shape::matrix(3, 4)), &ty(Shape::matrix(5, 8))).unwrap_err();
         assert_eq!(
             err.to_string(),
-            "`@` inner dimensions differ: 4 vs 5 in Matrix[3,4] @ Matrix[5,8]"
+            "cannot multiply Matrix[3,4] by Matrix[5,8]"
         );
         assert_eq!(u, before);
     }
@@ -253,10 +278,7 @@ mod tests {
         let dot = matmul(&mut u, &ty(Shape::vector(3)), &ty(Shape::vector(3))).unwrap();
         assert_eq!(dot.shape(), &Shape::scalar());
         let err = matmul(&mut u, &TensorType::scalar(), &ty(Shape::vector(3))).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "`@` needs vector or matrix operands, found Scalar @ Vector[3]"
-        );
+        assert_eq!(err.to_string(), "cannot multiply Scalar by Vector[3]");
     }
 
     #[test]

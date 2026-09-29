@@ -3,3 +3,4 @@ crates/sky-types/tests/ui/err_invert_non_square.sky:2:6: error: cannot invert a 
 2 | x = A⁻¹
   |      ^^
   |     - this is Matrix[3,4] [1]
+  = note: an inverse needs as many rows as columns, but [3, 4] has 3 rows and 4 columns

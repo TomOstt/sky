@@ -1,0 +1,8 @@
+# A chain of products: `Z @ B` fixes `N` to 4, later products contradict it.
+A: Matrix[3, N]
+B: Matrix[N, 2]
+Z: Matrix[3, 4]
+W = Z @ B
+C: Matrix[5, 2]
+Y = A @ C
+X = C @ B

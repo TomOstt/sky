@@ -65,7 +65,7 @@ use crate::flow::{FnCtx, FuncSig, LoopFrame};
 use crate::rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 use crate::rules::{elementwise, inverse, matmul, TensorType};
 use crate::scale::{negated_tags, scaled_tags};
-use crate::shape::{Shape, ShapeDim, ShapeError, ShapeUnifier, ShapeVar};
+use crate::shape::{Shape, ShapeContext, ShapeDim, ShapeError, ShapeUnifier, ShapeVar};
 use crate::tags::{Tag, TagSet};
 use sky_diag::display_capped as quote;
 
@@ -255,6 +255,15 @@ impl Env {
     /// The type of `name`, with solved shape variables substituted.
     pub fn get(&self, name: &str) -> Option<Ty> {
         self.names.get(name).map(|t| self.resolve(t))
+    }
+
+    /// The type of `name` with its shape variables left as they are. The
+    /// checker reads names through this so a later conflict can still say
+    /// which variable a size came from (see [`ShapeUnifier::provenance`]):
+    /// once a variable is substituted by its solution, its identity is gone.
+    /// Everything that compares or prints shapes applies the substitution.
+    pub(crate) fn get_symbolic(&self, name: &str) -> Option<Ty> {
+        self.names.get(name).cloned()
     }
 
     /// Every binding in name order, with solved shape variables substituted.
@@ -747,10 +756,17 @@ impl<'s> Checker<'s> {
             }
             Ty::Unknown => return Ty::value(declared_dim, tensor),
         };
-        if let Err(e) = self.env.shapes.unify(tensor.shape(), v.ty.shape()) {
+        let what = format!(
+            "`{}` on a value of shape {}",
+            self.quoted(ty.span),
+            self.env.shapes.apply(v.ty.shape())
+        );
+        let unified = self.with_origin(ty.span, what, |u| u.unify(tensor.shape(), v.ty.shape()));
+        if let Err(e) = unified {
+            let e = e.in_context(ShapeContext::Declaration);
             let label = self.this_is(&v);
             self.error(
-                Diagnostic::error(format!("mismatched shapes: {e}"), value.span)
+                self.shape_diagnostic(&e, value.span)
                     .with_label(label)
                     .with_secondary(ty.span, "expected because of this annotation"),
             );
@@ -902,18 +918,15 @@ impl<'s> Checker<'s> {
             );
             return;
         }
-        if let Err(e) = self.env.shapes.unify(dv.ty.shape(), rv.ty.shape()) {
+        let what = format!("`{name} {sym} …`");
+        let unified = self.with_origin(op_span, what, |u| u.unify(dv.ty.shape(), rv.ty.shape()));
+        if let Err(e) = unified {
             let label = self.this_is(dv);
-            self.error(
-                Diagnostic::error(
-                    format!("`{sym}` would change the shape of `{name}`: {e}"),
-                    op_span,
-                )
-                .with_secondary(id.span, label)
-                .with_note(format!(
-                    "the result of `{sym}` must keep the type of `{name}`"
-                )),
-            );
+            let mut d = self.shape_diagnostic(&e, op_span);
+            d.message = format!("`{sym}` would change the shape of `{name}`: {e}");
+            self.error(d.with_secondary(id.span, label).with_note(format!(
+                "the result of `{sym}` must keep the type of `{name}`"
+            )));
             return;
         }
         let (had, has) = (dv.ty.tags().closure(), rv.ty.tags().closure());
@@ -1162,7 +1175,7 @@ impl<'s> Checker<'s> {
             },
             ExprKind::Name(id) => {
                 let name = self.ident(id);
-                match self.env.get(name) {
+                match self.env.get_symbolic(name) {
                     Some(t) => t,
                     None => self.undefined_name(name, id.span),
                 }
@@ -1337,12 +1350,14 @@ impl<'s> Checker<'s> {
             self.overflow(op_span.join(operand));
             return Ty::Unknown;
         };
-        match inverse(&mut self.env.shapes, &v.ty) {
+        let what = format!("`{}⁻¹`", self.quoted(operand));
+        match self.with_origin(op_span, what, |u| inverse(u, &v.ty)) {
             Ok(ty) => Ty::value(dim, ty),
             Err(e) => {
                 let label = self.this_is(&v);
                 self.error(
-                    Diagnostic::error(e.to_string(), op_span).with_secondary(operand, label),
+                    self.shape_diagnostic(&e, op_span)
+                        .with_secondary(operand, label),
                 );
                 Ty::Unknown
             }
@@ -1396,12 +1411,13 @@ impl<'s> Checker<'s> {
                 }
             }
         }
-        match matmul(&mut self.env.shapes, &lv.ty, &rv.ty) {
+        let what = format!("`{}`", self.quoted(span));
+        match self.with_origin(op_span, what, |u| matmul(u, &lv.ty, &rv.ty)) {
             Ok(ty) => Ty::value(dim, ty),
             Err(e) => {
                 let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
                 self.error(
-                    Diagnostic::error(e.to_string(), op_span)
+                    self.shape_diagnostic(&e, op_span)
                         .with_secondary(lhs.span, ll)
                         .with_secondary(rhs.span, rl),
                 );
@@ -1604,6 +1620,9 @@ impl<'s> Checker<'s> {
                 // type-checks. When the dimensions differ the operation fails
                 // below (after the shape error, which has priority), so probe
                 // on a copy then; otherwise commit.
+                let what = format!("`{}`", self.quoted(le.span.join(re.span)));
+                // Set before the probe is cloned so the copy records it too.
+                self.set_origin(op_span, what);
                 let mut probe;
                 let shapes = if lv.dim == rv.dim {
                     &mut self.env.shapes
@@ -1611,10 +1630,13 @@ impl<'s> Checker<'s> {
                     probe = self.env.shapes.clone();
                     &mut probe
                 };
-                if let Err(e) = elementwise(shapes, &lv.ty, &rv.ty) {
+                let checked = elementwise(shapes, &lv.ty, &rv.ty);
+                self.env.shapes.set_origin(None);
+                if let Err(e) = checked {
+                    let e = e.in_context(ShapeContext::Operator(Arc::from(sym)));
                     let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
                     self.error(
-                        Diagnostic::error(e.to_string(), op_span)
+                        self.shape_diagnostic(&e, op_span)
                             .with_secondary(le.span, ll)
                             .with_secondary(re.span, rl),
                     );

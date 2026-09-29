@@ -1,0 +1,9 @@
+# Size variables are generic per call: `N` is fixed to 3 by the first argument.
+def apply(A: Matrix[N, N], b: Vector[N]) -> Vector[N]:
+    return A @ b
+
+A3: Matrix[3, 3]
+b4: Vector[4]
+b3: Vector[3]
+ok = apply(A3, b3)
+r = apply(A3, b4)

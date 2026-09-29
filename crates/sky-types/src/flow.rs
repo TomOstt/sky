@@ -43,7 +43,7 @@ use sky_units::Dimension;
 
 use crate::check::{describe, strip_parens, Checker, Scope, Ty, ValueTy};
 use crate::rules::TensorType;
-use crate::shape::{Shape, ShapeDim, ShapeVar};
+use crate::shape::{Shape, ShapeContext, ShapeDim, ShapeVar};
 use sky_diag::display_capped as quote;
 
 /// A function's signature, as the checker knows it: enough to check a call
@@ -697,10 +697,18 @@ impl Checker<'_> {
                         .with_secondary(ann, "declared here"),
                     );
                 }
-                if let Err(e) = self.env.shapes.unify(declared.shape(), v.ty.shape()) {
+                let what = format!(
+                    "`{}` on a value of shape {}",
+                    self.quoted(ann),
+                    self.env.shapes.apply(v.ty.shape())
+                );
+                let unified =
+                    self.with_origin(ann, what, |u| u.unify(declared.shape(), v.ty.shape()));
+                if let Err(e) = unified {
+                    let e = e.in_context(ShapeContext::Declaration);
                     let label = self.this_is(&v);
                     self.error(
-                        Diagnostic::error(format!("mismatched shapes: {e}"), vspan)
+                        self.shape_diagnostic(&e, vspan)
                             .with_label(label)
                             .with_secondary(ann, "declared here"),
                     );
@@ -965,10 +973,14 @@ impl Checker<'_> {
                 // The shape first: a vector passed for a scalar is a shape
                 // error, whatever the units.
                 let expected = self.substitute(&pt.ty, fresh);
-                if let Err(e) = self.env.shapes.unify(expected.shape(), av.ty.shape()) {
+                let what = format!("`{pname}` of `{fname}` given `{}`", self.quoted(arg.span));
+                let unified =
+                    self.with_origin(arg.span, what, |u| u.unify(expected.shape(), av.ty.shape()));
+                if let Err(e) = unified {
+                    let e = e.in_context(ShapeContext::Argument);
                     let label = self.this_is(av);
                     self.error(
-                        Diagnostic::error(format!("mismatched shapes: {e}"), arg.span)
+                        self.shape_diagnostic(&e, arg.span)
                             .with_label(label)
                             .with_secondary(ann, "expected because of this annotation"),
                     );

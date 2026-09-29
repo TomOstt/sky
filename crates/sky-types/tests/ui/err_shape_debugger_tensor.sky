@@ -1,0 +1,9 @@
+# Axes have no names yet, so the error points at axis positions.
+Q: Tensor[B, H, N, D]
+V: Tensor[2, 8, 16, 64]
+K: Tensor[2, 8, 32, 64]
+S = Q + V
+T = Q + K
+W: Matrix[16, 64]
+X = V + W
+Y = V @ W

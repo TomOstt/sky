@@ -12,5 +12,6 @@ sky-diag = { path = "../sky-diag" }
 
 [target.'cfg(unix)'.dependencies]
 # geteuid() and getpwuid_r(): std has no API for the effective uid or the
-# passwd home directory. FFI declarations only; no build script.
+# passwd home directory. FFI declarations only (libc's build.rs does cfg
+# detection; no proc macros).
 libc = { version = "0.2", default-features = false }

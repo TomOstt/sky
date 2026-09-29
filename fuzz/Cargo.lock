@@ -103,6 +103,16 @@ dependencies = [
  "libfuzzer-sys",
  "sky-ast",
  "sky-diag",
+ "sky-project",
+ "sky-syntax",
+]
+
+[[package]]
+name = "sky-project"
+version = "0.0.1"
+dependencies = [
+ "libc",
+ "sky-diag",
  "sky-syntax",
 ]
 

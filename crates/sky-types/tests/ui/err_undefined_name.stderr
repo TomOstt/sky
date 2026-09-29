@@ -1,0 +1,9 @@
+crates/sky-types/tests/ui/err_undefined_name.sky:1:5: error: cannot find `A` in this scope
+  |
+1 | x = A⁻¹ @ b
+  |     ^ not defined
+
+crates/sky-types/tests/ui/err_undefined_name.sky:1:11: error: cannot find `b` in this scope
+  |
+1 | x = A⁻¹ @ b
+  |           ^ not defined

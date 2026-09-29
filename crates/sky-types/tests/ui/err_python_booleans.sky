@@ -1,0 +1,3 @@
+# `True` and `False` are ordinary names in Sky; unbound, they get a hint.
+a = True
+b = not False

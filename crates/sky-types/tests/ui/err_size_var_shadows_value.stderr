@@ -1,0 +1,5 @@
+crates/sky-types/tests/ui/err_size_var_shadows_value.sky:3:11: error: size variable `N` has the same name as a value in scope
+  |
+3 | A: Matrix[N, N]
+  |           ^ size variable
+  = help: size variables are separate from values

@@ -25,6 +25,8 @@
 
 use std::fmt;
 
+use crate::tag_ops::{tag_result, TagOp};
+
 /// A matrix property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub enum Tag {
@@ -179,10 +181,6 @@ impl TagSet {
     pub fn join(self, other: TagSet) -> TagSet {
         self.closure().intersection(other.closure())
     }
-
-    fn keep(self, rule: impl Fn(Tag) -> bool) -> TagSet {
-        TagSet::from_tags(self.closure().iter().filter(|&t| rule(t))).closure()
-    }
 }
 
 impl fmt::Display for TagSet {
@@ -209,10 +207,10 @@ impl fmt::Display for TagSet {
 ///   `1/λᵢ > 0`. Equivalently `xᵀA⁻¹x = yᵀAy > 0` with `y = A⁻¹x ≠ 0`.
 /// * Diagonal: `diag(d₁…dₙ)⁻¹ = diag(1/d₁…1/dₙ)`, which exists iff every `dᵢ ≠ 0`.
 /// * Orthogonal: `Q⁻¹ = Qᵀ`, and `(Qᵀ)ᵀQᵀ = QQᵀ = I`.
+///
+/// Defined by [`tag_result`]`(`[`TagOp::Inverse`]`, ..)`.
 pub fn preserved_by_inverse(tags: TagSet) -> TagSet {
-    tags.keep(|t| match t {
-        Tag::Symmetric | Tag::PositiveDefinite | Tag::Diagonal | Tag::Orthogonal => true,
-    })
+    tag_result(TagOp::Inverse, &[tags])
 }
 
 /// The tags `Aᵀ` is guaranteed to have, given `A`'s tags. Every tag is preserved:
@@ -220,10 +218,10 @@ pub fn preserved_by_inverse(tags: TagSet) -> TagSet {
 /// * Symmetric, PositiveDefinite, Diagonal: all imply `Aᵀ = A`, so `Aᵀ` is
 ///   the same matrix with the same properties.
 /// * Orthogonal: `(Qᵀ)ᵀQᵀ = QQᵀ = I` and `Qᵀ(Qᵀ)ᵀ = QᵀQ = I`.
+///
+/// Defined by [`tag_result`]`(`[`TagOp::Transpose`]`, ..)`.
 pub fn preserved_by_transpose(tags: TagSet) -> TagSet {
-    tags.keep(|t| match t {
-        Tag::Symmetric | Tag::PositiveDefinite | Tag::Diagonal | Tag::Orthogonal => true,
-    })
+    tag_result(TagOp::Transpose, &[tags])
 }
 
 /// The tags `A @ B` is guaranteed to have (both matrices). Conservative:
@@ -234,16 +232,10 @@ pub fn preserved_by_transpose(tags: TagSet) -> TagSet {
 /// * Nothing else. Symmetric is *not* preserved: `(AB)ᵀ = BᵀAᵀ = BA ≠ AB`
 ///   in general. Nor is PositiveDefinite, since the product of two PD matrices
 ///   need not be symmetric.
+///
+/// Defined by [`tag_result`]`(`[`TagOp::MatMul`]`, ..)`.
 pub fn matmul_tags(a: TagSet, b: TagSet) -> TagSet {
-    let (a, b) = (a.closure(), b.closure());
-    let both = |t| a.contains(t) && b.contains(t);
-    let mut out = TagSet::EMPTY;
-    for t in [Tag::Diagonal, Tag::Orthogonal] {
-        if both(t) {
-            out = out.with(t);
-        }
-    }
-    out.closure()
+    tag_result(TagOp::MatMul, &[a, b])
 }
 
 #[cfg(test)]

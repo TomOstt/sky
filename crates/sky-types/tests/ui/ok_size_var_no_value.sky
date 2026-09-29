@@ -1,0 +1,4 @@
+# `N` as a size variable, with no value named `N` in scope.
+A: Matrix[N, N]
+B: Matrix[3, 3]
+C = A @ B

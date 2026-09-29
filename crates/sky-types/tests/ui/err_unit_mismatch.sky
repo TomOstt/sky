@@ -1,0 +1,5 @@
+# Mirrors the spec's `5 meters + 20 kelvin`, with table symbols.
+x = 5 m + 20 K
+y = 3 km - 2 s
+z = 1 J < 2 eV
+w = 1 m < 2 s

@@ -1,0 +1,23 @@
+crates/sky-types/tests/ui/err_bool_in_arithmetic.sky:3:5: error: `+` needs a number, found Bool
+  |
+3 | a = p + 1
+  |     ^ this is Bool
+  = note: v0.1 has no truthiness: a Bool is never a number
+
+crates/sky-types/tests/ui/err_bool_in_arithmetic.sky:4:6: error: `-` needs a number, found Bool
+  |
+4 | b = -p
+  |      ^ this is Bool
+  = note: v0.1 has no truthiness: a Bool is never a number
+
+crates/sky-types/tests/ui/err_bool_in_arithmetic.sky:5:5: error: `==` needs a number, found Bool
+  |
+5 | c = p == 1
+  |     ^ this is Bool
+  = note: v0.1 has no truthiness: a Bool is never a number
+
+crates/sky-types/tests/ui/err_bool_in_arithmetic.sky:6:5: error: `^` needs a number, found Bool
+  |
+6 | d = p^2
+  |     ^ this is Bool
+  = note: v0.1 has no truthiness: a Bool is never a number

@@ -1,0 +1,11 @@
+crates/sky-types/tests/ui/err_unknown_unit.sky:1:7: error: unknown unit `meters`
+  |
+1 | x = 5 meters + 20 kelvin
+  |       ^^^^^^
+  = help: did you mean `m`?
+
+crates/sky-types/tests/ui/err_unknown_unit.sky:1:19: error: unknown unit `kelvin`
+  |
+1 | x = 5 meters + 20 kelvin
+  |                   ^^^^^^
+  = help: did you mean `K`?

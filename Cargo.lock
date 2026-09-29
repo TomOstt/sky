@@ -191,6 +191,10 @@ name = "sky-types"
 version = "0.0.1"
 dependencies = [
  "proptest",
+ "sky-ast",
+ "sky-diag",
+ "sky-syntax",
+ "sky-units",
 ]
 
 [[package]]

@@ -1,0 +1,2 @@
+# env: A: Matrix[3,3]
+z = 1 / A

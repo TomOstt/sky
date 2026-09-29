@@ -1,0 +1,11 @@
+crates/sky-types/tests/ui/err_python_booleans.sky:2:5: error: cannot find `True` in this scope
+  |
+2 | a = True
+  |     ^^^^ not defined
+  = help: Sky writes booleans as `true`/`false`
+
+crates/sky-types/tests/ui/err_python_booleans.sky:3:9: error: cannot find `False` in this scope
+  |
+3 | b = not False
+  |         ^^^^^ not defined
+  = help: Sky writes booleans as `true`/`false`

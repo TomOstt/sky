@@ -1,0 +1,7 @@
+# `name: Matrix[...]` annotations declare shapes; `N` is solved from use.
+A: Matrix[3, 4]
+B: Matrix[4, 8]
+C = A @ B
+S: Matrix[N, N]
+T: Matrix[3, 3]
+U = S + T

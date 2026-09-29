@@ -1,0 +1,4 @@
+# `N` can't be both 3 and 4.
+S: Matrix[N, N]
+T: Matrix[3, 4]
+U = S + T

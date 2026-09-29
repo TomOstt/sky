@@ -1,0 +1,1560 @@
+//! The checker walk: types a parsed [`Module`] and reports diagnostics.
+//!
+//! This is the first slice that consumes the real AST (`sky-ast`). It types
+//! number literals with units, names and their bindings, the arithmetic and
+//! comparison operators, `@`, postfix `⁻¹` (and `inv(x)`), `^`, the Bool
+//! literals `true`/`false`, and `and`/`or`/`not` (strict Bool operands, no
+//! truthiness, per the spec's "Booleans and conditions"). Anything
+//! else (strings, other calls, indexing, attributes, `∂`, `∇`) is typed as
+//! [`Ty::Unknown`] without a diagnostic, and an operator with an unknown
+//! operand is unknown too, so one error never cascades.
+//!
+//! # Types
+//!
+//! Every numeric value is a [`ValueTy`]: an element [`Dimension`] plus a
+//! [`TensorType`] (shape and property tags). A scalar is the rank-0 case.
+//!
+//! # Declaring shapes and tags
+//!
+//! The only shape syntax the parser accepts today is a binding annotation,
+//! `A: Matrix[N, N]` (parsed as an index expression), which this walk reads
+//! as a shape. There is no syntax for property tags or for the element unit
+//! of an array. Tests and future front ends seed those through [`Env`] and
+//! [`check_module_with`].
+//!
+//! # Purity
+//!
+//! The walk never evaluates user code. The only "values" it looks at are
+//! constant exponents like the `2` in `x^2`, read from the source text.
+//!
+//! # Output size
+//!
+//! Source text quoted in a diagnostic (and in the `--explain` text, and in
+//! shape-variable names shown in types) is capped at
+//! [`crate::QUOTE_MAX_CHARS`] characters; spans still cover the full text.
+//! At most [`MAX_STORED_REWRITES`] rewrite sites are stored, and later ones
+//! are only counted in [`Checked::rewrites_omitted`].
+//!
+//! # Depth
+//!
+//! The walk recurses once per nesting level, and the parser caps nesting at
+//! [`sky_ast::MAX_DEPTH`]. Callers run it on a thread with a deep stack, like
+//! the parser (see the crate's `deep_nesting` test).
+
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+use std::fmt;
+use std::sync::Arc;
+
+use sky_ast::ast::span_text;
+use sky_ast::{BinaryOp, Expr, ExprKind, Ident, Literal, Module, StmtKind, UnaryOp, UnitExpr};
+use sky_diag::{Diagnostic, Severity, Span};
+use sky_units::{lookup, Dimension, Rational};
+
+use crate::quote::quote;
+use crate::rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
+use crate::rules::{elementwise, inverse, matmul, TensorType};
+use crate::scale::{negated_tags, scaled_tags};
+use crate::shape::{Shape, ShapeDim, ShapeError, ShapeUnifier, ShapeVar};
+use crate::tags::TagSet;
+
+/// The type of a numeric value: element dimension plus shape and tags.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ValueTy {
+    /// The dimension of every element (for a scalar, of the value).
+    pub dim: Dimension,
+    /// Shape and property tags. Rank 0 is a scalar.
+    pub ty: TensorType,
+}
+
+impl ValueTy {
+    /// A scalar of dimension `dim`.
+    pub fn scalar(dim: Dimension) -> Self {
+        ValueTy {
+            dim,
+            ty: TensorType::scalar(),
+        }
+    }
+
+    /// Whether this is a scalar (rank 0).
+    pub fn is_scalar(&self) -> bool {
+        self.ty.shape().rank() == 0
+    }
+}
+
+/// The type the walk assigns to an expression or a name.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Ty {
+    /// A number, vector, matrix, or tensor.
+    Value(ValueTy),
+    /// The result of a comparison.
+    Bool,
+    /// Not typed in this slice, or the result of an error already reported.
+    Unknown,
+}
+
+impl Ty {
+    /// A scalar of dimension `dim`.
+    pub fn scalar(dim: Dimension) -> Self {
+        Ty::Value(ValueTy::scalar(dim))
+    }
+
+    /// An array (or scalar) with element dimension `dim`.
+    pub fn value(dim: Dimension, ty: TensorType) -> Self {
+        Ty::Value(ValueTy { dim, ty })
+    }
+}
+
+impl fmt::Display for ValueTy {
+    /// `Matrix[3,3] {Symmetric} [L]`: shape, tags if any, element dimension.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} [{}]", self.ty, self.dim)
+    }
+}
+
+impl fmt::Display for Ty {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Ty::Value(v) => v.fmt(f),
+            Ty::Bool => f.write_str("Bool"),
+            Ty::Unknown => f.write_str("?"),
+        }
+    }
+}
+
+/// Names in scope, plus the shape unifier and the named shape variables.
+///
+/// Shape variables are named per module: every `N` in the module's
+/// annotations (and in seeded types from [`Env::shape_var`]) is the same
+/// variable.
+#[derive(Clone, Debug, Default)]
+pub struct Env {
+    names: BTreeMap<String, Ty>,
+    shape_vars: BTreeMap<String, ShapeVar>,
+    shapes: ShapeUnifier,
+}
+
+impl Env {
+    /// An empty environment.
+    pub fn new() -> Self {
+        Env::default()
+    }
+
+    /// The shape variable called `name`, created on first use.
+    pub fn shape_var(&mut self, name: &str) -> ShapeVar {
+        if let Some(v) = self.shape_vars.get(name) {
+            return v.clone();
+        }
+        // The name is for display only (identity is the id), so store it
+        // capped like any quoted source text.
+        let v = self.shapes.fresh(Arc::<str>::from(quote(name)));
+        self.shape_vars.insert(name.to_string(), v.clone());
+        v
+    }
+
+    /// Binds `name` to `ty`, replacing any earlier binding.
+    pub fn bind(&mut self, name: impl Into<String>, ty: Ty) {
+        self.names.insert(name.into(), ty);
+    }
+
+    /// Binds `name` to an array with element dimension `dim`. Fails if
+    /// `tags` is non-empty and `shape` is not a square matrix.
+    pub fn bind_array(
+        &mut self,
+        name: impl Into<String>,
+        shape: Shape,
+        tags: TagSet,
+        dim: Dimension,
+    ) -> Result<(), ShapeError> {
+        let ty = TensorType::tagged(&mut self.shapes, shape, tags)?;
+        self.bind(name, Ty::value(dim, ty));
+        Ok(())
+    }
+
+    /// The type of `name`, with solved shape variables substituted.
+    pub fn get(&self, name: &str) -> Option<Ty> {
+        self.names.get(name).map(|t| self.resolve(t))
+    }
+
+    /// Every binding in name order, with solved shape variables substituted.
+    pub fn bindings(&self) -> impl Iterator<Item = (&str, Ty)> + '_ {
+        self.names
+            .iter()
+            .map(|(n, t)| (n.as_str(), self.resolve(t)))
+    }
+
+    /// The shape unifier (for callers that inspect solved variables).
+    pub fn shapes(&self) -> &ShapeUnifier {
+        &self.shapes
+    }
+
+    fn resolve(&self, t: &Ty) -> Ty {
+        match t {
+            Ty::Value(v) => Ty::value(v.dim, self.shapes.apply_type(&v.ty)),
+            other => other.clone(),
+        }
+    }
+}
+
+/// A `A⁻¹ @ b` site the checker decided to rewrite to a Cholesky solve.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct RewriteSite {
+    /// The whole `A⁻¹ @ b` expression.
+    pub span: Span,
+    /// `A`, the operand of `⁻¹`.
+    pub matrix: Span,
+    /// `b`, the right operand of `@`.
+    pub rhs: Span,
+    /// The plan, including the `--explain` text.
+    pub rewrite: Rewrite,
+}
+
+impl RewriteSite {
+    /// A note diagnostic for `sky check --explain`: points at the rewritten
+    /// expression and carries the explanation.
+    pub fn to_diagnostic(&self, source: &str) -> Diagnostic {
+        let text = quote(span_text(source, self.span).unwrap_or("A⁻¹ @ b"));
+        Diagnostic::note(
+            format!("`{text}` is rewritten to a Cholesky solve"),
+            self.span,
+        )
+        .with_secondary(self.matrix, "positive definite")
+        .with_note(self.rewrite.explanation())
+    }
+}
+
+/// Most [`RewriteSite`]s kept in [`Checked::rewrites`]; later ones are only
+/// counted, in [`Checked::rewrites_omitted`]. The cap never stops the walk
+/// and never affects diagnostics.
+pub const MAX_STORED_REWRITES: usize = 100;
+
+/// The result of checking a module.
+#[derive(Clone, Debug)]
+pub struct Checked {
+    /// Errors and warnings, in source order of the walk.
+    pub diagnostics: Vec<Diagnostic>,
+    /// Rewrite decisions, in source order: at most [`MAX_STORED_REWRITES`],
+    /// the first ones found. This bounds `sky check --explain` output.
+    pub rewrites: Vec<RewriteSite>,
+    /// Rewrite decisions made after [`MAX_STORED_REWRITES`] were stored.
+    /// They are still rewrites; only their explanations are dropped.
+    pub rewrites_omitted: usize,
+    /// The environment after the last statement.
+    pub env: Env,
+}
+
+impl Checked {
+    /// Whether any diagnostic is an error.
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics
+            .iter()
+            .any(|d| d.severity == Severity::Error)
+    }
+}
+
+/// Checks `module` (parsed from `source`) in an empty environment.
+pub fn check_module(module: &Module, source: &str) -> Checked {
+    check_module_with(module, source, Env::new())
+}
+
+/// Checks `module` (parsed from `source`) starting from `env`, which can
+/// seed names with shapes, tags, and element units that the language can't
+/// declare yet.
+pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
+    let mut c = Checker {
+        src: source,
+        shadow_reported: Vec::new(),
+        env,
+        diagnostics: Vec::new(),
+        rewrites: Vec::new(),
+        rewrites_omitted: 0,
+    };
+    for stmt in &module.stmts {
+        c.stmt(&stmt.kind);
+    }
+    Checked {
+        diagnostics: c.diagnostics,
+        rewrites: c.rewrites,
+        rewrites_omitted: c.rewrites_omitted,
+        env: c.env,
+    }
+}
+
+struct Checker<'s> {
+    src: &'s str,
+    /// Size-variable names already reported as shadowing a value in the
+    /// annotation being read.
+    shadow_reported: Vec<String>,
+    env: Env,
+    diagnostics: Vec<Diagnostic>,
+    rewrites: Vec<RewriteSite>,
+    rewrites_omitted: usize,
+}
+
+/// Human wording for a dimension in error text: its name if it has one
+/// (`length`), otherwise its formula (`L·M`).
+fn describe(d: &Dimension) -> String {
+    match d.name() {
+        Some(n) => n.to_string(),
+        None => d.to_string(),
+    }
+}
+
+fn rank_noun(rank: usize) -> String {
+    match rank {
+        0 => "scalar".to_string(),
+        1 => "vector".to_string(),
+        2 => "matrix".to_string(),
+        n => format!("rank-{n} tensor"),
+    }
+}
+
+fn strip_parens(mut e: &Expr) -> &Expr {
+    while let ExprKind::Paren(inner) = &e.kind {
+        e = inner;
+    }
+    e
+}
+
+impl<'s> Checker<'s> {
+    fn text(&self, span: Span) -> &'s str {
+        span_text(self.src, span).unwrap_or("…")
+    }
+
+    fn ident(&self, id: &Ident) -> &'s str {
+        self.text(id.span)
+    }
+
+    /// Source text for a diagnostic: [`quote`]d (capped and escaped). Use
+    /// this, never [`Self::text`], for any text shown to the user.
+    fn quoted(&self, span: Span) -> Cow<'s, str> {
+        quote(self.text(span))
+    }
+
+    fn error(&mut self, d: Diagnostic) {
+        self.diagnostics.push(d);
+    }
+
+    /// `this is Matrix[3,3] [1]` for secondary labels.
+    fn this_is(&self, v: &ValueTy) -> String {
+        format!(
+            "this is {}",
+            ValueTy {
+                dim: v.dim,
+                ty: self.env.shapes.apply_type(&v.ty),
+            }
+        )
+    }
+
+    /// Whether `t` is a matrix whose two dimensions are known to be equal
+    /// (the same number, or the same shape variable).
+    fn is_square_matrix(&self, t: &TensorType) -> bool {
+        match self.env.shapes.apply(t.shape()).dims() {
+            [rows, cols] => rows == cols,
+            _ => false,
+        }
+    }
+
+    /// `e`'s source text, parenthesized unless it is an atom (a name,
+    /// literal, unit literal, call, index, attribute, or parenthesized
+    /// expression), so it can be spliced into a larger suggested expression
+    /// such as `(K⁻¹)⁻¹` or `(-2) * ones(A)`.
+    fn operand_text(&self, e: &Expr) -> String {
+        let text = self.quoted(e.span);
+        match e.kind {
+            ExprKind::Binary { .. } | ExprKind::Unary { .. } | ExprKind::Inverse { .. } => {
+                format!("({text})")
+            }
+            _ => text.to_string(),
+        }
+    }
+
+    /// If `t` is Bool, reports that `what` needs a number (v0.1 has no
+    /// truthiness in either direction) and returns true.
+    fn reject_bool(&mut self, what: &str, e: &Expr, t: &Ty) -> bool {
+        if *t != Ty::Bool {
+            return false;
+        }
+        self.error(
+            Diagnostic::error(format!("`{what}` needs a number, found Bool"), e.span)
+                .with_label("this is Bool")
+                .with_note("v0.1 has no truthiness: a Bool is never a number"),
+        );
+        true
+    }
+
+    /// Checks one operand of `and`, `or`, or `not` (`kw`): it must be a
+    /// Bool. Numbers and tensors are errors (no truthiness), on the
+    /// operand's span.
+    fn bool_operand(&mut self, kw: &str, e: &Expr, t: Ty) {
+        let Ty::Value(v) = t else {
+            return; // Bool, or unknown (already reported).
+        };
+        let found = ValueTy {
+            dim: v.dim,
+            ty: self.env.shapes.apply_type(&v.ty),
+        };
+        let mut d = Diagnostic::error(
+            format!("`{kw}` needs a Bool operand, found {found}"),
+            e.span,
+        )
+        .with_label("not a Bool")
+        .with_note("v0.1 has no truthiness");
+        if v.is_scalar() {
+            let text = self.operand_text(e);
+            d = match zero_of(&v.dim) {
+                Some(zero) => d.with_help(format!("compare it instead, e.g. `{text} != {zero}`")),
+                None => d.with_help("compare it with a value of the same dimension"),
+            };
+        } else {
+            d = d.with_help("a condition must be a single `Bool` (shape `()`)");
+        }
+        self.error(d);
+    }
+
+    fn stmt(&mut self, kind: &StmtKind) {
+        match kind {
+            StmtKind::Expr(e) => {
+                self.expr(e);
+            }
+            StmtKind::Assign { target, value } => {
+                let t = self.expr(value);
+                let name = self.ident(target);
+                self.env.bind(name, t);
+            }
+            StmtKind::Binding { name, ty, value } => {
+                let declared = self.annotation(ty);
+                let found = value.as_ref().map(|v| (v, self.expr(v)));
+                let bound = self.binding_type(ty.span, declared, found);
+                let name = self.ident(name);
+                self.env.bind(name, bound);
+            }
+        }
+    }
+
+    /// The type a binding gives its name. The annotation fixes the shape;
+    /// the element dimension comes from the value (annotations can't state
+    /// units yet), or is dimensionless without a value.
+    fn binding_type(
+        &mut self,
+        ann_span: Span,
+        declared: Option<TensorType>,
+        found: Option<(&Expr, Ty)>,
+    ) -> Ty {
+        let Some(declared) = declared else {
+            return found.map_or(Ty::Unknown, |(_, t)| t);
+        };
+        let Some((value, found)) = found else {
+            return Ty::value(Dimension::DIMENSIONLESS, declared);
+        };
+        let Ty::Value(v) = found else {
+            return Ty::value(Dimension::DIMENSIONLESS, declared);
+        };
+        match self.env.shapes.unify(declared.shape(), v.ty.shape()) {
+            Ok(()) => Ty::value(v.dim, declared),
+            Err(e) => {
+                let label = self.this_is(&v);
+                self.error(
+                    Diagnostic::error(format!("mismatched shapes: {e}"), value.span)
+                        .with_label(label)
+                        .with_secondary(ann_span, "expected because of this annotation"),
+                );
+                Ty::value(v.dim, declared)
+            }
+        }
+    }
+
+    /// Reads a shape annotation: `Vector[n]`, `Matrix[m, n]`, or
+    /// `Tensor[d1, d2, ...]`, where each dimension is an integer literal or
+    /// a name (a shape variable).
+    fn annotation(&mut self, ty: &Expr) -> Option<TensorType> {
+        self.shadow_reported.clear();
+        const NOTE: &str =
+            "v0.1 annotations are `Vector[n]`, `Matrix[m, n]`, and `Tensor[d1, d2, ...]`";
+        let ExprKind::Index { base, indices } = &ty.kind else {
+            self.error(
+                Diagnostic::error(
+                    format!("unsupported type annotation `{}`", self.quoted(ty.span)),
+                    ty.span,
+                )
+                .with_note(NOTE),
+            );
+            return None;
+        };
+        let kind = match &base.kind {
+            ExprKind::Name(id) => self.ident(id),
+            _ => "",
+        };
+        let want = match kind {
+            "Vector" => Some(1),
+            "Matrix" => Some(2),
+            "Tensor" => None,
+            _ => {
+                self.error(
+                    Diagnostic::error(
+                        format!("unsupported type annotation `{}`", self.quoted(ty.span)),
+                        base.span,
+                    )
+                    .with_note(NOTE),
+                );
+                return None;
+            }
+        };
+        if let Some(n) = want {
+            if indices.len() != n {
+                self.error(Diagnostic::error(
+                    format!(
+                        "`{kind}` takes {n} dimension{}, found {}",
+                        if n == 1 { "" } else { "s" },
+                        indices.len()
+                    ),
+                    ty.span,
+                ));
+                return None;
+            }
+        }
+        let mut dims = Vec::with_capacity(indices.len());
+        let mut ok = true;
+        for ix in indices {
+            match self.shape_dim(ix) {
+                Some(d) => dims.push(d),
+                None => ok = false,
+            }
+        }
+        ok.then(|| TensorType::untagged(Shape::new(dims)))
+    }
+
+    fn shape_dim(&mut self, ix: &Expr) -> Option<ShapeDim> {
+        match &strip_parens(ix).kind {
+            ExprKind::Literal(Literal::Int(span)) => match self.text(*span).parse::<u64>() {
+                Ok(n) => Some(ShapeDim::Known(n)),
+                Err(_) => {
+                    self.error(Diagnostic::error(
+                        format!("shape dimension `{}` is too large", self.quoted(*span)),
+                        *span,
+                    ));
+                    None
+                }
+            },
+            ExprKind::Name(id) => {
+                let name = self.ident(id);
+                if self.env.names.contains_key(name) {
+                    if self.shadow_reported.iter().any(|n| n == name) {
+                        return None; // one error per name per annotation
+                    }
+                    self.shadow_reported.push(name.to_string());
+                    // `N = 3` then `Matrix[N, N]`: the size variable is not
+                    // the value 3, so reusing the name is an error.
+                    self.error(
+                        Diagnostic::error(
+                            format!(
+                                "size variable `{}` has the same name as a value in scope",
+                                quote(name)
+                            ),
+                            id.span,
+                        )
+                        .with_label("size variable")
+                        .with_help("size variables are separate from values"),
+                    );
+                    return None;
+                }
+                Some(ShapeDim::Var(self.env.shape_var(name)))
+            }
+            ExprKind::Binary {
+                op: BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Pow,
+                ..
+            } => {
+                self.error(
+                    Diagnostic::error(
+                        format!(
+                            "shape arithmetic like `{}` is not supported in v0.1",
+                            self.quoted(ix.span)
+                        ),
+                        ix.span,
+                    )
+                    .with_note("v0.1 shapes are equality constraints only"),
+                );
+                None
+            }
+            _ => {
+                self.error(Diagnostic::error(
+                    format!(
+                        "a shape dimension must be a non-negative integer or a name, found `{}`",
+                        self.quoted(ix.span)
+                    ),
+                    ix.span,
+                ));
+                None
+            }
+        }
+    }
+
+    fn expr(&mut self, e: &Expr) -> Ty {
+        match &e.kind {
+            ExprKind::Literal(lit) => match lit {
+                Literal::Int(_) | Literal::Float(_) => Ty::scalar(Dimension::DIMENSIONLESS),
+                Literal::Bool { .. } => Ty::Bool,
+                Literal::Str(_) => Ty::Unknown,
+            },
+            ExprKind::BoolOp { op, operands, .. } => {
+                // Flat: a long chain is a loop here, not recursion.
+                for operand in operands {
+                    let t = self.expr(operand);
+                    self.bool_operand(op.keyword(), operand, t);
+                }
+                Ty::Bool
+            }
+            ExprKind::UnitLiteral { unit, .. } => match self.unit(unit) {
+                Some(d) => Ty::scalar(d),
+                None => Ty::Unknown,
+            },
+            ExprKind::Name(id) => {
+                let name = self.ident(id);
+                match self.env.get(name) {
+                    Some(t) => t,
+                    None => {
+                        let mut d = Diagnostic::error(
+                            format!("cannot find `{}` in this scope", quote(name)),
+                            id.span,
+                        )
+                        .with_label("not defined");
+                        if matches!(name, "True" | "False") {
+                            d = d.with_help("Sky writes booleans as `true`/`false`");
+                        }
+                        self.error(d);
+                        Ty::Unknown
+                    }
+                }
+            }
+            ExprKind::Paren(inner) => self.expr(inner),
+            ExprKind::Unary {
+                op,
+                op_span: _,
+                operand,
+            } => {
+                let t = self.expr(operand);
+                if *op == UnaryOp::Not {
+                    self.bool_operand("not", operand, t);
+                    return Ty::Bool;
+                }
+                if matches!(op, UnaryOp::Neg | UnaryOp::Pos)
+                    && self.reject_bool(op_sym(*op), operand, &t)
+                {
+                    return Ty::Unknown;
+                }
+                match (op, t) {
+                    (UnaryOp::Pos, t @ Ty::Value(_)) => t,
+                    (UnaryOp::Neg, Ty::Value(v)) => self.retag(v, negated_tags),
+                    _ => Ty::Unknown,
+                }
+            }
+            ExprKind::Inverse { operand, op_span } => {
+                let t = self.expr(operand);
+                if self.reject_bool("⁻¹", operand, &t) {
+                    return Ty::Unknown;
+                }
+                self.invert(t, *op_span, operand.span)
+            }
+            ExprKind::Call { callee, args } => {
+                if let Some(arg) = self.inv_call(callee, args) {
+                    let t = self.expr(arg);
+                    return self.invert(t, callee.span, arg.span);
+                }
+                self.expr(callee);
+                for a in args {
+                    self.expr(a);
+                }
+                Ty::Unknown
+            }
+            ExprKind::Index { base, indices } => {
+                self.expr(base);
+                for i in indices {
+                    self.expr(i);
+                }
+                Ty::Unknown
+            }
+            ExprKind::Attribute { base, .. } => {
+                self.expr(base);
+                Ty::Unknown
+            }
+            ExprKind::Binary {
+                op,
+                op_span,
+                lhs,
+                rhs,
+            } => match op {
+                BinaryOp::MatMul => self.matmul(e.span, *op_span, lhs, rhs),
+                BinaryOp::Pow => self.pow(*op_span, lhs, rhs),
+                _ => {
+                    let l = self.expr(lhs);
+                    let r = self.expr(rhs);
+                    self.binary(*op, *op_span, (lhs, l), (rhs, r))
+                }
+            },
+        }
+    }
+
+    /// `inv(x)` with exactly one argument: the function spelling of `x⁻¹`.
+    fn inv_call<'e>(&self, callee: &Expr, args: &'e [Expr]) -> Option<&'e Expr> {
+        match (&callee.kind, args) {
+            (ExprKind::Name(id), [arg])
+                if self.ident(id) == "inv" && self.env.get("inv").is_none() =>
+            {
+                Some(arg)
+            }
+            _ => None,
+        }
+    }
+
+    fn unit(&mut self, u: &UnitExpr) -> Option<Dimension> {
+        let r = match u {
+            UnitExpr::Name(id) => {
+                let name = self.ident(id);
+                return match lookup(name) {
+                    Some(unit) => Some(unit.dim),
+                    None => {
+                        let mut d =
+                            Diagnostic::error(format!("unknown unit `{}`", quote(name)), id.span);
+                        if let Some(s) = unit_suggestion(name) {
+                            d = d.with_help(format!("did you mean `{s}`?"));
+                        }
+                        self.error(d);
+                        None
+                    }
+                };
+            }
+            UnitExpr::Mul { lhs, rhs, .. } => {
+                let (a, b) = (self.unit(lhs), self.unit(rhs));
+                a?.checked_mul(b?)
+            }
+            UnitExpr::Div { lhs, rhs, .. } => {
+                let (a, b) = (self.unit(lhs), self.unit(rhs));
+                a?.checked_div(b?)
+            }
+            UnitExpr::Pow {
+                base,
+                num,
+                den,
+                exponent_span,
+                ..
+            } => {
+                let b = self.unit(base)?;
+                let exp = i64::try_from(*den)
+                    .ok()
+                    .and_then(|den| Rational::checked_new(*num, den).ok());
+                let Some(exp) = exp else {
+                    self.overflow(*exponent_span);
+                    return None;
+                };
+                b.pow_rat(exp)
+            }
+        };
+        match r {
+            Ok(d) => Some(d),
+            Err(_) => {
+                self.overflow(u.span());
+                None
+            }
+        }
+    }
+
+    fn overflow(&mut self, span: Span) {
+        self.error(Diagnostic::error("dimension exponent too large", span));
+    }
+
+    /// Keeps the shape and dimension, maps the tags.
+    fn retag(&mut self, v: ValueTy, rule: fn(TagSet) -> TagSet) -> Ty {
+        let tags = rule(v.ty.tags());
+        let shape = v.ty.shape().clone();
+        let ty = TensorType::tagged(&mut self.env.shapes, shape.clone(), tags)
+            .unwrap_or_else(|_| TensorType::untagged(shape));
+        Ty::value(v.dim, ty)
+    }
+
+    fn invert(&mut self, t: Ty, op_span: Span, operand: Span) -> Ty {
+        let Ty::Value(v) = t else {
+            return Ty::Unknown;
+        };
+        let Ok(dim) = v.dim.inverse() else {
+            self.overflow(op_span.join(operand));
+            return Ty::Unknown;
+        };
+        match inverse(&mut self.env.shapes, &v.ty) {
+            Ok(ty) => Ty::value(dim, ty),
+            Err(e) => {
+                let label = self.this_is(&v);
+                self.error(
+                    Diagnostic::error(e.to_string(), op_span).with_secondary(operand, label),
+                );
+                Ty::Unknown
+            }
+        }
+    }
+
+    fn matmul(&mut self, span: Span, op_span: Span, lhs: &Expr, rhs: &Expr) -> Ty {
+        // For the rewrite, keep the type of `A` in `A⁻¹` (or `inv(A)`).
+        let inner = strip_parens(lhs);
+        let inverted = match &inner.kind {
+            ExprKind::Inverse { operand, op_span } => Some((&**operand, *op_span)),
+            ExprKind::Call { callee, args } => {
+                self.inv_call(callee, args).map(|a| (a, callee.span))
+            }
+            _ => None,
+        };
+        let (a, l) = match inverted {
+            Some((operand, inv_span)) => {
+                let a = self.expr(operand);
+                let l = self.invert(a.clone(), inv_span, operand.span);
+                (Some((operand, a)), l)
+            }
+            None => (None, self.expr(lhs)),
+        };
+        let r = self.expr(rhs);
+        let lb = self.reject_bool("@", lhs, &l);
+        if self.reject_bool("@", rhs, &r) || lb {
+            return Ty::Unknown;
+        }
+        let (Ty::Value(lv), Ty::Value(rv)) = (l, r) else {
+            return Ty::Unknown;
+        };
+        let Ok(dim) = lv.dim.checked_mul(rv.dim) else {
+            self.overflow(span);
+            return Ty::Unknown;
+        };
+        if let Some((operand, Ty::Value(av))) = a {
+            if let Some(rewrite) =
+                cholesky_rewrite(MatmulLhs::Inverse(&av.ty), &rv.ty, &self.env.shapes)
+            {
+                if self.rewrites.len() < MAX_STORED_REWRITES {
+                    let rewrite = self.name_operands(rewrite, operand, rhs);
+                    self.rewrites.push(RewriteSite {
+                        span,
+                        matrix: operand.span,
+                        rhs: rhs.span,
+                        rewrite,
+                    });
+                } else {
+                    self.rewrites_omitted += 1;
+                }
+            }
+        }
+        match matmul(&mut self.env.shapes, &lv.ty, &rv.ty) {
+            Ok(ty) => Ty::value(dim, ty),
+            Err(e) => {
+                let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
+                self.error(
+                    Diagnostic::error(e.to_string(), op_span)
+                        .with_secondary(lhs.span, ll)
+                        .with_secondary(rhs.span, rl),
+                );
+                Ty::Unknown
+            }
+        }
+    }
+
+    /// Replaces the explanation's placeholder names `A` and `b` with the
+    /// operands' source text: `K is Matrix[3,3] and PositiveDefinite, f is
+    /// Vector[3]`. In formulas a compound operand is parenthesized.
+    fn name_operands(&self, rewrite: Rewrite, matrix: &Expr, rhs: &Expr) -> Rewrite {
+        let Rewrite::CholeskySolve { a, b, result, .. } = rewrite;
+        let (a_text, b_text) = (self.quoted(matrix.span), self.quoted(rhs.span));
+        let (a_f, b_f) = (self.operand_text(matrix), self.operand_text(rhs));
+        let explanation = format!(
+            "rewrite `{a_f}⁻¹ @ {b_f}` to a Cholesky solve: {a_text} is {a} and PositiveDefinite, \
+             {b_text} is {b}. Factor {a_f} = L·Lᵀ (L lower-triangular), solve L·y = {b_f}, \
+             then Lᵀ·x = y. x = {a_f}⁻¹·{b_f} is {result}, and {a_f}⁻¹ is never formed."
+        );
+        Rewrite::CholeskySolve {
+            a,
+            b,
+            result,
+            explanation,
+        }
+    }
+
+    /// A constant exponent: an integer literal, possibly negated or
+    /// parenthesized, or a quotient of two such (`(1/2)`).
+    fn const_exponent(&self, e: &Expr) -> Option<Rational> {
+        match &e.kind {
+            ExprKind::Literal(Literal::Int(span)) => {
+                self.text(*span).parse::<i64>().ok().map(Rational::integer)
+            }
+            ExprKind::Paren(inner) => self.const_exponent(inner),
+            ExprKind::Unary {
+                op: UnaryOp::Neg,
+                operand,
+                ..
+            } => self.const_exponent(operand)?.checked_neg().ok(),
+            ExprKind::Unary {
+                op: UnaryOp::Pos,
+                operand,
+                ..
+            } => self.const_exponent(operand),
+            ExprKind::Binary {
+                op: BinaryOp::Div,
+                lhs,
+                rhs,
+                ..
+            } => {
+                let (a, b) = (self.const_exponent(lhs)?, self.const_exponent(rhs)?);
+                if b.is_zero() {
+                    return None;
+                }
+                a.checked_div(b).ok()
+            }
+            _ => None,
+        }
+    }
+
+    fn pow(&mut self, op_span: Span, base: &Expr, exp: &Expr) -> Ty {
+        let b = self.expr(base);
+        let x = self.expr(exp);
+        let bb = self.reject_bool("^", base, &b);
+        if self.reject_bool("^", exp, &x) || bb {
+            return Ty::Unknown;
+        }
+        let Ty::Value(bv) = b else {
+            return Ty::Unknown;
+        };
+        let power_span = op_span.join(exp.span);
+        let constant = self.const_exponent(exp);
+        if !bv.is_scalar() {
+            let base_text = self.quoted(base.span);
+            let rank = bv.ty.shape().rank();
+            let label = self.this_is(&bv);
+            let d = if rank == 2 && constant == Some(Rational::integer(-1)) {
+                Diagnostic::error("`^-1` does not invert a matrix", power_span)
+                    .with_label("a power, not the inverse operator")
+                    .with_secondary(base.span, label)
+                    .with_help(format!("write `{base_text}⁻¹` or `inv({base_text})`"))
+            } else {
+                let mut d = Diagnostic::error(
+                    format!("cannot raise a {} to a power", rank_noun(rank)),
+                    power_span,
+                )
+                .with_secondary(base.span, label)
+                .with_note("`^` needs a scalar base in v0.1");
+                if rank == 1 && constant == Some(Rational::integer(2)) {
+                    d = d.with_help(format!(
+                        "for the squared magnitude write `{base_text} @ {base_text}`"
+                    ));
+                } else if rank == 2 {
+                    d = d.with_help("use `@` for matrix products");
+                }
+                d
+            };
+            self.error(d);
+            return Ty::Unknown;
+        }
+        match x {
+            Ty::Value(xv) if !xv.is_scalar() => {
+                let label = self.this_is(&xv);
+                self.error(
+                    Diagnostic::error("the exponent must be a scalar", exp.span).with_label(label),
+                );
+                return Ty::Unknown;
+            }
+            Ty::Value(xv) if !xv.dim.is_dimensionless() => {
+                self.error(
+                    Diagnostic::error("the exponent must be dimensionless", exp.span)
+                        .with_label(format!("this is {}", describe(&xv.dim))),
+                );
+                return Ty::Unknown;
+            }
+            _ => {}
+        }
+        match constant {
+            Some(r) => match bv.dim.pow_rat(r) {
+                Ok(d) => Ty::scalar(d),
+                Err(_) => {
+                    self.overflow(base.span.join(exp.span));
+                    Ty::Unknown
+                }
+            },
+            None if bv.dim.is_dimensionless() => Ty::scalar(Dimension::DIMENSIONLESS),
+            None => {
+                self.error(
+                    Diagnostic::error(
+                        "the exponent must be a constant number when the base has a unit",
+                        exp.span,
+                    )
+                    .with_secondary(base.span, format!("this is {}", describe(&bv.dim))),
+                );
+                Ty::Unknown
+            }
+        }
+    }
+
+    fn binary(&mut self, op: BinaryOp, op_span: Span, l: (&Expr, Ty), r: (&Expr, Ty)) -> Ty {
+        let ((le, lt), (re, rt)) = (l, r);
+        match (&lt, &rt) {
+            (Ty::Bool, Ty::Bool) if matches!(op, BinaryOp::Eq | BinaryOp::Ne) => return Ty::Bool,
+            (Ty::Bool, _) | (_, Ty::Bool) => {
+                // `==`/`!=` between a Bool and an unknown operand may be
+                // fine; stay silent rather than guess.
+                let eq = matches!(op, BinaryOp::Eq | BinaryOp::Ne);
+                if !(eq && (lt == Ty::Unknown || rt == Ty::Unknown)) {
+                    self.reject_bool(op.symbol(), le, &lt);
+                    self.reject_bool(op.symbol(), re, &rt);
+                }
+                return Ty::Unknown;
+            }
+            _ => {}
+        }
+        let (Ty::Value(lv), Ty::Value(rv)) = (lt, rt) else {
+            return Ty::Unknown;
+        };
+        match op {
+            BinaryOp::Add | BinaryOp::Sub => self.additive(op, op_span, (le, lv), (re, rv)),
+            BinaryOp::Mul | BinaryOp::Div => self.multiplicative(op, op_span, (le, lv), (re, rv)),
+            _ if op.is_comparison() => {
+                if !lv.is_scalar() || !rv.is_scalar() {
+                    let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
+                    self.error(
+                        Diagnostic::error(
+                            format!("`{}` needs scalar operands", op.symbol()),
+                            op_span,
+                        )
+                        .with_secondary(le.span, ll)
+                        .with_secondary(re.span, rl),
+                    );
+                    return Ty::Unknown;
+                }
+                if lv.dim != rv.dim {
+                    self.dim_mismatch(
+                        format!(
+                            "cannot compare {} and {}",
+                            describe(&lv.dim),
+                            describe(&rv.dim)
+                        ),
+                        op,
+                        op_span,
+                        (le, &lv),
+                        (re, &rv),
+                    );
+                }
+                Ty::Bool
+            }
+            _ => Ty::Unknown,
+        }
+    }
+
+    fn dim_mismatch(
+        &mut self,
+        message: String,
+        op: BinaryOp,
+        op_span: Span,
+        l: (&Expr, &ValueTy),
+        r: (&Expr, &ValueTy),
+    ) {
+        self.error(
+            Diagnostic::error(message, op_span)
+                .with_label("mismatched dimensions")
+                .with_secondary(l.0.span, describe(&l.1.dim))
+                .with_secondary(r.0.span, describe(&r.1.dim))
+                .with_note(format!(
+                    "both operands of `{}` must have the same dimension",
+                    op.symbol()
+                ))
+                .with_help("convert one side, or fix the unit"),
+        );
+    }
+
+    fn additive(
+        &mut self,
+        op: BinaryOp,
+        op_span: Span,
+        l: (&Expr, ValueTy),
+        r: (&Expr, ValueTy),
+    ) -> Ty {
+        let ((le, lv), (re, rv)) = (l, r);
+        let sym = op.symbol();
+        match (lv.is_scalar(), rv.is_scalar()) {
+            (true, true) => {}
+            (false, false) => {
+                if let Err(e) = elementwise(&mut self.env.shapes, &lv.ty, &rv.ty) {
+                    let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
+                    self.error(
+                        Diagnostic::error(e.to_string(), op_span)
+                            .with_secondary(le.span, ll)
+                            .with_secondary(re.span, rl),
+                    );
+                    return Ty::Unknown;
+                }
+            }
+            (left_scalar, _) => {
+                let (arr, arr_e, sc_e) = if left_scalar {
+                    (&rv, re, le)
+                } else {
+                    (&lv, le, re)
+                };
+                let a = self.quoted(arr_e.span);
+                let noun = rank_noun(arr.ty.shape().rank());
+                let message = match (op, left_scalar) {
+                    (BinaryOp::Add, false) => format!("cannot add a scalar to a {noun}"),
+                    (BinaryOp::Add, true) => format!("cannot add a {noun} to a scalar"),
+                    (_, false) => format!("cannot subtract a scalar from a {noun}"),
+                    (_, true) => format!("cannot subtract a {noun} from a scalar"),
+                };
+                let c = self.operand_text(sc_e);
+                let (ones, identity) = if left_scalar {
+                    (format!("{c} * ones({a}) {sym} {a}"), format!("I {sym} {a}"))
+                } else {
+                    (format!("{a} {sym} {c} * ones({a})"), format!("{a} {sym} I"))
+                };
+                let sc = if left_scalar { &lv } else { &rv };
+                let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
+                let mut d = Diagnostic::error(message, op_span)
+                    .with_label("no broadcasting between a scalar and an array")
+                    .with_secondary(le.span, ll)
+                    .with_secondary(re.span, rl);
+                if sc.dim != arr.dim {
+                    // Neither rewrite would type-check, so don't offer one.
+                    d = d.with_note(format!(
+                        "the dimensions differ as well: {} and {}",
+                        describe(&sc.dim),
+                        describe(&arr.dim)
+                    ));
+                } else if self.is_square_matrix(&arr.ty) {
+                    d = d.with_help(format!(
+                        "write `{ones}` for every element, or `{identity}` for the identity"
+                    ));
+                } else {
+                    d = d.with_help(format!("write `{ones}` for every element"));
+                }
+                self.error(d);
+                return Ty::Unknown;
+            }
+        }
+        if lv.dim != rv.dim {
+            let message = if op == BinaryOp::Add {
+                format!("cannot add {} and {}", describe(&lv.dim), describe(&rv.dim))
+            } else {
+                format!(
+                    "cannot subtract {} from {}",
+                    describe(&rv.dim),
+                    describe(&lv.dim)
+                )
+            };
+            self.dim_mismatch(message, op, op_span, (le, &lv), (re, &rv));
+            return Ty::Unknown;
+        }
+        // Elementwise results carry no tags (see `rules::elementwise`).
+        let shape = self.env.shapes.apply(lv.ty.shape());
+        Ty::value(lv.dim, TensorType::untagged(shape))
+    }
+
+    fn multiplicative(
+        &mut self,
+        op: BinaryOp,
+        op_span: Span,
+        l: (&Expr, ValueTy),
+        r: (&Expr, ValueTy),
+    ) -> Ty {
+        let ((le, lv), (re, rv)) = (l, r);
+        let dim = match op {
+            BinaryOp::Mul => lv.dim.checked_mul(rv.dim),
+            _ => lv.dim.checked_div(rv.dim),
+        };
+        let Ok(dim) = dim else {
+            self.overflow(le.span.join(re.span));
+            return Ty::Unknown;
+        };
+        match (lv.is_scalar(), rv.is_scalar()) {
+            (true, true) => Ty::scalar(dim),
+            // `c * A`, `A * c`, `A / c`: scale every element.
+            (true, false) if op == BinaryOp::Mul => {
+                self.retag(ValueTy { dim, ty: rv.ty }, scaled_tags)
+            }
+            (false, true) => self.retag(ValueTy { dim, ty: lv.ty }, scaled_tags),
+            (true, false) => {
+                let (a, rank) = (self.quoted(re.span), rv.ty.shape().rank());
+                let label = self.this_is(&rv);
+                let mut d = Diagnostic::error(
+                    format!("cannot divide a scalar by a {}", rank_noun(rank)),
+                    op_span,
+                )
+                .with_secondary(re.span, label);
+                if rank == 2 {
+                    d = d.with_help(format!("for the matrix inverse write `{a}⁻¹`"));
+                }
+                self.error(d);
+                Ty::Unknown
+            }
+            (false, false) => {
+                let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
+                let verb = if op == BinaryOp::Mul {
+                    "multiply"
+                } else {
+                    "divide"
+                };
+                let mut d = Diagnostic::error(
+                    format!("cannot {verb} two arrays with `{}`", op.symbol()),
+                    op_span,
+                )
+                .with_secondary(le.span, ll)
+                .with_secondary(re.span, rl)
+                .with_note("v0.1 has no elementwise `*` or `/` between arrays");
+                if op == BinaryOp::Mul {
+                    d = d.with_help("use `@` for the matrix product");
+                }
+                self.error(d);
+                Ty::Unknown
+            }
+        }
+    }
+}
+
+/// The symbol of a unary arithmetic operator, for messages.
+fn op_sym(op: UnaryOp) -> &'static str {
+    match op {
+        UnaryOp::Neg => "-",
+        UnaryOp::Pos => "+",
+        UnaryOp::Partial => "∂",
+        UnaryOp::Nabla => "∇",
+        UnaryOp::Not => "not",
+    }
+}
+
+/// A zero of dimension `d` written as Sky source (`0`, `0 m`, `0 kg*m/s^2`),
+/// for help text. Uses a coherent table unit when one has exactly this
+/// dimension, otherwise composes m, kg, s and K. `None` if `d` involves a
+/// base dimension without a table unit (current, amount, luminosity).
+fn zero_of(d: &Dimension) -> Option<String> {
+    use sky_units::{BaseDim, UNITS};
+    if d.is_dimensionless() {
+        return Some("0".to_string());
+    }
+    if let Some(u) = UNITS.iter().find(|u| u.dim == *d && u.scale == 1.0) {
+        return Some(format!("0 {}", u.name));
+    }
+    let symbol = |b: BaseDim| match b {
+        BaseDim::Length => Some("m"),
+        BaseDim::Mass => Some("kg"),
+        BaseDim::Time => Some("s"),
+        BaseDim::Temperature => Some("K"),
+        _ => None,
+    };
+    let power = |sym: &str, e: Rational| {
+        if e == Rational::ONE {
+            sym.to_string()
+        } else if e.is_integer() {
+            format!("{sym}^{}", e.numer())
+        } else {
+            format!("{sym}^({}/{})", e.numer(), e.denom())
+        }
+    };
+    let (mut pos, mut neg) = (Vec::new(), Vec::new());
+    // SI order for derived units: kg·m·s⁻²·K.
+    let order = [
+        BaseDim::Mass,
+        BaseDim::Length,
+        BaseDim::Time,
+        BaseDim::Temperature,
+        BaseDim::Current,
+        BaseDim::Amount,
+        BaseDim::Luminosity,
+    ];
+    for b in order {
+        let e = d.exponent(b);
+        if e.is_zero() {
+            continue;
+        }
+        let sym = symbol(b)?;
+        if e.numer() > 0 {
+            pos.push(power(sym, e));
+        } else {
+            neg.push((sym, e));
+        }
+    }
+    let unit = if pos.is_empty() {
+        neg.iter()
+            .map(|&(s, e)| power(s, e))
+            .collect::<Vec<_>>()
+            .join("*")
+    } else {
+        let mut u = pos.join("*");
+        for (s, e) in neg {
+            u.push('/');
+            u.push_str(&power(s, e.checked_neg().ok()?));
+        }
+        u
+    };
+    Some(format!("0 {unit}"))
+}
+
+/// Full names people are likely to write, mapped to the table symbol. Only
+/// used for `help:` text; the unit table itself has no aliases in v0.1.
+fn unit_suggestion(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "meter" | "meters" | "metre" | "metres" => "m",
+        "kilometer" | "kilometers" | "kilometre" | "kilometres" => "km",
+        "second" | "seconds" | "sec" => "s",
+        "minute" | "minutes" => "min",
+        "hour" | "hours" | "hr" => "h",
+        "kilogram" | "kilograms" => "kg",
+        "kelvin" => "K",
+        "joule" | "joules" => "J",
+        "parsec" | "parsecs" => "pc",
+        "radian" | "radians" => "rad",
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tags::Tag;
+
+    fn check_src(src: &str, env: Env) -> Checked {
+        let lexed = sky_syntax_lex(src);
+        let (module, errors) = sky_ast::parse_module(&lexed, src);
+        assert!(errors.is_empty(), "{errors:#?}");
+        check_module_with(&module, src, env)
+    }
+
+    fn sky_syntax_lex(src: &str) -> Vec<sky_ast::Token> {
+        sky_syntax::lex(src).expect("lexes").tokens
+    }
+
+    fn span_of(src: &str, needle: &str) -> Span {
+        let start = src.find(needle).expect("needle") as u32;
+        Span::new(start, start + needle.len() as u32)
+    }
+
+    fn pd_env() -> Env {
+        let mut env = Env::new();
+        let n = env.shape_var("N");
+        env.bind_array(
+            "A",
+            Shape::matrix(n.clone(), n),
+            TagSet::of(Tag::PositiveDefinite),
+            Dimension::DIMENSIONLESS,
+        )
+        .unwrap();
+        env.bind_array("b", Shape::vector(3u64), TagSet::EMPTY, Dimension::LENGTH)
+            .unwrap();
+        env
+    }
+
+    #[test]
+    fn rewrite_sites_carry_spans() {
+        let src = "x = A⁻¹ @ b\n";
+        let c = check_src(src, pd_env());
+        assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
+        assert_eq!(c.rewrites.len(), 1);
+        let site = &c.rewrites[0];
+        assert_eq!(site.span, span_of(src, "A⁻¹ @ b"));
+        assert_eq!(site.matrix, span_of(src, "A"));
+        assert_eq!(site.rhs, span_of(src, "b"));
+        assert!(matches!(site.rewrite, Rewrite::CholeskySolve { .. }));
+        // N was solved from b's length; b's unit carries through.
+        assert_eq!(c.env.get("x").unwrap().to_string(), "Vector[3] [L]");
+    }
+
+    #[test]
+    fn parenthesized_inverse_still_rewrites_but_power_does_not() {
+        let c = check_src("x = (A⁻¹) @ b\n", pd_env());
+        assert_eq!(c.rewrites.len(), 1);
+        let src = "x = A^-1 @ b\n";
+        let c = check_src(src, pd_env());
+        assert!(c.rewrites.is_empty());
+        assert_eq!(c.diagnostics.len(), 1);
+        let d = &c.diagnostics[0];
+        assert_eq!(d.primary.span, span_of(src, "^-1"));
+        assert_eq!(d.help, vec!["write `A⁻¹` or `inv(A)`".to_string()]);
+    }
+
+    #[test]
+    fn rewrite_explanation_uses_operand_text() {
+        let mut env = Env::new();
+        env.bind_array(
+            "K",
+            Shape::matrix(3u64, 3u64),
+            TagSet::of(Tag::PositiveDefinite),
+            Dimension::DIMENSIONLESS,
+        )
+        .unwrap();
+        env.bind_array(
+            "f",
+            Shape::vector(3u64),
+            TagSet::EMPTY,
+            Dimension::DIMENSIONLESS,
+        )
+        .unwrap();
+        let c = check_src("u = K⁻¹ @ f\n", env);
+        let text = c.rewrites[0].rewrite.explanation();
+        assert!(
+            text.contains("K is Matrix[3,3] and PositiveDefinite, f is Vector[3]"),
+            "{text}"
+        );
+        assert!(!text.contains(" A ") && !text.contains(" b "), "{text}");
+    }
+
+    #[test]
+    fn identity_is_suggested_only_for_square_matrices() {
+        let mut env = pd_env();
+        env.bind_array(
+            "v",
+            Shape::vector(3u64),
+            TagSet::EMPTY,
+            Dimension::DIMENSIONLESS,
+        )
+        .unwrap();
+        env.bind_array(
+            "M",
+            Shape::matrix(3u64, 4u64),
+            TagSet::EMPTY,
+            Dimension::DIMENSIONLESS,
+        )
+        .unwrap();
+        let c = check_src("x = A + 2\ny = v + 2\nz = M + 2\nw = 2 m + b\n", env);
+        let help: Vec<Vec<String>> = c.diagnostics.iter().map(|d| d.help.clone()).collect();
+        assert_eq!(
+            help,
+            vec![
+                vec![
+                    "write `A + 2 * ones(A)` for every element, or `A + I` for the identity"
+                        .to_string()
+                ],
+                vec!["write `v + 2 * ones(v)` for every element".to_string()],
+                vec!["write `M + 2 * ones(M)` for every element".to_string()],
+                // b is in metres too: the `ones` form applies, `I` doesn't.
+                vec!["write `2 m * ones(b) + b` for every element".to_string()],
+            ]
+        );
+    }
+
+    #[test]
+    fn size_variable_rule_leaves_the_unit_n_alone() {
+        // `N` as a unit after a number never touches the value or size
+        // variable namespaces, whether or not the unit table has `N` yet.
+        let src = "N = 3 m\nF = 10 N\nA: Matrix[M, M]\n";
+        let c = check_src(src, Env::new());
+        assert!(
+            c.diagnostics
+                .iter()
+                .all(|d| !d.message.contains("size variable")),
+            "{:#?}",
+            c.diagnostics
+        );
+        match sky_units::lookup("N") {
+            Some(newton) => {
+                assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
+                assert_eq!(c.env.get("F"), Some(Ty::scalar(newton.dim)));
+            }
+            None => assert_eq!(c.diagnostics[0].message, "unknown unit `N`"),
+        }
+        // A size variable named like a value is reported once, at the
+        // first use in the annotation.
+        let src = "N = 3\nA: Matrix[N, N]\n";
+        let c = check_src(src, Env::new());
+        assert_eq!(c.diagnostics.len(), 1);
+        assert_eq!(c.diagnostics[0].primary.span, Span::new(16, 17));
+    }
+
+    #[test]
+    fn scalar_inverse_flips_the_dimension() {
+        let c = check_src("f = (2 s)⁻¹\ng = inv(3 m/s)\n", Env::new());
+        assert!(c.diagnostics.is_empty());
+        assert_eq!(c.env.get("f"), Some(Ty::scalar(Dimension::FREQUENCY)));
+        assert_eq!(
+            c.env.get("g"),
+            Some(Ty::scalar(Dimension::VELOCITY.inverse().unwrap()))
+        );
+    }
+
+    #[test]
+    fn unit_mismatch_spans() {
+        let src = "x = 5 m + 20 K\n";
+        let c = check_src(src, Env::new());
+        assert_eq!(c.diagnostics.len(), 1);
+        let d = &c.diagnostics[0];
+        assert_eq!(d.message, "cannot add length and temperature");
+        assert_eq!(d.primary.span, span_of(src, "+"));
+        let secondary: Vec<_> = d
+            .secondary
+            .iter()
+            .map(|l| (l.span, l.message.as_deref().unwrap_or("")))
+            .collect();
+        assert_eq!(
+            secondary,
+            vec![
+                (span_of(src, "5 m"), "length"),
+                (span_of(src, "20 K"), "temperature"),
+            ]
+        );
+        assert_eq!(c.env.get("x"), Some(Ty::Unknown));
+    }
+
+    #[test]
+    fn negation_and_scaling_tags() {
+        let mut env = Env::new();
+        env.bind_array(
+            "Q",
+            Shape::matrix(2u64, 2u64),
+            TagSet::of(Tag::Orthogonal),
+            Dimension::DIMENSIONLESS,
+        )
+        .unwrap();
+        let c = check_src("n = -Q\ns = 2 * Q\np = +Q\n", env);
+        assert!(c.diagnostics.is_empty());
+        let tags = |name: &str| match c.env.get(name) {
+            Some(Ty::Value(v)) => v.ty.tags(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(tags("n"), TagSet::of(Tag::Orthogonal));
+        assert_eq!(tags("s"), TagSet::EMPTY);
+        assert_eq!(tags("p"), TagSet::of(Tag::Orthogonal));
+    }
+
+    #[test]
+    fn errors_do_not_cascade() {
+        // One undefined name, one error: every use of the unknown result is
+        // silent.
+        let c = check_src("x = y + 1 m\nz = x * x @ x\n", Env::new());
+        assert_eq!(c.diagnostics.len(), 1, "{:#?}", c.diagnostics);
+        assert_eq!(c.diagnostics[0].message, "cannot find `y` in this scope");
+    }
+
+    #[test]
+    fn binding_value_must_match_the_annotation() {
+        let mut env = Env::new();
+        env.bind_array(
+            "B",
+            Shape::matrix(3u64, 5u64),
+            TagSet::EMPTY,
+            Dimension::MASS,
+        )
+        .unwrap();
+        let src = "A: Matrix[3, 4] = B\n";
+        let c = check_src(src, env);
+        assert_eq!(c.diagnostics.len(), 1);
+        assert_eq!(c.diagnostics[0].primary.span, span_of(src, "B"));
+        // The annotation wins for the shape; the value gives the unit.
+        assert_eq!(c.env.get("A").unwrap().to_string(), "Matrix[3,4] [M]");
+    }
+
+    #[test]
+    fn exponents_need_constants_when_the_base_has_a_unit() {
+        let mut env = Env::new();
+        env.bind("n", Ty::scalar(Dimension::DIMENSIONLESS));
+        let c = check_src("a = 2^n\nb = (3 m)^(1/2)\nc = (3 m)^n\n", env);
+        assert_eq!(c.diagnostics.len(), 1, "{:#?}", c.diagnostics);
+        assert_eq!(c.env.get("a"), Some(Ty::scalar(Dimension::DIMENSIONLESS)));
+        assert_eq!(
+            c.env.get("b"),
+            Some(Ty::scalar(
+                Dimension::LENGTH.pow_rat(Rational::new(1, 2)).unwrap()
+            ))
+        );
+    }
+
+    #[test]
+    fn exponent_overflow_is_a_diagnostic() {
+        let src = format!("x = (1 m^{})^2\n", i64::MAX);
+        let c = check_src(&src, Env::new());
+        assert_eq!(c.diagnostics.len(), 1);
+        assert_eq!(c.diagnostics[0].message, "dimension exponent too large");
+    }
+}

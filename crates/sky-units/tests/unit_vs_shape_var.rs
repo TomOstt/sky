@@ -4,7 +4,7 @@
 //! else is a name. These tests pin that, so adding `N` to the unit table
 //! cannot change how `Matrix[N, N]` parses.
 
-use sky_ast::{ast::span_text, Expr, ExprKind, Module, StmtKind, UnitExpr};
+use sky_ast::{ast::span_text, Expr, ExprKind, IndexItem, Module, StmtKind, UnitExpr};
 use sky_units::{lookup, Dimension};
 
 fn parse(src: &str) -> Module {
@@ -51,10 +51,12 @@ fn n_in_a_shape_annotation_is_a_name_not_a_unit() {
         let StmtKind::Binding { ty, .. } = &stmt.kind else {
             panic!("{stmt:?}");
         };
-        let ExprKind::Index { indices, .. } = &ty.kind else {
+        let ExprKind::Index { items, .. } = &ty.kind else {
             panic!("{ty:?}");
         };
-        for ix in indices {
+        let dims: Vec<&Expr> = items.iter().filter_map(IndexItem::as_expr).collect();
+        assert_eq!(dims.len(), 2, "{ty:?}");
+        for ix in dims {
             let ExprKind::Name(id) = &ix.kind else {
                 panic!("shape dim is not a plain name: {ix:?}");
             };
@@ -96,9 +98,11 @@ fn a_unit_literal_inside_a_shape_is_not_a_shape_variable() {
     let StmtKind::Binding { ty, .. } = &m.stmts[0].kind else {
         panic!();
     };
-    let ExprKind::Index { indices, .. } = &ty.kind else {
+    let ExprKind::Index { items, .. } = &ty.kind else {
         panic!();
     };
-    assert_eq!(unit_name(&indices[0], src), "N");
-    assert!(matches!(indices[1].kind, ExprKind::Name(_)));
+    let dims: Vec<&Expr> = items.iter().filter_map(IndexItem::as_expr).collect();
+    assert_eq!(dims.len(), 2, "{ty:?}");
+    assert_eq!(unit_name(dims[0], src), "N");
+    assert!(matches!(dims[1].kind, ExprKind::Name(_)));
 }

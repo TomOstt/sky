@@ -20,8 +20,9 @@
 //!   absolute or malformed paths, and stdlib shadowing. It opens the module
 //!   by a handle-relative walk from the root (`openat` with `O_NOFOLLOW` at
 //!   every level), checks each handle it holds (owned by the effective uid;
-//!   directories not world-writable unless sticky), and returns the open
-//!   file, so the module is never reopened by name.
+//!   directories not world-writable unless sticky; the module file not
+//!   world-writable at all), and returns the open file, so the module is
+//!   never reopened by name.
 //! - [`read_source`] and [`read_entry_file`] read a source from a handle:
 //!   regular files only, at most [`sky_syntax::MAX_SOURCE_BYTES`].
 

@@ -102,6 +102,13 @@ pub enum ImportError {
         path: PathBuf,
         mode: u32,
     },
+    /// The module file is world-writable (the sticky bit is irrelevant for
+    /// files).
+    WorldWritableFile {
+        module: String,
+        path: PathBuf,
+        mode: u32,
+    },
     /// Project imports need Unix handle-relative opens; elsewhere they are
     /// refused (fail closed).
     Unsupported { module: String },
@@ -125,7 +132,7 @@ pub enum ImportError {
 ///   Every handle is `fstat`ed as soon as it is opened. The root and each
 ///   directory must be a directory owned by `identity`'s effective uid and
 ///   must not be world-writable unless the sticky bit is set; the file must
-///   be a regular file owned by the effective uid. No symbolic link is
+///   be a regular file owned by the effective uid and not world-writable. No symbolic link is
 ///   followed anywhere below the root, so nothing can resolve outside it.
 /// - In [`Project::SingleFile`] mode every project import is an error.
 ///
@@ -204,6 +211,7 @@ pub(crate) enum Refusal {
     NotAFile,
     ForeignOwner { owner: u32 },
     WorldWritable { mode: u32 },
+    WorldWritableFile { mode: u32 },
 }
 
 /// The rule for the root and every directory on the way to a module: a
@@ -222,7 +230,9 @@ pub(crate) fn check_dir(f: Facts, euid: u32) -> Result<(), Refusal> {
     Ok(())
 }
 
-/// The rule for the module file: a regular file owned by `euid`.
+/// The rule for the module file: a regular file, owned by `euid`, and not
+/// world-writable (the sticky bit means nothing for a file). Group-writable
+/// is allowed, as for directories.
 #[cfg(unix)]
 pub(crate) fn check_file(f: Facts, euid: u32) -> Result<(), Refusal> {
     if !f.is_file {
@@ -230,6 +240,9 @@ pub(crate) fn check_file(f: Facts, euid: u32) -> Result<(), Refusal> {
     }
     if f.uid != euid {
         return Err(Refusal::ForeignOwner { owner: f.uid });
+    }
+    if f.mode & 0o002 != 0 {
+        return Err(Refusal::WorldWritableFile { mode: f.mode });
     }
     Ok(())
 }
@@ -248,6 +261,9 @@ impl Refusal {
                 euid,
             },
             Refusal::WorldWritable { mode } => ImportError::WorldWritable { module, path, mode },
+            Refusal::WorldWritableFile { mode } => {
+                ImportError::WorldWritableFile { module, path, mode }
+            }
         }
     }
 }
@@ -492,6 +508,13 @@ impl ImportError {
                 mode & 0o7777
             ))
             .with_note("any user can replace files in a world-writable directory that does not have the sticky bit")
+            .with_help(format!("remove write permission for others: chmod o-w {}", path.display())),
+            ImportError::WorldWritableFile { module, path, mode } => d(format!(
+                "refusing to import `{module}`: {} is writable by every user (mode {:04o})",
+                path.display(),
+                mode & 0o7777
+            ))
+            .with_note("any user can change a world-writable module file to code you did not write")
             .with_help(format!("remove write permission for others: chmod o-w {}", path.display())),
             ImportError::Unsupported { module } => d(format!(
                 "cannot import project module `{module}`: project imports are only supported on Unix"

@@ -289,6 +289,75 @@ fn world_writable_directory_with_sticky_bit_is_allowed() {
 }
 
 #[test]
+fn world_writable_module_file_is_refused() {
+    let t = TempDir::new("imp-wwfile");
+    let m = t.file("pkg/m.sky", "");
+    // Explicit modes, so the result does not depend on the umask.
+    chmod(&t.path().join("pkg"), 0o755);
+    chmod(&m, 0o666);
+    let err = resolve_import("pkg.m", &project(t.path()), STDLIB, &me(&t)).unwrap_err();
+    match &err {
+        ImportError::WorldWritableFile { path, mode, .. } => {
+            assert_eq!(path, &m);
+            assert_eq!(mode & 0o7777, 0o666);
+        }
+        other => panic!("expected WorldWritableFile, got {other:?}"),
+    }
+    let out = err
+        .to_diagnostic(Span::new(7, 12))
+        .render_to_string(&SourceFile::new("main.sky", "import pkg.m\n"));
+    assert_eq!(
+        out,
+        format!(
+            "\
+main.sky:1:8: error: refusing to import `pkg.m`: {p} is writable by every user (mode 0666)
+  |
+1 | import pkg.m
+  |        ^^^^^
+  = note: any user can change a world-writable module file to code you did not write
+  = help: remove write permission for others: chmod o-w {p}
+",
+            p = m.display()
+        )
+    );
+
+    // The sticky bit does not help a file; group-writable is allowed.
+    chmod(&m, 0o1666);
+    assert!(matches!(
+        resolve_import("pkg.m", &project(t.path()), STDLIB, &me(&t)),
+        Err(ImportError::WorldWritableFile { .. })
+    ));
+    chmod(&m, 0o664);
+    assert_eq!(
+        opened(resolve_import("pkg.m", &project(t.path()), STDLIB, &me(&t))).0,
+        m
+    );
+}
+
+#[test]
+fn world_writable_module_file_refusal_escapes_the_path() {
+    let t = TempDir::new("imp-wwfile-esc");
+    let root = t.dir("evil\u{1b}[2J\u{202E}proj");
+    let m = t.file("evil\u{1b}[2J\u{202E}proj/m.sky", "");
+    chmod(&m, 0o666);
+    let err = resolve_import("m", &project(&root), STDLIB, &me(&t)).unwrap_err();
+    assert!(
+        matches!(err, ImportError::WorldWritableFile { .. }),
+        "{err:?}"
+    );
+    let rendered = err
+        .to_diagnostic(Span::new(7, 8))
+        .render_to_string(&SourceFile::new("main.sky", "import m\n"));
+    for out in [rendered, err.to_string()] {
+        assert!(
+            out.contains("evil\\u{001B}[2J\\u{202E}proj/m.sky"),
+            "{out:?}"
+        );
+        assert!(!out.contains(['\u{1b}', '\u{202E}']), "{out:?}");
+    }
+}
+
+#[test]
 fn group_writable_directory_is_allowed() {
     // Out of scope for the agreed rule: only world-writable is refused.
     let t = TempDir::new("imp-gw");

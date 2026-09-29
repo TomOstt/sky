@@ -215,6 +215,21 @@ fn directory_rule() {
 #[test]
 fn file_rule() {
     assert_eq!(check_file(facts(false, 7, 0o644), 7), Ok(()));
+    assert_eq!(check_file(facts(false, 7, 0o664), 7), Ok(())); // group-writable: allowed, as for dirs
+    assert_eq!(
+        check_file(facts(false, 7, 0o666), 7),
+        Err(Refusal::WorldWritableFile { mode: 0o666 })
+    );
+    // The sticky bit does not make a world-writable file acceptable.
+    assert_eq!(
+        check_file(facts(false, 7, 0o1666), 7),
+        Err(Refusal::WorldWritableFile { mode: 0o1666 })
+    );
+    // Owner is checked before mode.
+    assert_eq!(
+        check_file(facts(false, 1000, 0o666), 7),
+        Err(Refusal::ForeignOwner { owner: 1000 })
+    );
     assert_eq!(
         check_file(facts(false, 1000, 0o644), 7),
         Err(Refusal::ForeignOwner { owner: 1000 })

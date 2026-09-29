@@ -1392,3 +1392,56 @@ fn deep_ifs(depth: usize) -> Module {
     ret(&mut b, vec![]);
     one_fn(b.finish())
 }
+
+/// `fn apply(A: Matrix[N, N], b: Vector[N]) -> Vector[N]` (returns `b`), and
+/// a `<main>` that calls it with the given argument sizes.
+fn generic_call(a_size: u64, b_size: u64, result_size: u64) -> Module {
+    use sky_ir::NumberType;
+    use sky_types::{ShapeDim, ShapeVar};
+    let n = ShapeDim::Var(ShapeVar::from_parts(7, "N"));
+    let num = |shape: Shape| {
+        Type::Number(NumberType {
+            dim: Dimension::DIMENSIONLESS,
+            shape,
+            tags: TagSet::EMPTY,
+            repr: Repr::Unchosen,
+        })
+    };
+    let mat_n = num(Shape::new(vec![n.clone(), n.clone()]));
+    let vec_n = num(Shape::new(vec![n]));
+    let mut g = FunctionBuilder::new("apply", vec![mat_n, vec_n.clone()], vec![vec_n], sp(0, 10));
+    let b_param = g.params()[1];
+    g.op(OpKind::Return, vec![b_param], vec![], sp(9, 10));
+    let apply = g.finish();
+
+    let mat = num(Shape::matrix(a_size, a_size));
+    let vect = num(Shape::vector(b_size));
+    let mut m = FunctionBuilder::new(Module::MAIN, vec![mat, vect], vec![], sp(20, 40));
+    let [a, b] = m.params()[..] else {
+        unreachable!()
+    };
+    m.op(
+        OpKind::Call {
+            callee: "apply".into(),
+        },
+        vec![a, b],
+        vec![num(Shape::vector(result_size))],
+        sp(21, 30),
+    );
+    m.op(OpKind::Return, vec![], vec![], sp(39, 40));
+    module(vec![m.finish(), apply])
+}
+
+#[test]
+fn a_call_instantiates_the_callees_size_variables() {
+    // N = 3 at this call, consistently for both arguments and the result;
+    // another call could use N = 4.
+    accepts(&generic_call(3, 3, 3));
+    accepts(&generic_call(4, 4, 4));
+}
+
+#[test]
+fn a_size_variable_must_be_consistent_within_one_call() {
+    rejects(&generic_call(3, 4, 3), "argument 1 of the call to `apply`");
+    rejects(&generic_call(3, 3, 4), "result 0 of the call to `apply`");
+}

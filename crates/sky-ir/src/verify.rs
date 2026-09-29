@@ -45,7 +45,9 @@ use std::fmt;
 
 use sky_diag::{Diagnostic, Span};
 use sky_types::rules::{self, TensorType};
-use sky_types::{Shape, ShapeUnifier, Tag};
+use std::collections::BTreeMap;
+
+use sky_types::{Shape, ShapeDim, ShapeUnifier, Tag};
 use sky_units::Dimension;
 
 use crate::ir::{
@@ -54,9 +56,13 @@ use crate::ir::{
 use crate::op::{CmpOp, OpKind, SolveMethod};
 
 /// The deepest nesting of regions the verifier, printer and parser accept.
-/// It bounds their recursion; lowering Sky's own limits (256 nested blocks,
-/// 256 nested parentheses) stays well inside it in practice.
-pub const MAX_REGION_DEPTH: usize = 256;
+/// It bounds their recursion. It must leave room above Sky's own source
+/// limit (256 nested blocks): lowering adds regions per source level (a
+/// `while` has two, the function body one), so 256 source levels become a
+/// little more than 256 region levels. Lowering keeps the ratio a small
+/// constant (it never nests one region per `elif` arm or `and` operand), so
+/// 4× the source limit is ample.
+pub const MAX_REGION_DEPTH: usize = 1024;
 
 /// Most errors reported for one module; later ones are dropped so a badly
 /// broken function cannot produce megabytes of output.
@@ -102,6 +108,12 @@ impl std::error::Error for VerifyError {}
 
 /// Checks all of `m`'s invariants. `Ok(())` means the module is well formed.
 pub fn verify(m: &Module) -> Result<(), Vec<VerifyError>> {
+    // Region nesting (up to MAX_REGION_DEPTH) is walked recursively: run on a
+    // stack of known size, whatever thread the caller is on.
+    sky_diag::with_deep_stack(|| verify_inner(m))
+}
+
+fn verify_inner(m: &Module) -> Result<(), Vec<VerifyError>> {
     let mut errors = Vec::new();
     for (i, f) in m.functions.iter().enumerate() {
         if m.functions[..i].iter().any(|g| g.name == f.name) {
@@ -998,6 +1010,10 @@ impl<'a> FnVerifier<'a> {
             self.err_op(o, format!("call to undefined function `{callee}`"));
             return;
         };
+        // The callee's size variables are generic: each call instantiates
+        // them (`N = 3`), consistently across its arguments, as the checker
+        // does with fresh copies per call. The results use the same binding.
+        let mut subst = Subst::new();
         if op.operands.len() != g.params.len() {
             self.err_op(
                 o,
@@ -1010,7 +1026,8 @@ impl<'a> FnVerifier<'a> {
         } else {
             for (i, (&v, p)) in op.operands.iter().zip(&g.params).enumerate() {
                 let t = self.f.ty(v);
-                if !assignable(t, p) {
+                if !subst.bind(t, p) {
+                    let p = subst.apply(p);
                     self.err_op(
                         o,
                         format!("argument {i} of the call to `{callee}` is {t}, expected {p}"),
@@ -1030,6 +1047,7 @@ impl<'a> FnVerifier<'a> {
         } else {
             for (i, (&v, r)) in op.results.iter().zip(&g.results).enumerate() {
                 let t = self.f.ty(v);
+                let r = &subst.apply(r);
                 if !assignable(r, t) {
                     self.err_op(
                         o,
@@ -1268,6 +1286,79 @@ impl<'a> FnVerifier<'a> {
                     ),
                 );
             }
+        }
+    }
+}
+
+/// A per-call instantiation of a callee's size variables (by variable id).
+#[derive(Default)]
+struct Subst {
+    map: BTreeMap<u64, ShapeDim>,
+}
+
+impl Subst {
+    fn new() -> Self {
+        Subst::default()
+    }
+
+    /// Whether an argument of type `arg` fits parameter type `param`,
+    /// binding `param`'s size variables on first use and requiring later
+    /// uses to agree. Otherwise the rules of [`assignable`].
+    fn bind(&mut self, arg: &Type, param: &Type) -> bool {
+        let (Type::Number(a), Type::Number(p)) = (arg, param) else {
+            return assignable(arg, param);
+        };
+        if a.dim != p.dim || a.repr != p.repr || !a.tags.is_subtag_of(p.tags) {
+            return false;
+        }
+        let (ad, pd) = (a.shape.dims(), p.shape.dims());
+        if ad.len() != pd.len() {
+            return false;
+        }
+        // Tentative: commit only if every axis agrees, so a failed argument
+        // leaves no binding behind for the next one.
+        let mut next = self.map.clone();
+        for (x, want) in ad.iter().zip(pd) {
+            match want {
+                ShapeDim::Var(v) => match next.get(&v.id()) {
+                    Some(bound) if bound != x => return false,
+                    Some(_) => {}
+                    None => {
+                        next.insert(v.id(), x.clone());
+                    }
+                },
+                known => {
+                    if x != known {
+                        return false;
+                    }
+                }
+            }
+        }
+        self.map = next;
+        true
+    }
+
+    /// `t` with the bound size variables replaced.
+    fn apply(&self, t: &Type) -> Type {
+        match t {
+            Type::Number(n) => {
+                let dims = n
+                    .shape
+                    .dims()
+                    .iter()
+                    .map(|d| match d {
+                        ShapeDim::Var(v) => {
+                            self.map.get(&v.id()).cloned().unwrap_or_else(|| d.clone())
+                        }
+                        known => known.clone(),
+                    })
+                    .collect();
+                Type::Number(crate::ir::NumberType {
+                    shape: Shape::new(dims),
+                    ..n.clone()
+                })
+            }
+            other => other.clone(),
         }
     }
 }

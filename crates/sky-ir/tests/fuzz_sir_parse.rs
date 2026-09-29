@@ -178,7 +178,8 @@ fn mutations_of_the_seeds_never_panic() {
 
 #[test]
 fn deep_nesting_is_an_error_not_a_crash() {
-    for levels in [10, 254, 255, 256, 1000, 100_000] {
+    let max = sky_ir::MAX_REGION_DEPTH;
+    for levels in [10, max - 2, max - 1, max, 5 * max, 100_000] {
         let mut s = String::from("sir edition 2026\nfn @f(%c: bool) -> () {\n");
         for _ in 0..levels {
             s.push_str("if %c {\n^0:\n");
@@ -188,7 +189,7 @@ fn deep_nesting_is_an_error_not_a_crash() {
         }
         s.push_str("}\n");
         let out = harness::check(s.as_bytes());
-        if levels >= 256 {
+        if levels >= max {
             assert!(out.error.unwrap().contains("nested too deeply"));
         }
     }

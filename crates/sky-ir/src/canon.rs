@@ -138,10 +138,11 @@ impl Layout {
 /// entries the body does not reach. Meant for verified modules: it indexes
 /// the arenas directly and panics on out-of-range ids.
 pub fn canonicalize(m: &Module) -> Module {
-    Module {
+    // Recursive over regions: see `verify`.
+    sky_diag::with_deep_stack(|| Module {
         edition: m.edition,
         functions: m.functions.iter().map(canonical_function).collect(),
-    }
+    })
 }
 
 fn canonical_function(f: &Function) -> Function {

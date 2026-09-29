@@ -3,17 +3,16 @@
 //! the reference interpreter in this crate. "Identically" means the same
 //! stdout bytes and the same runtime error message (or both succeed).
 //!
-//! The lowering pass is being written on another branch. Until it lands,
-//! [`run_lowered`] is a marked stub, [`assert_same`] checks only that the
-//! tree-walking side runs, and the tests below pin what that side does so
-//! wiring up the other side is a one-line change (see `run_lowered`).
+//! The SIR side runs `sky_lower::lower_source`, which also verifies the
+//! lowered module, so every program here is checked three ways: same
+//! output, same errors, and valid SIR.
 
 use sky_diag::Severity;
 use sky_interp::{run_module, RuntimeEnv};
 
 /// What running a program did: its stdout, and the message of the runtime
 /// error that stopped it, if any.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Outcome {
     stdout: String,
     error: Option<String>,
@@ -51,27 +50,17 @@ fn run_tree_walker(src: &str) -> Outcome {
     })
 }
 
-/// The SIR side: lower the checked module, run the result in this crate's
-/// interpreter.
-///
-/// **STUB.** Lowering (`sky-lower`, another branch) does not exist here, so
-/// there is nothing to compare against yet. After merging, replace the body
-/// with:
-///
-/// ```ignore
-/// let module = parse_checked(src);
-/// let ir = sky_lower::lower(&module, src);
-/// Some(run_ir(&ir))
-/// ```
-///
-/// with `run_ir` below, and delete the `None`.
-fn run_lowered(_src: &str) -> Option<Outcome> {
-    None
+/// The SIR side: lower (lex, parse, check, lower, verify) and run the result
+/// in this crate's interpreter. Every program given to [`assert_same`] must
+/// lower: a lowering refusal fails the test.
+fn run_lowered(src: &str) -> Option<Outcome> {
+    let ir =
+        sky_lower::lower_source(src).unwrap_or_else(|e| panic!("lowering failed on:\n{src}\n{e}"));
+    Some(run_ir(&ir))
 }
 
 /// Runs a lowered module through the reference interpreter into an
 /// [`Outcome`]. Used by [`run_lowered`] once lowering exists.
-#[allow(dead_code)] // wired up when lowering lands
 fn run_ir(ir: &sky_ir::Module) -> Outcome {
     sky_ast::with_deep_stack(|| {
         let mut out = Vec::new();
@@ -83,13 +72,35 @@ fn run_ir(ir: &sky_ir::Module) -> Outcome {
     })
 }
 
+/// The two resource-limit errors. Which one trips first depends on how much
+/// Rust stack each interpreter spends per call (a debug tree-walker runs out
+/// of stack budget before 1000 calls; the leaner SIR interpreter reaches the
+/// call limit), not on the program's meaning, so they compare as one.
+fn normalized(o: Outcome) -> Outcome {
+    let is_limit = |e: &str| {
+        e.starts_with("recursion is too deep")
+            || e == "the program nests too deeply for the interpreter"
+    };
+    Outcome {
+        error: o.error.map(|e| {
+            if is_limit(&e) {
+                "<resource limit>".to_string()
+            } else {
+                e
+            }
+        }),
+        ..o
+    }
+}
+
 /// Asserts that `src` behaves the same under both interpreters. Returns the
 /// (shared) outcome so a test can also pin it.
 fn assert_same(src: &str) -> Outcome {
     let expected = run_tree_walker(src);
     if let Some(actual) = run_lowered(src) {
         assert_eq!(
-            actual, expected,
+            normalized(actual),
+            normalized(expected.clone()),
             "SIR interpreter differs from `sky run` on:\n{src}"
         );
     }

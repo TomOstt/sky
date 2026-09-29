@@ -38,6 +38,7 @@ mod render;
 mod safe;
 mod source;
 mod span;
+pub mod stack;
 
 pub use capped::{display_capped, DISPLAY_CAP_BYTES, DISPLAY_CAP_CHARS};
 pub use diagnostic::{Diagnostic, Label, Severity};
@@ -45,3 +46,4 @@ pub use display_unsafe_table::UNICODE_VERSION as DISPLAY_UNSAFE_UNICODE_VERSION;
 pub use safe::{display_safe, is_display_unsafe};
 pub use source::SourceFile;
 pub use span::Span;
+pub use stack::{with_deep_stack, DEEP_STACK_BYTES};

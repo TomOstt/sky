@@ -88,6 +88,11 @@ type Res<T> = Result<T, ParseError>;
 
 /// Parses SIR text. See the module docs for the grammar.
 pub fn parse(src: &str) -> Result<Module, ParseError> {
+    // Recursive over nested regions: see `verify`.
+    sky_diag::with_deep_stack(|| parse_inner(src))
+}
+
+fn parse_inner(src: &str) -> Result<Module, ParseError> {
     if src.len() > MAX_SOURCE_BYTES {
         return Err(ParseError {
             message: format!("the text is larger than {MAX_SOURCE_BYTES} bytes"),

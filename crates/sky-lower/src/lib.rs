@@ -265,7 +265,20 @@ fn lower_source_inner(src: &str) -> Result<Module, String> {
         return Err(render(&ds));
     }
     let module = lower(&ast, src, &checked).map_err(|e| render(&[&e.to_diagnostic()]))?;
-    // The verifier (`sky_ir::verify`) is called here once it exists, so every
-    // module this function returns has been checked against SIR's invariants.
+    // Every module this function returns has been checked against SIR's
+    // invariants: a verifier error here is a lowering bug, reported with the
+    // verifier's own messages.
+    if let Err(errors) = sky_ir::verify(&module) {
+        let msgs: Vec<String> = errors
+            .iter()
+            .map(|e| {
+                format!(
+                    "internal error: lowering produced invalid SIR: {}",
+                    e.message
+                )
+            })
+            .collect();
+        return Err(msgs.join("\n"));
+    }
     Ok(module)
 }

@@ -39,16 +39,26 @@ use sky_diag::Span;
 
 /// The whole module as text.
 pub fn print(m: &Module) -> String {
+    // Recursive over regions: see `verify`. `print_function` is called
+    // per function inside the one deep-stack thread.
+    sky_diag::with_deep_stack(|| print_inner(m))
+}
+
+fn print_inner(m: &Module) -> String {
     let mut out = format!("sir edition {}\n", m.edition.year());
     for f in &m.functions {
         out.push('\n');
-        out.push_str(&print_function(f));
+        out.push_str(&print_function_inner(f));
     }
     out
 }
 
 /// One function as text (without the `sir edition` header).
 pub fn print_function(f: &Function) -> String {
+    sky_diag::with_deep_stack(|| print_function_inner(f))
+}
+
+fn print_function_inner(f: &Function) -> String {
     let mut p = Printer {
         f,
         layout: Layout::new(f),

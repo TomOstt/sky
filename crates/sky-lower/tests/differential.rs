@@ -1,13 +1,13 @@
 //! Lowering preserves meaning: run programs with the tree-walking
-//! interpreter and, after lowering, with a small SIR evaluator
-//! (`tests/common/eval.rs`), and compare what they print and whether they
-//! fail. Covers hand-written tricky control flow, the repository's runnable
+//! interpreter and, after lowering, with the SIR reference interpreter
+//! (`sky-ir-interp`), and compare what they print and the error that stops
+//! them, message for message. Covers hand-written tricky control flow, the repository's runnable
 //! UI programs, and a few hundred generated programs full of early returns,
 //! `break`, `continue`, nested loops and module-level names.
 
 mod common;
 
-use common::eval::run_main;
+use common::eval::{normalized, run_main};
 use common::*;
 use sky_interp::RuntimeEnv;
 
@@ -39,8 +39,8 @@ fn agree(src: &str) -> String {
         dump_module(&m)
     );
     assert_eq!(
-        got.is_ok(),
-        want.is_ok(),
+        normalized(&got),
+        normalized(&want),
         "failure differs (interpreter {want:?}, SIR {got:?})\nsource:\n{src}\nSIR:\n{}",
         dump_module(&m)
     );
@@ -293,7 +293,7 @@ fn the_runnable_ui_programs() {
         let (want_out, want) = interpret(&src);
         let (got_out, got) = run_main(&m);
         assert_eq!(got_out, want_out, "{name}");
-        assert_eq!(got.is_ok(), want.is_ok(), "{name}: {want:?} vs {got:?}");
+        assert_eq!(normalized(&got), normalized(&want), "{name}");
     }
 }
 

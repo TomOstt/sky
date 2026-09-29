@@ -1,7 +1,8 @@
-//! Running the front end on a stack of known size.
+//! Running recursive work on a stack of known size.
 //!
-//! The parser bounds its own recursion with [`crate::MAX_DEPTH`], and later
-//! passes (checker, interpreter) recurse over trees whose height that bounds.
+//! The Sky parser bounds its recursion (`sky_ast::MAX_DEPTH`), and the
+//! checker, the interpreters, and the SIR verifier, printer and parser
+//! recurse over trees and regions whose height those limits bound.
 //! Those bounds only mean something on a stack of known size: the main
 //! thread's is set by the OS (often 8 MiB, sometimes 1 MiB), a spawned
 //! thread's defaults to 2 MiB, and debug builds use several times more stack
@@ -11,11 +12,15 @@
 //! **Every entry point that parses, checks, or interprets Sky code must go
 //! through [`with_deep_stack`]:** `sky check`, `sky run`, `sky repl` (per
 //! input), and the fuzz harness. Library callers that parse directly get the
-//! same guarantee by wrapping their call.
+//! same guarantee by wrapping their call. The SIR entry points (`verify`,
+//! `print`, `parse`, `canonicalize`) wrap themselves.
+//!
+//! It lives in sky-diag, the crate every other depends on, so any crate can
+//! use it; `sky_ast` re-exports it.
 
 use std::thread;
 
-/// Stack size for [`with_deep_stack`]: 8 MiB. Parsing [`crate::MAX_DEPTH`]
+/// Stack size for [`with_deep_stack`]: 8 MiB. Parsing `sky_ast::MAX_DEPTH`
 /// levels needs well under 1 MiB even in a debug build, so this leaves room
 /// for the passes that run after the parser.
 pub const DEEP_STACK_BYTES: usize = 8 * 1024 * 1024;

@@ -1,7 +1,7 @@
 //! Helpers shared by the lowering tests: lower a source string, and look at
 //! the result through the `sky_ir` API (a compact indented dump, flat op
-//! listings, counts). There is no printer or verifier in `sky-ir` yet; when
-//! they land, `lower_ok` is where every lowered module gets verified.
+//! listings, counts). `sky_lower::lower_source` verifies every module it
+//! returns, so `lower_ok` only ever sees valid SIR.
 
 #![allow(dead_code)]
 

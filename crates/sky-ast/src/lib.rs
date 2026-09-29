@@ -16,7 +16,6 @@ pub mod ast;
 pub mod parser;
 pub mod precedence;
 mod sexpr;
-pub mod stack;
 
 pub use ast::{
     AssignTarget, BinaryOp, Block, BoolOp, CompoundOp, DimExpr, Expr, ExprKind, Ident, IndexItem,
@@ -27,5 +26,5 @@ pub use parser::{
     parse_expr, parse_module, ParseError, MAX_DEPTH, MAX_QUOTED_BYTES, MAX_QUOTED_CHARS,
     MAX_UNIT_FACTORS,
 };
+pub use sky_diag::{with_deep_stack, DEEP_STACK_BYTES};
 pub use sky_syntax::{Kw, Span, Token, TokenKind};
-pub use stack::{with_deep_stack, DEEP_STACK_BYTES};

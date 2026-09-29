@@ -749,15 +749,20 @@ fn unicode_lookalike_operators_get_help() {
 
 #[test]
 fn keywords() {
-    let src = "def return if else for in import equation solve field and or not true false\n";
+    let src = "def return if elif else while for in import pass break continue equation solve field and or not true false\n";
     let expected: Vec<_> = [
         Kw::Def,
         Kw::Return,
         Kw::If,
+        Kw::Elif,
         Kw::Else,
+        Kw::While,
         Kw::For,
         Kw::In,
         Kw::Import,
+        Kw::Pass,
+        Kw::Break,
+        Kw::Continue,
         Kw::Equation,
         Kw::Solve,
         Kw::Field,

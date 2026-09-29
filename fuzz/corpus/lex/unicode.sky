@@ -1,0 +1,6 @@
+def f(x):
+    return exp(-x^2)
+
+df = ∂f/∂x
+x = A⁻¹ @ b
+mass = 5.31 ± 0.02 kg

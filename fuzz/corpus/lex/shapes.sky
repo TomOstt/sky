@@ -1,0 +1,3 @@
+A: Matrix[3, 4]
+B: Matrix[4, 8]
+C = A @ B

@@ -6,4 +6,7 @@ members = ["crates/*"]
 version = "0.0.1"
 edition = "2021"
 license = "Apache-2.0"
+# Not published to crates.io in v0.1. This also lets cargo-deny accept
+# path-only dependencies between workspace crates.
+publish = false
 repository = "https://github.com/TomOstt/sky"

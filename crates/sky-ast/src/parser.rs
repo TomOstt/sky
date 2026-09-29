@@ -1151,10 +1151,51 @@ impl<'t, 's> Parser<'t, 's> {
             );
             return None;
         }
+        self.reject_spaced_caret_after_unit(&value, &unit)?;
         Some(Expr {
             span: value.span().join(unit.span()),
             kind: ExprKind::UnitLiteral { value, unit },
         })
+    }
+
+    /// A `^` right after a unit that doesn't touch both sides (`10 m ^2`,
+    /// `10 m^ 2`, `10 m ^ 2`) is an error. The spacing is the only thing
+    /// deciding between a unit power (`10 m^2`, 10 m²) and a power of the
+    /// quantity (`(10 m)^2`, 100 m²), readers can't see which was meant, and
+    /// the dimension is the same either way, so the checker can't catch it.
+    /// A `^` that touches both sides was already read as part of the unit.
+    fn reject_spaced_caret_after_unit(&mut self, value: &Literal, unit: &UnitExpr) -> Option<()> {
+        let tok = self.current();
+        if tok.kind != TokenKind::Caret {
+            return Some(());
+        }
+        let number = self.text(value.span());
+        let unit_text = self.text(unit.span());
+        // The exponent as written, when it is a plain (possibly negative) integer.
+        let exponent = match (self.nth(1), self.nth(2)) {
+            (Some(t), _) if t.kind == TokenKind::Int => Some(self.text(t.span).to_string()),
+            (Some(m), Some(t)) if m.kind == TokenKind::Minus && t.kind == TokenKind::Int => {
+                Some(format!("-{}", self.text(t.span)))
+            }
+            _ => None,
+        };
+        let help = match exponent {
+            Some(e) if matches!(unit, UnitExpr::Name(_)) => format!(
+                "write `{number} {unit_text}^{e}` for a power of the unit, or `({number} {unit_text})^{e}` to raise the whole quantity"
+            ),
+            Some(e) => format!(
+                "write the exponent with no spaces for a power of a unit, or `({number} {unit_text})^{e}` to raise the whole quantity"
+            ),
+            None => format!(
+                "to raise the whole quantity, write `({number} {unit_text})^…`"
+            ),
+        };
+        self.errors.push(
+            ParseError::new("ambiguous `^` after a unit", tok.span)
+                .with_secondary(unit.span(), "unit")
+                .with_help(help),
+        );
+        None
     }
 
     /// `⁻¹` right after a unit (`10 km⁻¹`, `9.8 m/s⁻¹`) is an error: it would

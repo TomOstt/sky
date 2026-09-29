@@ -47,7 +47,10 @@ use std::fmt;
 use std::sync::Arc;
 
 use sky_ast::ast::span_text;
-use sky_ast::{BinaryOp, Expr, ExprKind, Ident, Literal, Module, StmtKind, UnaryOp, UnitExpr};
+use sky_ast::{
+    AssignTarget, BinaryOp, CompoundOp, Expr, ExprKind, Ident, IndexItem, Literal, Module,
+    StmtKind, UnaryOp, UnitExpr,
+};
 use sky_diag::{Diagnostic, Severity, Span};
 use sky_units::{lookup, Dimension, Rational};
 
@@ -419,9 +422,26 @@ impl<'s> Checker<'s> {
             }
             StmtKind::Assign { target, value } => {
                 let t = self.expr(value);
-                let name = self.ident(target);
-                self.env.bind(name, t);
+                match target {
+                    AssignTarget::Name(id) => {
+                        let name = self.ident(id);
+                        self.env.bind(name, t);
+                    }
+                    _ => self.reject_write(target, "="),
+                }
             }
+            StmtKind::CompoundAssign {
+                target,
+                op,
+                op_span,
+                value,
+            } => match target {
+                AssignTarget::Name(id) => self.compound_assign(id, *op, *op_span, value),
+                _ => {
+                    self.expr(value);
+                    self.reject_write(target, op.symbol());
+                }
+            },
             StmtKind::Binding { name, ty, value } => {
                 let declared = self.annotation(ty);
                 let found = value.as_ref().map(|v| (v, self.expr(v)));
@@ -447,8 +467,18 @@ impl<'s> Checker<'s> {
         let Some((value, found)) = found else {
             return Ty::value(Dimension::DIMENSIONLESS, declared);
         };
-        let Ty::Value(v) = found else {
-            return Ty::value(Dimension::DIMENSIONLESS, declared);
+        let v = match found {
+            Ty::Value(v) => v,
+            Ty::Bool => {
+                self.error(
+                    Diagnostic::error("expected a number, found Bool", value.span)
+                        .with_label("this is Bool")
+                        .with_secondary(ann_span, "expected because of this annotation")
+                        .with_note("v0.1 has no truthiness: a Bool is never a number"),
+                );
+                return Ty::value(Dimension::DIMENSIONLESS, declared);
+            }
+            Ty::Unknown => return Ty::value(Dimension::DIMENSIONLESS, declared),
         };
         match self.env.shapes.unify(declared.shape(), v.ty.shape()) {
             Ok(()) => Ty::value(v.dim, declared),
@@ -464,6 +494,139 @@ impl<'s> Checker<'s> {
         }
     }
 
+    /// Types every expression inside `[...]`, slice bounds included.
+    fn index_items(&mut self, items: &[IndexItem]) {
+        for item in items {
+            match item {
+                IndexItem::Expr(e) => {
+                    self.expr(e);
+                }
+                IndexItem::Slice { start, stop, .. } => {
+                    for bound in [start, stop].into_iter().flatten() {
+                        self.expr(bound);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Reports a write through an index or attribute target (`A[i] = x`,
+    /// `a.b += 1`), which the v0.1 checker rejects (spec: "Statements and
+    /// assignment"). The target's own subexpressions are still typed.
+    fn reject_write(&mut self, target: &AssignTarget, op: &str) {
+        let d = match target {
+            AssignTarget::Name(_) => return,
+            AssignTarget::Index {
+                base, items, span, ..
+            } => {
+                self.expr(base);
+                self.index_items(items);
+                Diagnostic::error(
+                    format!(
+                        "cannot assign to an element of `{}`",
+                        self.quoted(base.span)
+                    ),
+                    *span,
+                )
+                .with_note("arrays are immutable in v0.1")
+            }
+            AssignTarget::Attribute { base, name, span } => {
+                self.expr(base);
+                Diagnostic::error(
+                    format!("cannot assign to attribute `{}`", self.quoted(name.span)),
+                    *span,
+                )
+                .with_note("nothing has assignable attributes in v0.1")
+            }
+        };
+        self.error(d.with_label(format!("written with `{op}`")));
+    }
+
+    /// `x op= value`: types `x op value` like the binary expression, then
+    /// requires the result to keep `x`'s type (dimension, shape, and tags).
+    /// `x` keeps its type either way.
+    fn compound_assign(&mut self, id: &Ident, op: CompoundOp, op_span: Span, value: &Expr) {
+        let name_expr = Expr {
+            kind: ExprKind::Name(*id),
+            span: id.span,
+        };
+        // Silent lookup: typing `whole` below reports an undefined name once.
+        let declared = self.env.get(self.ident(id)).unwrap_or(Ty::Unknown);
+        let whole = Expr {
+            kind: ExprKind::Binary {
+                op: op.binary(),
+                op_span,
+                lhs: Box::new(name_expr),
+                rhs: Box::new(value.clone()),
+            },
+            span: id.span.join(value.span),
+        };
+        let result = self.expr(&whole);
+        let (Ty::Value(dv), Ty::Value(rv)) = (&declared, &result) else {
+            return; // unknown or Bool: already reported, or nothing to compare
+        };
+        let name = self.quoted(id.span);
+        let sym = op.symbol();
+        if dv.dim != rv.dim {
+            self.error(
+                Diagnostic::error(
+                    format!(
+                        "`{sym}` would change `{name}` from {} to {}",
+                        describe(&dv.dim),
+                        describe(&rv.dim)
+                    ),
+                    op_span,
+                )
+                .with_secondary(id.span, format!("this is {}", describe(&dv.dim)))
+                .with_note(format!(
+                    "the result of `{sym}` must keep the type of `{name}`"
+                ))
+                .with_help(format!(
+                    "bind a new name instead: `y = {name} {} …`",
+                    op.binary().symbol()
+                )),
+            );
+            return;
+        }
+        if let Err(e) = self.env.shapes.unify(dv.ty.shape(), rv.ty.shape()) {
+            let label = self.this_is(dv);
+            self.error(
+                Diagnostic::error(
+                    format!("`{sym}` would change the shape of `{name}`: {e}"),
+                    op_span,
+                )
+                .with_secondary(id.span, label)
+                .with_note(format!(
+                    "the result of `{sym}` must keep the type of `{name}`"
+                )),
+            );
+            return;
+        }
+        let (had, has) = (dv.ty.tags().closure(), rv.ty.tags().closure());
+        if !has.is_subtag_of(had) {
+            let lost: Vec<&str> = had
+                .iter()
+                .filter(|t| !has.contains(*t))
+                .map(|t| t.name())
+                .collect();
+            let label = self.this_is(dv);
+            self.error(
+                Diagnostic::error(
+                    format!(
+                        "`{sym}` would drop `{name}`'s {} tag{}",
+                        lost.join(", "),
+                        if lost.len() == 1 { "" } else { "s" }
+                    ),
+                    op_span,
+                )
+                .with_secondary(id.span, label)
+                .with_note(format!(
+                    "the result of `{sym}` must keep the type of `{name}`"
+                )),
+            );
+        }
+    }
+
     /// Reads a shape annotation: `Vector[n]`, `Matrix[m, n]`, or
     /// `Tensor[d1, d2, ...]`, where each dimension is an integer literal or
     /// a name (a shape variable).
@@ -471,7 +634,7 @@ impl<'s> Checker<'s> {
         self.shadow_reported.clear();
         const NOTE: &str =
             "v0.1 annotations are `Vector[n]`, `Matrix[m, n]`, and `Tensor[d1, d2, ...]`";
-        let ExprKind::Index { base, indices } = &ty.kind else {
+        let ExprKind::Index { base, items } = &ty.kind else {
             self.error(
                 Diagnostic::error(
                     format!("unsupported type annotation `{}`", self.quoted(ty.span)),
@@ -501,21 +664,29 @@ impl<'s> Checker<'s> {
             }
         };
         if let Some(n) = want {
-            if indices.len() != n {
+            if items.len() != n {
                 self.error(Diagnostic::error(
                     format!(
                         "`{kind}` takes {n} dimension{}, found {}",
                         if n == 1 { "" } else { "s" },
-                        indices.len()
+                        items.len()
                     ),
                     ty.span,
                 ));
                 return None;
             }
         }
-        let mut dims = Vec::with_capacity(indices.len());
+        let mut dims = Vec::with_capacity(items.len());
         let mut ok = true;
-        for ix in indices {
+        for item in items {
+            let Some(ix) = item.as_expr() else {
+                self.error(
+                    Diagnostic::error("a shape dimension cannot be a slice", item.span())
+                        .with_note(NOTE),
+                );
+                ok = false;
+                continue;
+            };
             match self.shape_dim(ix) {
                 Some(d) => dims.push(d),
                 None => ok = false,
@@ -666,11 +837,9 @@ impl<'s> Checker<'s> {
                 }
                 Ty::Unknown
             }
-            ExprKind::Index { base, indices } => {
+            ExprKind::Index { base, items } => {
                 self.expr(base);
-                for i in indices {
-                    self.expr(i);
-                }
+                self.index_items(items);
                 Ty::Unknown
             }
             ExprKind::Attribute { base, .. } => {

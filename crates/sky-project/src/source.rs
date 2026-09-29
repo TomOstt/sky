@@ -41,11 +41,18 @@ pub enum SourceError {
 /// rejected. Symbolic links are followed: the user named this file. The
 /// contents come from [`read_source`] on the same handle.
 pub fn read_entry_file(path: &Path) -> Result<String, SourceError> {
-    let file = open_entry(path).map_err(|error| SourceError::Io {
+    read_source(&open_entry_file(path)?, path)
+}
+
+/// Opens the file `sky check` (or `sky run`) was given, like
+/// [`read_entry_file`], without reading it. Keep the handle to read it with
+/// [`read_source`] and to find its project with
+/// [`crate::discover_opened`], so both refer to the same file.
+pub fn open_entry_file(path: &Path) -> Result<File, SourceError> {
+    open_entry(path).map_err(|error| SourceError::Io {
         path: path.to_path_buf(),
         error,
-    })?;
-    read_source(&file, path)
+    })
 }
 
 #[cfg(unix)]

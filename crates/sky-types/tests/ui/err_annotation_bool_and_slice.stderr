@@ -1,0 +1,12 @@
+crates/sky-types/tests/ui/err_annotation_bool_and_slice.sky:1:19: error: expected a number, found Bool
+  |
+1 | A: Matrix[3, 3] = true
+  |                   ^^^^ this is Bool
+  |    ------------ expected because of this annotation
+  = note: v0.1 has no truthiness: a Bool is never a number
+
+crates/sky-types/tests/ui/err_annotation_bool_and_slice.sky:2:14: error: a shape dimension cannot be a slice
+  |
+2 | B: Matrix[3, :]
+  |              ^
+  = note: v0.1 annotations are `Vector[n]`, `Matrix[m, n]`, and `Tensor[d1, d2, ...]`

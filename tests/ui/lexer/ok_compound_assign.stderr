@@ -1,0 +1,60 @@
+tests/ui/lexer/ok_compound_assign.sky:3:1: error: cannot find `A` in this scope
+  |
+3 | A += B
+  | ^ not defined
+
+tests/ui/lexer/ok_compound_assign.sky:3:6: error: cannot find `B` in this scope
+  |
+3 | A += B
+  |      ^ not defined
+
+tests/ui/lexer/ok_compound_assign.sky:4:1: error: cannot find `t` in this scope
+  |
+4 | t -= 1 s
+  | ^ not defined
+
+tests/ui/lexer/ok_compound_assign.sky:5:1: error: cannot find `A` in this scope
+  |
+5 | A[i, j] *= 2
+  | ^ not defined
+
+tests/ui/lexer/ok_compound_assign.sky:5:1: error: cannot assign to an element of `A`
+  |
+5 | A[i, j] *= 2
+  | ^^^^^^^ written with `*=`
+  = note: arrays are immutable in v0.1
+
+tests/ui/lexer/ok_compound_assign.sky:5:3: error: cannot find `i` in this scope
+  |
+5 | A[i, j] *= 2
+  |   ^ not defined
+
+tests/ui/lexer/ok_compound_assign.sky:5:6: error: cannot find `j` in this scope
+  |
+5 | A[i, j] *= 2
+  |      ^ not defined
+
+tests/ui/lexer/ok_compound_assign.sky:6:1: error: cannot find `v` in this scope
+  |
+6 | v /= n
+  | ^ not defined
+
+tests/ui/lexer/ok_compound_assign.sky:6:6: error: cannot find `n` in this scope
+  |
+6 | v /= n
+  |      ^ not defined
+
+tests/ui/lexer/ok_compound_assign.sky:7:1: error: cannot find `x` in this scope
+  |
+7 | x^=2
+  | ^ not defined
+
+tests/ui/lexer/ok_compound_assign.sky:8:1: error: cannot find `A` in this scope
+  |
+8 | A@=B
+  | ^ not defined
+
+tests/ui/lexer/ok_compound_assign.sky:8:4: error: cannot find `B` in this scope
+  |
+8 | A@=B
+  |    ^ not defined

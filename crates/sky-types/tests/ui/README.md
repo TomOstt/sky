@@ -22,8 +22,8 @@ The language has no syntax yet for property tags or for the unit of an array's e
 
 binds `NAME` before checking, for example `# env: A: Matrix[N,N] PositiveDefinite` or `# env: v: Vector[3] unit m/s`. `SHAPE` is `Scalar`, `Vector[d]`, `Matrix[m,n]`, or `Tensor[d1,d2,...]`, where each dimension is an integer or a shape-variable name. `TAG` is `Symmetric`, `PositiveDefinite`, `Diagonal`, or `Orthogonal`. `UNIT` uses table symbols joined by `*` and `/`, each with an optional integer power (`kg*m^2/s^2`). This is a test-harness convention, not Sky syntax, and it goes away once annotations can declare tags and units.
 
-## Why they live here for now
+## Why they live here
 
-`sky check` does not run the checker yet (wiring the CLI is a separate change), and the `sky-cli` harness runs `sky check` on everything under `tests/ui/`, so checker error cases there would fail it. They move to `tests/ui/types/` once `sky check` type-checks. At that point only the path in each header changes, so re-bless them.
+`sky check` runs the checker, and `tests/ui/check/` has end-to-end cases. Most files here seed names with `# env:` lines, which only this runner understands, so they stay here until annotations can declare tags and units.
 
 To regenerate every `.stderr` and the existing `.types`/`.explain` files, run `SKY_BLESS=1 cargo test -p sky-types --test ui_check`, then review the diff.

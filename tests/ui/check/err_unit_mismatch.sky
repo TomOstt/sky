@@ -1,0 +1,2 @@
+# `sky check` runs the type checker: a length plus a time is an error.
+y = 3 m + 2 s

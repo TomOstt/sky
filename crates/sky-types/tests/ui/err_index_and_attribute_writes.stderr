@@ -1,0 +1,17 @@
+crates/sky-types/tests/ui/err_index_and_attribute_writes.sky:2:1: error: cannot assign to an element of `A`
+  |
+2 | A[0, 0] = 1
+  | ^^^^^^^ written with `=`
+  = note: arrays are immutable in v0.1
+
+crates/sky-types/tests/ui/err_index_and_attribute_writes.sky:3:1: error: cannot assign to an element of `A`
+  |
+3 | A[0, :] += 2
+  | ^^^^^^^ written with `+=`
+  = note: arrays are immutable in v0.1
+
+crates/sky-types/tests/ui/err_index_and_attribute_writes.sky:4:1: error: cannot assign to attribute `rows`
+  |
+4 | A.rows = 3
+  | ^^^^^^ written with `=`
+  = note: nothing has assignable attributes in v0.1

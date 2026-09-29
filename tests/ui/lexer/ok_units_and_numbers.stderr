@@ -1,0 +1,21 @@
+tests/ui/lexer/ok_units_and_numbers.sky:3:9: error: unknown unit `meters`
+  |
+3 | bad = 5 meters + 20 kelvin
+  |         ^^^^^^
+  = help: did you mean `m`?
+
+tests/ui/lexer/ok_units_and_numbers.sky:3:21: error: unknown unit `kelvin`
+  |
+3 | bad = 5 meters + 20 kelvin
+  |                     ^^^^^^
+  = help: did you mean `K`?
+
+tests/ui/lexer/ok_units_and_numbers.sky:8:5: error: cannot find `Matrix` in this scope
+  |
+8 | C = Matrix[3,4] @ Matrix[4,8]
+  |     ^^^^^^ not defined
+
+tests/ui/lexer/ok_units_and_numbers.sky:8:19: error: cannot find `Matrix` in this scope
+  |
+8 | C = Matrix[3,4] @ Matrix[4,8]
+  |                   ^^^^^^ not defined

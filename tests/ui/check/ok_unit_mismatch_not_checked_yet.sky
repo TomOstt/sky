@@ -1,4 +1,0 @@
-# KNOWN GAP: `sky check` does not run the type checker yet, so adding a
-# length to a time is not reported. This golden flips to a dimension error
-# when the checker is wired in after the parser; re-bless it then.
-y = 3 m + 2 s

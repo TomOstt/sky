@@ -5,7 +5,7 @@ mod common;
 use std::os::unix::fs::symlink;
 
 use common::{me, my_uid, FakeIdentity, TempDir};
-use sky_project::{discover, DiscoverError, Project};
+use sky_project::{discover, discover_opened, open_entry_file, DiscoverError, Project};
 
 fn rooted(root: &std::path::Path) -> Project {
     Project::Rooted {
@@ -267,4 +267,51 @@ fn symlinked_file_is_discovered_from_its_target_directory() {
     let d = discover(&link, &id).unwrap();
     assert_eq!(d.file, target);
     assert_eq!(d.project, rooted(&t.path().join("home/proj")));
+}
+
+#[test]
+fn discover_opened_accepts_the_file_that_was_opened() {
+    let t = TempDir::new("opened");
+    t.file("home/proj/sky.toml", "");
+    let f = t.file("home/proj/main.sky", "x = 1\n");
+    let id = FakeIdentity {
+        home: Some(t.path().join("home")),
+        ..me(&t)
+    };
+    let opened = open_entry_file(&f).unwrap();
+    let d = discover_opened(&f, &opened, &id).unwrap();
+    assert_eq!(d.project, rooted(&t.path().join("home/proj")));
+}
+
+#[test]
+fn discover_opened_refuses_a_file_replaced_after_the_open() {
+    let t = TempDir::new("replaced");
+    t.file("home/proj/sky.toml", "");
+    let f = t.file("home/proj/main.sky", "x = 1\n");
+    let id = FakeIdentity {
+        home: Some(t.path().join("home")),
+        ..me(&t)
+    };
+    let opened = open_entry_file(&f).unwrap();
+    // Swap a different file in at the same path.
+    let other = t.file("home/proj/other.sky", "y = 2\n");
+    std::fs::rename(&other, &f).unwrap();
+    let err = discover_opened(&f, &opened, &id).unwrap_err();
+    assert!(matches!(&err, DiscoverError::FileChanged { path } if path == &f));
+}
+
+#[test]
+fn display_escapes_terminal_unsafe_characters_in_paths() {
+    let t = TempDir::new("escape");
+    t.dir("home/proj\u{1b}[31m");
+    let manifest = t.path().join("home/proj\u{1b}[31m/sky.toml");
+    symlink(t.path().join("nowhere"), &manifest).unwrap();
+    let f = t.file("home/proj\u{1b}[31m/main.sky", "");
+    let id = FakeIdentity {
+        home: Some(t.path().join("home")),
+        ..me(&t)
+    };
+    let shown = discover(&f, &id).unwrap_err().to_string();
+    assert!(!shown.contains('\u{1b}'), "{shown:?}");
+    assert!(shown.contains("\\u{001B}"), "{shown:?}");
 }

@@ -62,6 +62,20 @@ fn display_width(c: char) -> usize {
     }
 }
 
+/// Writes `prefix`, then ` text` (escaped), then a newline. Trailing
+/// whitespace in `text` is dropped, and the space too when nothing is left,
+/// so no line ends in whitespace (spec/diagnostics.md: only a source line
+/// may).
+fn line_with_text(out: &mut impl Write, prefix: &str, text: &str) -> fmt::Result {
+    let text = display_safe(text);
+    let text = text.trim_end();
+    if text.is_empty() {
+        writeln!(out, "{prefix}")
+    } else {
+        writeln!(out, "{prefix} {text}")
+    }
+}
+
 impl Diagnostic {
     /// Writes this diagnostic in the plain-text format defined in
     /// `spec/diagnostics.md`. Never panics, whatever the spans are.
@@ -81,15 +95,14 @@ impl Diagnostic {
         let w = max_line.to_string().len();
         let blank = " ".repeat(w);
 
-        writeln!(
-            out,
-            "{}:{}:{}: {}: {}",
+        let header = format!(
+            "{}:{}:{}: {}:",
             display_safe(file.name()),
             primary.line,
             primary.col,
             self.severity,
-            display_safe(&self.message)
-        )?;
+        );
+        line_with_text(out, &header, &self.message)?;
         writeln!(out, "{blank} |")?;
         let mut shown_line = None;
         for m in std::iter::once(&primary).chain(&secondary) {
@@ -106,16 +119,13 @@ impl Diagnostic {
             for _ in 0..m.width {
                 out.write_char(m.marker)?;
             }
-            match m.label {
-                Some(l) if !l.is_empty() => writeln!(out, " {}", display_safe(l))?,
-                _ => writeln!(out)?,
-            }
+            line_with_text(out, "", m.label.unwrap_or(""))?;
         }
         for n in &self.notes {
-            writeln!(out, "{blank} = note: {}", display_safe(n))?;
+            line_with_text(out, &format!("{blank} = note:"), n)?;
         }
         for h in &self.help {
-            writeln!(out, "{blank} = help: {}", display_safe(h))?;
+            line_with_text(out, &format!("{blank} = help:"), h)?;
         }
         Ok(())
     }
@@ -184,6 +194,32 @@ demo.sky:1:1: warning: unused binding `y`
   | ^
 "
         );
+    }
+
+    #[test]
+    fn blank_message_label_note_and_help_leave_no_trailing_whitespace() {
+        let src = "y = 3   \n";
+        let d = Diagnostic::error("", find(src, "y"))
+            .with_label("   ")
+            .with_secondary(find(src, "3"), "three  ")
+            .with_note("")
+            .with_help("  ");
+        let out = d.render_to_string(&file(src));
+        assert_eq!(
+            out,
+            "\
+demo.sky:1:1: error:
+  |
+1 | y = 3   
+  | ^
+  |     - three
+  = note:
+  = help:
+"
+        );
+        // Only the source line keeps its trailing whitespace.
+        let trailing: Vec<&str> = out.lines().filter(|l| l.ends_with(' ')).collect();
+        assert_eq!(trailing, vec!["1 | y = 3   "]);
     }
 
     #[test]
@@ -674,11 +710,20 @@ demo.sky:10:1: error: e
             let mut lines = out.lines();
             let header = lines.next().unwrap();
             assert!(
+                !header.ends_with(' '),
+                "case {case}: trailing space in {header:?}"
+            );
+            assert!(
                 !header.contains('\t'),
                 "case {case}: tab in header {header:?}"
             );
             for line in lines {
                 let numbered = line.trim_start().starts_with(|c: char| c.is_ascii_digit());
+                // Only a source row may end in whitespace.
+                assert!(
+                    numbered || !line.ends_with([' ', '\t']),
+                    "case {case}: trailing whitespace in {line:?}"
+                );
                 let body = line.trim_start_matches(|c: char| c == ' ' || c.is_ascii_digit());
                 if let Some(row) = body.strip_prefix('|') {
                     if !numbered {
@@ -689,7 +734,7 @@ demo.sky:10:1: error: e
                     }
                 } else {
                     assert!(
-                        body.starts_with("= note: ") || body.starts_with("= help: "),
+                        body.starts_with("= note:") || body.starts_with("= help:"),
                         "case {case}: unexpected line {line:?} in:\n{out}"
                     );
                     assert!(!body.contains('\t'), "case {case}: tab in {line:?}");

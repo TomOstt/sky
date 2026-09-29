@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use sky_diag::{Diagnostic, SourceFile, Span};
+use sky_diag::{display_safe, Diagnostic, SourceFile, Span};
 
 use crate::Identity;
 
@@ -53,6 +53,9 @@ pub enum DiscoverError {
         owner: u32,
         euid: u32,
     },
+    /// The checked file's path no longer names the file that was opened
+    /// (it was replaced or renamed between the open and discovery).
+    FileChanged { path: PathBuf },
 }
 
 /// Discovers the project for `file`.
@@ -109,6 +112,45 @@ pub fn discover(file: &Path, identity: &dyn Identity) -> Result<Discovery, Disco
         file,
         project: Project::SingleFile,
     })
+}
+
+/// Like [`discover`], for a file already open as `opened`: also checks that
+/// the canonical path found for `file` still names that same file (same
+/// device and inode), so the project root belongs to the source that was
+/// read, not to whatever was swapped in at `file` afterwards.
+pub fn discover_opened(
+    file: &Path,
+    opened: &fs::File,
+    identity: &dyn Identity,
+) -> Result<Discovery, DiscoverError> {
+    let discovery = discover(file, identity)?;
+    let changed = || DiscoverError::FileChanged {
+        path: file.to_path_buf(),
+    };
+    let io = |error| DiscoverError::Io {
+        path: file.to_path_buf(),
+        error,
+    };
+    let now = fs::metadata(&discovery.file).map_err(|_| changed())?;
+    let then = opened.metadata().map_err(io)?;
+    if same_file(&now, &then) {
+        Ok(discovery)
+    } else {
+        Err(changed())
+    }
+}
+
+#[cfg(unix)]
+fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+/// No file identity off Unix (where rooted projects are refused anyway):
+/// fail closed.
+#[cfg(not(unix))]
+fn same_file(_a: &fs::Metadata, _b: &fs::Metadata) -> bool {
+    false
 }
 
 fn is_boundary(dir: &Path, home: Option<&Path>) -> bool {
@@ -174,7 +216,7 @@ impl DiscoverError {
     /// purpose: a refused manifest is never read.
     pub fn source_file(&self) -> SourceFile {
         let path = match self {
-            DiscoverError::Io { path, .. } => path,
+            DiscoverError::Io { path, .. } | DiscoverError::FileChanged { path } => path,
             DiscoverError::ManifestSymlink { manifest }
             | DiscoverError::ManifestNotFile { manifest }
             | DiscoverError::ForeignOwner { manifest, .. } => manifest,
@@ -189,6 +231,14 @@ impl DiscoverError {
             DiscoverError::Io { path, error } => {
                 Diagnostic::error(format!("cannot inspect {}: {error}", path.display()), at)
             }
+            DiscoverError::FileChanged { path } => Diagnostic::error(
+                format!(
+                    "refusing to check {}: the file was replaced while it was being opened",
+                    path.display()
+                ),
+                at,
+            )
+            .with_help("run the check again once nothing is modifying the file"),
             DiscoverError::ManifestSymlink { manifest } => Diagnostic::error(
                 format!("refusing to use {}: it is a symbolic link", manifest.display()),
                 at,
@@ -220,9 +270,11 @@ impl DiscoverError {
     }
 }
 
+/// The message with terminal-unsafe characters escaped, so a hostile path
+/// can't reach the terminal raw through `{}` (like [`crate::SourceError`]).
 impl fmt::Display for DiscoverError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.to_diagnostic().message)
+        f.write_str(&display_safe(&self.to_diagnostic().message))
     }
 }
 

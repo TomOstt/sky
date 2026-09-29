@@ -1,5 +1,8 @@
-# Lexes and parses cleanly: arithmetic, units, `not`/`and`/`or`.
+# Lexes, parses, and checks cleanly: arithmetic, units, `not`/`and`/`or`.
 v = 3 m / 2 s
 g = 9.81 m/s^2
 k = 10 km^-1
+a = true
+b = v > 1 m/s
+c = false
 f = not (a and b) or c

@@ -155,6 +155,7 @@ dependencies = [
  "sky-diag",
  "sky-project",
  "sky-syntax",
+ "sky-types",
 ]
 
 [[package]]

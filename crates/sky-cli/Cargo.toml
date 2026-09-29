@@ -16,3 +16,4 @@ sky-ast = { path = "../sky-ast" }
 sky-diag = { path = "../sky-diag" }
 sky-project = { path = "../sky-project" }
 sky-syntax = { path = "../sky-syntax" }
+sky-types = { path = "../sky-types" }

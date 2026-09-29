@@ -1,0 +1,5 @@
+# Only an explicit inverse is rewritten: never a power (even ^-1), never plain A.
+let A = Matrix[3,3] PositiveDefinite
+let b = Vector[3]
+explain A^-1 @ b
+explain A @ b

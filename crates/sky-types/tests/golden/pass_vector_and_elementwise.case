@@ -1,0 +1,8 @@
+# Matrix-vector, vector-matrix, dot product, and equal-shape elementwise ops.
+let A = Matrix[M,K]
+let x = Vector[5]
+let y = Vector[2]
+show A @ x
+show y @ A
+show A + A
+show x @ x

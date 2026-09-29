@@ -1,0 +1,8 @@
+# Inverse of a square matrix keeps its tags; Q⁻¹ = Qᵀ is orthogonal too.
+let P = Matrix[4,4] PositiveDefinite
+let Q = Matrix[N,4] Orthogonal
+let D = Matrix[2,2] Diagonal
+show inv(P)
+show inv(Q)
+show transpose(Q)
+show inv(D)

@@ -1,0 +1,4 @@
+# Inverse of a scalar is its reciprocal: a scalar with no tags.
+let x = Scalar
+show inv(x)
+show x⁻¹

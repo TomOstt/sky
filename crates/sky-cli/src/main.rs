@@ -1,7 +1,8 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use sky_diag::{display_safe, Diagnostic, SourceFile};
+use sky_ast::ParseError;
+use sky_diag::{display_safe, Diagnostic, Severity, SourceFile};
 use sky_project::SystemIdentity;
 
 fn main() -> ExitCode {
@@ -34,9 +35,9 @@ fn main() -> ExitCode {
     }
 }
 
-/// `sky check`: finds the project root, lexes the file, and prints its
-/// diagnostics to stderr, in source order, separated by blank lines. Exits 1
-/// if any is an error.
+/// `sky check`: finds the project root, then lexes and parses the file and
+/// prints its diagnostics to stderr, in source order, separated by blank
+/// lines. Exits 1 if any is an error; prints `ok` only if none is.
 fn check(path: &str, src: &str) -> ExitCode {
     // Spec v0.1 non-negotiable 2: the root comes only from walking up from
     // the file, never from the cwd or the environment. A refused sky.toml
@@ -46,18 +47,9 @@ fn check(path: &str, src: &str) -> ExitCode {
         eprint!("{}", e.to_diagnostic().display(&e.source_file()));
         return ExitCode::FAILURE;
     }
-    let result = sky_syntax::lex(src);
-    let (diagnostics, ok): (Vec<&Diagnostic>, bool) = match &result {
-        Ok(lexed) => (lexed.warnings.iter().collect(), true),
-        Err(e) => (e.diagnostics().collect(), false),
-    };
-    // Pass the source unchanged: spans are byte offsets into it, and the
-    // renderer escapes terminal-unsafe characters itself (spec/diagnostics.md).
-    let file = SourceFile::new(path, src);
-    let rendered: Vec<String> = diagnostics
-        .iter()
-        .map(|d| d.render_to_string(&file))
-        .collect();
+    // The whole front end runs in one call on the known-size stack, so the
+    // parser's depth limit holds (and a panic inside propagates unchanged).
+    let (rendered, ok) = sky_ast::with_deep_stack(|| check_source(path, src));
     eprint!("{}", rendered.join("\n"));
     if ok {
         println!("{}: ok", display_safe(path));
@@ -65,4 +57,33 @@ fn check(path: &str, src: &str) -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// Lexes and parses `src`, and renders every diagnostic. Returns the
+/// rendered diagnostics in source order and whether none is an error. Runs
+/// inside `with_deep_stack`.
+fn check_source(path: &str, src: &str) -> (Vec<String>, bool) {
+    let mut diagnostics: Vec<Diagnostic> = match sky_syntax::lex(src) {
+        Err(e) => e.diagnostics().cloned().collect(),
+        Ok(lexed) => {
+            let (module, errors) = sky_ast::parse_module(&lexed.tokens, src);
+            let mut diagnostics = lexed.warnings;
+            diagnostics.extend(errors.into_iter().map(ParseError::into_diagnostic));
+            // Type checker seam: when sky-types is wired in, check `module`
+            // here (if `errors` was empty) and push its diagnostics.
+            let _ = module;
+            diagnostics
+        }
+    };
+    // Lexer warnings and parse errors, interleaved by position.
+    diagnostics.sort_by_key(|d| d.primary.span.start);
+    let ok = !diagnostics.iter().any(|d| d.severity == Severity::Error);
+    // Pass the source unchanged: spans are byte offsets into it, and the
+    // renderer escapes terminal-unsafe characters itself (spec/diagnostics.md).
+    let file = SourceFile::new(path, src);
+    let rendered = diagnostics
+        .iter()
+        .map(|d| d.render_to_string(&file))
+        .collect();
+    (rendered, ok)
 }

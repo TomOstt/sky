@@ -1,0 +1,6 @@
+tests/ui/check/err_superscript_inverse_after_unit.sky:1:10: error: `⁻¹` cannot follow a unit
+  |
+1 | x = 10 km⁻¹
+  |          ^^
+  |        -- unit
+  = help: write `10 km^-1` for per-km, or `(10 km)⁻¹`

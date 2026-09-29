@@ -1,0 +1,2 @@
+# Sky spells logical negation as `not`.
+ok = !a

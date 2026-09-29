@@ -1,0 +1,4 @@
+# `true` and `false` are the Bool literals.
+x = true
+y = not false
+z = true or (3 m + 2 s)

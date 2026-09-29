@@ -1,0 +1,60 @@
+name: Bench
+# Never on pull requests: shared runners are too noisy to gate a PR on, and a
+# full run takes minutes. Run it by hand to measure a change, or wait for the
+# weekly run; the JSON artifacts make the runs comparable over time.
+on:
+  schedule:
+    - cron: "43 3 * * 1" # Mondays 03:43 UTC, off-peak and not on the hour
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: "Only workloads whose name contains this text (empty: all)"
+        required: false
+        default: ""
+      reps:
+        description: "Timed repetitions per measurement"
+        required: false
+        default: "9"
+permissions:
+  contents: read
+# One run at a time: two benchmarks on the same machine pool would still
+# measure each other's noise if they were ever scheduled together.
+concurrency:
+  group: bench
+  cancel-in-progress: false
+jobs:
+  # Same pinned actions and toolchain as ci.yml; keep them in sync.
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: 1.85.1 # keep in sync with rust-toolchain.toml
+      # Inputs go through the environment, never into the script text, so a
+      # crafted filter cannot inject shell.
+      # `shell: bash` (not the default `bash -e`) turns on pipefail, so a
+      # failing run is not hidden by `tee`.
+      - shell: bash
+        env:
+          FILTER: ${{ inputs.filter }}
+          REPS: ${{ inputs.reps || '9' }}
+          SKY_BENCH_REV: ${{ github.sha }}
+        run: |
+          args=(--reps "$REPS" --json bench.json)
+          if [ -n "$FILTER" ]; then args+=(--filter "$FILTER"); fi
+          cargo run --release --locked -p sky-bench -- "${args[@]}" | tee bench.txt
+      # The JSON is written even when the engines disagree (which fails the
+      # step), so a bad run is still inspectable.
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bench-${{ github.sha }}
+          path: |
+            bench.json
+            bench.txt
+          if-no-files-found: warn
+          retention-days: 90

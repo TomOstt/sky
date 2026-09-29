@@ -1,0 +1,124 @@
+tests/ui/lexer/ok_unicode_operators.sky:2:7: error: cannot find `f` in this scope
+  |
+2 | df = ∂f/∂x
+  |       ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:2:10: error: cannot find `x` in this scope
+  |
+2 | df = ∂f/∂x
+  |          ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:3:6: error: cannot find `d` in this scope
+  |
+3 | df = d(f)/d(x)
+  |      ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:3:8: error: cannot find `f` in this scope
+  |
+3 | df = d(f)/d(x)
+  |        ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:3:11: error: cannot find `d` in this scope
+  |
+3 | df = d(f)/d(x)
+  |           ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:3:13: error: cannot find `x` in this scope
+  |
+3 | df = d(f)/d(x)
+  |             ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:4:5: error: cannot find `A` in this scope
+  |
+4 | x = A⁻¹ @ b
+  |     ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:4:11: error: cannot find `b` in this scope
+  |
+4 | x = A⁻¹ @ b
+  |           ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:5:9: error: cannot find `A` in this scope
+  |
+5 | x = inv(A) @ b
+  |         ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:5:14: error: cannot find `b` in this scope
+  |
+5 | x = inv(A) @ b
+  |              ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:6:6: error: cannot find `φ` in this scope
+  |
+6 | g = ∇φ
+  |      ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:7:5: error: cannot find `grad` in this scope
+  |
+7 | g = grad(φ)
+  |     ^^^^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:7:10: error: cannot find `φ` in this scope
+  |
+7 | g = grad(φ)
+  |          ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:8:6: error: cannot find `a` in this scope
+  |
+8 | ok = a ≤ b
+  |      ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:8:10: error: cannot find `b` in this scope
+  |
+8 | ok = a ≤ b
+  |          ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:9:6: error: cannot find `a` in this scope
+  |
+9 | ok = a <= b
+  |      ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:9:11: error: cannot find `b` in this scope
+  |
+9 | ok = a <= b
+  |           ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:10:6: error: cannot find `a` in this scope
+   |
+10 | ok = a ≥ b
+   |      ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:10:10: error: cannot find `b` in this scope
+   |
+10 | ok = a ≥ b
+   |          ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:11:6: error: cannot find `a` in this scope
+   |
+11 | ok = a >= b
+   |      ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:11:11: error: cannot find `b` in this scope
+   |
+11 | ok = a >= b
+   |           ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:12:6: error: cannot find `a` in this scope
+   |
+12 | ok = a ≠ b
+   |      ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:12:10: error: cannot find `b` in this scope
+   |
+12 | ok = a ≠ b
+   |          ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:13:6: error: cannot find `a` in this scope
+   |
+13 | ok = a != b
+   |      ^ not defined
+
+tests/ui/lexer/ok_unicode_operators.sky:13:11: error: cannot find `b` in this scope
+   |
+13 | ok = a != b
+   |           ^ not defined

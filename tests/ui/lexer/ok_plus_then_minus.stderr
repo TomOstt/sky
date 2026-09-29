@@ -1,0 +1,28 @@
+tests/ui/lexer/ok_plus_then_minus.sky:2:5: error: cannot find `a` in this scope
+  |
+2 | y = a+-b
+  |     ^ not defined
+
+tests/ui/lexer/ok_plus_then_minus.sky:2:8: error: cannot find `b` in this scope
+  |
+2 | y = a+-b
+  |        ^ not defined
+
+tests/ui/lexer/ok_plus_then_minus.sky:3:5: error: cannot find `a` in this scope
+  |
+3 | y = a + -b
+  |     ^ not defined
+
+tests/ui/lexer/ok_plus_then_minus.sky:3:10: error: cannot find `b` in this scope
+  |
+3 | y = a + -b
+  |          ^ not defined
+
+tests/ui/lexer/ok_plus_then_minus.sky:4:10: error: cannot add dimensionless and mass
+  |
+4 | m = 5.31 +- 0.02 kg
+  |          ^ mismatched dimensions
+  |     ---- dimensionless
+  |           --------- mass
+  = note: both operands of `+` must have the same dimension
+  = help: convert one side, or fix the unit

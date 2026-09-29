@@ -1,4 +1,4 @@
-//! `sky check` runs the parser: stdout and exit status for the goldens in
+//! `sky check` runs the parser and checker: stdout and exit status for the goldens in
 //! `tests/ui/check/` (the ui harness compares only stderr), and nesting far
 //! past the parser's depth limit ends in a clean error, not a stack overflow.
 
@@ -29,12 +29,7 @@ fn stdout(o: &Output) -> String {
 
 #[test]
 fn ok_only_when_there_are_no_errors() {
-    for f in [
-        "ok_parses",
-        "ok_depth_256",
-        "ok_unit_mismatch_not_checked_yet",
-        "ok_bool_literals",
-    ] {
+    for f in ["ok_parses", "ok_depth_256", "ok_bool_literals"] {
         let rel = format!("tests/ui/check/{f}.sky");
         let out = sky_check(&rel);
         assert_eq!(out.status.code(), Some(0), "{rel}");
@@ -45,6 +40,7 @@ fn ok_only_when_there_are_no_errors() {
         "err_depth_257",
         "err_lexer_error_before_parse",
         "err_unit_after_bool",
+        "err_unit_mismatch",
     ] {
         let rel = format!("tests/ui/check/{f}.sky");
         let out = sky_check(&rel);
@@ -75,4 +71,42 @@ fn very_deep_nesting_is_a_clean_error() {
     );
     assert_eq!(stdout(&out), "");
     fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn explain_is_accepted_before_or_after_the_file() {
+    for args in [
+        ["check", "--explain", "tests/ui/check/ok_parses.sky"],
+        ["check", "tests/ui/check/ok_parses.sky", "--explain"],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sky"))
+            .args(args)
+            .current_dir(root())
+            .output()
+            .expect("run sky");
+        assert_eq!(out.status.code(), Some(0), "{args:?}");
+        assert_eq!(stdout(&out), "tests/ui/check/ok_parses.sky: ok\n");
+    }
+}
+
+#[test]
+fn unexpected_arguments_are_a_usage_error() {
+    for args in [
+        vec!["check"],
+        vec!["check", "a.sky", "b.sky"],
+        vec!["check", "--explain", "--explain", "a.sky"],
+        vec!["check", "--verbose", "a.sky"],
+        vec!["frobnicate"],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sky"))
+            .args(&args)
+            .current_dir(root())
+            .output()
+            .expect("run sky");
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).starts_with("usage: sky check"),
+            "{args:?}"
+        );
+    }
 }

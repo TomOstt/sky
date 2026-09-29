@@ -33,7 +33,7 @@ mod source;
 #[cfg(unix)]
 mod walk;
 
-pub use discover::{discover, DiscoverError, Discovery, Project, MANIFEST};
+pub use discover::{discover, discover_opened, DiscoverError, Discovery, Project, MANIFEST};
 pub use identity::{Identity, SystemIdentity};
 pub use import::{parse_module_path, resolve_import, ImportError, Module, ProjectModule};
-pub use source::{read_entry_file, read_source, SourceError};
+pub use source::{open_entry_file, read_entry_file, read_source, SourceError};

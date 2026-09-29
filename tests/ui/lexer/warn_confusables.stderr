@@ -8,6 +8,11 @@ tests/ui/lexer/warn_confusables.sky:3:1: warning: identifier `xЖ` mixes Latin a
 3 | xЖ = 2
   | ^^ possibly confusable identifier
 
+tests/ui/lexer/warn_confusables.sky:4:10: error: unknown unit `μm`
+  |
+4 | size = 5 μm
+  |          ^^
+
 tests/ui/lexer/warn_confusables.sky:6:1: warning: identifier `vαlue` contains Greek 'α' (U+03B1), which looks like Latin 'a'
   |
 6 | vαlue = 3

@@ -1,0 +1,8 @@
+tests/ui/check/err_unit_mismatch.sky:2:9: error: cannot add length and time
+  |
+2 | y = 3 m + 2 s
+  |         ^ mismatched dimensions
+  |     --- length
+  |           --- time
+  = note: both operands of `+` must have the same dimension
+  = help: convert one side, or fix the unit

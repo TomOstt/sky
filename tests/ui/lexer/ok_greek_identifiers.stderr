@@ -1,0 +1,14 @@
+tests/ui/lexer/ok_greek_identifiers.sky:5:9: error: unknown unit `nm`
+  |
+5 | λ = 500 nm
+  |         ^^
+
+tests/ui/lexer/ok_greek_identifiers.sky:7:7: error: unknown unit `GHz`
+  |
+7 | ν = 5 GHz
+  |       ^^^
+
+tests/ui/lexer/ok_greek_identifiers.sky:10:10: error: unknown unit `μm`
+   |
+10 | size = 3 μm
+   |          ^^

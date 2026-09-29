@@ -1,3 +1,6 @@
 # In this case language bare `N` is the base dimension (amount of substance)
 # and `[N]` is the unit newton. They are different dimensions.
+#
+# If you add `mol` or `cd`, rename the `N`/`J` dimension display symbols;
+# they collide with newton/joule.
 unify [N] with N

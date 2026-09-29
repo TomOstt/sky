@@ -189,13 +189,43 @@ mod tests {
         assert_eq!(dim("Hz"), rad_per_s);
     }
 
+    /// Shown by the guard tests below when they fail.
+    const DISPLAY_COLLISION: &str = "if you add `mol` or `cd`, rename the `N`/`J` dimension \
+         display symbols; they collide with newton/joule";
+
     #[test]
     fn newton_is_not_the_amount_dimension() {
         // The unit `N` (force) and the base-dimension symbol `N` (amount of
         // substance, shown by `Dimension`'s display) are different things.
-        assert_ne!(dim("N"), Dimension::AMOUNT);
-        assert_eq!(Dimension::AMOUNT.to_string(), "N");
+        assert_ne!(dim("N"), Dimension::AMOUNT, "{DISPLAY_COLLISION}");
+        assert_ne!(dim("J"), Dimension::LUMINOSITY, "{DISPLAY_COLLISION}");
+        assert_eq!(Dimension::AMOUNT.to_string(), "N", "{DISPLAY_COLLISION}");
+        assert_eq!(
+            Dimension::LUMINOSITY.to_string(),
+            "J",
+            "{DISPLAY_COLLISION}"
+        );
         assert_eq!(dim("N").to_string(), "L·M·T⁻²");
+        assert_eq!(dim("J").to_string(), "L²·M·T⁻²");
+    }
+
+    /// Fails as soon as the table gains a unit (such as `mol` or `cd`)
+    /// whose dimension involves amount of substance or luminous intensity,
+    /// because error text would then show the bare symbols `N` and `J`,
+    /// which read as newton and joule.
+    #[test]
+    fn no_unit_exposes_the_n_or_j_display_symbols() {
+        use crate::dimension::BaseDim;
+        for u in UNITS {
+            for b in [BaseDim::Amount, BaseDim::Luminosity] {
+                assert!(
+                    u.dim.exponent(b).is_zero(),
+                    "{DISPLAY_COLLISION} (unit `{}` has dimension {})",
+                    u.name,
+                    u.dim
+                );
+            }
+        }
     }
 
     #[test]

@@ -491,12 +491,19 @@ fn sir_text_parse_accepts_the_math_operations_the_printer_writes() {
 }
 
 /// The checker follows the arm that falls through: `t` is bound after the
-/// `if`, since the other arm leaves the loop. Lowering does not: it builds no
-/// `t` for the merge and stops with "cannot find `t` in this scope". The same
-/// shape with `return` in a function is fine.
+/// `if`, since the other arm leaves the loop. Lowering used to build no `t`
+/// for the merge ("cannot find `t` in this scope"). Fixed: a name is a result
+/// of the merge when every arm that falls through binds it.
 #[test]
-#[ignore = "bug: lowering drops a name bound only by the arms that do not break or continue"]
 fn lowering_loses_a_name_bound_beside_a_break_arm() {
+    // An `elif` chain, and a name bound in a `while true` loop that the
+    // breaking arm also binds.
+    assert_agree(
+        "k = 0\nwhile k < 4:\n    k += 1\n    if k > 2:\n        break\n    elif k > 1:\n        t = 5\n    else:\n        t = 6\n    print(t)\nprint(k)\n",
+    );
+    assert_agree(
+        "k = 0\nwhile true:\n    k += 1\n    if k > 2:\n        u = 1\n        break\n    else:\n        t = 6\n    print(t)\nprint(u, k)\n",
+    );
     assert_agree(
         "k = 0\nwhile k < 3:\n    k += 1\n    if k > 1:\n        break\n    else:\n        t = 5\n    print(t)\nprint(k)\n",
     );

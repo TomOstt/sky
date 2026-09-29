@@ -53,7 +53,13 @@
 //!   every name whose value differs on some path becomes a **result** of the
 //!   `if`, and each arm yields its current values. A name that is bound
 //!   after the `if` only on some paths (the checker calls it "maybe
-//!   undefined") is not a result: a checked program cannot read it.
+//!   undefined") is not a result: a checked program cannot read it. "Some
+//!   paths" are the arms that *fall through*: an arm that `break`s,
+//!   `continue`s or returns takes no part, as in the checker's merge
+//!   (`sky-types/src/flow.rs`), so `t` is a result of an `if` whose other
+//!   arm `break`s (with a stand-in on the breaking path, which the flags
+//!   make unobservable). A name the enclosing loop's exit reads (a new name
+//!   of a `while true`) is a result too, if a `break`ing arm binds it.
 //! * `while` is `scf.while`: the variables the body assigns (that are bound
 //!   before the loop) are the **loop-carried** values, block arguments of
 //!   `before` and `after` and results of the loop. `before` computes the

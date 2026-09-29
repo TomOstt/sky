@@ -384,11 +384,11 @@ struct Gen<'a> {
 /// overflows `f64` in a program that must run (huge numbers get plain SI
 /// units).
 ///
-/// `lowering_loses_a_name_bound_beside_a_break_arm`: a name bound only by the
-/// arms of an `if` that fall through, when another arm `break`s or
-/// `continue`s, is "cannot find `t` in this scope" if read after the `if`
-/// inside the loop.
-const GATE_MERGE_AFTER_JUMP: bool = true;
+/// `lowering_loses_a_name_bound_beside_a_break_arm`: fixed (a name bound only
+/// by the arms of an `if` that fall through, when another arm `break`s or
+/// `continue`s, was "cannot find `t` in this scope" if read after the `if`
+/// inside the loop).
+const GATE_MERGE_AFTER_JUMP: bool = false;
 
 /// `lowering_ignores_a_constant_rebound_in_a_block`: rebinding a predefined
 /// constant (`c = 2 m/s`) inside an `if` or `while`, at module level or in a

@@ -197,6 +197,8 @@ name = "sky-units"
 version = "0.0.1"
 dependencies = [
  "proptest",
+ "sky-ast",
+ "sky-syntax",
 ]
 
 [[package]]

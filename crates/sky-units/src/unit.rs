@@ -1,6 +1,11 @@
 //! The v0.1 unit table: each unit is a dimension plus a scale factor to the
 //! coherent SI unit of that dimension (so `km` is length with scale 1000).
 //!
+//! The derived SI units `N`, `Pa`, `W`, and `Hz` are coherent (scale 1).
+//! Because `rad` is dimensionless, `Hz` and `rad/s` have the same dimension,
+//! so a missing 2π between frequency and angular frequency is not caught (a
+//! known v0.1 limitation).
+//!
 //! Affine units such as °C are deliberately absent in v0.1. Lookup is by
 //! symbol only; full-name aliases (`meters`, `kelvin`) are not provided yet.
 
@@ -46,6 +51,18 @@ pub static UNITS: &[Unit] = &[
     unit("pc", Dimension::LENGTH, PARSEC_IN_METRES),
     unit("AU", Dimension::LENGTH, ASTRONOMICAL_UNIT_IN_METRES),
     unit("rad", Dimension::DIMENSIONLESS, 1.0),
+    // Derived SI units with special names, all coherent (scale 1).
+    // `N` is the newton. It is unrelated to the base-dimension symbol N
+    // (amount of substance) in `Dimension`'s display, and to a shape
+    // variable written `N` in `Matrix[N, N]`: the parser only reads a unit
+    // right after a numeric literal (`10 N`).
+    unit("N", Dimension::FORCE, 1.0),
+    unit("Pa", Dimension::PRESSURE, 1.0),
+    unit("W", Dimension::POWER, 1.0),
+    // `Hz` is T⁻¹, the same dimension as `rad/s` because `rad` is
+    // dimensionless: a missing 2π between frequency and angular frequency is
+    // not a dimension error. A known v0.1 limitation.
+    unit("Hz", Dimension::FREQUENCY, 1.0),
 ];
 
 /// Looks a unit up by its exact symbol (case-sensitive), e.g. `lookup("km")`.
@@ -100,7 +117,10 @@ mod tests {
         let names: Vec<_> = UNITS.iter().map(|u| u.name).collect();
         assert_eq!(
             names,
-            ["m", "km", "s", "min", "h", "kg", "K", "J", "eV", "pc", "AU", "rad"]
+            [
+                "m", "km", "s", "min", "h", "kg", "K", "J", "eV", "pc", "AU", "rad", "N", "Pa",
+                "W", "Hz"
+            ]
         );
         for u in UNITS {
             assert!(u.scale.is_finite() && u.scale > 0.0, "{}", u.name);
@@ -125,6 +145,57 @@ mod tests {
             assert!(crate::lookup(not_unit).is_none(), "{not_unit:?}");
             assert!(!crate::is_unit_symbol(not_unit), "{not_unit:?}");
         }
+    }
+
+    fn dim(name: &str) -> Dimension {
+        lookup(name).unwrap_or_else(|| panic!("{name}")).dim
+    }
+
+    #[test]
+    fn derived_si_units_equal_their_si_composition() {
+        let (m, kg, s) = (dim("m"), dim("kg"), dim("s"));
+        let m2 = m.pow_int(2).unwrap();
+        // N = kg·m·s⁻²
+        let newton = kg
+            .checked_mul(m)
+            .unwrap()
+            .checked_div(s.pow_int(2).unwrap())
+            .unwrap();
+        assert_eq!(dim("N"), newton);
+        // Pa = N·m⁻²
+        assert_eq!(dim("Pa"), dim("N").checked_div(m2).unwrap());
+        // W = J·s⁻¹
+        assert_eq!(dim("W"), dim("J").checked_div(s).unwrap());
+        // Hz = s⁻¹
+        assert_eq!(dim("Hz"), s.inverse().unwrap());
+        // Cross-checks: N·m = J, W·s = J, Pa·m² = N.
+        assert_eq!(dim("N").checked_mul(m).unwrap(), dim("J"));
+        assert_eq!(dim("W").checked_mul(s).unwrap(), dim("J"));
+        assert_eq!(dim("Pa").checked_mul(m2).unwrap(), dim("N"));
+        for u in ["N", "Pa", "W", "Hz"] {
+            assert_eq!(lookup(u).unwrap().scale, 1.0, "{u}");
+        }
+        assert_eq!(dim("N").name(), Some("force"));
+        assert_eq!(dim("Pa").name(), Some("pressure"));
+        assert_eq!(dim("W").name(), Some("power"));
+        assert_eq!(dim("Hz").name(), Some("frequency"));
+    }
+
+    #[test]
+    fn hertz_and_radians_per_second_share_a_dimension() {
+        // Known v0.1 limitation, not a bug: rad is dimensionless, so a
+        // missing 2π between Hz and rad/s is not a dimension error.
+        let rad_per_s = dim("rad").checked_div(dim("s")).unwrap();
+        assert_eq!(dim("Hz"), rad_per_s);
+    }
+
+    #[test]
+    fn newton_is_not_the_amount_dimension() {
+        // The unit `N` (force) and the base-dimension symbol `N` (amount of
+        // substance, shown by `Dimension`'s display) are different things.
+        assert_ne!(dim("N"), Dimension::AMOUNT);
+        assert_eq!(Dimension::AMOUNT.to_string(), "N");
+        assert_eq!(dim("N").to_string(), "L·M·T⁻²");
     }
 
     #[test]

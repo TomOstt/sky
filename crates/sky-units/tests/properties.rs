@@ -285,3 +285,74 @@ proptest! {
         }
     }
 }
+
+/// The derived SI units with special names.
+fn derived_si() -> impl Strategy<Value = &'static str> {
+    prop::sample::select(vec!["N", "Pa", "W", "Hz"])
+}
+
+/// Every table unit.
+fn table_unit() -> impl Strategy<Value = &'static sky_units::Unit> {
+    prop::sample::select(sky_units::UNITS.iter().collect::<Vec<_>>())
+}
+
+fn udim(name: &str) -> Dimension {
+    sky_units::lookup(name).expect(name).dim
+}
+
+/// Each derived unit's SI composition, built from base units only.
+fn composition(name: &str) -> Dimension {
+    let (m, kg, s) = (udim("m"), udim("kg"), udim("s"));
+    let s2 = s.pow_int(2).unwrap();
+    let newton = kg.checked_mul(m).unwrap().checked_div(s2).unwrap();
+    match name {
+        "N" => newton,
+        "Pa" => newton.checked_div(m.pow_int(2).unwrap()).unwrap(),
+        "W" => kg
+            .checked_mul(m.pow_int(2).unwrap())
+            .unwrap()
+            .checked_div(s.pow_int(3).unwrap())
+            .unwrap(),
+        "Hz" => s.inverse().unwrap(),
+        _ => unreachable!(),
+    }
+}
+
+proptest! {
+    /// Every power of a derived unit equals the same power of its SI
+    /// composition, and the unit is coherent (scale 1).
+    #[test]
+    fn derived_units_match_their_composition(name in derived_si(), n in -6i64..=6, r in rational()) {
+        let u = sky_units::lookup(name).unwrap();
+        prop_assert_eq!(u.scale, 1.0);
+        prop_assert_eq!(u.dim, composition(name));
+        prop_assert_eq!(u.dim.pow_int(n).unwrap(), composition(name).pow_int(n).unwrap());
+        prop_assert_eq!(u.dim.pow_rat(r).unwrap(), composition(name).pow_rat(r).unwrap());
+    }
+
+    /// Unifying `?x · [v]` with `[u]` solves `?x = [u] / [v]` for any two
+    /// table units, including the derived ones.
+    #[test]
+    fn unit_quotients_are_solved(u in table_unit(), v in table_unit()) {
+        let mut un = DimUnifier::new();
+        let x = un.fresh("x");
+        let lhs = DimTerm::var(x.clone()).mul(&DimTerm::known(v.dim)).unwrap();
+        un.unify(&lhs, &DimTerm::known(u.dim)).unwrap();
+        prop_assert_eq!(
+            un.resolve(&x).unwrap(),
+            DimTerm::known(u.dim.checked_div(v.dim).unwrap())
+        );
+    }
+
+    /// Lookup is exact: every table symbol finds its own entry, and a
+    /// symbol with anything appended or prepended is not a unit unless it is
+    /// itself in the table.
+    #[test]
+    fn lookup_is_exact(u in table_unit(), extra in "[A-Za-z]{1,2}") {
+        prop_assert!(std::ptr::eq(sky_units::lookup(u.name).unwrap(), u));
+        for candidate in [format!("{}{extra}", u.name), format!("{extra}{}", u.name)] {
+            let in_table = sky_units::UNITS.iter().any(|t| t.name == candidate);
+            prop_assert_eq!(sky_units::is_unit_symbol(&candidate), in_table);
+        }
+    }
+}

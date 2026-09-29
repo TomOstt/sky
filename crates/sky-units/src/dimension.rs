@@ -121,6 +121,12 @@ impl Dimension {
     pub const FREQUENCY: Dimension = Dimension::from_ints([0, 0, -1, 0, 0, 0, 0]);
     /// L·T⁻¹.
     pub const VELOCITY: Dimension = Dimension::from_ints([1, 0, -1, 0, 0, 0, 0]);
+    /// L·M·T⁻² (the newton, `N`; not the base dimension N, amount of substance).
+    pub const FORCE: Dimension = Dimension::from_ints([1, 1, -2, 0, 0, 0, 0]);
+    /// L⁻¹·M·T⁻² (the pascal, `Pa`).
+    pub const PRESSURE: Dimension = Dimension::from_ints([-1, 1, -2, 0, 0, 0, 0]);
+    /// L²·M·T⁻³ (the watt, `W`).
+    pub const POWER: Dimension = Dimension::from_ints([2, 1, -3, 0, 0, 0, 0]);
 
     /// A dimension with integer exponents, in [`BaseDim::ALL`] order.
     pub const fn from_ints(exps: [i64; 7]) -> Self {
@@ -215,6 +221,9 @@ static NAMES: &[(Dimension, &str)] = &[
     (Dimension::ENERGY, "energy"),
     (Dimension::FREQUENCY, "frequency"),
     (Dimension::VELOCITY, "velocity"),
+    (Dimension::FORCE, "force"),
+    (Dimension::PRESSURE, "pressure"),
+    (Dimension::POWER, "power"),
 ];
 
 fn expect_exp(r: Result<Dimension, DimError>) -> Dimension {

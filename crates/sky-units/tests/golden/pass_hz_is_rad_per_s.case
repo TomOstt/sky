@@ -1,0 +1,3 @@
+# Known v0.1 limitation, not a bug: rad is dimensionless, so Hz and rad/s
+# have the same dimension and a missing 2π is not a dimension error.
+unify [Hz] with [rad]/[s]

@@ -12,3 +12,7 @@ publish.workspace = true
 [dev-dependencies]
 # Property tests only; not linked into any shipped artifact.
 proptest = { version = "1", default-features = false, features = ["std"] }
+# Only for tests/unit_vs_shape_var.rs, which pins how the parser tells the
+# unit `N` from a shape variable `N`. The library itself has no dependencies.
+sky-ast = { path = "../sky-ast" }
+sky-syntax = { path = "../sky-syntax" }

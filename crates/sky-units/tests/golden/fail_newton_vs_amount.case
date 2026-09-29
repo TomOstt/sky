@@ -1,0 +1,3 @@
+# In this case language bare `N` is the base dimension (amount of substance)
+# and `[N]` is the unit newton. They are different dimensions.
+unify [N] with N

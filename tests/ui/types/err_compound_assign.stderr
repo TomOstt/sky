@@ -1,0 +1,28 @@
+tests/ui/types/err_compound_assign.sky:6:3: error: cannot add length and time
+  |
+6 | x += 3 s
+  |   ^^ mismatched dimensions
+  | - length
+  |      --- time
+  = note: both operands of `+` must have the same dimension
+  = help: convert one side, or fix the unit
+
+tests/ui/types/err_compound_assign.sky:7:3: error: `*=` would change `x` from length to L²
+  |
+7 | x *= 2 m
+  |   ^^
+  | - this is length
+  = note: the result of `*=` must keep the type of `x`
+  = help: bind a new name instead: `y = x * …`
+
+tests/ui/types/err_compound_assign.sky:8:3: error: `@=` would drop `K`'s Symmetric, PositiveDefinite tags
+  |
+8 | K @= B
+  |   ^^
+  | - this is Matrix[3,3] {Symmetric, PositiveDefinite} [1]
+  = note: the result of `@=` must keep the type of `K`
+
+tests/ui/types/err_compound_assign.sky:10:1: error: cannot find `y` in this scope
+   |
+10 | y += 1
+   | ^ not defined

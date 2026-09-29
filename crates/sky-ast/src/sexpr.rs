@@ -5,7 +5,8 @@
 //! `m^(1/2)` → `(^ m 1/2)`, `A⁻¹ @ b` → `(@ (inverse A) b)`,
 //! `f(a)` → `(call f a)`, `M[3, 4]` → `(index M 3 4)`, `a.b` → `(attr a b)`,
 //! `A[1:3]` → `(index A (: 1 3))`, `A[0, :]` → `(index A 0 (: _ _))`,
-//! `(a)` → `(paren a)`, `x = 1` → `(= x 1)`, `A: T = v` → `(: A T v)`,
+//! `(a)` → `(paren a)`, `x = 1` → `(= x 1)`,
+//! `A: Symmetric Matrix[3, 3] N = v` → `(: A (type (tags Symmetric) (Matrix 3 3) (unit N)) v)`,
 //! `a.b = x` → `(= (attr a b) x)`, `x += e` → `(+= x e)`,
 //! `true` → `true`, `not a` → `(not a)`, `a and b and c` → `(and a b c)`,
 //! `a and b or c` → `(or (and a b) c)`.
@@ -13,7 +14,7 @@
 use sky_syntax::Span;
 
 use crate::ast::{
-    span_text, AssignTarget, Expr, ExprKind, IndexItem, Module, Stmt, StmtKind, UnitExpr,
+    span_text, AssignTarget, Expr, ExprKind, IndexItem, Module, Stmt, StmtKind, TypeExpr, UnitExpr,
 };
 
 fn text(src: &str, span: Span) -> &str {
@@ -36,6 +37,39 @@ impl UnitExpr {
     }
 }
 
+impl TypeExpr {
+    /// `(type (tags T...)? (Matrix d...)? (unit u)?)`: absent parts are
+    /// left out, so `x: m/s` is `(type (unit (/ m s)))` and `x: Scalar` is
+    /// `(type (Scalar))`.
+    pub fn to_sexpr(&self, src: &str) -> String {
+        let mut out = String::from("(type");
+        if !self.tags.is_empty() {
+            out.push_str(" (tags");
+            for t in &self.tags {
+                out.push(' ');
+                out.push_str(text(src, t.span));
+            }
+            out.push(')');
+        }
+        if let Some(shape) = &self.shape {
+            out.push_str(" (");
+            out.push_str(shape.kind.name());
+            for d in &shape.dims {
+                out.push(' ');
+                out.push_str(text(src, d.span()));
+            }
+            out.push(')');
+        }
+        if let Some(u) = &self.unit {
+            out.push_str(" (unit ");
+            write_unit(&mut out, u, src);
+            out.push(')');
+        }
+        out.push(')');
+        out
+    }
+}
+
 impl Stmt {
     pub fn to_sexpr(&self, src: &str) -> String {
         let mut out = String::new();
@@ -53,7 +87,7 @@ impl Stmt {
                 out.push_str("(: ");
                 out.push_str(text(src, name.span));
                 out.push(' ');
-                write_expr(&mut out, ty, src);
+                out.push_str(&ty.to_sexpr(src));
                 if let Some(v) = value {
                     out.push(' ');
                     write_expr(&mut out, v, src);

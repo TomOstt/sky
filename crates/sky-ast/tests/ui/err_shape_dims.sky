@@ -1,0 +1,7 @@
+# A dimension is an integer or a name.
+a: Matrix[3, :]
+b: Matrix[2.5, 3]
+c: Matrix[]
+e: Matrix[3 3]
+f: Vector[-1]
+g: Matrix[(3), 3]

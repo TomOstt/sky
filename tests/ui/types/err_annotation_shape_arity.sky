@@ -1,0 +1,3 @@
+# `Vector` takes one dimension and `Matrix` two.
+a: Vector[3, 3]
+b: Matrix[3]

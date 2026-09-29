@@ -1,0 +1,4 @@
+# Matrix properties go before the shape.
+A: Matrix[3, 3] PositiveDefinite
+B: Symmetric Matrix[3, 3] Diagonal
+C: Matrix[3, 3] PositveDefinite

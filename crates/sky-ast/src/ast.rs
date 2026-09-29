@@ -186,6 +186,92 @@ impl UnitExpr {
     }
 }
 
+/// A type annotation, e.g. `PositiveDefinite Matrix[N, N] kg`: read as "a
+/// positive-definite N by N matrix of kilograms".
+///
+/// ```text
+/// type := tag* shape [unit] | tag* unit | "Scalar"
+/// ```
+///
+/// A lone name is always a unit (`x: N` is newtons, `x: K` kelvin), never a
+/// size variable: size variables only appear inside `[...]`. The parser does
+/// not know which capitalized names are tags; the checker validates them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeExpr {
+    /// Matrix-property names before the shape, in source order.
+    pub tags: Vec<Ident>,
+    /// `Vector[..]`, `Matrix[..]`, `Tensor[..]`, or `Scalar`. `None` for a
+    /// bare unit (`x: m/s`), which means a scalar of that unit.
+    pub shape: Option<ShapeAnn>,
+    /// The element unit, after the shape.
+    pub unit: Option<UnitExpr>,
+    /// From the first tag or shape word through the last token of the type.
+    pub span: Span,
+}
+
+/// Which shape word an annotation starts with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ShapeKind {
+    Scalar,
+    Vector,
+    Matrix,
+    Tensor,
+}
+
+impl ShapeKind {
+    /// The source spelling, also used by the S-expression printer.
+    pub fn name(self) -> &'static str {
+        match self {
+            ShapeKind::Scalar => "Scalar",
+            ShapeKind::Vector => "Vector",
+            ShapeKind::Matrix => "Matrix",
+            ShapeKind::Tensor => "Tensor",
+        }
+    }
+
+    /// The shape word spelled `word`, if it is one.
+    pub fn from_name(word: &str) -> Option<ShapeKind> {
+        match word {
+            "Scalar" => Some(ShapeKind::Scalar),
+            "Vector" => Some(ShapeKind::Vector),
+            "Matrix" => Some(ShapeKind::Matrix),
+            "Tensor" => Some(ShapeKind::Tensor),
+            _ => None,
+        }
+    }
+}
+
+/// The shape part of a type: `Matrix[N, 3]`, or a bare `Scalar`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShapeAnn {
+    pub kind: ShapeKind,
+    /// The shape word alone (`Matrix`).
+    pub kind_span: Span,
+    /// Empty for `Scalar`; otherwise at least one dimension.
+    pub dims: Vec<DimExpr>,
+    /// The shape word through its `]`.
+    pub span: Span,
+}
+
+/// One dimension in `[...]` of a shape: an integer or a size-variable name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DimExpr {
+    /// A non-negative integer literal (the checker reads its value, so a
+    /// huge one is a checker error, not a parse error).
+    Int(Span),
+    /// A size variable.
+    Name(Ident),
+}
+
+impl DimExpr {
+    pub fn span(&self) -> Span {
+        match self {
+            DimExpr::Int(s) => *s,
+            DimExpr::Name(id) => id.span,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expr {
     pub kind: ExprKind,
@@ -239,9 +325,8 @@ pub enum ExprKind {
         callee: Box<Expr>,
         args: Vec<Expr>,
     },
-    /// `base[items...]`, e.g. `A[i, j]`, `A[0, :]`, `A[1:3]`. Also used for
-    /// generic arguments like `Matrix[3, 4]` (the checker rejects slices
-    /// there). Always at least one item.
+    /// `base[items...]`, e.g. `A[i, j]`, `A[0, :]`, `A[1:3]`. Always at
+    /// least one item. (Type annotations do not use this: see [`TypeExpr`].)
     Index {
         base: Box<Expr>,
         items: Vec<IndexItem>,
@@ -385,7 +470,7 @@ pub enum StmtKind {
     /// (`a.b: T = e` and `A[i]: T = e` are parse errors).
     Binding {
         name: Ident,
-        ty: Expr,
+        ty: TypeExpr,
         value: Option<Expr>,
     },
     /// `target op= value`, e.g. `x += 1`. Its own node, not desugared to

@@ -1,0 +1,3 @@
+# The unit of an annotation is checked against the unit table.
+a: Vector[3] meters
+b: furlongs

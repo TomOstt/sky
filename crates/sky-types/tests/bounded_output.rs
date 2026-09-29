@@ -61,10 +61,7 @@ fn huge_annotation_is_quoted_capped_but_spanned_in_full() {
     let c = check(&src, Env::new());
     assert_eq!(c.diagnostics.len(), 1, "{:#?}", c.diagnostics);
     let d = &c.diagnostics[0];
-    assert_eq!(
-        d.message,
-        format!("unsupported type annotation `{}`", capped())
-    );
+    assert_eq!(d.message, format!("unknown unit `{}`", capped()));
     assert!(checker_text_len(d) < KIB, "{}", checker_text_len(d));
     assert_eq!(span_text(&src, d), name);
 }
@@ -217,15 +214,15 @@ fn every_quoting_diagnostic_stays_small() {
     )
     .unwrap();
     let m = "y".repeat(HUGE);
+    let big = "Y".repeat(HUGE);
     let cases = [
         // (source, expected message prefix)
-        (format!("A: Matrix[{m} + 1, 3]\n"), "shape arithmetic like"),
         (format!("A: Matrix[{digits}, 3]\n"), "shape dimension `"),
         (
-            format!("A: Matrix[{m}.z, 3]\n"),
-            "a shape dimension must be",
+            format!("A: {big} Matrix[3, 3]\n"),
+            "unknown matrix property `",
         ),
-        (format!("A: {m}[3]\n"), "unsupported type annotation"),
+        (format!("A: Matrix[3, 3] {big}\n"), "unknown unit `"),
         (format!("A: Matrix[{n}, {n}]\n"), "size variable `"),
         (format!("q = 1 {m}\n"), "unknown unit `"),
         (format!("q = {n} + 1\n"), "cannot add a scalar to a matrix"),

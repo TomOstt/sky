@@ -1,0 +1,17 @@
+# Type annotations read like English: "A is a positive-definite N by N matrix
+# of kilograms". A lone name is a unit (`N` is newtons, `K` kelvin), a name
+# before a shape word is a matrix property, and a name inside `[...]` is a
+# size variable.
+t: s
+v: Vector[3] m/s
+A: PositiveDefinite Matrix[N, N]
+K: Symmetric Diagonal Matrix[3, 3] N/m
+x: Scalar
+M: Tensor[B, T, D] kg
+f: N
+T2: K
+w: Vector[3,] kg*m^2/s^2
+h: m^(1/2)
+B: Matrix[3, 4] = zeros(3, 4)
+C: Symmetric Matrix[N, N] kg = A
+a: m/s^2 = 9.8 m/s^2

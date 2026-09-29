@@ -25,8 +25,8 @@ use sky_diag::{display_capped, Diagnostic, Label};
 use sky_syntax::{Kw, Span, Token, TokenKind};
 
 use crate::ast::{
-    span_text, AssignTarget, BinaryOp, BoolOp, CompoundOp, Expr, ExprKind, Ident, IndexItem,
-    Literal, Module, Stmt, StmtKind, UnaryOp, UnitExpr,
+    span_text, AssignTarget, BinaryOp, BoolOp, CompoundOp, DimExpr, Expr, ExprKind, Ident,
+    IndexItem, Literal, Module, ShapeAnn, ShapeKind, Stmt, StmtKind, TypeExpr, UnaryOp, UnitExpr,
 };
 use crate::precedence::{
     bool_binding_power, infix_binding_power, is_postfix_start, prefix_binding_power, NOT_BP,
@@ -283,7 +283,7 @@ impl<'t, 's> Parser<'t, 's> {
                     "annotate",
                     "invalid annotation target: only a plain name can have a type annotation",
                 )?;
-                let ty = self.expr_bp(0)?;
+                let ty = self.parse_type()?;
                 let value = if self.peek() == TokenKind::Assign {
                     first_op = Some(self.current());
                     self.bump();
@@ -403,13 +403,15 @@ impl<'t, 's> Parser<'t, 's> {
             }
             _ => {
                 let last = match &stmt.kind {
-                    StmtKind::Expr(e) => e,
+                    StmtKind::Expr(e) => e.span,
                     StmtKind::Assign { value, .. } | StmtKind::CompoundAssign { value, .. } => {
-                        value
+                        value.span
                     }
-                    StmtKind::Binding { ty, value, .. } => value.as_ref().unwrap_or(ty),
+                    StmtKind::Binding { ty, value, .. } => {
+                        value.as_ref().map_or(ty.span, |v| v.span)
+                    }
                 };
-                let err = self.unexpected_after(last.span, "end of line");
+                let err = self.unexpected_after(last, "end of line");
                 self.errors.push(err);
                 None
             }
@@ -1074,8 +1076,21 @@ impl<'t, 's> Parser<'t, 's> {
     //   exponent     := ["-"~] INT | "("~ ["-"~] INT ~"/"~ INT ~")"
 
     fn parse_unit_literal(&mut self, value: Literal) -> Option<Expr> {
+        let unit = self.parse_unit(UnitCtx::Literal(&value))?;
+        Some(Expr {
+            span: value.span().join(unit.span()),
+            kind: ExprKind::UnitLiteral { value, unit },
+        })
+    }
+
+    /// The unit itself, with the `IDENT` of its first factor current. Shared
+    /// by unit literals (`10 km/h`) and type annotations (`v: Vector[3] m/s`)
+    /// so both accept exactly the same spellings; `ctx` only picks the
+    /// wording of the errors, which name the number in a literal and have no
+    /// quantity to mention in an annotation.
+    fn parse_unit(&mut self, ctx: UnitCtx<'_>) -> Option<UnitExpr> {
         let mut unit = self.parse_unit_factor()?;
-        self.reject_inverse_after_unit(&value, &unit)?;
+        self.reject_inverse_after_unit(ctx, &unit)?;
         let mut factors = 1usize;
         loop {
             let op = self.current();
@@ -1087,7 +1102,13 @@ impl<'t, 's> Parser<'t, 's> {
             let Some(next) = self.nth(1) else { break };
             let before_adjacent = self.prev_span().is_some_and(|p| p.end == op.span.start);
             if !before_adjacent || op.span.end != next.span.start {
-                break; // Spaced operator: ordinary arithmetic on the quantity.
+                // In a literal a spaced operator is ordinary arithmetic on
+                // the quantity. A type has no quantity, so `m / s` can only
+                // be a unit written with spaces.
+                if ctx.is_annotation() && next.kind == TokenKind::Ident {
+                    return self.fail_spaced_unit_op(&unit, op, next);
+                }
+                break;
             }
             self.bump();
             if is_mul && next.kind == TokenKind::Star {
@@ -1098,20 +1119,33 @@ impl<'t, 's> Parser<'t, 's> {
             }
             if next.kind != TokenKind::Ident {
                 let verb = if is_mul { "multiply" } else { "divide" };
+                let (what, help) = match ctx {
+                    UnitCtx::Literal(_) => (
+                        "unit literal",
+                        format!(
+                            "to {verb} the quantity, put spaces around `{}`",
+                            symbol(op.kind)
+                        ),
+                    ),
+                    UnitCtx::Annotation => (
+                        "unit",
+                        format!(
+                            "write a unit name after `{}`, e.g. `m/s` or `kg*m`",
+                            symbol(op.kind)
+                        ),
+                    ),
+                };
                 self.errors.push(
                     ParseError::new(
                         format!(
-                            "expected a unit name after `{}` in a unit literal, found {}",
+                            "expected a unit name after `{}` in a {what}, found {}",
                             symbol(op.kind),
                             self.describe(next)
                         ),
                         next.span,
                     )
                     .with_secondary(op.span, "no spaces around this, so it is part of the unit")
-                    .with_help(format!(
-                        "to {verb} the quantity, put spaces around `{}`",
-                        symbol(op.kind)
-                    )),
+                    .with_help(help),
                 );
                 return None;
             }
@@ -1131,30 +1165,338 @@ impl<'t, 's> Parser<'t, 's> {
             } else {
                 UnitExpr::Div { lhs, rhs, span }
             };
-            self.reject_inverse_after_unit(&value, &unit)?;
+            self.reject_inverse_after_unit(ctx, &unit)?;
         }
         // `5 kg m`: compound units need `*`, never juxtaposition.
         let tok = self.current();
         if tok.kind == TokenKind::Ident {
             let unit_text = self.text(unit.span());
             let name = self.text(tok.span);
-            self.errors.push(
-                ParseError::new(
-                    format!("unexpected name `{name}` after the unit `{unit_text}`"),
-                    tok.span,
-                )
-                .with_secondary(unit.span(), "unit")
-                .with_help(format!(
+            let mut err = ParseError::new(
+                format!("unexpected name `{name}` after the unit `{unit_text}`"),
+                tok.span,
+            )
+            .with_secondary(unit.span(), "unit");
+            // `x: symmetric Matrix[3, 3]`: a lowercase tag reads as a unit.
+            let shape_word = span_text(self.src, tok.span).and_then(ShapeKind::from_name);
+            err = match (ctx, shape_word) {
+                (UnitCtx::Annotation, Some(kind)) => err.with_help(format!(
+                    "matrix properties are capitalized and go before the shape: `PositiveDefinite {}[…]`",
+                    kind.name()
+                )),
+                _ => err.with_help(format!(
                     "compound units are written with `*` and no spaces: `{unit_text}*{name}`"
                 )),
-            );
+            };
+            self.errors.push(err);
             return None;
         }
-        self.reject_spaced_caret_after_unit(&value, &unit)?;
-        Some(Expr {
-            span: value.span().join(unit.span()),
-            kind: ExprKind::UnitLiteral { value, unit },
+        self.reject_spaced_caret_after_unit(ctx, &unit)?;
+        Some(unit)
+    }
+
+    // ----- type annotations -----
+    //
+    // Grammar (spec/v0.1.md, "Type annotations"; `unit` is the unit-literal
+    // grammar above, so its `*`, `/`, `^` touch their operands):
+    //   type  := tag* shape [unit] | tag* unit | "Scalar"
+    //   tag   := NAME
+    //   shape := ("Vector" | "Matrix" | "Tensor") "[" dim ("," dim)* [","] "]"
+    //   dim   := INT | NAME
+    //
+    // A name starts a unit unless it is a shape word or a tag. A tag is a
+    // capitalized name followed by another name (`PositiveDefinite Matrix`),
+    // which the checker validates: the parser has no tag table, so
+    // `Matrix[3,3] PositiveDefinite` (a tag after the shape) parses as a
+    // unit and the checker explains it. A lone name is always a unit
+    // (`x: N` is newtons), never a size variable: those only appear in
+    // `[...]`. The whole type is parsed in a loop with no recursion, so it
+    // adds no nesting depth.
+
+    /// Parses the type after `:` in `name: type [= value]`. This is the one
+    /// place type annotations are parsed, so `def` parameters and
+    /// `-> return` types can call it too. On error it has recorded a
+    /// diagnostic and returns `None`, leaving the parser mid-line for the
+    /// caller's usual recovery.
+    fn parse_type(&mut self) -> Option<TypeExpr> {
+        let start = self.current().span;
+        let mut tags = Vec::new();
+        loop {
+            let tok = self.current();
+            if tok.kind != TokenKind::Ident {
+                return self.fail_not_a_type(tok);
+            }
+            let word = span_text(self.src, tok.span).unwrap_or("");
+            let next = self.nth(1).map(|t| t.kind);
+            if let Some(kind) = ShapeKind::from_name(word) {
+                return self.parse_shape_type(tags, kind, start);
+            }
+            if next == Some(TokenKind::LBracket) {
+                return self.fail_unknown_shape(tok);
+            }
+            if word.chars().next().is_some_and(char::is_uppercase) && next == Some(TokenKind::Ident)
+            {
+                tags.push(Ident { span: tok.span });
+                self.bump();
+                continue;
+            }
+            let unit = self.parse_unit(UnitCtx::Annotation)?;
+            return Some(TypeExpr {
+                span: start.join(unit.span()),
+                tags,
+                shape: None,
+                unit: Some(unit),
+            });
+        }
+    }
+
+    /// The rest of a type once its shape word (`Matrix`, ...) is current.
+    fn parse_shape_type(
+        &mut self,
+        tags: Vec<Ident>,
+        kind: ShapeKind,
+        start: Span,
+    ) -> Option<TypeExpr> {
+        let word = self.bump();
+        let mut dims = Vec::new();
+        let mut end = word.span;
+        if kind == ShapeKind::Scalar {
+            let tok = self.current();
+            if tok.kind == TokenKind::LBracket {
+                return self.fail_scalar_dims(tok.span);
+            }
+        } else {
+            let open = self.current();
+            if open.kind != TokenKind::LBracket {
+                return self.fail_shape_needs_dims(kind, word.span);
+            }
+            self.bump();
+            end = self.parse_shape_dims(open.span, &mut dims)?;
+        }
+        let shape = ShapeAnn {
+            kind,
+            kind_span: word.span,
+            dims,
+            span: word.span.join(end),
+        };
+        let mut span = start.join(shape.span);
+        let mut unit = None;
+        if self.peek() == TokenKind::Ident {
+            if kind == ShapeKind::Scalar {
+                return self.fail_scalar_unit(shape.span);
+            }
+            let u = self.parse_unit(UnitCtx::Annotation)?;
+            span = span.join(u.span());
+            unit = Some(u);
+        }
+        Some(TypeExpr {
+            tags,
+            shape: Some(shape),
+            unit,
+            span,
         })
+    }
+
+    /// `dim ("," dim)* [","] "]"` after a shape's `[` (`open`). Returns the
+    /// span of the `]`.
+    fn parse_shape_dims(&mut self, open: Span, dims: &mut Vec<DimExpr>) -> Option<Span> {
+        loop {
+            let tok = self.current();
+            let dim = match tok.kind {
+                TokenKind::Ident => DimExpr::Name(Ident { span: tok.span }),
+                TokenKind::Int => DimExpr::Int(tok.span),
+                TokenKind::RBracket if dims.is_empty() => {
+                    return self.fail_dim(tok, open, "a shape needs at least one dimension");
+                }
+                TokenKind::Colon => {
+                    return self.fail_dim(tok, open, "a shape dimension cannot be a slice");
+                }
+                _ => {
+                    let msg = format!(
+                        "a shape dimension must be a non-negative integer or a name, found {}",
+                        self.describe(tok)
+                    );
+                    return self.fail_dim(tok, open, &msg);
+                }
+            };
+            self.bump();
+            dims.push(dim);
+            let next = self.current();
+            match next.kind {
+                TokenKind::Comma => {
+                    self.bump();
+                    if self.peek() == TokenKind::RBracket {
+                        return Some(self.bump().span);
+                    }
+                }
+                TokenKind::RBracket => return Some(self.bump().span),
+                TokenKind::Plus
+                | TokenKind::Minus
+                | TokenKind::Star
+                | TokenKind::Slash
+                | TokenKind::Caret => return self.fail_shape_arithmetic(dim.span(), next),
+                _ => {
+                    let err = ParseError::new(
+                        format!(
+                            "expected `,` or `]` after a shape dimension, found {}",
+                            self.describe(next)
+                        ),
+                        next.span,
+                    )
+                    .with_secondary(open, "in this shape")
+                    .with_help("separate dimensions with commas: `Matrix[3, 3]`");
+                    self.errors.push(err);
+                    return None;
+                }
+            }
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn fail_dim<T>(&mut self, tok: Token, open: Span, message: &str) -> Option<T> {
+        self.errors.push(
+            ParseError::new(message, tok.span)
+                .with_secondary(open, "in this shape")
+                .with_help("write dimensions as integers or size-variable names: `Matrix[N, 3]`"),
+        );
+        None
+    }
+
+    /// `Matrix[N+1, N]`: the operator's operand, if any, is part of the span.
+    #[cold]
+    #[inline(never)]
+    fn fail_shape_arithmetic<T>(&mut self, dim: Span, op: Token) -> Option<T> {
+        let mut span = dim.join(op.span);
+        if let Some(rhs) = self.nth(1) {
+            if matches!(rhs.kind, TokenKind::Ident | TokenKind::Int) {
+                span = span.join(rhs.span);
+            }
+        }
+        let text = self.text(span);
+        self.errors.push(
+            ParseError::new(
+                format!("shape arithmetic like `{text}` is not supported in v0.1"),
+                span,
+            )
+            .with_help(
+                "v0.1 shapes are equality constraints only: use an integer or a size-variable name",
+            ),
+        );
+        None
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn fail_shape_needs_dims<T>(&mut self, kind: ShapeKind, word: Span) -> Option<T> {
+        let name = kind.name();
+        let example = match kind {
+            ShapeKind::Vector => "Vector[3]",
+            ShapeKind::Matrix => "Matrix[3, 3]",
+            _ => "Tensor[2, 3, 4]",
+        };
+        self.errors.push(
+            ParseError::new(format!("`{name}` needs dimensions in brackets"), word)
+                .with_help(format!("write it like `{example}`")),
+        );
+        None
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn fail_scalar_dims<T>(&mut self, open: Span) -> Option<T> {
+        self.errors.push(
+            ParseError::new("`Scalar` takes no dimensions", open).with_help(
+                "a scalar is just `Scalar`; for an array write `Vector[n]` or `Matrix[m, n]`",
+            ),
+        );
+        None
+    }
+
+    /// `x: Scalar m`: a unit alone already means a scalar of that unit.
+    #[cold]
+    #[inline(never)]
+    fn fail_scalar_unit<T>(&mut self, shape: Span) -> Option<T> {
+        let tok = self.current();
+        let name = self.text(tok.span);
+        self.errors.push(
+            ParseError::new("a unit cannot follow `Scalar`", tok.span)
+                .with_secondary(shape, "`Scalar` is dimensionless")
+                .with_help(format!(
+                    "a scalar with a unit is written as the unit alone: `{name}`"
+                )),
+        );
+        None
+    }
+
+    /// `List[int]`, `Foo[3]`: only three words take dimensions.
+    #[cold]
+    #[inline(never)]
+    fn fail_unknown_shape<T>(&mut self, tok: Token) -> Option<T> {
+        let name = self.text(tok.span);
+        self.errors.push(
+            ParseError::new(format!("unknown shape `{name}`"), tok.span).with_help(
+                "shapes are `Vector[n]`, `Matrix[m, n]`, and `Tensor[d1, d2, ...]`; a bare unit like `m/s` is a scalar",
+            ),
+        );
+        None
+    }
+
+    /// The start of a type is not a name: a value where a type belongs
+    /// (`x: 5 m`), or nothing (`x:`).
+    #[cold]
+    #[inline(never)]
+    fn fail_not_a_type<T>(&mut self, tok: Token) -> Option<T> {
+        let is_value = matches!(
+            tok.kind,
+            TokenKind::Int
+                | TokenKind::Float
+                | TokenKind::Str
+                | TokenKind::Keyword(Kw::True | Kw::False)
+        );
+        let err = if is_value {
+            let unit = match (tok.kind, self.nth(1)) {
+                (TokenKind::Int | TokenKind::Float, Some(u)) if u.kind == TokenKind::Ident => {
+                    Some(self.text(u.span))
+                }
+                _ => None,
+            };
+            let help = match unit {
+                Some(u) => format!(
+                    "declare a unit by itself (`{u}`), or give the name a value with `=`"
+                ),
+                None => "a type is a unit like `m/s` or a shape like `Matrix[3, 3]`; give the name a value with `=`".to_string(),
+            };
+            ParseError::new("an annotation is a type, not a value", tok.span).with_help(help)
+        } else {
+            ParseError::new(
+                format!("expected a type, found {}", self.describe(tok)),
+                tok.span,
+            )
+            .with_help("a type is a unit like `m/s`, a shape like `Matrix[3, 3]`, or both: `Vector[3] m/s`")
+        };
+        self.errors.push(err);
+        None
+    }
+
+    /// `x: m / s` (or `m /s`): the operator of a unit has no spaces around it.
+    #[cold]
+    #[inline(never)]
+    fn fail_spaced_unit_op<T>(&mut self, unit: &UnitExpr, op: Token, next: Token) -> Option<T> {
+        let sym = symbol(op.kind);
+        let unit_text = self.text(unit.span());
+        let name = self.text(next.span);
+        self.errors.push(
+            ParseError::new(
+                format!("a unit's `{sym}` cannot have spaces around it"),
+                op.span,
+            )
+            .with_secondary(unit.span(), "unit so far")
+            .with_help(format!(
+                "write the unit without spaces: `{unit_text}{sym}{name}`"
+            )),
+        );
+        None
     }
 
     /// A `^` right after a unit that doesn't touch both sides (`10 m ^2`,
@@ -1163,13 +1505,25 @@ impl<'t, 's> Parser<'t, 's> {
     /// quantity (`(10 m)^2`, 100 m²), readers can't see which was meant, and
     /// the dimension is the same either way, so the checker can't catch it.
     /// A `^` that touches both sides was already read as part of the unit.
-    fn reject_spaced_caret_after_unit(&mut self, value: &Literal, unit: &UnitExpr) -> Option<()> {
+    fn reject_spaced_caret_after_unit(&mut self, ctx: UnitCtx<'_>, unit: &UnitExpr) -> Option<()> {
         let tok = self.current();
         if tok.kind != TokenKind::Caret {
             return Some(());
         }
-        let number = self.text(value.span());
         let unit_text = self.text(unit.span());
+        let UnitCtx::Literal(value) = ctx else {
+            // A type has no quantity to raise, so there is no ambiguity, only
+            // a spelling to fix.
+            self.errors.push(
+                ParseError::new("a unit's `^` cannot have spaces around it", tok.span)
+                    .with_secondary(unit.span(), "unit")
+                    .with_help(format!(
+                        "write the exponent with no spaces: `{unit_text}^2`, `{unit_text}^-1`, or `{unit_text}^(1/2)`"
+                    )),
+            );
+            return None;
+        };
+        let number = self.text(value.span());
         // The exponent as written, when it is a plain (possibly negative) integer.
         let exponent = match (self.nth(1), self.nth(2)) {
             (Some(t), _) if t.kind == TokenKind::Int => Some(self.text(t.span).to_string()),
@@ -1202,7 +1556,7 @@ impl<'t, 's> Parser<'t, 's> {
     /// the dimension is the same either way, so the checker can't catch it.
     /// `unit` is the unit so far; its last factor is the right-hand side of
     /// the last `*` or `/`, or the whole unit if there is none.
-    fn reject_inverse_after_unit(&mut self, value: &Literal, unit: &UnitExpr) -> Option<()> {
+    fn reject_inverse_after_unit(&mut self, ctx: UnitCtx<'_>, unit: &UnitExpr) -> Option<()> {
         let tok = self.current();
         if tok.kind != TokenKind::Inverse {
             return Some(());
@@ -1210,6 +1564,18 @@ impl<'t, 's> Parser<'t, 's> {
         let factor = match unit {
             UnitExpr::Mul { rhs, .. } | UnitExpr::Div { rhs, .. } => &**rhs,
             _ => unit,
+        };
+        let UnitCtx::Literal(value) = ctx else {
+            // A type has no quantity to invert: the only fix is `^-1`.
+            let name = self.text(factor.span());
+            self.errors.push(
+                ParseError::new("`⁻¹` cannot follow a unit", tok.span)
+                    .with_secondary(factor.span(), "unit")
+                    .with_help(format!(
+                        "write a negative exponent instead: `{name}^-1` (no spaces)"
+                    )),
+            );
+            return None;
         };
         let number = self.text(value.span());
         let unit_text = self.text(unit.span());
@@ -1385,6 +1751,20 @@ impl<'t, 's> Parser<'t, 's> {
             ));
         }
         value
+    }
+}
+
+/// Where a unit is being parsed: after a number (`10 km`), or in a type
+/// annotation (`m/s`). See `Parser::parse_unit`.
+#[derive(Clone, Copy)]
+enum UnitCtx<'a> {
+    Literal(&'a Literal),
+    Annotation,
+}
+
+impl UnitCtx<'_> {
+    fn is_annotation(self) -> bool {
+        matches!(self, UnitCtx::Annotation)
     }
 }
 

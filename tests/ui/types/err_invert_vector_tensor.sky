@@ -1,0 +1,4 @@
+v: Vector[3]
+T: Tensor[2, 2, 2]
+w = v⁻¹
+u = T⁻¹

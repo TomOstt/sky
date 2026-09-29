@@ -1,0 +1,11 @@
+# `A⁻¹ @ b` with a PositiveDefinite `A` is rewritten to a Cholesky solve;
+# `inv(A) @ b` is the same operator spelled as a call. The explanation
+# names the operands by their source text.
+A: PositiveDefinite Matrix[N, N]
+b: Vector[3]
+K: PositiveDefinite Matrix[3, 3]
+f: Vector[3]
+x = A⁻¹ @ b
+y = inv(A) @ b
+u = K⁻¹ @ f
+w = inv(K⁻¹) @ (f + f)

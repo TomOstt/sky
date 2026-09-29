@@ -1,0 +1,39 @@
+tests/ui/types/err_scalar_plus_vector.sky:7:7: error: cannot add a scalar to a vector
+  |
+7 | w = v + 2
+  |       ^ no broadcasting between a scalar and an array
+  |     - this is Vector[3] [1]
+  |         - this is Scalar [1]
+  = help: write `v + 2 * ones(v)` for every element
+
+tests/ui/types/err_scalar_plus_vector.sky:9:12: error: cannot add a vector to a scalar
+  |
+9 | x = energy + p
+  |            ^ no broadcasting between a scalar and an array
+  |     ------ this is Scalar [L²·M·T⁻²]
+  |              - this is Vector[3] [L·M·T⁻¹]
+  = note: the dimensions differ as well: energy and L·M·T⁻¹
+
+tests/ui/types/err_scalar_plus_vector.sky:10:7: error: cannot subtract a scalar from a matrix
+   |
+10 | y = M - 2
+   |       ^ no broadcasting between a scalar and an array
+   |     - this is Matrix[3,4] [1]
+   |         - this is Scalar [1]
+   = help: write `M - 2 * ones(M)` for every element
+
+tests/ui/types/err_scalar_plus_vector.sky:11:7: error: cannot add a matrix to a scalar
+   |
+11 | z = 2 + S
+   |       ^ no broadcasting between a scalar and an array
+   |     - this is Scalar [1]
+   |         - this is Matrix[N,N] [1]
+   = help: write `2 * ones(S) + S` for every element, or `I + S` for the identity
+
+tests/ui/types/err_scalar_plus_vector.sky:12:7: error: cannot subtract a scalar from a vector
+   |
+12 | t = v - (1 + 2)
+   |       ^ no broadcasting between a scalar and an array
+   |     - this is Vector[3] [1]
+   |         ------- this is Scalar [1]
+   = help: write `v - (1 + 2) * ones(v)` for every element

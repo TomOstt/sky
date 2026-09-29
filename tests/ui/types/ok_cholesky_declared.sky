@@ -1,0 +1,5 @@
+# The spec's example: declaring `A` positive definite is how a program gets
+# a PD matrix, and `A⁻¹ @ b` is then rewritten to a Cholesky solve.
+A: PositiveDefinite Matrix[N, N]
+b: Vector[3] m
+x = A⁻¹ @ b

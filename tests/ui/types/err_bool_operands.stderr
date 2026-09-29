@@ -1,0 +1,50 @@
+tests/ui/types/err_bool_operands.sky:4:5: error: `and` needs a Bool operand, found Scalar [L]
+  |
+4 | a = x and true
+  |     ^ not a Bool
+  = note: v0.1 has no truthiness
+  = help: compare it instead, e.g. `x != 0 m`
+
+tests/ui/types/err_bool_operands.sky:5:9: error: `not` needs a Bool operand, found Scalar [L]
+  |
+5 | b = not x
+  |         ^ not a Bool
+  = note: v0.1 has no truthiness
+  = help: compare it instead, e.g. `x != 0 m`
+
+tests/ui/types/err_bool_operands.sky:6:13: error: `or` needs a Bool operand, found Scalar [L²·T⁻²]
+  |
+6 | c = true or (v @ v) or 1
+  |             ^^^^^^^ not a Bool
+  = note: v0.1 has no truthiness
+  = help: compare it instead, e.g. `(v @ v) != 0 m^2/s^2`
+
+tests/ui/types/err_bool_operands.sky:6:24: error: `or` needs a Bool operand, found Scalar [1]
+  |
+6 | c = true or (v @ v) or 1
+  |                        ^ not a Bool
+  = note: v0.1 has no truthiness
+  = help: compare it instead, e.g. `1 != 0`
+
+tests/ui/types/err_bool_operands.sky:7:5: error: `and` needs a Bool operand, found Vector[3] [L·T⁻¹]
+  |
+7 | d = v and true
+  |     ^ not a Bool
+  = note: v0.1 has no truthiness
+  = help: a condition must be a single `Bool` (shape `()`)
+
+tests/ui/types/err_bool_operands.sky:8:9: error: `not` needs a Bool operand, found Scalar [L·M·T⁻¹]
+  |
+8 | e = not (3 kg*m/s)
+  |         ^^^^^^^^^^ not a Bool
+  = note: v0.1 has no truthiness
+  = help: compare it instead, e.g. `(3 kg*m/s) != 0 kg*m/s`
+
+tests/ui/types/err_bool_operands.sky:9:18: error: cannot add length and time
+  |
+9 | f = true or (3 m + 2 s)
+  |                  ^ mismatched dimensions
+  |              --- length
+  |                    --- time
+  = note: both operands of `+` must have the same dimension
+  = help: convert one side, or fix the unit

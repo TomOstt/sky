@@ -1,0 +1,6 @@
+crates/sky-ast/tests/ui/err_annotation_lowercase_tag.sky:2:14: error: unexpected name `Matrix` after the unit `symmetric`
+  |
+2 | x: symmetric Matrix[3, 3]
+  |              ^^^^^^
+  |    --------- unit
+  = help: matrix properties are capitalized and go before the shape: `PositiveDefinite Matrix[…]`

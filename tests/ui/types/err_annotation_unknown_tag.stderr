@@ -1,0 +1,17 @@
+tests/ui/types/err_annotation_unknown_tag.sky:2:4: error: unknown matrix property `PositveDefinite`
+  |
+2 | A: PositveDefinite Matrix[3, 3]
+  |    ^^^^^^^^^^^^^^^ not a matrix property
+  = help: did you mean `PositiveDefinite`?
+
+tests/ui/types/err_annotation_unknown_tag.sky:3:4: error: unknown matrix property `Symetric`
+  |
+3 | B: Symetric Matrix[3, 3]
+  |    ^^^^^^^^ not a matrix property
+  = help: did you mean `Symmetric`?
+
+tests/ui/types/err_annotation_unknown_tag.sky:4:4: error: unknown matrix property `Positive`
+  |
+4 | C: Positive Matrix[3, 3]
+  |    ^^^^^^^^ not a matrix property
+  = help: did you mean `PositiveDefinite`?

@@ -17,16 +17,18 @@
 //!   --explain` will print). Required whenever the file has a rewrite, so
 //!   every rewrite is pinned; an empty `.explain` pins "no rewrite".
 //!
-//! `# env:` comment lines seed names the language can't declare yet (see
-//! the README). Regenerate with `SKY_BLESS=1 cargo test -p sky-types --test
-//! ui_check` and review the diff.
+//! Declarations now come from real Sky annotations (`A: PositiveDefinite
+//! Matrix[N, N]`), so there is no test-only seeding. The cases that need
+//! declarations live in `tests/ui/types/` and run end to end through
+//! `sky check` (`crates/sky-cli/tests/ui.rs`); this runner also reads their
+//! `.types` files, which the CLI harness can't see. Regenerate with
+//! `SKY_BLESS=1 cargo test -p sky-types --test ui_check` and review the diff.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use sky_diag::{Diagnostic, Severity, SourceFile};
-use sky_types::{Env, Shape, ShapeDim, Tag, TagSet};
-use sky_units::Dimension;
+use sky_types::Env;
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -34,79 +36,6 @@ fn workspace_root() -> PathBuf {
         .nth(2)
         .expect("crates/sky-types is two levels below the workspace root")
         .to_path_buf()
-}
-
-/// Parses a `# env: NAME: SHAPE [TAG...] [unit UNIT]` line, e.g.
-/// `# env: A: Matrix[N,N] PositiveDefinite` or `# env: v: Vector[3] unit m/s`.
-fn seed(env: &mut Env, line: &str) -> Result<(), String> {
-    let (name, rest) = line.split_once(':').ok_or("expected `NAME: SHAPE`")?;
-    let mut words = rest.split_whitespace();
-    let shape_text = words.next().ok_or("missing shape")?;
-    let shape = if shape_text == "Scalar" {
-        Shape::scalar()
-    } else {
-        let (kind, dims) = shape_text
-            .strip_suffix(']')
-            .and_then(|s| s.split_once('['))
-            .ok_or_else(|| format!("bad shape `{shape_text}`"))?;
-        let dims: Vec<ShapeDim> = dims
-            .split(',')
-            .map(|d| match d.trim().parse::<u64>() {
-                Ok(n) => ShapeDim::Known(n),
-                Err(_) => ShapeDim::Var(env.shape_var(d.trim())),
-            })
-            .collect();
-        let want = match kind {
-            "Vector" => Some(1),
-            "Matrix" => Some(2),
-            "Tensor" => None,
-            _ => return Err(format!("bad shape kind `{kind}`")),
-        };
-        if want.is_some_and(|n| n != dims.len()) {
-            return Err(format!("wrong rank in `{shape_text}`"));
-        }
-        Shape::new(dims)
-    };
-    let mut tags = TagSet::EMPTY;
-    let mut dim = Dimension::DIMENSIONLESS;
-    while let Some(w) = words.next() {
-        if w == "unit" {
-            dim = unit(words.next().ok_or("missing unit")?)?;
-        } else {
-            tags = tags.with(Tag::from_name(w).ok_or_else(|| format!("unknown tag `{w}`"))?);
-        }
-    }
-    env.bind_array(name.trim(), shape, tags, dim)
-        .map_err(|e| e.to_string())
-}
-
-/// `m/s`, `kg*m^2`: symbols from the unit table joined by `*` and `/`, each
-/// with an optional integer power.
-fn unit(text: &str) -> Result<Dimension, String> {
-    let mut dim = Dimension::DIMENSIONLESS;
-    let mut divide = false;
-    let mut rest = text;
-    loop {
-        let end = rest.find(['*', '/']).unwrap_or(rest.len());
-        let (factor, tail) = rest.split_at(end);
-        let (sym, pow) = match factor.split_once('^') {
-            Some((s, p)) => (s, p.parse::<i64>().map_err(|e| e.to_string())?),
-            None => (factor, 1),
-        };
-        let u = sky_units::lookup(sym).ok_or_else(|| format!("unknown unit `{sym}`"))?;
-        let d = u.dim.pow_int(pow).map_err(|e| e.to_string())?;
-        dim = if divide {
-            dim.checked_div(d)
-        } else {
-            dim.checked_mul(d)
-        }
-        .map_err(|e| e.to_string())?;
-        let Some(op) = tail.chars().next() else {
-            return Ok(dim);
-        };
-        divide = op == '/';
-        rest = &tail[1..];
-    }
 }
 
 struct Outcome {
@@ -117,13 +46,8 @@ struct Outcome {
     rewrites: usize,
 }
 
-fn run(path: &str, src: &str) -> Result<Outcome, String> {
-    let mut env = Env::new();
-    for line in src.lines() {
-        if let Some(spec) = line.strip_prefix("# env:") {
-            seed(&mut env, spec).map_err(|e| format!("{path}: bad `# env:` line {line:?}: {e}"))?;
-        }
-    }
+fn run(path: &str, src: &str) -> Outcome {
+    let env = Env::new();
     let file = SourceFile::new(path, src);
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut checked = None;
@@ -158,13 +82,13 @@ fn run(path: &str, src: &str) -> Result<Outcome, String> {
         }
         None => (None, None, 0),
     };
-    Ok(Outcome {
+    Outcome {
         stderr: render(&diagnostics),
         has_error: diagnostics.iter().any(|d| d.severity == Severity::Error),
         types,
         explain,
         rewrites,
-    })
+    }
 }
 
 /// Compares (or, when blessing, writes) an optional sibling file.
@@ -222,13 +146,7 @@ fn ui_check() {
         let name = sky.file_name().expect("file name").to_string_lossy();
         let rel = format!("crates/sky-types/tests/ui/{name}");
         let src = fs::read_to_string(sky).expect("read .sky");
-        let out = match run(&rel, &src) {
-            Ok(out) => out,
-            Err(e) => {
-                failures.push(e);
-                continue;
-            }
-        };
+        let out = run(&rel, &src);
         if name.starts_with("ok_") && out.has_error {
             failures.push(format!("{rel}: ok_ file has an error"));
         }
@@ -275,11 +193,38 @@ fn ui_check() {
             ));
         }
     }
+    // `tests/ui/types/` belongs to the CLI harness (stderr and `--explain`);
+    // only its `.types` files are checked here.
+    let types_dir = workspace_root().join("tests/ui/types");
+    let mut typed: Vec<PathBuf> = fs::read_dir(&types_dir)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", types_dir.display()))
+        .map(|e| e.expect("dir entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "types"))
+        .collect();
+    typed.sort();
+    for types_path in &typed {
+        let sky = types_path.with_extension("sky");
+        let name = sky.file_name().expect("file name").to_string_lossy();
+        let rel = format!("tests/ui/types/{name}");
+        let Ok(src) = fs::read_to_string(&sky) else {
+            failures.push(format!("{rel}: .types file has no .sky file"));
+            continue;
+        };
+        let out = run(&rel, &src);
+        sibling(
+            &mut failures,
+            &rel,
+            types_path,
+            out.types.as_deref(),
+            bless,
+            "types",
+        );
+    }
     assert!(
         failures.is_empty(),
         "{} of {} checker ui tests failed:\n\n{}",
         failures.len(),
-        files.len(),
+        files.len() + typed.len(),
         failures.join("\n\n")
     );
 }

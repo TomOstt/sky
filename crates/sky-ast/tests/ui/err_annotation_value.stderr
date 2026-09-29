@@ -1,0 +1,23 @@
+crates/sky-ast/tests/ui/err_annotation_value.sky:2:4: error: an annotation is a type, not a value
+  |
+2 | x: 5 m
+  |    ^
+  = help: declare a unit by itself (`m`), or give the name a value with `=`
+
+crates/sky-ast/tests/ui/err_annotation_value.sky:3:4: error: an annotation is a type, not a value
+  |
+3 | y: 3
+  |    ^
+  = help: a type is a unit like `m/s` or a shape like `Matrix[3, 3]`; give the name a value with `=`
+
+crates/sky-ast/tests/ui/err_annotation_value.sky:4:4: error: an annotation is a type, not a value
+  |
+4 | z: "s"
+  |    ^^^
+  = help: a type is a unit like `m/s` or a shape like `Matrix[3, 3]`; give the name a value with `=`
+
+crates/sky-ast/tests/ui/err_annotation_value.sky:5:4: error: an annotation is a type, not a value
+  |
+5 | w: true
+  |    ^^^^
+  = help: a type is a unit like `m/s` or a shape like `Matrix[3, 3]`; give the name a value with `=`

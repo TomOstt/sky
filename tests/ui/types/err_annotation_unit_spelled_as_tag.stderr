@@ -1,0 +1,11 @@
+tests/ui/types/err_annotation_unit_spelled_as_tag.sky:3:4: error: unknown matrix property `N`
+  |
+3 | a: N m
+  |    ^ not a matrix property
+  = help: `N` is a unit; compound units are written with `*` and no spaces: `N*m`
+
+tests/ui/types/err_annotation_unit_spelled_as_tag.sky:4:4: error: unknown matrix property `Pa`
+  |
+4 | b: Pa s
+  |    ^^ not a matrix property
+  = help: `Pa` is a unit; compound units are written with `*` and no spaces: `Pa*s`

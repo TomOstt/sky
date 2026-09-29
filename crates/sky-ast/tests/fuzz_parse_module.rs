@@ -83,3 +83,11 @@ fn every_seed_passes_the_fuzz_check() {
         let _ = harness::run(&data);
     }
 }
+
+#[test]
+fn type_annotations_parse_and_recover() {
+    let src = "t: s\nv: Vector[3] m/s\nA: PositiveDefinite Matrix[N, N]\nK: Symmetric Diagonal Matrix[3, 3] N/m\nx: Scalar\nM: Tensor[B, T, D,] kg\nbad1: Matrix[N+1]\nbad2: Matrix[3,3] PositiveDefinite m s\nbad3: 5 m\n";
+    let out = harness::run(&seed("type_annotations", src));
+    assert_eq!(out.stmts, Some(6));
+    assert_eq!(out.errors.len(), 3, "{:?}", out.errors);
+}

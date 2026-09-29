@@ -1,0 +1,2 @@
+# Matrix properties are capitalized names before the shape word.
+x: symmetric Matrix[3, 3]

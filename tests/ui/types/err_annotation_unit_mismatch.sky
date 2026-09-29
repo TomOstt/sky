@@ -1,0 +1,5 @@
+# A declared unit must match the value's dimension.
+m: kg = 3 s
+v: Vector[3] m/s
+w: Vector[3] m = v
+x: m = 5

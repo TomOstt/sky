@@ -265,6 +265,7 @@ impl<'t, 's> Parser<'t, 's> {
                 let name = self.binding_target(
                     &first,
                     tok.span,
+                    "annotate",
                     "invalid annotation target: only a plain name can have a type annotation",
                 )?;
                 let ty = self.expr_bp(0)?;
@@ -285,6 +286,7 @@ impl<'t, 's> Parser<'t, 's> {
                 let target = self.binding_target(
                     &first,
                     tok.span,
+                    "assign to",
                     "invalid assignment target: only a plain name can be assigned in Sky v0.1",
                 )?;
                 let value = self.expr_bp(0)?;
@@ -302,12 +304,25 @@ impl<'t, 's> Parser<'t, 's> {
         Some(stmt)
     }
 
-    fn binding_target(&mut self, target: &Expr, op: Span, message: &str) -> Option<Ident> {
-        if let ExprKind::Name(id) = &target.kind {
-            return Some(*id);
-        }
-        self.errors
-            .push(ParseError::new(message, target.span).with_secondary(op, "because of this"));
+    /// `verb` names the action for a Bool literal target ("cannot assign
+    /// to `true`"); every other non-name target gets `message`.
+    fn binding_target(
+        &mut self,
+        target: &Expr,
+        op: Span,
+        verb: &str,
+        message: &str,
+    ) -> Option<Ident> {
+        let err = match &target.kind {
+            ExprKind::Name(id) => return Some(*id),
+            ExprKind::Literal(Literal::Bool { value, span }) => {
+                ParseError::new(format!("cannot {verb} `{value}`"), *span)
+                    .with_secondary(op, "because of this")
+                    .with_help("`true` and `false` are Bool literals, not names")
+            }
+            _ => ParseError::new(message, target.span).with_secondary(op, "because of this"),
+        };
+        self.errors.push(err);
         None
     }
 

@@ -22,6 +22,8 @@ The language has no syntax yet for property tags or for the unit of an array's e
 
 binds `NAME` before checking, for example `# env: A: Matrix[N,N] PositiveDefinite` or `# env: v: Vector[3] unit m/s`. `SHAPE` is `Scalar`, `Vector[d]`, `Matrix[m,n]`, or `Tensor[d1,d2,...]`, where each dimension is an integer or a shape-variable name. `TAG` is `Symmetric`, `PositiveDefinite`, `Diagonal`, or `Orthogonal`. `UNIT` uses table symbols joined by `*` and `/`, each with an optional integer power (`kg*m^2/s^2`). This is a test-harness convention, not Sky syntax, and it goes away once annotations can declare tags and units.
 
+A line `# prelude` starts from `Env::with_prelude()`, so the physical constants (`c`, `h`, `ħ`, ...) are in scope, as they are under `sky check`. Without it the environment is empty.
+
 ## Why they live here
 
 `sky check` runs the checker, and `tests/ui/check/` has end-to-end cases. Most files here seed names with `# env:` lines, which only this runner understands, so they stay here until annotations can declare tags and units.

@@ -1,0 +1,41 @@
+crates/sky-types/tests/ui/err_unit_suggestions.sky:1:8: error: unknown unit `amps`
+  |
+1 | a = 10 amps
+  |        ^^^^
+  = help: did you mean `A`?
+
+crates/sky-types/tests/ui/err_unit_suggestions.sky:2:7: error: unknown unit `liters`
+  |
+2 | b = 3 liters
+  |       ^^^^^^
+  = help: did you mean `L`?
+
+crates/sky-types/tests/ui/err_unit_suggestions.sky:3:7: error: unknown unit `micrometers`
+  |
+3 | c = 2 micrometers
+  |       ^^^^^^^^^^^
+  = help: did you mean `μm`?
+
+crates/sky-types/tests/ui/err_unit_suggestions.sky:4:7: error: unknown unit `Gy`
+  |
+4 | d = 5 Gy
+  |       ^^
+  = help: did you mean `Gyr`?
+
+crates/sky-types/tests/ui/err_unit_suggestions.sky:5:7: error: unknown unit `c`
+  |
+5 | e = 4 c
+  |       ^
+  = help: `c` is a physical constant, not a unit; multiply by it: `x * c`
+
+crates/sky-types/tests/ui/err_unit_suggestions.sky:6:7: error: unknown unit `gram`
+  |
+6 | f = 1 gram + 2 volt
+  |       ^^^^
+  = help: did you mean `g`?
+
+crates/sky-types/tests/ui/err_unit_suggestions.sky:6:16: error: unknown unit `volt`
+  |
+6 | f = 1 gram + 2 volt
+  |                ^^^^
+  = help: did you mean `V`?

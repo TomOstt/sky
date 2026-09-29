@@ -42,7 +42,7 @@
 //! the parser (see the crate's `deep_nesting` test).
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -52,7 +52,7 @@ use sky_ast::{
     StmtKind, UnaryOp, UnitExpr,
 };
 use sky_diag::{Diagnostic, Severity, Span};
-use sky_units::{lookup, Dimension, Rational};
+use sky_units::{lookup, lookup_constant, suggest_unit, Dimension, Rational, CONSTANTS};
 
 use crate::quote::quote;
 use crate::rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
@@ -133,6 +133,10 @@ impl fmt::Display for Ty {
 #[derive(Clone, Debug, Default)]
 pub struct Env {
     names: BTreeMap<String, Ty>,
+    /// Names still bound to a predefined constant (see [`Env::with_prelude`]).
+    /// A name leaves the set when the program rebinds it, which is when the
+    /// checker warns once.
+    prelude: BTreeSet<String>,
     shape_vars: BTreeMap<String, ShapeVar>,
     shapes: ShapeUnifier,
 }
@@ -141,6 +145,25 @@ impl Env {
     /// An empty environment.
     pub fn new() -> Self {
         Env::default()
+    }
+
+    /// An environment with every physical constant bound as a scalar of its
+    /// dimension, under both its Unicode and its ASCII spelling (`ħ` and
+    /// `hbar`), so `E = m * c^2` is energy when `m` is a mass. This is what
+    /// [`check_module`] (and so `sky check`) starts from; [`Env::new`] and
+    /// [`check_module_with`] do not add the prelude on their own.
+    ///
+    /// A program may rebind a constant; the checker then warns once, because
+    /// `c` and `h` are also common variable names.
+    pub fn with_prelude() -> Self {
+        let mut env = Env::new();
+        for c in CONSTANTS {
+            for name in [Some(c.name), c.ascii].into_iter().flatten() {
+                env.names.insert(name.to_string(), Ty::scalar(c.dim));
+                env.prelude.insert(name.to_string());
+            }
+        }
+        env
     }
 
     /// The shape variable called `name`, created on first use.
@@ -157,7 +180,9 @@ impl Env {
 
     /// Binds `name` to `ty`, replacing any earlier binding.
     pub fn bind(&mut self, name: impl Into<String>, ty: Ty) {
-        self.names.insert(name.into(), ty);
+        let name = name.into();
+        self.prelude.remove(&name);
+        self.names.insert(name, ty);
     }
 
     /// Binds `name` to an array with element dimension `dim`. Fails if
@@ -255,9 +280,10 @@ impl Checked {
     }
 }
 
-/// Checks `module` (parsed from `source`) in an empty environment.
+/// Checks `module` (parsed from `source`) in an environment holding only the
+/// predefined physical constants ([`Env::with_prelude`]).
 pub fn check_module(module: &Module, source: &str) -> Checked {
-    check_module_with(module, source, Env::new())
+    check_module_with(module, source, Env::with_prelude())
 }
 
 /// Checks `module` (parsed from `source`) starting from `env`, which can
@@ -415,6 +441,38 @@ impl<'s> Checker<'s> {
         self.error(d);
     }
 
+    /// Binds the name `id` to `ty`. The first time a program rebinds a
+    /// predefined constant, warns that it shadows it: allowed (like a Python
+    /// builtin), but `c = 3` or `h = 0.1` silently losing the constant is
+    /// exactly the surprise this is meant to prevent.
+    fn bind_name(&mut self, id: &Ident, ty: Ty) {
+        self.warn_if_shadowing(id);
+        self.env.bind(self.ident(id), ty);
+    }
+
+    fn warn_if_shadowing(&mut self, id: &Ident) {
+        let name = self.ident(id);
+        if !self.env.prelude.contains(name) {
+            return;
+        }
+        let Some(c) = lookup_constant(name) else {
+            return;
+        };
+        let q = self.quoted(id.span);
+        let d = Diagnostic::warning(format!("`{q}` shadows {}", c.description), id.span)
+            .with_label("shadows a predefined constant")
+            .with_note(format!(
+                "`{q}` is predefined by Sky: {} ({}, {:e} in SI units, CODATA 2018), defined in the sky-units constants table",
+                c.description,
+                describe(&c.dim),
+                c.value
+            ))
+            .with_help(format!(
+                "rename your variable to keep using the constant, e.g. `my_{q} = …`"
+            ));
+        self.diagnostics.push(d);
+    }
+
     fn stmt(&mut self, kind: &StmtKind) {
         match kind {
             StmtKind::Expr(e) => {
@@ -424,8 +482,7 @@ impl<'s> Checker<'s> {
                 let t = self.expr(value);
                 match target {
                     AssignTarget::Name(id) => {
-                        let name = self.ident(id);
-                        self.env.bind(name, t);
+                        self.bind_name(id, t);
                     }
                     _ => self.reject_write(target, "="),
                 }
@@ -446,8 +503,7 @@ impl<'s> Checker<'s> {
                 let declared = self.annotation(ty);
                 let found = value.as_ref().map(|v| (v, self.expr(v)));
                 let bound = self.binding_type(ty.span, declared, found);
-                let name = self.ident(name);
-                self.env.bind(name, bound);
+                self.bind_name(name, bound);
             }
         }
     }
@@ -550,6 +606,7 @@ impl<'s> Checker<'s> {
             kind: ExprKind::Name(*id),
             span: id.span,
         };
+        self.warn_if_shadowing(id);
         // Silent lookup: typing `whole` below reports an undefined name once.
         let declared = self.env.get(self.ident(id)).unwrap_or(Ty::Unknown);
         let whole = Expr {
@@ -709,7 +766,9 @@ impl<'s> Checker<'s> {
             },
             ExprKind::Name(id) => {
                 let name = self.ident(id);
-                if self.env.names.contains_key(name) {
+                // A predefined constant nobody has rebound is not a value the
+                // program wrote, so `Matrix[G, G]` still means a size variable.
+                if self.env.names.contains_key(name) && !self.env.prelude.contains(name) {
                     if self.shadow_reported.iter().any(|n| n == name) {
                         return None; // one error per name per annotation
                     }
@@ -884,8 +943,14 @@ impl<'s> Checker<'s> {
                     None => {
                         let mut d =
                             Diagnostic::error(format!("unknown unit `{}`", quote(name)), id.span);
-                        if let Some(s) = unit_suggestion(name) {
-                            d = d.with_help(format!("did you mean `{s}`?"));
+                        if lookup_constant(name).is_some() {
+                            // `10 c`: a constant is a value, so it multiplies.
+                            let q = quote(name);
+                            d = d.with_help(format!(
+                                "`{q}` is a physical constant, not a unit; multiply by it: `x * {q}`"
+                            ));
+                        } else if let Some(s) = suggest_unit(name) {
+                            d = d.with_help(format!("did you mean `{}`?", quote(&s)));
                         }
                         self.error(d);
                         None
@@ -1387,8 +1452,8 @@ fn op_sym(op: UnaryOp) -> &'static str {
 
 /// A zero of dimension `d` written as Sky source (`0`, `0 m`, `0 kg*m/s^2`),
 /// for help text. Uses a coherent table unit when one has exactly this
-/// dimension, otherwise composes m, kg, s and K. `None` if `d` involves a
-/// base dimension without a table unit (current, amount, luminosity).
+/// dimension, otherwise composes the SI base units (m, kg, s, A, K, mol, cd).
+/// `None` only if an exponent cannot be negated.
 fn zero_of(d: &Dimension) -> Option<String> {
     use sky_units::{BaseDim, UNITS};
     if d.is_dimensionless() {
@@ -1398,11 +1463,13 @@ fn zero_of(d: &Dimension) -> Option<String> {
         return Some(format!("0 {}", u.name));
     }
     let symbol = |b: BaseDim| match b {
-        BaseDim::Length => Some("m"),
-        BaseDim::Mass => Some("kg"),
-        BaseDim::Time => Some("s"),
-        BaseDim::Temperature => Some("K"),
-        _ => None,
+        BaseDim::Length => "m",
+        BaseDim::Mass => "kg",
+        BaseDim::Time => "s",
+        BaseDim::Temperature => "K",
+        BaseDim::Current => "A",
+        BaseDim::Amount => "mol",
+        BaseDim::Luminosity => "cd",
     };
     let power = |sym: &str, e: Rational| {
         if e == Rational::ONE {
@@ -1429,7 +1496,7 @@ fn zero_of(d: &Dimension) -> Option<String> {
         if e.is_zero() {
             continue;
         }
-        let sym = symbol(b)?;
+        let sym = symbol(b);
         if e.numer() > 0 {
             pos.push(power(sym, e));
         } else {
@@ -1450,24 +1517,6 @@ fn zero_of(d: &Dimension) -> Option<String> {
         u
     };
     Some(format!("0 {unit}"))
-}
-
-/// Full names people are likely to write, mapped to the table symbol. Only
-/// used for `help:` text; the unit table itself has no aliases in v0.1.
-fn unit_suggestion(name: &str) -> Option<&'static str> {
-    Some(match name {
-        "meter" | "meters" | "metre" | "metres" => "m",
-        "kilometer" | "kilometers" | "kilometre" | "kilometres" => "km",
-        "second" | "seconds" | "sec" => "s",
-        "minute" | "minutes" => "min",
-        "hour" | "hours" | "hr" => "h",
-        "kilogram" | "kilograms" => "kg",
-        "kelvin" => "K",
-        "joule" | "joules" => "J",
-        "parsec" | "parsecs" => "pc",
-        "radian" | "radians" => "rad",
-        _ => return None,
-    })
 }
 
 #[cfg(test)]

@@ -1,0 +1,13 @@
+crates/sky-types/tests/ui/ok_shadow_constant_warns.sky:3:1: warning: `c` shadows the speed of light
+  |
+3 | c = 3 m/s
+  | ^ shadows a predefined constant
+  = note: `c` is predefined by Sky: the speed of light (velocity, 2.99792458e8 in SI units, CODATA 2018), defined in the sky-units constants table
+  = help: rename your variable to keep using the constant, e.g. `my_c = …`
+
+crates/sky-types/tests/ui/ok_shadow_constant_warns.sky:5:1: warning: `hbar` shadows the reduced Planck constant
+  |
+5 | hbar = 1
+  | ^^^^ shadows a predefined constant
+  = note: `hbar` is predefined by Sky: the reduced Planck constant (L²·M·T⁻¹, 1.054571817e-34 in SI units, CODATA 2018), defined in the sky-units constants table
+  = help: rename your variable to keep using the constant, e.g. `my_hbar = …`

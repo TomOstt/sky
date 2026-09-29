@@ -1,0 +1,8 @@
+# Electrical units compose: V*A is power, V/A is resistance.
+P = 5 V * 2 A + 3 W
+R = 5 V / 2 A + 3 ohm + 2 kΩ
+q = 2 mA * 3 s + 1 C
+n = 3 mol + 2 mmol
+l = 2 cd + 1 mcd
+v = 3 L + 2 mL
+b = 1 T + 2 mT

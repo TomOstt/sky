@@ -118,7 +118,13 @@ struct Outcome {
 }
 
 fn run(path: &str, src: &str) -> Result<Outcome, String> {
-    let mut env = Env::new();
+    // A `# prelude` line starts from `Env::with_prelude()` (the physical
+    // constants), as `sky check` does.
+    let mut env = if src.lines().any(|l| l.trim() == "# prelude") {
+        Env::with_prelude()
+    } else {
+        Env::new()
+    };
     for line in src.lines() {
         if let Some(spec) = line.strip_prefix("# env:") {
             seed(&mut env, spec).map_err(|e| format!("{path}: bad `# env:` line {line:?}: {e}"))?;

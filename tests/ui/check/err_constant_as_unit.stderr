@@ -1,0 +1,5 @@
+tests/ui/check/err_constant_as_unit.sky:2:7: error: unknown unit `c`
+  |
+2 | E = 2 c
+  |       ^
+  = help: `c` is a physical constant, not a unit; multiply by it: `x * c`

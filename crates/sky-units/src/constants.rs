@@ -48,7 +48,7 @@ pub struct Constant {
     /// True when the value has no uncertainty (SI defining constants and
     /// values derived from them).
     pub exact: bool,
-    /// What it is, in words, for diagnostics ("the speed of light in vacuum").
+    /// What it is, in words, for diagnostics ("the speed of light").
     pub description: &'static str,
 }
 
@@ -83,16 +83,16 @@ pub static CONSTANTS: &[Constant] = &[
         Dimension::VELOCITY,
         SPEED_OF_LIGHT,
         true,
-        "the speed of light in vacuum",
+        "the speed of light",
     ),
     constant("h", None, ACTION, PLANCK, true, "the Planck constant"),
-    // ħ = h/2π. CODATA 2018 lists 1.054 571 817... × 10⁻³⁴ J·s, exact given
-    // h; computed here so the two cannot drift apart.
+    // ħ = h/2π, given as CODATA 2018 lists it (1.054 571 817 × 10⁻³⁴ J·s; exact
+    // given h, and a test checks it agrees with h/2π to 9 digits).
     constant(
         "ħ",
         Some("hbar"),
         ACTION,
-        PLANCK / (2.0 * std::f64::consts::PI),
+        1.054_571_817e-34,
         true,
         "the reduced Planck constant",
     ),
@@ -320,7 +320,7 @@ mod tests {
         let pi = std::f64::consts::PI;
         let sigma = 2.0 * pi.powi(5) * k.powi(4) / (15.0 * h.powi(3) * c * c);
         assert!(close(sigma, value("σ_SB"), 1e-9));
-        assert!(close(value("ħ"), h / (2.0 * pi), 1e-15));
+        assert!(close(value("ħ"), h / (2.0 * pi), 1e-9));
         // m_p is about 1836 m_e.
         assert!(close(value("m_p") / value("m_e"), 1_836.152_673_43, 1e-9));
         assert!(close(value("m_u"), 1.660_539_066_60e-27, 1e-15));

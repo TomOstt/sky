@@ -1,0 +1,7 @@
+# The toolchain for building, testing, and the fmt and clippy CI gates, so
+# local runs and CI format and lint the same way. The fuzz job overrides this
+# with `cargo +nightly`.
+[toolchain]
+channel = "1.85.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

@@ -90,6 +90,11 @@ pub enum Kw {
     Equation,
     Solve,
     Field,
+    And,
+    Or,
+    Not,
+    True,
+    False,
 }
 
 impl Kw {
@@ -105,6 +110,11 @@ impl Kw {
             "equation" => Kw::Equation,
             "solve" => Kw::Solve,
             "field" => Kw::Field,
+            "and" => Kw::And,
+            "or" => Kw::Or,
+            "not" => Kw::Not,
+            "true" => Kw::True,
+            "false" => Kw::False,
             _ => return None,
         })
     }
@@ -121,6 +131,11 @@ impl Kw {
             Kw::Equation => "equation",
             Kw::Solve => "solve",
             Kw::Field => "field",
+            Kw::And => "and",
+            Kw::Or => "or",
+            Kw::Not => "not",
+            Kw::True => "true",
+            Kw::False => "false",
         }
     }
 }

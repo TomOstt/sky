@@ -45,7 +45,9 @@ struct Checked {
 fn check(path: &str, src: &str) -> Checked {
     let (diagnostics, ast): (Vec<Diagnostic>, _) = match sky_syntax::lex(src) {
         Ok(lexed) => {
-            let (module, errors) = sky_ast::parse_module(&lexed.tokens, src);
+            // Like every entry point, parse on a deep stack.
+            let (module, errors) =
+                sky_ast::with_deep_stack(|| sky_ast::parse_module(&lexed.tokens, src));
             let diagnostics = lexed
                 .warnings
                 .into_iter()

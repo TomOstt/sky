@@ -88,9 +88,8 @@ fn spaced_operators_are_arithmetic_on_the_quantity() {
         ("10 m/ s", "(/ (unit 10 m) s)"),
         ("10 m /s", "(/ (unit 10 m) s)"),
         ("10 m * 2", "(* (unit 10 m) 2)"),
-        ("10 m ^ 2", "(^ (unit 10 m) 2)"),
-        ("10 m^ 2", "(^ (unit 10 m) 2)"),
-        ("10 m ^2", "(^ (unit 10 m) 2)"),
+        ("(10 m) ^ 2", "(^ (paren (unit 10 m)) 2)"),
+        ("x ^ 2", "(^ x 2)"),
         ("-10 km", "(neg (unit 10 km))"),
         ("(10 km)⁻¹", "(inverse (paren (unit 10 km)))"),
         ("f(10 km, 2 s)", "(call f (unit 10 km) (unit 2 s))"),
@@ -325,4 +324,42 @@ fn double_star_suggests_caret() {
     // Separated stars are just a missing operand.
     let err = one_error("x * *2");
     assert_eq!(err.message, "expected an expression, found `*`");
+}
+
+#[test]
+fn spaced_caret_directly_after_a_unit_is_an_error() {
+    // `10 m^2` is 10 m², `(10 m)^2` is 100 m²: with any other spacing a
+    // reader can't tell which was meant, and the dimension is the same.
+    for (src, help) in [
+        (
+            "10 m ^2",
+            "write `10 m^2` for a power of the unit, or `(10 m)^2` to raise the whole quantity",
+        ),
+        (
+            "10 m^ 2",
+            "write `10 m^2` for a power of the unit, or `(10 m)^2` to raise the whole quantity",
+        ),
+        (
+            "10 m ^ 2",
+            "write `10 m^2` for a power of the unit, or `(10 m)^2` to raise the whole quantity",
+        ),
+        (
+            "3 s ^ -2",
+            "write `3 s^-2` for a power of the unit, or `(3 s)^-2` to raise the whole quantity",
+        ),
+        (
+            "9.8 m/s ^2",
+            "write the exponent with no spaces for a power of a unit, or `(9.8 m/s)^2` to raise the whole quantity",
+        ),
+        (
+            "2 m^2 ^ 3",
+            "write the exponent with no spaces for a power of a unit, or `(2 m^2)^3` to raise the whole quantity",
+        ),
+        ("10 m ^ n", "to raise the whole quantity, write `(10 m)^…`"),
+    ] {
+        let err = one_error(src);
+        assert_eq!(err.message, "ambiguous `^` after a unit", "{src:?}");
+        assert_eq!(common::at(src, err.span), "^", "{src:?}");
+        assert_eq!(err.help.as_deref(), Some(help), "{src:?}");
+    }
 }

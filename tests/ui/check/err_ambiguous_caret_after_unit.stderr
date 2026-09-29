@@ -1,0 +1,6 @@
+tests/ui/check/err_ambiguous_caret_after_unit.sky:2:10: error: ambiguous `^` after a unit
+  |
+2 | a = 10 m ^2
+  |          ^
+  |        - unit
+  = help: write `10 m^2` for a power of the unit, or `(10 m)^2` to raise the whole quantity

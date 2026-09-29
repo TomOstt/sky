@@ -51,6 +51,11 @@ impl Lower<'_> {
                 Ok(self.op1(OpKind::Inverse, vec![a], ty, e.span))
             }
             ExprKind::Binary { op, lhs, rhs, .. } => {
+                if *op == BinaryOp::MatMul {
+                    if let Some(v) = self.cholesky_site(e, lhs, rhs)? {
+                        return Ok(v);
+                    }
+                }
                 let a = self.expr(lhs)?;
                 let ty = if op.is_comparison() {
                     Type::Bool
@@ -69,16 +74,8 @@ impl Lower<'_> {
                 let unit = self.text(unit.span()).to_string();
                 Ok(self.op1(OpKind::Show { unit }, vec![a], Type::Str, e.span))
             }
-            ExprKind::Index { .. } => Err(LowerError::new(
-                "indexing an array is not supported yet",
-                e.span,
-            )
-            .with_note(ARRAYS)),
-            ExprKind::Array(_) => Err(LowerError::new(
-                "array literals are not supported in SIR yet",
-                e.span,
-            )
-            .with_note(ARRAYS)),
+            ExprKind::Index { base, items } => self.index_expr(e, base, items),
+            ExprKind::Array(elems) => self.array_literal(e, elems),
             ExprKind::Attribute { name, .. } => Err(LowerError::new(
                 format!("attribute `{}` is not supported yet", self.text(name.span)),
                 e.span,
@@ -307,6 +304,11 @@ impl Lower<'_> {
                         let ty = self.ty_of(e)?;
                         return Ok(self.op1(OpKind::Inverse, vec![a], ty, e.span));
                     }
+                    (name @ ("zeros" | "identity" | "len"), _) => {
+                        if let Some(v) = self.array_builtin(e, name, args)? {
+                            return Ok(v);
+                        }
+                    }
                     (name, _) => {
                         if let Some(f) = sky_ir::MathFn::from_name(name) {
                             let mut vals = Vec::with_capacity(args.len());
@@ -403,6 +405,6 @@ impl Lower<'_> {
     }
 }
 
-/// Why arrays are rejected.
+/// Why an index or attribute write, or an attribute read, is rejected.
 pub(crate) const ARRAYS: &str =
-    "`sky run` executes arrays, but SIR has no array values yet, so this program can't be lowered";
+    "`sky run` cannot execute this either: arrays are immutable and attributes are not supported in v0.1";

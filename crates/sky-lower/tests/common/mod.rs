@@ -145,6 +145,11 @@ fn attrs(k: &OpKind) -> String {
         OpKind::ConstStr(s) => format!(" {s:?}"),
         OpKind::PowConst { exponent } => format!(" [{exponent}]"),
         OpKind::Call { callee } => format!(" @{callee}"),
+        OpKind::ArrayLiteral { cols: Some(c) } => format!(" [{c}]"),
+        OpKind::Slice { axes } => {
+            let items: Vec<&str> = axes.iter().map(|a| a.text()).collect();
+            format!(" [{}]", items.join(", "))
+        }
         _ => String::new(),
     }
 }

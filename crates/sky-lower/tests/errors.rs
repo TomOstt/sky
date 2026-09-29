@@ -1,5 +1,5 @@
 //! What lowering rejects: everything `sky run` cannot execute either
-//! (arrays at run time, attributes, derivatives) and what SIR v1 has no
+//! (attributes, derivatives, writes through an index) and what SIR v1 has no
 //! representation for (function values).
 
 mod common;
@@ -10,16 +10,6 @@ use common::*;
 fn rejected(src: &str) -> (String, &str) {
     let e = try_lower(src).expect_err("must be rejected");
     (e.message.clone(), &src[e.span.range()])
-}
-
-#[test]
-fn indexing_is_rejected() {
-    let (msg, at) = rejected("A: Matrix[3, 3]\nx = A[0, 1]\n");
-    assert!(msg.contains("indexing"), "{msg}");
-    assert_eq!(at, "A[0, 1]");
-    let (msg, at) = rejected("v: Vector[3]\nx = v[1:2]\n");
-    assert!(msg.contains("indexing"), "{msg}");
-    assert_eq!(at, "v[1:2]");
 }
 
 #[test]
@@ -40,10 +30,10 @@ fn derivative_operators_are_rejected() {
 
 #[test]
 fn an_error_has_a_note_saying_why() {
-    let e = try_lower("A: Matrix[3, 3]\nx = A[0, 1]\n").expect_err("rejected");
+    let e = try_lower("x = 2 m\ny = x.value\n").expect_err("rejected");
     let note = e.note.as_deref().unwrap_or("");
     assert!(note.contains("sky run"), "{note}");
-    assert!(e.to_string().contains("indexing"));
+    assert!(e.to_string().contains("attribute"));
     let d = e.to_diagnostic();
     assert_eq!(d.primary.span, e.span);
 }

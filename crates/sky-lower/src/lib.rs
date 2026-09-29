@@ -140,9 +140,9 @@
 //!
 //! # Rejected with a [`LowerError`]
 //!
-//! Anything `sky run` cannot execute either: indexing, attributes, `∂` and
-//! `∇`, writes through an index or attribute, and an input declaration
-//! anywhere but the top level of the file; and anything SIR v1 has no
+//! Anything `sky run` cannot execute either: attributes, `∂` and `∇`,
+//! writes through an index or attribute, and an input declaration anywhere
+//! but the top level of the file; and anything SIR v1 has no
 //! representation for: a function used as a value (passed, stored,
 //! returned), calling anything that is not a function defined with `def`.
 //! Also number literals that overflow `f64`, which the interpreter reports
@@ -165,6 +165,7 @@
 #![forbid(unsafe_code)]
 
 mod analysis;
+mod array;
 mod build;
 mod ctx;
 mod expr;
@@ -260,6 +261,7 @@ pub fn lower(module: &Ast, src: &str, checked: &Checked) -> Result<Module, Lower
         defs: HashMap::new(),
         mod_assigned: BTreeSet::new(),
         fns: HashMap::new(),
+        literal_bindings: HashMap::new(),
         out: Vec::new(),
         used_names: HashMap::new(),
         st: main,
@@ -267,6 +269,7 @@ pub fn lower(module: &Ast, src: &str, checked: &Checked) -> Result<Module, Lower
     };
     lw.collect_defs(&module.stmts);
     lw.collect_module_names(&module.stmts);
+    lw.collect_literal_bindings(&module.stmts);
     lw.block(&module.stmts, &Needed::new())?;
     lw.st
         .b

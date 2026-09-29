@@ -88,6 +88,9 @@ pub(crate) struct Lower<'a> {
     /// Names assigned or declared at module level anywhere in the file.
     pub(crate) mod_assigned: BTreeSet<String>,
     pub(crate) fns: HashMap<Span, FnInfo>,
+    /// The array literals that initialize a typed declaration, by the
+    /// literal's span, with the span of the declared name (see `array.rs`).
+    pub(crate) literal_bindings: HashMap<Span, Span>,
     /// Finished user functions, with their `def` position for ordering.
     pub(crate) out: Vec<(u32, Function)>,
     pub(crate) used_names: HashMap<String, usize>,

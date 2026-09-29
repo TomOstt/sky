@@ -17,9 +17,12 @@ fn interpret(src: &str) -> (String, Result<(), String>) {
         let lexed = sky_syntax::lex(src).expect("lexes");
         let (ast, errors) = sky_ast::parse_module(&lexed.tokens, src);
         assert!(errors.is_empty(), "{errors:#?}");
+        // `sky run` honours the checker's Cholesky rewrites.
+        let checked = sky_types::check_module(&ast, src);
         let mut env = RuntimeEnv::with_prelude();
         let mut out = Vec::new();
-        let r = sky_interp::run_module(&ast, src, &mut env, &mut out);
+        let r =
+            sky_interp::run_module_with(&ast, src, &mut env, &mut out, &checked.cholesky_solves);
         (
             String::from_utf8(out).expect("utf8"),
             r.map(|_| ()).map_err(|e| e.message.clone()),
@@ -344,6 +347,11 @@ fn the_runnable_ui_programs() {
         "crates/sky-types/tests/ui/ok_print_builtin.sky",
         "crates/sky-types/tests/ui/ok_scalar_inverse.sky",
         "crates/sky-types/tests/ui/ok_user_bound_true.sky",
+        "tests/ui/types/ok_array_builtins.sky",
+        "tests/ui/types/ok_array_index.sky",
+        "tests/ui/types/ok_array_literals.sky",
+        "tests/ui/types/ok_cholesky_literal.sky",
+        "tests/ui/types/ok_literal_tag_proofs.sky",
     ] {
         let path = root.join(name);
         let Ok(src) = std::fs::read_to_string(&path) else {
@@ -354,6 +362,49 @@ fn the_runnable_ui_programs() {
         let (got_out, got) = run_main(&m);
         assert_eq!(got_out, want_out, "{name}");
         assert_eq!(normalized(&got), normalized(&want), "{name}");
+    }
+}
+
+/// The names a program binds at its top level (`x = ...`, `x: T = ...`).
+fn top_level_names(src: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for line in src.lines() {
+        let ident: String = line
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        let rest = line[ident.len()..].trim_start();
+        let binds = !ident.is_empty()
+            && ((rest.starts_with('=') && !rest.starts_with("==")) || rest.starts_with(':'));
+        if binds && ident != "def" && !names.contains(&ident) {
+            names.push(ident);
+        }
+    }
+    names
+}
+
+/// The array programs of the UI suites print nothing, so print every name
+/// they bind: the arrays SIR computes must be the ones `sky run` computes,
+/// entry for entry, in the same text.
+#[test]
+fn the_array_ui_programs_bind_the_same_values() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for name in [
+        "ok_array_builtins",
+        "ok_array_index",
+        "ok_array_literals",
+        "ok_cholesky_literal",
+        "ok_literal_tag_proofs",
+    ] {
+        let path = root.join("tests/ui/types").join(format!("{name}.sky"));
+        let mut src = std::fs::read_to_string(&path).expect("reads");
+        let names = top_level_names(&src);
+        assert!(!names.is_empty(), "{name}");
+        for n in &names {
+            src.push_str(&format!("print({n})\n"));
+        }
+        let out = agree(&src);
+        assert_eq!(out.lines().count(), names.len(), "{name}:\n{out}");
     }
 }
 

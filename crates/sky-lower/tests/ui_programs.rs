@@ -51,6 +51,19 @@ const REJECTED: &[(&str, &str)] = &[
         "ok_literal_tag_proofs.sky",
         "array literals are not supported in SIR yet",
     ),
+    // The numerical-warning goldens: constant matrices.
+    (
+        "ok_condition_warning.sky",
+        "array literals are not supported in SIR yet",
+    ),
+    (
+        "ok_condition_quiet.sky",
+        "array literals are not supported in SIR yet",
+    ),
+    (
+        "ok_condition_warns.sky",
+        "array literals are not supported in SIR yet",
+    ),
 ];
 
 #[test]

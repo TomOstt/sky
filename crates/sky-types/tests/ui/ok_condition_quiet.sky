@@ -1,0 +1,38 @@
+# No warnings: well-conditioned constants, and matrices the checker cannot
+# trust to be constant.
+A = [[4, 1], [1, 3]]
+x = A⁻¹ @ [1, 2]
+R = [[0.6, -0.8], [0.8, 0.6]]
+y = inv(R)
+# Rebound: not a single known matrix.
+B = [[1, 1], [1, 1.0000000001]]
+B = [[1, 0], [0, 1]]
+u = B⁻¹
+# Updated in place.
+C = [[1, 1], [1, 1.0000000001]]
+C *= 1
+v = C⁻¹
+# A different matrix on each path.
+if x[0] > 0:
+    D = [[1, 1], [1, 1.0000000001]]
+else:
+    D = [[2, 0], [0, 2]]
+w = D⁻¹
+# Not a constant matrix: entries computed, or a parameter.
+k = 3
+E = [[1, k], [k, 9.000000001]]
+t = E⁻¹
+def invert(M: Matrix[2, 2]):
+    return M⁻¹
+# A global read inside a function may be rebound before the call.
+P = [[1, 1], [1, 1.0000000001]]
+def g():
+    return P⁻¹
+P = [[1, 0], [0, 1]]
+# Inside a loop, only literals are analyzed.
+H = [[1, 1], [1, 1.0000000001]]
+i = 0
+while i < 2:
+    s = H⁻¹
+    H = [[1, 0], [0, 1]]
+    i += 1

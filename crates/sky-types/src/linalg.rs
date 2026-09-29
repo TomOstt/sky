@@ -1,9 +1,17 @@
 //! Dense linear algebra on row-major `f64` slices.
 //!
 //! Plain loops, no dependencies (`faer` comes later). Everything here is
-//! pure numerics: no spans, no dimensions, no [`crate::Value`]. The value
-//! layer ([`crate::array`]) checks shapes, attaches dimensions and turns the
-//! failures below into runtime errors. Matrices are `n` by `n` (or `m` by
+//! pure numerics: no spans, no dimensions, no values. The interpreter's
+//! value layer (`sky_interp::array`) checks shapes, attaches dimensions and
+//! turns the failures below into runtime errors.
+//!
+//! The code lives in `sky-types` (and `sky-interp` re-exports it as
+//! `sky_interp::linalg`) so the checker and the interpreter share one
+//! implementation: the checker's numerical warnings ([`crate::numerics`])
+//! call [`inverse`], so "this matrix is singular" at check time is by
+//! construction the verdict `sky run` gives.
+//!
+//! Matrices are `n` by `n` (or `m` by
 //! `k`, as the signature says) in row-major order: entry `(i, j)` of an
 //! `m` by `n` matrix is `a[i * n + j]`.
 //!
@@ -54,7 +62,7 @@ pub fn is_symmetric(a: &[f64], n: usize) -> bool {
 /// If `a` is exactly symmetric the result is too: the inverse of a
 /// symmetric matrix is symmetric, but two elimination orders round
 /// `(A⁻¹)ᵢⱼ` and `(A⁻¹)ⱼᵢ` differently, so the upper triangle is computed
-/// and mirrored (`sky_types::needs_mirroring`).
+/// and mirrored ([`crate::needs_mirroring`]).
 pub fn inverse(a: &[f64], n: usize) -> Result<Vec<f64>, LinalgError> {
     debug_assert_eq!(a.len(), n * n);
     let mut m = a.to_vec();
@@ -104,7 +112,7 @@ pub fn inverse(a: &[f64], n: usize) -> Result<Vec<f64>, LinalgError> {
     for x in &mut inv {
         *x += 0.0;
     }
-    if sky_types::needs_mirroring(sky_types::TagOp::Inverse) && is_symmetric(a, n) {
+    if crate::needs_mirroring(crate::TagOp::Inverse) && is_symmetric(a, n) {
         for i in 0..n {
             for j in i + 1..n {
                 inv[j * n + i] = inv[i * n + j];

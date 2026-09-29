@@ -8,6 +8,8 @@
 //!   rewrite decisions ([`RewriteSite`]). Everything below is AST-free.
 //!   Blocks, control flow, and functions (scoping, merges, calls to `def`s)
 //!   are in the private `flow` module, documented at its top.
+//! * `provenance`: why a name has its dimension, for the derivation notes on
+//!   dimension-mismatch errors (private; see its module docs for the bounds).
 //! * [`shape`]: symbolic shapes ([`Shape`], [`ShapeDim`]) and equality-only
 //!   unification ([`ShapeUnifier`]). There is no dimension arithmetic such as
 //!   `N+1` in v0.1.
@@ -25,6 +27,7 @@
 
 pub mod check;
 mod flow;
+mod provenance;
 pub mod rewrite;
 pub mod rules;
 pub mod scale;

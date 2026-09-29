@@ -42,6 +42,7 @@ use sky_diag::{Diagnostic, Span};
 use sky_units::Dimension;
 
 use crate::check::{describe, strip_parens, Checker, Scope, Ty, ValueTy};
+use crate::provenance::label_dim;
 use crate::rules::TensorType;
 use crate::shape::{Shape, ShapeDim, ShapeVar};
 use sky_diag::display_capped as quote;
@@ -561,6 +562,9 @@ impl Checker<'_> {
         for (p, sig) in params.iter().zip(&psigs) {
             let ty = sig.ty.clone().map_or(Ty::Unknown, Ty::Value);
             self.bind_at(&sig.name, ty, p.name.span);
+            if let (Some(_), Some(ann)) = (&sig.ty, sig.annotation) {
+                self.note_param(p.name.span, ann);
+            }
         }
         self.diverged = false;
         self.block(body);
@@ -661,7 +665,7 @@ impl Checker<'_> {
             value: typed.clone(),
         });
         if let Some((decl, dim, ann)) = declared {
-            self.check_declared_return(span, typed, &decl, dim, ann);
+            self.check_declared_return(span, typed, (&decl, dim, ann), value);
         }
     }
 
@@ -672,9 +676,8 @@ impl Checker<'_> {
         &mut self,
         span: Span,
         value: Option<(Span, Ty)>,
-        declared: &TensorType,
-        dim: Option<Dimension>,
-        ann: Span,
+        (declared, dim, ann): (&TensorType, Option<Dimension>, Span),
+        expr: Option<&Expr>,
     ) {
         let Some((vspan, t)) = value else {
             self.error(
@@ -688,14 +691,17 @@ impl Checker<'_> {
         match t {
             Ty::Value(v) => {
                 if let Some(want) = dim.filter(|d| *d != v.dim) {
-                    self.error(
-                        Diagnostic::error(
-                            format!("expected {}, found {}", describe(&want), describe(&v.dim)),
-                            vspan,
-                        )
-                        .with_label(format!("this is {}", describe(&v.dim)))
-                        .with_secondary(ann, "declared here"),
-                    );
+                    let d = Diagnostic::error(
+                        format!("expected {}, found {}", describe(&want), describe(&v.dim)),
+                        vspan,
+                    )
+                    .with_label(format!("this is {}", label_dim(&v.dim)))
+                    .with_secondary(ann, "declared here");
+                    let d = match expr {
+                        Some(e) => self.with_derivations(d, &[(e, v.dim)]),
+                        None => d,
+                    };
+                    self.error(d);
                 }
                 if let Err(e) = self.env.shapes.unify(declared.shape(), v.ty.shape()) {
                     let label = self.this_is(&v);

@@ -224,6 +224,37 @@ pub fn matmul(l: &Value, r: &Value, whole: Span, lspan: Span, rspan: Span) -> R<
     })
 }
 
+/// `Aᵀ`: a number is its own transpose, and an `m` by `n` matrix becomes
+/// `n` by `m`. A vector or anything else is an error (the checker's rule:
+/// v0.1 has no row/column-vector distinction). Entries only move, so the
+/// dimension and every value are unchanged. `sky run` has no syntax for it;
+/// SIR does (`transpose`), and this is its one implementation.
+pub fn transpose(v: &Value, whole: Span) -> R<Value> {
+    match v {
+        Value::Number { .. } => Ok(v.clone()),
+        Value::Array { dims, data, dim } => match dims[..] {
+            [m, n] => {
+                let mut out = Vec::with_capacity(data.len());
+                for j in 0..n {
+                    out.extend((0..m).map(|i| data[i * n + j]));
+                }
+                Ok(Value::array(vec![n, m], out, *dim))
+            }
+            _ => Err(RuntimeError::new(
+                format!(
+                    "cannot transpose {}: transpose needs a matrix",
+                    shape_text(dims)
+                ),
+                whole,
+            )),
+        },
+        other => Err(RuntimeError::new(
+            format!("cannot transpose {}", other.kind()),
+            whole,
+        )),
+    }
+}
+
 /// `A⁻¹` for a square matrix, by Gauss-Jordan elimination with partial
 /// pivoting. The result's dimension is the inverse of `A`'s. A singular
 /// matrix is a runtime error, and the inverse of an exactly symmetric matrix

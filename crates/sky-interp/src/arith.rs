@@ -104,12 +104,6 @@ pub fn arity_mismatch(name: &str, expected: usize, found: usize, span: Span) -> 
     )
 }
 
-pub fn arrays_unsupported(span: Span) -> RuntimeError {
-    RuntimeError::new("arrays are not supported by the interpreter yet", span)
-        .with_label("this needs an array")
-        .with_note("the checker accepts array types in v0.1, but `sky run` cannot execute them yet")
-}
-
 /// `length`, or `L·M` for a dimension without a name (as the checker says it).
 pub fn describe(d: &Dimension) -> String {
     match d.name() {

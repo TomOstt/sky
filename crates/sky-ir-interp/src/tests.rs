@@ -3,8 +3,8 @@
 
 use sky_diag::Span;
 use sky_ir::{
-    BlockId, CmpOp, Function, FunctionBuilder, Module, OpId, OpKind, RegionId, SolveMethod, Type,
-    ValueId,
+    BlockId, CmpOp, Function, FunctionBuilder, Module, OpId, OpKind, RegionId, SliceAxis,
+    SolveMethod, Type, ValueId,
 };
 use sky_units::{Dimension, Rational};
 
@@ -215,36 +215,238 @@ fn comparisons_and_not() {
     assert_eq!(msg(&e), "`not` needs a Bool operand, found a number");
 }
 
+fn vector(xs: &[f64]) -> Value {
+    Value::array(vec![xs.len()], xs.to_vec(), Dimension::DIMENSIONLESS)
+}
+
+fn matrix(rows: usize, cols: usize, xs: &[f64]) -> Value {
+    Value::array(vec![rows, cols], xs.to_vec(), Dimension::DIMENSIONLESS)
+}
+
 #[test]
-fn array_operations_are_not_supported_yet() {
-    for kind in [
-        OpKind::MatMul,
-        OpKind::Transpose,
-        OpKind::Solve {
-            method: SolveMethod::Cholesky,
-        },
-    ] {
-        let e = apply(kind, vec![n(1.0), n(2.0)]).expect_err("arrays");
-        assert_eq!(msg(&e), "arrays are not supported by the interpreter yet");
-    }
-    // An op typed as working on an array is refused the same way.
-    let vec3 = Type::Number(sky_ir::NumberType {
-        shape: sky_types::Shape::vector(3u64),
-        ..sky_ir::NumberType::scalar(Dimension::DIMENSIONLESS)
-    });
-    let mut b = FunctionBuilder::new(
-        "f",
-        vec![vec3.clone(), vec3.clone()],
-        vec![vec3.clone()],
+fn arithmetic_on_arrays_uses_the_shared_rules() {
+    let a = matrix(2, 2, &[1.0, 2.0, 3.0, 4.0]);
+    let v = vector(&[1.0, 1.0]);
+    assert_eq!(
+        apply(OpKind::Add, vec![a.clone(), a.clone()]),
+        Ok(matrix(2, 2, &[2.0, 4.0, 6.0, 8.0]))
+    );
+    assert_eq!(
+        apply(OpKind::Mul, vec![n(2.0), v.clone()]),
+        Ok(vector(&[2.0, 2.0]))
+    );
+    assert_eq!(
+        apply(OpKind::Neg, vec![v.clone()]),
+        Ok(vector(&[-1.0, -1.0]))
+    );
+    assert_eq!(
+        apply(OpKind::MatMul, vec![a.clone(), v.clone()]),
+        Ok(vector(&[3.0, 7.0]))
+    );
+    assert_eq!(
+        apply(OpKind::Transpose, vec![a.clone()]),
+        Ok(matrix(2, 2, &[1.0, 3.0, 2.0, 4.0]))
+    );
+    assert_eq!(
+        apply(OpKind::Transpose, vec![matrix(1, 3, &[1.0, 2.0, 3.0])]),
+        Ok(matrix(3, 1, &[1.0, 2.0, 3.0]))
+    );
+    assert_eq!(apply(OpKind::Transpose, vec![n(5.0)]), Ok(n(5.0)));
+    let e = apply(OpKind::Transpose, vec![v.clone()]).expect_err("vector");
+    assert_eq!(
+        msg(&e),
+        "cannot transpose Vector[2]: transpose needs a matrix"
+    );
+    let e = apply(OpKind::Add, vec![v.clone(), vector(&[1.0, 2.0, 3.0])]).expect_err("shapes");
+    assert_eq!(msg(&e), "cannot add Vector[2] and Vector[3]");
+    let e =
+        apply(OpKind::Inverse, vec![matrix(2, 2, &[1.0, 2.0, 2.0, 4.0])]).expect_err("singular");
+    assert_eq!(msg(&e), "the matrix is singular");
+    // Comparing arrays is the same error `sky run` gives.
+    let e = apply(OpKind::Cmp(CmpOp::Eq), vec![v.clone(), v]).expect_err("arrays");
+    assert_eq!(msg(&e), "cannot compare a vector and a vector");
+}
+
+#[test]
+fn a_cholesky_solve_solves_and_checks_its_promise() {
+    let k = matrix(2, 2, &[4.0, 1.0, 1.0, 3.0]);
+    let f = vector(&[1.0, 2.0]);
+    let solve = OpKind::Solve {
+        method: SolveMethod::Cholesky,
+    };
+    let Ok(Value::Array { data, .. }) = apply(solve.clone(), vec![k, f.clone()]) else {
+        panic!("solves");
+    };
+    // 4x + y = 1, x + 3y = 2
+    assert!((data[0] - 1.0 / 11.0).abs() < 1e-15 && (data[1] - 7.0 / 11.0).abs() < 1e-15);
+    let e = apply(
+        solve.clone(),
+        vec![matrix(2, 2, &[1.0, 2.0, 2.0, 1.0]), f.clone()],
+    )
+    .expect_err("not positive definite");
+    assert_eq!(msg(&e), "the matrix is not positive definite");
+    let e = apply(solve, vec![matrix(2, 2, &[2.0, 1.0, 1.5, 2.0]), f]).expect_err("asymmetric");
+    assert_eq!(msg(&e), "the matrix is not symmetric");
+}
+
+#[test]
+fn array_literals_index_slice_and_builders() {
+    let three = vec![n(1.0), n(2.0), n(3.0)];
+    assert_eq!(
+        apply(OpKind::ArrayLiteral { cols: None }, three.clone()),
+        Ok(vector(&[1.0, 2.0, 3.0]))
+    );
+    assert_eq!(
+        apply(OpKind::ArrayLiteral { cols: Some(3) }, three.clone()),
+        Ok(matrix(1, 3, &[1.0, 2.0, 3.0]))
+    );
+    let e = apply(OpKind::ArrayLiteral { cols: Some(2) }, three).expect_err("ragged");
+    assert_eq!(
+        msg(&e),
+        "malformed IR: `array.literal` cannot arrange 3 operands in rows of 2"
+    );
+    let e = apply(
+        OpKind::ArrayLiteral { cols: None },
+        vec![n(1.0), Value::number(1.0, Dimension::TIME)],
+    )
+    .expect_err("dimensions");
+    assert!(
+        msg(&e).starts_with("array elements must have the same dimension"),
+        "{e}"
+    );
+
+    let a = matrix(2, 3, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    assert_eq!(
+        apply(OpKind::Index, vec![a.clone(), n(1.0), n(2.0)]),
+        Ok(n(6.0))
+    );
+    assert_eq!(
+        apply(OpKind::Index, vec![a.clone(), n(0.0)]),
+        Ok(vector(&[1.0, 2.0, 3.0]))
+    );
+    let e = apply(OpKind::Index, vec![a.clone(), n(2.0)]).expect_err("bounds");
+    assert_eq!(msg(&e), "index 2 is out of bounds for axis 0 with length 2");
+    let e = apply(OpKind::Index, vec![a.clone(), n(0.5)]).expect_err("integer");
+    assert_eq!(msg(&e), "an index must be an integer, found 0.5");
+    let e = apply(OpKind::Index, vec![a.clone(), n(-1.0)]).expect_err("negative");
+    assert_eq!(msg(&e), "an index cannot be negative");
+    let e = apply(OpKind::Index, vec![n(1.0), n(0.0)]).expect_err("scalar");
+    assert_eq!(msg(&e), "cannot index a number");
+
+    // `A[:, 1]`, `A[0, 1:]`, `A[1:2, :2]`
+    let col = OpKind::Slice {
+        axes: vec![
+            SliceAxis::Range {
+                start: false,
+                stop: false,
+            },
+            SliceAxis::At,
+        ],
+    };
+    assert_eq!(apply(col, vec![a.clone(), n(1.0)]), Ok(vector(&[2.0, 5.0])));
+    let tail = OpKind::Slice {
+        axes: vec![
+            SliceAxis::At,
+            SliceAxis::Range {
+                start: true,
+                stop: false,
+            },
+        ],
+    };
+    assert_eq!(
+        apply(tail, vec![a.clone(), n(0.0), n(1.0)]),
+        Ok(vector(&[2.0, 3.0]))
+    );
+    let block = OpKind::Slice {
+        axes: vec![
+            SliceAxis::Range {
+                start: true,
+                stop: true,
+            },
+            SliceAxis::Range {
+                start: false,
+                stop: true,
+            },
+        ],
+    };
+    assert_eq!(
+        apply(block.clone(), vec![a.clone(), n(1.0), n(2.0), n(2.0)]),
+        Ok(matrix(1, 2, &[4.0, 5.0]))
+    );
+    let e = apply(block.clone(), vec![a.clone(), n(1.0), n(1.0), n(2.0)]).expect_err("empty");
+    assert_eq!(msg(&e), "this slice is empty");
+    let e = apply(block.clone(), vec![a.clone(), n(1.0), n(3.0), n(2.0)]).expect_err("bounds");
+    assert_eq!(
+        msg(&e),
+        "slice 1..3 is out of bounds for axis 0 with length 2"
+    );
+    let e = apply(block, vec![a.clone(), n(1.0)]).expect_err("operands");
+    assert_eq!(
+        msg(&e),
+        "malformed IR: `slice` has fewer operands than its items need"
+    );
+
+    assert_eq!(apply(OpKind::Len, vec![a]), Ok(n(2.0)));
+    let e = apply(OpKind::Len, vec![n(1.0)]).expect_err("scalar");
+    assert_eq!(msg(&e), "`len` needs a vector or a matrix, found a number");
+    assert_eq!(apply(OpKind::Zeros, vec![n(2.0)]), Ok(vector(&[0.0, 0.0])));
+    assert_eq!(
+        apply(OpKind::Zeros, vec![n(1.0), n(2.0)]),
+        Ok(matrix(1, 2, &[0.0, 0.0]))
+    );
+    assert_eq!(
+        apply(OpKind::Identity, vec![n(2.0)]),
+        Ok(matrix(2, 2, &[1.0, 0.0, 0.0, 1.0]))
+    );
+    let e = apply(OpKind::Zeros, vec![n(0.0)]).expect_err("size");
+    assert_eq!(msg(&e), "`zeros` needs a size, a positive integer, found 0");
+    let e = apply(OpKind::Identity, vec![n(1.5)]).expect_err("size");
+    assert_eq!(
+        msg(&e),
+        "`identity` needs a size, a positive integer, found 1.5"
+    );
+}
+
+#[test]
+fn arrays_print_like_sky_run() {
+    let mut b = main_builder();
+    let x = constant(&mut b, 1.5);
+    let y = constant(&mut b, 2.0);
+    let v = b.op1(
+        OpKind::ArrayLiteral { cols: None },
+        vec![x, y],
+        Type::Unknown,
         sp(),
     );
-    let [x, y] = b.params()[..] else {
-        unreachable!()
-    };
-    let r = b.op1(OpKind::Add, vec![x, y], vec3, sp());
-    b.op(OpKind::Return, vec![r], vec![], sp());
-    let e = call_fn(&module(vec![b.finish()]), "f", vec![n(1.0), n(2.0)]).expect_err("arrays");
-    assert_eq!(msg(&e), "arrays are not supported by the interpreter yet");
+    let m = b.op1(
+        OpKind::ArrayLiteral { cols: Some(1) },
+        vec![x, y],
+        Type::Unknown,
+        sp(),
+    );
+    b.op(OpKind::Print, vec![v, m], vec![], sp());
+    assert_eq!(output(&finish_main(b)), "[1.5, 2] [[1.5], [2]]\n");
+}
+
+#[test]
+fn arrays_flow_through_calls() {
+    let mut f = FunctionBuilder::new("twice", vec![Type::Unknown], vec![Type::Unknown], sp());
+    let [x] = f.params()[..] else { unreachable!() };
+    let two = f.op1(
+        OpKind::ConstFloat {
+            bits: 2f64.to_bits(),
+        },
+        vec![],
+        num(),
+        sp(),
+    );
+    let r = f.op1(OpKind::Mul, vec![two, x], Type::Unknown, sp());
+    f.op(OpKind::Return, vec![r], vec![], sp());
+    let m = module(vec![f.finish()]);
+    assert_eq!(
+        call_fn(&m, "twice", vec![vector(&[1.0, 2.0])]),
+        Ok(vec![vector(&[2.0, 4.0])])
+    );
 }
 
 #[test]

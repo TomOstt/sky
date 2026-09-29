@@ -151,6 +151,7 @@ dependencies = [
 name = "sky-cli"
 version = "0.0.1"
 dependencies = [
+ "sky-ast",
  "sky-diag",
  "sky-project",
  "sky-syntax",
@@ -189,8 +190,7 @@ dependencies = [
 name = "sky-types"
 version = "0.0.1"
 dependencies = [
- "sky-ast",
- "sky-units",
+ "proptest",
 ]
 
 [[package]]

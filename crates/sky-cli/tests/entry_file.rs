@@ -96,7 +96,7 @@ fn oversized_file_is_refused_with_the_limit() {
 fn small_file_is_checked() {
     let d = scratch("small");
     let f = d.join("ok.sky");
-    fs::write(&f, "let x = 1\n").unwrap();
+    fs::write(&f, "x = 1\n").unwrap();
     let out = sky_check(&f);
     assert!(
         out.status.success(),

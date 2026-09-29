@@ -1,0 +1,2 @@
+inv(A) : Matrix[3,3] {Symmetric}
+explain: no rewrite

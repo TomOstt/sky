@@ -1,0 +1,29 @@
+tests/ui/lexer/ok_tabs.sky:1:1: error: expected an expression, found keyword `def`; statements and blocks are not supported by the parser yet
+  |
+1 | def f(x):
+  | ^^^
+
+tests/ui/lexer/ok_tabs.sky:2:2: error: unexpected indentation: indented blocks are not supported yet
+  |
+2 | 	if x:
+  | 	^
+
+tests/ui/lexer/ok_tabs.sky:2:2: error: expected an expression, found keyword `if`; statements and blocks are not supported by the parser yet
+  |
+2 | 	if x:
+  | 	^^
+
+tests/ui/lexer/ok_tabs.sky:3:3: error: unexpected indentation: indented blocks are not supported yet
+  |
+3 | 		return 1
+  | 		^
+
+tests/ui/lexer/ok_tabs.sky:3:3: error: expected an expression, found keyword `return`; statements and blocks are not supported by the parser yet
+  |
+3 | 		return 1
+  | 		^^^^^^
+
+tests/ui/lexer/ok_tabs.sky:4:2: error: expected an expression, found keyword `return`; statements and blocks are not supported by the parser yet
+  |
+4 | 	return 0
+  | 	^^^^^^

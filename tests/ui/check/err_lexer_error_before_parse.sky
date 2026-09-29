@@ -1,0 +1,4 @@
+# Line 1 alone would be a parse error, but the lexer error on line 2 stops
+# the check before the parser runs, so only the lexer error is reported.
+x = 1 +
+y = 1 − 2

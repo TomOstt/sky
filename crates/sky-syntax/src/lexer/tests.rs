@@ -754,6 +754,22 @@ fn invisible_characters_break_identifiers() {
     assert_err("a\u{00AD}b = 1\n", LexErrorKind::UnexpectedChar, "\u{00AD}");
 }
 
+#[test]
+fn hangul_fillers_cannot_start_an_identifier() {
+    // XID_Start, but they render as nothing: `\u{3164} = 1` would bind a
+    // variable whose name is invisible.
+    for c in ['\u{115F}', '\u{1160}', '\u{3164}', '\u{FFA0}'] {
+        let s = c.to_string();
+        let e = assert_err(&format!("{c} = 1\n"), LexErrorKind::UnexpectedChar, &s);
+        assert_eq!(
+            e.diagnostic.help,
+            ["invisible characters are not allowed in source code"]
+        );
+        assert_err(&format!("x = {c}y\n"), LexErrorKind::UnexpectedChar, &s);
+        assert_err(&format!("a{c}b = 1\n"), LexErrorKind::UnexpectedChar, &s);
+    }
+}
+
 // ---- numbers --------------------------------------------------------------
 
 #[test]
@@ -875,17 +891,289 @@ fn bidi_controls_are_rejected_everywhere() {
 
 #[test]
 fn size_limit_is_checked_before_bidi_scan() {
-    // `lex` uses `u32::MAX`; a tiny limit exercises the same order without a
-    // 4 GiB input. The bidi control lies past the limit, where a `u32` span
-    // would be truncated, so the file must be rejected for its size.
+    // `lex` uses `MAX_SOURCE_BYTES` (16 MiB); a tiny limit exercises the same
+    // order without a 16 MiB input. The bidi control lies past the limit, so
+    // the file must be rejected for its size before the bidi scan runs.
     let src = "x = 1 # \u{202E}\n";
     let e = check_whole_file(src, 8).unwrap_err();
     assert_eq!(e.kind, LexErrorKind::SourceTooLarge);
     assert_eq!(e.diagnostic.primary.span, Span::point(0));
+    assert_eq!(e.diagnostic.message, "source file is larger than 8 bytes");
     // At or under the limit, the bidi check still runs.
     let e = check_whole_file(src, src.len()).unwrap_err();
     assert_eq!(e.kind, LexErrorKind::BidiControl);
     assert!(check_whole_file("x = 1\n", 6).is_ok());
+}
+
+#[test]
+fn size_limit_is_human_readable() {
+    assert_eq!(human_size(MAX_SOURCE_BYTES), "16 MiB");
+    assert_eq!(human_size(4 << 30), "4 GiB");
+    assert_eq!(human_size(3 << 10), "3 KiB");
+    assert_eq!(human_size((1 << 20) + 1), "1048577 bytes");
+    assert_eq!(human_size(0), "0 bytes");
+}
+
+/// `x = 1`, then a comment that pads the file to exactly `len` bytes.
+fn source_of_len(len: usize) -> String {
+    let mut s = String::with_capacity(len);
+    s.push_str("x = 1\n#");
+    s.extend(std::iter::repeat_n('a', len - s.len() - 1));
+    s.push('\n');
+    assert_eq!(s.len(), len);
+    s
+}
+
+#[test]
+fn source_of_exactly_max_source_bytes_lexes() {
+    assert_eq!(MAX_SOURCE_BYTES, 16 * 1024 * 1024);
+    let src = source_of_len(MAX_SOURCE_BYTES);
+    assert_eq!(kinds(&src), [Ident, Assign, Int, Newline, Eof]);
+}
+
+#[test]
+fn source_one_byte_over_max_source_bytes_is_rejected() {
+    // The bidi control would be an error too; the size check must win.
+    let mut src = source_of_len(MAX_SOURCE_BYTES + 1);
+    src.replace_range(8..11, "\u{202E}");
+    assert_eq!(src.len(), MAX_SOURCE_BYTES + 1);
+    let e = lex(&src).unwrap_err();
+    assert_eq!(e.kind, LexErrorKind::SourceTooLarge);
+    assert_eq!(e.diagnostic.primary.span, Span::point(0));
+    assert_eq!(e.diagnostic.message, "source file is larger than 16 MiB");
+    assert_eq!(
+        e.diagnostic.notes,
+        ["the file is 16777217 bytes; the limit is 16777216 bytes"]
+    );
+}
+
+/// One-way drift check between the lexer and the diagnostic renderer: every
+/// character the lexer rejects because it is invisible or a bidi control
+/// must be escaped by the renderer, or a diagnostic about it would print the
+/// very character it complains about. The renderer may escape more (tab and
+/// C0 controls, which are legal in source), so the reverse is not checked.
+#[test]
+fn lexer_rejected_invisible_and_bidi_chars_are_display_unsafe() {
+    let mut rejected = 0;
+    let mut not_escaped = Vec::new();
+    for c in (0..=0x10FFFFu32).filter_map(char::from_u32) {
+        if is_invisible(c) || crate::source::is_bidi_control(c) {
+            rejected += 1;
+            if !sky_diag::is_display_unsafe(c) {
+                not_escaped.push(format!("U+{:04X}", c as u32));
+            }
+        }
+    }
+    assert!(
+        not_escaped.is_empty(),
+        "rejected by the lexer but not escaped by sky_diag::is_display_unsafe: {not_escaped:?}"
+    );
+    // Computed from the tables, so it needs no hand-updating, but the loop
+    // above cannot silently check nothing. The three sets are disjoint
+    // (`invisible_tables_are_well_formed`, and bidi controls are neither
+    // XID nor in `INVISIBLE_EXTRA`).
+    let expected = table_len(DEFAULT_IGNORABLE_IDENT)
+        + table_len(INVISIBLE_EXTRA)
+        + crate::source::BIDI_CONTROLS.len();
+    assert!(expected > 0);
+    assert_eq!(rejected, expected);
+}
+
+fn table_len(ranges: &[(u32, u32)]) -> usize {
+    ranges.iter().map(|&(lo, hi)| (hi - lo + 1) as usize).sum()
+}
+
+#[test]
+fn invisible_tables_are_well_formed() {
+    assert!(!DEFAULT_IGNORABLE_IDENT.is_empty());
+    for table in [DEFAULT_IGNORABLE_IDENT, INVISIBLE_EXTRA] {
+        for &(lo, hi) in table {
+            assert!(lo <= hi && hi <= 0x10FFFF, "{lo:X}..{hi:X}");
+        }
+        for w in table.windows(2) {
+            assert!(w[0].1 + 1 < w[1].0, "unsorted or adjacent: {w:X?}");
+        }
+    }
+    // The extras are exactly the default-ignorables that are not XID, so
+    // none may overlap the generated table.
+    for c in (0..=0x10FFFFu32).filter_map(char::from_u32) {
+        assert!(
+            !(in_ranges(DEFAULT_IGNORABLE_IDENT, c) && in_ranges(INVISIBLE_EXTRA, c)),
+            "U+{:04X} is in both tables",
+            c as u32
+        );
+        if in_ranges(INVISIBLE_EXTRA, c) {
+            assert!(
+                !unicode_ident::is_xid_start(c) && !unicode_ident::is_xid_continue(c),
+                "U+{:04X} is XID: it belongs in the generated table",
+                c as u32
+            );
+        }
+    }
+    // ZWNJ, ZWJ, and the Hangul fillers come from the generated table (they
+    // are Default_Ignorable_Code_Point and XID in Unicode 18.0.0), not from
+    // an explicit list.
+    for c in [
+        '\u{200C}', '\u{200D}', '\u{115F}', '\u{1160}', '\u{3164}', '\u{FFA0}',
+    ] {
+        assert!(in_ranges(DEFAULT_IGNORABLE_IDENT, c), "U+{:04X}", c as u32);
+    }
+}
+
+/// Everything the old hand-typed `is_invisible` list (#11 through #16)
+/// rejected is still invisible, so no character is newly accepted.
+#[test]
+fn previously_invisible_characters_stay_invisible() {
+    let old = [
+        0x00AD..=0x00AD,
+        0x034F..=0x034F,
+        0x115F..=0x1160,
+        0x17B4..=0x17B5,
+        0x180B..=0x180F,
+        0x200B..=0x200D,
+        0x2060..=0x2064,
+        0x3164..=0x3164,
+        0xFE00..=0xFE0F,
+        0xFEFF..=0xFEFF,
+        0xFFA0..=0xFFA0,
+    ];
+    for cp in old.into_iter().flatten() {
+        assert!(is_invisible(char::from_u32(cp).unwrap()), "U+{cp:04X}");
+    }
+}
+
+/// Default_Ignorable_Code_Point ranges from the verbatim UCD records the
+/// generator also wrote out, parsed here independently of the generated
+/// intersection.
+fn default_ignorable_from_ucd() -> Vec<(u32, u32)> {
+    const SOURCE: &str = include_str!("../../tests/data/ucd-default-ignorable.txt");
+    let (a, b, c) = sky_diag::DISPLAY_UNSAFE_UNICODE_VERSION;
+    assert!(
+        SOURCE
+            .lines()
+            .next()
+            .unwrap()
+            .contains(&format!("Unicode {a}.{b}.{c} UCD")),
+        "sky-syntax and sky-diag tables must come from the same Unicode version"
+    );
+    let out: Vec<(u32, u32)> = SOURCE
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .map(|l| {
+            let (cps, prop) = l.split('#').next().unwrap().split_once(';').unwrap();
+            assert_eq!(prop.trim(), "Default_Ignorable_Code_Point");
+            let cps = cps.trim();
+            let (lo, hi) = cps.split_once("..").unwrap_or((cps, cps));
+            (
+                u32::from_str_radix(lo, 16).unwrap(),
+                u32::from_str_radix(hi, 16).unwrap(),
+            )
+        })
+        .collect();
+    assert!(!out.is_empty());
+    out
+}
+
+/// Every default-ignorable code point that `unicode-ident` counts as
+/// XID_Start or XID_Continue is rejected by `lex` at the start, middle, and
+/// end of an identifier (at the start of a line and after `=`), with the
+/// error pointing at exactly that character. Every other default-ignorable
+/// code point is rejected there too (as a bidi control or an unexpected
+/// character).
+#[test]
+fn default_ignorable_identifier_characters_are_rejected_everywhere() {
+    let di = default_ignorable_from_ucd();
+    let mut xid_count = 0;
+    for c in (0..=0x10FFFFu32).filter_map(char::from_u32) {
+        if !di.iter().any(|&(lo, hi)| lo <= c as u32 && c as u32 <= hi) {
+            continue;
+        }
+        let xid = unicode_ident::is_xid_start(c) || unicode_ident::is_xid_continue(c);
+        xid_count += usize::from(xid);
+        let cases = [
+            (format!("{c}ab = 1\n"), 0),
+            (format!("a{c}b = 1\n"), 1),
+            (format!("ab{c} = 1\n"), 2),
+            (format!("x = {c}ab\n"), 4),
+            (format!("x = a{c}b\n"), 5),
+            (format!("x = ab{c}\n"), 6),
+        ];
+        for (src, at) in cases {
+            if c == '\u{FEFF}' && at == 0 {
+                continue; // a leading BOM is skipped by design
+            }
+            let e = lex(&src).expect_err(&format!("U+{:04X} in {src:?}", c as u32));
+            if xid {
+                assert_eq!(e.kind, LexErrorKind::UnexpectedChar, "U+{:04X}", c as u32);
+                let span = e.diagnostic.primary.span;
+                assert_eq!(span.start as usize, at, "U+{:04X} in {src:?}", c as u32);
+                assert_eq!(span.len() as usize, c.len_utf8());
+                assert_eq!(
+                    e.diagnostic.help,
+                    ["invisible characters are not allowed in source code"]
+                );
+            }
+        }
+    }
+    // Cross-check: `unicode-ident`'s XID data agrees with the generated
+    // table on which default-ignorables are identifier characters.
+    assert!(xid_count > 0);
+    assert_eq!(xid_count, table_len(DEFAULT_IGNORABLE_IDENT));
+}
+
+#[test]
+fn supplementary_variation_selector_does_not_make_a_second_variable() {
+    // `ab` and `a\u{E0100}b` render the same; the second must not lex as a
+    // distinct identifier.
+    let e = assert_err(
+        "ab = 1\na\u{E0100}b = 2\n",
+        LexErrorKind::UnexpectedChar,
+        "\u{E0100}",
+    );
+    assert_eq!(e.diagnostic.message, "unexpected character U+E0100");
+    assert_eq!(
+        e.diagnostic.help,
+        ["invisible characters are not allowed in source code"]
+    );
+    assert_err(
+        "ab\u{E01EF} = 1\n",
+        LexErrorKind::UnexpectedChar,
+        "\u{E01EF}",
+    );
+    assert_err("a\u{FE0F}b = 1\n", LexErrorKind::UnexpectedChar, "\u{FE0F}");
+}
+
+#[test]
+fn zero_width_joiner_and_non_joiner_are_rejected_in_identifiers() {
+    for c in ['\u{200C}', '\u{200D}'] {
+        let s = c.to_string();
+        let e = assert_err(&format!("ab{c}c = 1\n"), LexErrorKind::UnexpectedChar, &s);
+        assert_eq!(
+            e.diagnostic.message,
+            format!("unexpected character U+{:04X}", c as u32)
+        );
+        assert_err(&format!("ab{c} = 1\n"), LexErrorKind::UnexpectedChar, &s);
+        assert_err(&format!("{c}ab = 1\n"), LexErrorKind::UnexpectedChar, &s);
+    }
+}
+
+/// The predicates the drift test uses are the ones `lex` enforces.
+#[test]
+fn drift_test_predicates_match_lexer_behaviour() {
+    for c in (0..=0x10FFFFu32).filter_map(char::from_u32) {
+        if crate::source::is_bidi_control(c) {
+            // Rejected anywhere, even in a comment.
+            let e = lex(&format!("x = 1 # {c}\n")).unwrap_err();
+            assert_eq!(e.kind, LexErrorKind::BidiControl, "U+{:04X}", c as u32);
+        } else if is_invisible(c) && c != '\u{FEFF}' {
+            // Rejected inside an identifier and as a token of its own.
+            // (U+FEFF is skipped only as a leading BOM; covered elsewhere.)
+            for src in [format!("a{c}b = 1\n"), format!("x = {c}1\n")] {
+                let e = lex(&src).unwrap_err();
+                assert_eq!(e.kind, LexErrorKind::UnexpectedChar, "U+{:04X}", c as u32);
+            }
+        }
+    }
 }
 
 #[test]

@@ -1,0 +1,5 @@
+tests/ui/lexer/err_variation_selector_supplement.sky:2:2: error: unexpected character U+E0100
+  |
+2 | a\u{E0100}b = 2
+  |  ^^^^^^^^^
+  = help: invisible characters are not allowed in source code

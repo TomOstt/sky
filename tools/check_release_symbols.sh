@@ -19,8 +19,9 @@ control=resolve_import
 for tool in strings nm ar cargo; do
     command -v "$tool" >/dev/null || { echo "error: $tool not found" >&2; exit 2; }
 done
-echo "$(strings --version | head -n1)"
-echo "$(nm --version | head -n1)"
+# sed reads all input (head could exit early and SIGPIPE the tool under pipefail).
+strings --version | sed -n 1p
+nm --version | sed -n 1p
 
 # Deny-listed names: strip comments and whitespace, skip blank lines.
 mapfile -t names < <(sed -e 's/#.*//' -e 's/[[:space:]]//g' "$denylist" | grep -v '^$')
@@ -29,11 +30,21 @@ if [ "${#names[@]}" -eq 0 ]; then
     exit 2
 fi
 
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+# Build first, on its own, so a failed build stops the script here (inside a
+# process substitution its exit status would be lost).
+build_json="$tmp/build.json"
+if ! cargo build --release --locked -p sky-project -p sky-cli --message-format=json-render-diagnostics >"$build_json"; then
+    echo "error: the release build failed" >&2
+    exit 2
+fi
+
 # The exact files this build produced (not stale ones from older builds),
 # from cargo's JSON messages: workspace crates only (libsky_*) and the binary.
 mapfile -t artifacts < <(
-    cargo build --release --locked -p sky-project -p sky-cli --message-format=json-render-diagnostics |
-        grep '"reason":"compiler-artifact"' |
+    grep '"reason":"compiler-artifact"' "$build_json" |
         grep -o '"filenames":\[[^]]*\]' |
         grep -o '"[^"]*"' | tr -d '"' |
         grep -E '/libsky_[a-z_]*(-[0-9a-f]+)?\.(rlib|rmeta)$|/sky$' |
@@ -45,9 +56,6 @@ if [ -z "$project_rlib" ] || ! printf '%s\n' "${artifacts[@]}" | grep -q '/sky$'
     printf '  %s\n' "${artifacts[@]}" >&2
     exit 2
 fi
-
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
 
 # Each item to scan: "label<TAB>path". An rlib's embedded lib.rmeta is
 # extracted and scanned as its own item.
@@ -63,11 +71,13 @@ for f in "${artifacts[@]}"; do
 done
 
 # count TOOL FILE NAME: occurrences of NAME in TOOL's output for FILE, or
-# "-" if nm cannot read the file (metadata is not an object file).
+# "-" if nm cannot read the file (metadata is not an object file). If strings
+# fails, it prints a non-number, which the caller turns into exit 2 (without
+# this, an empty output would count as 0 hits).
 count() {
     local out
     if [ "$1" = strings ]; then
-        out=$(strings -a "$2")
+        out=$(strings -a "$2") || { echo "strings-failed"; return; }
     elif ! out=$(nm -a "$2" 2>/dev/null); then
         echo -
         return

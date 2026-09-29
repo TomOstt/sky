@@ -1,0 +1,7 @@
+# The unit rules of the math builtins, end to end.
+L = 2 m
+t = 1 s
+a = exp(L)
+b = sin(L / t)
+bigger = max(L, t)
+d = round(1.5 km)

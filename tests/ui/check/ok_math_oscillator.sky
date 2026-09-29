@@ -1,0 +1,9 @@
+# A damped oscillator: x = A exp(-t/tau) cos(omega t). `omega * t` is
+# dimensionless because Hz is 1/s, and so is `t / tau`.
+A = 2 cm
+tau = 0.5 s
+omega = 3 Hz
+t = 0.25 s
+x = A * exp(-t / tau) * cos(2 * pi * omega * t)
+period = 2 * pi * sqrt(1 m / g_n)
+speed = hypot(3 m/s, 4 m/s)

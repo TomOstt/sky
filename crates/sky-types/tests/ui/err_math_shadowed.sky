@@ -1,0 +1,4 @@
+# A user binding named like a builtin wins, as with `print` and `inv`:
+# `sqrt` is a number here, so calling it is an error.
+sqrt = 4
+a = sqrt(9)

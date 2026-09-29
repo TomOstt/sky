@@ -391,3 +391,46 @@ fn runaway_recursion_is_an_error_not_a_crash() {
         );
     }
 }
+
+#[test]
+fn run_a_damped_oscillator_with_math_builtins() {
+    // x = A exp(-t/tau) cos(omega t): `t / tau` and `2 pi omega t` are
+    // dimensionless (Hz is 1/s), so the checker accepts them and the result
+    // keeps A's dimension.
+    let o = run_script(
+        "oscillator",
+        "A = 2 m\n\
+         tau = 1 s\n\
+         omega = 0.25 Hz\n\
+         t = 2 s\n\
+         x = A * exp(-t / tau) * cos(2 * pi * omega * t)\n\
+         print(x)\n\
+         print(sqrt(9 m^2), hypot(3 m, 4 m), max(1 s, 2 s), round(2.5))\n",
+    );
+    assert_eq!(err(&o), "");
+    // cos(pi) = -1, so x = -2 exp(-2) m.
+    let o_text = out(&o);
+    let (first, rest) = o_text.split_once('\n').expect("two lines");
+    let x: f64 = first.trim_end_matches(" m").parse().expect("a number");
+    assert!((x + 2.0 * (-2.0f64).exp()).abs() < 1e-12, "{first}");
+    assert_eq!(rest, "3 m 5 m 2 s 3\n");
+    assert_eq!(o.status.code(), Some(0));
+}
+
+#[test]
+fn math_domain_errors_are_rendered_and_units_are_checked_first() {
+    let o = run_script("log-zero", "print(\"a\")\nprint(log(0))\n");
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(out(&o), "a\n");
+    assert!(
+        err(&o).contains("error: `log` of zero has no real value"),
+        "{}",
+        err(&o)
+    );
+
+    // A unit error stops the run before anything prints.
+    let o = run_script("exp-length", "print(\"x\")\nprint(exp(3 m))\n");
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(out(&o), "");
+    assert!(err(&o).contains("the argument of `exp` must be dimensionless, found length"));
+}

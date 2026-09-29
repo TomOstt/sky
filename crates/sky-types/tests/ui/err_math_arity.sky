@@ -1,0 +1,7 @@
+# Wrong argument counts and non-numbers.
+a = sqrt()
+b = sqrt(1 m^2, 2)
+c = atan2(1)
+d = hypot(1 m, 2 m, 3 m)
+e = sin(true)
+f = abs(1 m < 2 m)

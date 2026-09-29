@@ -1,0 +1,9 @@
+# C = A·s, V = W/A, Ω = V/A, F = C/V, Wb = V·s, T = Wb/m², H = Wb/A, S = 1/Ω.
+unify [C] with [A]*[s]
+unify [V] with [W]/[A]
+unify [ohm] with [V]/[A]
+unify [F] with [C]/[V]
+unify [Wb] with [V]*[s]
+unify [T] with [Wb]/[m]^2
+unify [H] with [Wb]/[A]
+unify [S] with 1/[ohm]

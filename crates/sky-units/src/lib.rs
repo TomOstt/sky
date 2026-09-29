@@ -4,8 +4,10 @@
 //!
 //! * [`Rational`]: a small exact rational number (checked `i64` arithmetic),
 //! * [`Dimension`]: seven rational exponents over L, M, T, I, Θ, N, J,
-//! * [`Unit`], [`lookup`], and [`is_unit_symbol`]: the v0.1 unit table (a dimension
-//!   plus a scale factor), the single source of truth shared by the parser and checker,
+//! * [`Unit`], [`lookup`], and [`is_unit_symbol`]: the unit table (a dimension
+//!   plus a scale factor) and SI prefixes, the single source of truth for unit names,
+//! * [`Constant`] and [`CONSTANTS`]: CODATA 2018 physical constants, which the checker
+//!   binds as names in scope (they are values, not units),
 //! * [`DimUnifier`]: unification of dimension terms containing dimension variables.
 //!
 //! Unification only ever compares dimensions; unit scale factors never take part.
@@ -17,12 +19,14 @@
 
 #![forbid(unsafe_code)]
 
+pub mod constants;
 pub mod dimension;
 pub mod rational;
 pub mod unify;
 pub mod unit;
 
+pub use constants::{lookup_constant, Constant, CONSTANTS};
 pub use dimension::{BaseDim, DimError, Dimension};
 pub use rational::{Rational, RationalError};
 pub use unify::{DimMismatch, DimTerm, DimUnifier, DimVar, UnifyError};
-pub use unit::{is_unit_symbol, lookup, Unit, UNITS};
+pub use unit::{is_unit_symbol, lookup, suggest_unit, Prefix, Resolved, Unit, PREFIXES, UNITS};

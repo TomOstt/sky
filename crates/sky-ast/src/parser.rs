@@ -1075,7 +1075,7 @@ impl<'t, 's> Parser<'t, 's> {
 
     fn parse_unit_literal(&mut self, value: Literal) -> Option<Expr> {
         let mut unit = self.parse_unit_factor()?;
-        self.reject_inverse_after_unit(&value, &unit, &unit)?;
+        self.reject_inverse_after_unit(&value, &unit)?;
         let mut factors = 1usize;
         loop {
             let op = self.current();
@@ -1126,13 +1126,12 @@ impl<'t, 's> Parser<'t, 's> {
             let rhs = self.parse_unit_factor()?;
             let span = unit.span().join(rhs.span());
             let (lhs, rhs) = (Box::new(unit), Box::new(rhs));
-            let factor = (*rhs).clone();
             unit = if is_mul {
                 UnitExpr::Mul { lhs, rhs, span }
             } else {
                 UnitExpr::Div { lhs, rhs, span }
             };
-            self.reject_inverse_after_unit(&value, &unit, &factor)?;
+            self.reject_inverse_after_unit(&value, &unit)?;
         }
         // `5 kg m`: compound units need `*`, never juxtaposition.
         let tok = self.current();
@@ -1201,17 +1200,17 @@ impl<'t, 's> Parser<'t, 's> {
     /// `⁻¹` right after a unit (`10 km⁻¹`, `9.8 m/s⁻¹`) is an error: it would
     /// invert the whole quantity (0.1/km), while readers expect 10/km, and
     /// the dimension is the same either way, so the checker can't catch it.
-    /// `unit` is the unit so far and `factor` its last factor.
-    fn reject_inverse_after_unit(
-        &mut self,
-        value: &Literal,
-        unit: &UnitExpr,
-        factor: &UnitExpr,
-    ) -> Option<()> {
+    /// `unit` is the unit so far; its last factor is the right-hand side of
+    /// the last `*` or `/`, or the whole unit if there is none.
+    fn reject_inverse_after_unit(&mut self, value: &Literal, unit: &UnitExpr) -> Option<()> {
         let tok = self.current();
         if tok.kind != TokenKind::Inverse {
             return Some(());
         }
+        let factor = match unit {
+            UnitExpr::Mul { rhs, .. } | UnitExpr::Div { rhs, .. } => &**rhs,
+            _ => unit,
+        };
         let number = self.text(value.span());
         let unit_text = self.text(unit.span());
         let help = match factor {

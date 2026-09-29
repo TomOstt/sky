@@ -666,3 +666,110 @@ fn repl_solves_with_a_positive_definite_input_it_was_given_a_value() {
         "{x:?}"
     );
 }
+
+// ----- for loops -----
+
+#[test]
+fn run_sums_a_vector_of_forces() {
+    let o = run_script(
+        "for-forces",
+        "forces = [10 N, 20 N, 5.5 N]\n\
+         total = 0 N\n\
+         for f in forces:\n    total += f\n\
+         print(\"total =\", total)\n\
+         print(\"last =\", f)\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "total = 35.5 N\nlast = 5.5 N\n");
+    assert_eq!(o.status.code(), Some(0));
+}
+
+#[test]
+fn run_integrates_with_a_riemann_sum() {
+    // The midpoint rule for the integral of x^2 on [0, 3 m]: 9 m^3.
+    let o = run_script(
+        "for-riemann",
+        "n = 3000\n\
+         a = 0 m\n\
+         b = 3 m\n\
+         dx = (b - a) / n\n\
+         area = 0 m^3\n\
+         for i in range(n):\n    x = a + (i + 0.5) * dx\n    area += x^2 * dx\n\
+         print(area)\n",
+    );
+    assert_eq!(err(&o), "");
+    let text = out(&o);
+    let value: f64 = text
+        .trim()
+        .strip_suffix(" m^3")
+        .expect("a volume")
+        .parse()
+        .expect("a number");
+    assert!((value - 9.0).abs() < 1e-5, "{text}");
+    assert_eq!(o.status.code(), Some(0));
+}
+
+#[test]
+fn run_loops_over_matrix_rows_and_uses_break_and_continue() {
+    let o = run_script(
+        "for-rows",
+        "A = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]\n\
+         for row in A:\n    if row[0] == 4:\n        continue\n    print(row)\n\
+         for i in range(10, 0, -3):\n    if i < 3:\n        break\n    print(i)\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "[1, 2, 3]\n[7, 8, 9]\n10\n7\n4\n");
+    assert_eq!(o.status.code(), Some(0));
+}
+
+#[test]
+fn run_rejects_iterating_a_scalar_before_running_anything() {
+    let o = run_script(
+        "for-scalar",
+        "print(\"MARKER_RAN\")\nn = 3\nfor i in n:\n    print(i)\n",
+    );
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(out(&o), "");
+    let e = err(&o);
+    assert!(
+        e.contains("3:10: error: cannot iterate over a dimensionless number"),
+        "{e}"
+    );
+    assert!(e.contains("for i in range(n)"), "{e}");
+}
+
+#[test]
+fn run_reports_a_bad_range_bound_at_run_time() {
+    let o = run_script(
+        "for-bad-bound",
+        "print(\"before\")\nn = 5 / 2\nfor i in range(n):\n    print(i)\n",
+    );
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(out(&o), "before\n");
+    assert!(
+        err(&o).contains("3:16: error: `range` needs an integer, found 2.5"),
+        "{}",
+        err(&o)
+    );
+}
+
+#[test]
+fn run_reports_iterating_a_string_at_run_time() {
+    let o = run_script("for-string", "s = \"abc\"\nfor c in s:\n    print(c)\n");
+    assert_eq!(o.status.code(), Some(1));
+    assert!(
+        err(&o).contains("2:10: error: cannot iterate over a string"),
+        "{}",
+        err(&o)
+    );
+}
+
+#[test]
+fn run_a_loop_variable_after_a_loop_that_may_not_run_is_a_check_error() {
+    let o = run_script(
+        "for-maybe",
+        "n = 0\nfor i in range(n):\n    pass\nprint(i)\n",
+    );
+    assert_eq!(o.status.code(), Some(1));
+    assert!(err(&o).contains("4:7: error: `i` may be undefined here"));
+}

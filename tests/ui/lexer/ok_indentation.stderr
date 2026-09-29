@@ -1,9 +1,3 @@
-tests/ui/lexer/ok_indentation.sky:13:1: error: `for` loops are not supported yet
-   |
-13 | for i in range(3):
-   | ^^^
-   = help: Sky has no iterable values yet; loop with `while` and a counter
-
 tests/ui/lexer/ok_indentation.sky:15:1: error: `equation` is reserved for a future version
    |
 15 | equation spring:

@@ -1,0 +1,23 @@
+# `for` over `range`: the index is a dimensionless number.
+n = 10
+dt = 0.1 s
+g = 9.81 m/s^2
+v = 0 m/s
+y = 100 m
+for step in range(n):
+    v += g * dt
+    y -= v * dt
+    if y < 0 m:
+        break
+print(y, v)
+
+# A negative step counts down, and `continue` skips to the next item.
+for k in range(9, 0, -4):
+    if k == 5:
+        continue
+    print(k)
+
+# Bounds that are constants always run, so `last` is defined afterwards.
+for j in range(1, 4):
+    last = j * 2
+print(last)

@@ -173,3 +173,173 @@ fn math_functions_agree_including_domain_errors() {
         assert!(o.error.is_some(), "{bad}");
     }
 }
+
+#[test]
+fn for_range_forms_agree() {
+    let src = "\
+for i in range(3):
+    print(i)
+for i in range(2, 5):
+    print(i)
+for i in range(10, 0, -4):
+    print(i)
+for i in range(4, 4):
+    print(i)
+for i in range(0):
+    print(i)
+print(\"done\")
+";
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "0\n1\n2\n2\n3\n4\n10\n6\n2\ndone\n");
+    assert_eq!(o.error, None);
+}
+
+#[test]
+fn for_variable_and_accumulators_after_the_loop() {
+    // A loop known to run leaves its variable and everything it binds
+    // defined; a `for` carries them out like a `while true`.
+    let src = "\
+total = 0
+for i in range(1, 5):
+    total += i
+    last = i * i
+print(total, i, last)
+";
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "10 4 16\n");
+    // A variable count may be zero: the variable is only used inside.
+    let src = "\
+n = 3
+count = 0
+for i in range(n):
+    count += 1
+print(count)
+n = 0
+for i in range(n):
+    count += 100
+print(count)
+";
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "3\n3\n");
+    // A variable bound before the loop survives a loop that does not run.
+    let o = assert_same("i = 7\nn = 0\nfor i in range(n):\n    pass\nprint(i)\n");
+    assert_eq!(o.stdout, "7\n");
+}
+
+#[test]
+fn for_with_a_computed_step_and_bounds() {
+    let src = "\
+n = 10
+step = 3
+for i in range(n - 8, n + 1, step):
+    print(i)
+step = 0 - 4
+for i in range(n, 0, step):
+    print(i)
+for i in range(1, n, 2 * step + 9):
+    print(i)
+";
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "2\n5\n8\n10\n6\n2\n1\n2\n3\n4\n5\n6\n7\n8\n9\n");
+}
+
+#[test]
+fn for_break_and_continue_agree() {
+    let src = "\
+for i in range(10):
+    if i == 2:
+        continue
+    if i == 6:
+        break
+    print(i)
+print(i)
+for i in range(3):
+    for j in range(3):
+        if j == i:
+            continue
+        if j == 2:
+            break
+        print(i, j)
+";
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "0\n1\n3\n4\n5\n6\n0 1\n1 0\n2 0\n2 1\n");
+}
+
+#[test]
+fn for_rebinding_the_variable_does_not_change_the_iteration() {
+    let src = "for i in range(3):\n    print(i)\n    i = 100\nprint(i)\n";
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "0\n1\n2\n100\n");
+}
+
+#[test]
+fn for_inside_functions_and_with_return() {
+    let src = "\
+def sum_to(n):
+    s = 0
+    for k in range(1, n + 1):
+        s += k
+    return s
+def first_multiple(n, m):
+    for k in range(1, n):
+        if k * m > 20:
+            return k
+    return 0
+def scaled(x):
+    t = 0 m
+    for k in range(4):
+        t += x * k
+    return t
+print(sum_to(10), first_multiple(100, 7), first_multiple(2, 7), scaled(2 m))
+";
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "55 3 0 12 m\n");
+}
+
+#[test]
+fn for_riemann_sum() {
+    let src = "\
+n = 200
+dx = 1 / n
+s = 0
+for i in range(n):
+    x = (i + 0.5) * dx
+    s += x^2 * dx
+print(s)
+t = 0 m
+for i in range(1, 11):
+    t += i * 1 m
+print(t)
+";
+    let o = assert_same(src);
+    assert!(o.stdout.ends_with("55 m\n"), "{}", o.stdout);
+}
+
+#[test]
+fn for_with_units_in_the_body() {
+    let src = "\
+v = 0 m/s
+a = 2 m/s^2
+dt = 0.5 s
+x = 0 m
+for i in range(4):
+    x += v * dt
+    v += a * dt
+print(x, v)
+";
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "3 m 4 m/s\n");
+}
+
+#[test]
+fn a_for_over_an_array_says_lowering_needs_array_values() {
+    let src = "for x in [1, 2]:\n    print(x)\n";
+    let e = sky_lower::lower_source(src).expect_err("arrays do not lower yet");
+    assert!(
+        e.to_string()
+            .contains("iteration over arrays lowers once SIR has array values"),
+        "{e}"
+    );
+    // The tree walker still runs it.
+    assert_eq!(run_tree_walker(src).stdout, "1\n2\n");
+}

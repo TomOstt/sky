@@ -1,0 +1,2 @@
+# rad is dimensionless, so rad/s and 1/s unify.
+unify [rad]/[s] with 1/[s]

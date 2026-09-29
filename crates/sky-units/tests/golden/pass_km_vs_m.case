@@ -1,0 +1,2 @@
+# Prefixed units share a dimension: km is length with scale 1000.
+unify [km] with [m]

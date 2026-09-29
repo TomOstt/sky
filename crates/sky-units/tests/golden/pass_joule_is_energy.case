@@ -1,0 +1,4 @@
+# J = M·L²·T⁻²; eV is the same dimension with a different scale.
+unify [J] with M*L^2*T^-2
+unify [eV] with [J]
+show [J]

@@ -1,0 +1,3 @@
+# α² = L² gives α = L.
+unify ?a^2 with L^2
+show ?a

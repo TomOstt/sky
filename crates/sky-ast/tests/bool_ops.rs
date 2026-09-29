@@ -312,3 +312,35 @@ fn bool_literal_spans_inside_expressions() {
     assert!(!value);
     assert_eq!((span.start, span.end), (5, 10));
 }
+
+#[test]
+fn bool_literals_are_not_binding_targets() {
+    for (src, message, target) in [
+        ("true = 1", "cannot assign to `true`", "true"),
+        ("false = 0", "cannot assign to `false`", "false"),
+        ("true: Bool", "cannot annotate `true`", "true"),
+        ("false: Bool = x", "cannot annotate `false`", "false"),
+    ] {
+        let errors = common::module_errors(src);
+        assert_eq!(errors.len(), 1, "{src:?}: {errors:#?}");
+        let err = &errors[0];
+        assert_eq!(err.message, message, "{src:?}");
+        assert_eq!(at(src, err.span), target, "{src:?}");
+        assert_eq!(
+            err.help.as_deref(),
+            Some("`true` and `false` are Bool literals, not names")
+        );
+    }
+    // A keyword attribute is an ordinary attribute: reading it is fine, and
+    // assigning to it fails like any attribute target (plain names only).
+    assert_eq!(common::module_sexpr("y = x.true"), "(= y (attr x true))");
+    for src in ["x.true = 1", "x.flag = 1"] {
+        let errors = common::module_errors(src);
+        assert_eq!(errors.len(), 1, "{src:?}: {errors:#?}");
+        assert_eq!(
+            errors[0].message,
+            "invalid assignment target: only a plain name can be assigned in Sky v0.1"
+        );
+        assert_eq!(at(src, errors[0].span), &src[..6]);
+    }
+}

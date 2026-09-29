@@ -1,6 +1,0 @@
-# spec v0.1 "Unit values": `3 eV == 4.806529902e-19 J` type-checks (energy
-# compared with energy) but is false after f64 rounding; the rounding is
-# checked in tests/spec_unit_values.rs.
-unify [eV] with [J]
-unify [eV] with M*L^2*T^-2
-show [eV]

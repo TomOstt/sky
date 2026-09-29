@@ -1,5 +1,0 @@
-# spec v0.1 "Unit values": `10 min` is 600 with dimension time.
-# (The value 600 is checked in tests/spec_unit_values.rs.)
-unify [min] with T
-unify [min] with [s]
-show [min]

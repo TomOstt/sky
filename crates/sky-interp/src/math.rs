@@ -116,3 +116,38 @@ pub fn apply(f: MathFn, args: &[Value], whole: Span, spans: &[Span]) -> R<Value>
     // `+ 0.0` turns `-0.0` into `0.0`.
     Ok(Value::number(finite(r, whole)? + 0.0, dim))
 }
+
+#[cfg(test)]
+mod can_fail_agrees {
+    use super::*;
+    use sky_units::Dimension;
+
+    /// `MathFn::can_fail` (which makes a SIR op fallible) must match this
+    /// evaluator: a function marked infallible never fails on any input,
+    /// and one marked fallible fails on at least one of these edge cases.
+    #[test]
+    fn can_fail_matches_the_evaluator() {
+        let edges = [
+            0.0, -0.0, 1.0, -1.0, 0.5, 2.0, -2.0, 1e308, 1.5e308, -1e308, 1e-308, 710.0,
+        ];
+        for f in MathFn::ALL {
+            let mut failed = false;
+            for &a in &edges {
+                for &b in &edges {
+                    let args: Vec<Value> = [a, b][..f.arity()]
+                        .iter()
+                        .map(|&x| Value::number(x, Dimension::DIMENSIONLESS))
+                        .collect();
+                    let spans = vec![Span::point(0); args.len()];
+                    failed |= apply(f, &args, Span::point(0), &spans).is_err();
+                }
+            }
+            assert_eq!(
+                failed,
+                f.can_fail(),
+                "{f:?}: can_fail says {}",
+                f.can_fail()
+            );
+        }
+    }
+}

@@ -573,6 +573,7 @@ impl<'a> FnVerifier<'a> {
             OpKind::Yield | OpKind::Return | OpKind::Print => (None, Some(0)),
             OpKind::Condition => (None, Some(0)),
             OpKind::Call { .. } => (None, None),
+            OpKind::Math(f) => (Some(f.arity()), Some(1)),
         };
         if let Some(n) = operands {
             if op.operands.len() != n {
@@ -625,6 +626,7 @@ impl<'a> FnVerifier<'a> {
                     self.expect_result_loose(o, op);
                 }
             }
+            OpKind::Math(f) => self.check_math(o, op, *f),
             OpKind::Pow => self.check_pow(o, op),
             OpKind::Inverse => self.check_inverse(o, op),
             OpKind::MatMul => self.check_matmul(o, op),
@@ -685,6 +687,34 @@ impl<'a> FnVerifier<'a> {
     }
 
     /// Result 0 must be a number or Unknown.
+    /// `math.*`: scalar operands (the checker rejects arrays), and the result
+    /// dimension from the one rule table, `MathFn::result_dim`.
+    fn check_math(&mut self, o: OpId, op: &OpData, f: crate::op::MathFn) {
+        let mut dims = Vec::with_capacity(op.operands.len());
+        for i in 0..op.operands.len() {
+            match self.operand_num(o, op, i) {
+                Some(Slot::Num(n)) if n.shape.rank() == 0 => dims.push(n.dim),
+                Some(Slot::Num(n)) => {
+                    let (name, shape) = (f.name(), n.shape.clone());
+                    self.err_op(
+                        o,
+                        format!("`{name}` takes scalars, operand {i} has shape {shape:?}"),
+                    );
+                    return;
+                }
+                // Unknown operand, or already reported.
+                _ => return self.expect_result_loose(o, op),
+            }
+        }
+        match f.result_dim(&dims) {
+            Ok(d) => self.expect_result(o, op, Some(d), Some(Shape::scalar())),
+            Err(e) => self.err_op(
+                o,
+                format!("`{}`: {e:?} for operand dimensions {dims:?}", f.name()),
+            ),
+        }
+    }
+
     fn expect_result_loose(&mut self, o: OpId, op: &OpData) {
         self.expect_result(o, op, None, None);
     }

@@ -1007,3 +1007,109 @@ mod fuzz {
         }
     }
 }
+
+mod math {
+    use super::*;
+    use sky_ir::MathFn;
+
+    fn m(f: MathFn, args: Vec<Value>) -> Result<Value, IrRuntimeError> {
+        apply(OpKind::Math(f), args)
+    }
+
+    fn q(x: f64, dim: Dimension) -> Value {
+        Value::number(x, dim)
+    }
+
+    #[test]
+    fn values() {
+        assert_eq!(m(MathFn::Sqrt, vec![n(9.0)]), Ok(n(3.0)));
+        assert_eq!(m(MathFn::Cbrt, vec![n(-8.0)]), Ok(n(-2.0)));
+        assert_eq!(m(MathFn::Abs, vec![n(-2.5)]), Ok(n(2.5)));
+        assert_eq!(m(MathFn::Exp, vec![n(0.0)]), Ok(n(1.0)));
+        assert_eq!(m(MathFn::Log, vec![n(1.0)]), Ok(n(0.0)));
+        assert_eq!(m(MathFn::Log2, vec![n(8.0)]), Ok(n(3.0)));
+        assert_eq!(m(MathFn::Log10, vec![n(1000.0)]), Ok(n(3.0)));
+        assert_eq!(m(MathFn::Sin, vec![n(0.0)]), Ok(n(0.0)));
+        assert_eq!(m(MathFn::Cos, vec![n(0.0)]), Ok(n(1.0)));
+        assert_eq!(m(MathFn::Tan, vec![n(0.0)]), Ok(n(0.0)));
+        assert_eq!(m(MathFn::Asin, vec![n(0.0)]), Ok(n(0.0)));
+        assert_eq!(m(MathFn::Acos, vec![n(1.0)]), Ok(n(0.0)));
+        assert_eq!(m(MathFn::Atan, vec![n(0.0)]), Ok(n(0.0)));
+        assert_eq!(m(MathFn::Atan2, vec![n(0.0), n(1.0)]), Ok(n(0.0)));
+        // The angle of the zero vector is undefined: an error, as in `sky run`
+        // (both use `sky_interp::math`).
+        assert!(m(MathFn::Atan2, vec![n(0.0), n(0.0)]).is_err());
+        assert_eq!(m(MathFn::Hypot, vec![n(3.0), n(4.0)]), Ok(n(5.0)));
+        assert_eq!(m(MathFn::Min, vec![n(3.0), n(4.0)]), Ok(n(3.0)));
+        assert_eq!(m(MathFn::Max, vec![n(3.0), n(4.0)]), Ok(n(4.0)));
+        assert_eq!(m(MathFn::Floor, vec![n(-1.5)]), Ok(n(-2.0)));
+        assert_eq!(m(MathFn::Ceil, vec![n(-1.5)]), Ok(n(-1.0)));
+        assert_eq!(m(MathFn::Round, vec![n(2.5)]), Ok(n(3.0)));
+        assert_eq!(m(MathFn::Round, vec![n(-2.5)]), Ok(n(-3.0)));
+    }
+
+    #[test]
+    fn dimensions() {
+        let area = Dimension::LENGTH.pow_int(2).unwrap();
+        assert_eq!(
+            m(MathFn::Sqrt, vec![q(9.0, area)]),
+            Ok(q(3.0, Dimension::LENGTH))
+        );
+        assert_eq!(
+            m(MathFn::Cbrt, vec![q(8.0, Dimension::VOLUME)]),
+            Ok(q(2.0, Dimension::LENGTH))
+        );
+        assert_eq!(
+            m(MathFn::Abs, vec![q(-1.0, Dimension::LENGTH)]),
+            Ok(q(1.0, Dimension::LENGTH))
+        );
+        assert_eq!(
+            m(
+                MathFn::Hypot,
+                vec![q(3.0, Dimension::LENGTH), q(4.0, Dimension::LENGTH)]
+            ),
+            Ok(q(5.0, Dimension::LENGTH))
+        );
+        assert_eq!(
+            m(
+                MathFn::Atan2,
+                vec![q(0.0, Dimension::LENGTH), q(1.0, Dimension::LENGTH)]
+            ),
+            Ok(n(0.0))
+        );
+        let e = m(MathFn::Sin, vec![q(1.0, Dimension::LENGTH)]).unwrap_err();
+        assert!(msg(&e).contains("dimensionless"), "{}", msg(&e));
+        let e = m(MathFn::Min, vec![q(1.0, Dimension::LENGTH), n(1.0)]).unwrap_err();
+        assert!(msg(&e).contains("same dimension"), "{}", msg(&e));
+    }
+
+    #[test]
+    fn domain_errors_are_errors_not_nan() {
+        for (f, x) in [
+            (MathFn::Sqrt, -1.0),
+            (MathFn::Log, 0.0),
+            (MathFn::Log10, -1.0),
+            (MathFn::Log2, 0.0),
+            (MathFn::Asin, 1.5),
+            (MathFn::Acos, -1.5),
+            (MathFn::Exp, 1000.0),
+        ] {
+            assert!(m(f, vec![n(x)]).is_err(), "{f:?}({x})");
+        }
+        assert!(m(MathFn::Hypot, vec![n(1.7e308), n(1.7e308)]).is_err());
+    }
+
+    #[test]
+    fn effects_match_failure() {
+        for f in MathFn::ALL {
+            let e = OpKind::Math(f).properties().effects;
+            assert_eq!(e.contains(sky_ir::Effect::Fail), f.can_fail(), "{f:?}");
+        }
+    }
+
+    #[test]
+    fn wrong_operand_count_is_malformed() {
+        let e = m(MathFn::Sqrt, vec![n(1.0), n(2.0)]).unwrap_err();
+        assert!(msg(&e).starts_with("malformed IR"));
+    }
+}

@@ -312,7 +312,16 @@ impl Lower<'_> {
                         let ty = self.ty_of(e)?;
                         return Ok(self.op1(OpKind::Inverse, vec![a], ty, e.span));
                     }
-                    _ => {}
+                    (name, _) => {
+                        if let Some(f) = sky_ir::MathFn::from_name(name) {
+                            let mut vals = Vec::with_capacity(args.len());
+                            for a in args {
+                                vals.push(self.expr(a)?);
+                            }
+                            let ty = self.ty_of(e)?;
+                            return Ok(self.op1(OpKind::Math(f), vals, ty, e.span));
+                        }
+                    }
                 },
             }
         }

@@ -34,16 +34,8 @@ fn ok_programs() -> Vec<PathBuf> {
 /// Programs the checker accepts that use arrays where `sky run` cannot follow
 /// (an input declared inside a function, indexing): rejected, with the
 /// reason. Everything else in the suites must lower.
-///
-/// The math builtins (`sqrt`, `exp`, ...) lower once SIR has its math
-/// operations (`OpKind::Math`); until then those programs are listed here.
 const REJECTED: &[(&str, &str)] = &[
     ("ok_returns.sky", "top level of the file"),
-    (
-        "ok_math_oscillator.sky",
-        "only functions defined with `def`",
-    ),
-    ("ok_math_functions.sky", "only functions defined with `def`"),
     // Arrays run in `sky run` but have no SIR values yet.
     ("ok_array_builtins.sky", "only functions defined with `def`"),
     ("ok_array_index.sky", "not supported"),

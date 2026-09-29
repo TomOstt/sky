@@ -152,3 +152,24 @@ fn runaway_recursion_stops_cleanly() {
         "{e}"
     );
 }
+
+#[test]
+fn math_functions_agree_including_domain_errors() {
+    let o = assert_same(
+        "x = 2 m * exp(-1 s / 2 s) * cos(2 * pi * 0.25 Hz * 1 s)\n\
+         print(sqrt(9 m^2), hypot(3 m, 4 m), max(1 s, 2 s), round(2.5), round(-0.4))\n\
+         print(atan2(1 m, 1 m), log10(1000), cbrt(27 m^3))\n",
+    );
+    assert_eq!(o.error, None);
+    // Each failure is the same error, with the same message, in both.
+    for bad in [
+        "print(log(0))\n",
+        "print(sqrt(0 - 1))\n",
+        "print(asin(2))\n",
+        "print(atan2(0 m, 0 m))\n",
+        "print(exp(1000))\n",
+    ] {
+        let o = assert_same(bad);
+        assert!(o.error.is_some(), "{bad}");
+    }
+}

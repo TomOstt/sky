@@ -1,0 +1,23 @@
+[package]
+name = "sky-egraph"
+description = "Identity-aware rewriting of SIR expressions with e-graphs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Pinned exactly: rewrite results (which of several equal-cost forms is
+# extracted) must not change under a routine `cargo update`.
+egg = "=0.11.0"
+sky-diag = { path = "../sky-diag" }
+sky-ir = { path = "../sky-ir" }
+sky-types = { path = "../sky-types" }
+sky-units = { path = "../sky-units" }
+
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
+sky-ast = { path = "../sky-ast" }
+sky-interp = { path = "../sky-interp" }
+sky-ir-interp = { path = "../sky-ir-interp" }

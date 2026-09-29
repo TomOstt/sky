@@ -485,6 +485,24 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             let v = sign(true, act.get(a, s)?.clone(), s)?;
             act.define(op, vec![v])
         }
+        OpKind::Math(f) => {
+            let vals = act.values(&op.operands, s)?;
+            if vals.len() != f.arity() {
+                return Err(IrRuntimeError::malformed(
+                    format!(
+                        "`{}` takes {} operands, found {}",
+                        f.mnemonic(),
+                        f.arity(),
+                        vals.len()
+                    ),
+                    s,
+                ));
+            }
+            no_arrays(act, op)?;
+            let refs: Vec<&Value> = vals.iter().collect();
+            let v = crate::math::eval(*f, &refs, s)?;
+            act.define(op, vec![v])
+        }
         OpKind::PowConst { exponent } => {
             let [a] = fixed(op)?;
             no_arrays(act, op)?;

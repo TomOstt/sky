@@ -33,6 +33,7 @@
 #![forbid(unsafe_code)]
 
 mod machine;
+mod math;
 
 #[cfg(test)]
 mod tests;

@@ -188,6 +188,58 @@ impl MathFn {
             _ => Ok(dimensionless),
         }
     }
+
+    /// The SIR text-format name: `math.sqrt`.
+    pub const fn mnemonic(self) -> &'static str {
+        match self {
+            MathFn::Sqrt => "math.sqrt",
+            MathFn::Cbrt => "math.cbrt",
+            MathFn::Abs => "math.abs",
+            MathFn::Exp => "math.exp",
+            MathFn::Log => "math.log",
+            MathFn::Log10 => "math.log10",
+            MathFn::Log2 => "math.log2",
+            MathFn::Sin => "math.sin",
+            MathFn::Cos => "math.cos",
+            MathFn::Tan => "math.tan",
+            MathFn::Asin => "math.asin",
+            MathFn::Acos => "math.acos",
+            MathFn::Atan => "math.atan",
+            MathFn::Atan2 => "math.atan2",
+            MathFn::Hypot => "math.hypot",
+            MathFn::Min => "math.min",
+            MathFn::Max => "math.max",
+            MathFn::Floor => "math.floor",
+            MathFn::Ceil => "math.ceil",
+            MathFn::Round => "math.round",
+        }
+    }
+
+    /// Whether evaluating it can fail at run time, which makes its SIR op
+    /// fallible (`Effect::Fail`): a domain error (`sqrt` of a negative,
+    /// `log` of a non-positive, `asin`/`acos` outside [-1, 1], `atan2(0, 0)`)
+    /// or an overflow (`exp`, `hypot`). Must agree with `sky_interp::math`,
+    /// the one evaluator; a test checks it.
+    pub const fn can_fail(self) -> bool {
+        matches!(
+            self,
+            MathFn::Sqrt
+                | MathFn::Exp
+                | MathFn::Log
+                | MathFn::Log10
+                | MathFn::Log2
+                | MathFn::Asin
+                | MathFn::Acos
+                | MathFn::Atan2
+                | MathFn::Hypot
+        )
+    }
+
+    /// `f(a, b) == f(b, a)` exactly. `min` and `max` are not: for `-0.0` and
+    /// `0.0` the two orders can pick different zeros.
+    pub const fn commutative(self) -> bool {
+        matches!(self, MathFn::Hypot)
+    }
 }
 
 #[cfg(test)]

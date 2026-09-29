@@ -55,6 +55,11 @@ impl SolveMethod {
     }
 }
 
+/// The math functions (`sqrt`, `exp`, `sin`, ...): the one list, with each
+/// function's arity, dimension rule and failure behaviour, lives in
+/// sky-units and is shared by the checker, both interpreters and SIR.
+pub use sky_units::MathFn;
+
 /// An operation kind. "Operands" and "results" below are the `operands`
 /// and `results` of the [`crate::OpData`].
 #[derive(Clone, PartialEq, Debug)]
@@ -99,6 +104,9 @@ pub enum OpKind {
     /// `a⁻¹` / `inv(a)`: one operand, one result. A scalar's reciprocal
     /// (dimension inverted) or a square matrix's inverse.
     Inverse,
+    /// A mathematical function: `arity()` operands (see [`MathFn`] for the
+    /// operands, dimension rule and failures of each), one result.
+    Math(MathFn),
     /// `A @ B`: two operands, one result.
     MatMul,
     /// `Aᵀ`: one operand, one result. Pure: it can't fail. (Running it
@@ -194,6 +202,7 @@ impl OpKind {
             OpKind::Sub => "sub",
             OpKind::Mul => "mul",
             OpKind::Div => "div",
+            OpKind::Math(f) => f.mnemonic(),
             OpKind::Neg => "neg",
             OpKind::PowConst { .. } => "pow.const",
             OpKind::Pow => "pow",
@@ -236,6 +245,10 @@ impl OpKind {
             OpKind::Add | OpKind::Mul => (fail, false, true, true),
             OpKind::Sub | OpKind::Div | OpKind::PowConst { .. } | OpKind::Pow => {
                 (fail, false, false, false)
+            }
+            OpKind::Math(f) => {
+                let e = if f.can_fail() { fail } else { EffectSet::PURE };
+                (e, false, f.commutative(), false)
             }
             // A singular matrix or a zero scalar fails.
             OpKind::Inverse | OpKind::Solve { .. } => (fail, false, false, false),

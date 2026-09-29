@@ -1343,8 +1343,15 @@ fn keywords_match_raw_text_only() {
     assert_eq!(e.diagnostic.help, ["did you mean `if`"]);
     let e = assert_non_nfkc("y = \u{FF44}ef\n", "\u{FF44}ef");
     assert_eq!(e.diagnostic.help, ["did you mean `def`"]);
-    // TODO(#18): `ｔｒｕｅ` / `ｆａｌｓｅ` should say "did you mean `true`" /
-    // "`false`" once the `true` and `false` keywords land.
+    let e = assert_non_nfkc(
+        "x = \u{FF54}\u{FF52}\u{FF55}\u{FF45}\n",
+        "\u{FF54}\u{FF52}\u{FF55}\u{FF45}",
+    );
+    assert_eq!(e.diagnostic.help, ["did you mean `true`"]);
+    let e = assert_non_nfkc("x = \u{FF46}alse\n", "\u{FF46}alse");
+    assert_eq!(e.diagnostic.help, ["did you mean `false`"]);
+    // The raw keyword is still a keyword.
+    assert_eq!(line("x = true\n")[2], Keyword(Kw::True));
 }
 
 #[test]

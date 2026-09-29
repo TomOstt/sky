@@ -1,0 +1,6 @@
+tests/ui/lexer/err_nfkc_fullwidth_true.sky:1:5: error: identifier is not in Unicode NFKC form
+  |
+1 | x = ｔｒｕｅ
+  |     ^^^^ not in NFKC form
+  = note: `\u{FF54}\u{FF52}\u{FF55}\u{FF45}` is not in NFKC (Unicode Normalization Form KC), and Sky never normalizes identifiers
+  = help: did you mean `true`

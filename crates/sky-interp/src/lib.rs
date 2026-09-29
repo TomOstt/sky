@@ -31,6 +31,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod arith;
 mod env;
 mod error;
 mod eval;
@@ -39,6 +40,7 @@ mod value;
 #[cfg(test)]
 mod tests;
 
+pub use arith::MAX_CALL_DEPTH;
 pub use env::RuntimeEnv;
 pub use error::{ErrorDetails, RuntimeError};
 pub use eval::run_module;

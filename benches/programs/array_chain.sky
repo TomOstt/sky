@@ -1,0 +1,12 @@
+# bench: N=100000 quick=50
+# Elementwise array chains on vectors of moderate size. Arrays are immutable,
+# so each step builds a new array; zeros(n) and indexing feed the loop.
+N = 100000
+u = [1 m, 2 m, 3 m, 4 m, 5 m, 6 m, 7 m, 8 m, 9 m, 10 m, 11 m, 12 m, 13 m, 14 m, 15 m, 16 m]
+d = [0.5 m, -0.25 m, 0.125 m, -0.0625 m, 0.5 m, -0.25 m, 0.125 m, -0.0625 m, 0.5 m, -0.25 m, 0.125 m, -0.0625 m, 0.5 m, -0.25 m, 0.125 m, -0.0625 m]
+acc = zeros(16) * 1 m
+for i in range(N):
+    j = i - 16 * floor(i / 16)
+    acc = 0.5 * acc + (u - d) / 4 + 0.25 * (d + u) - u / 8
+    acc = acc + (acc[j] / 1000) * (d / (1 m))
+print(acc[0], acc[5], acc[15])

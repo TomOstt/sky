@@ -94,11 +94,31 @@ crates/
   sky-egraph/   e-graph rewriting as a pass
   sky-ir-interp/  reference interpreter for SIR
   sky-cli/      the `sky` command: check, run, repl
+  sky-bench/    benchmark runner (not shipped; nothing depends on it)
 spec/           grammar, typing rules, diagnostic format
 tests/ui/       golden diagnostic tests for `sky check`
 tests/ir/       golden tests for `sky check --emit-ir` and the pass explanations
+benches/        benchmark workloads: `benches/programs/*.sky`
 fuzz/           cargo-fuzz targets for the lexer, parser and manifest
 ```
+
+## Benchmarks
+
+`sky-bench` times each program in `benches/programs/` through three engines: (a) the tree-walking interpreter (`sky run`), (b) lowering plus the SIR interpreter with no passes, and (c) lowering plus `sky_opt::default_pipeline` plus the SIR interpreter. It also times the compile-side phases (lex, parse, check, lower, pipeline, verify), and it fails if the three engines do not print identical output. Every workload prints a checksum, so none can be skipped.
+
+```
+cargo run --release -p sky-bench                              # all workloads, a table on stdout
+cargo run --release -p sky-bench -- --filter fib              # workloads whose name contains the text
+cargo run --release -p sky-bench -- --json out.json           # also write the results as JSON
+cargo run --release -p sky-bench -- --reps 9 --warmup 2       # more repetitions (default 5, warmup 1)
+cargo run --release -p sky-bench -- --quick                   # tiny sizes, a smoke run
+```
+
+Always use `--release`: debug timings mean nothing. Each engine runs `--reps` times, interleaved, and the table shows the median with the range as a percentage of it; the JSON keeps every sample (integer nanoseconds, schema version 1) so runs can be compared over time. On a busy machine the median drifts upward; the minimum is the steadier number. Set `SKY_BENCH_REV` to record a commit in the JSON.
+
+The workloads are `scalar_loop` (10^6 iterations of arithmetic with units), `recursion` (`fib(25)`), `math_calls` (`for` over `range` with math functions), `array_chain` (elementwise vector chains), `matmul` (`@` on small matrices), `cholesky` (`K⁻¹ @ f` on a PositiveDefinite literal) and `derivative` (`derivative(f, t)(x)` in a loop). To add one, put a `.sky` file in `benches/programs/` whose first line is `# bench: N=<full> quick=<small>` and which sets its size with a line `N = <full>`, then list it in `crates/sky-bench/src/bench.rs` (a test fails if a file is not listed).
+
+The `bench` workflow (`.github/workflows/bench.yml`) runs the suite in release mode weekly and on manual dispatch, never on pull requests, and uploads the JSON as an artifact.
 
 ## Development
 

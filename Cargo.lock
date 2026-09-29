@@ -349,6 +349,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "sky-bench"
+version = "0.0.1"
+dependencies = [
+ "sky-ast",
+ "sky-derive",
+ "sky-diag",
+ "sky-interp",
+ "sky-ir",
+ "sky-ir-interp",
+ "sky-lower",
+ "sky-opt",
+ "sky-syntax",
+ "sky-types",
+]
+
+[[package]]
 name = "sky-cli"
 version = "0.0.1"
 dependencies = [

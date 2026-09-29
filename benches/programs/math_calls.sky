@@ -1,0 +1,8 @@
+# bench: N=100000 quick=500
+# A for loop over range with several math.* calls on every iteration.
+N = 100000
+total = 0
+for i in range(1, N + 1):
+    x = i / 1000
+    total = total + sqrt(x) * sin(x) + cos(x) / (1 + exp(-x / 100)) + log(x) + hypot(x, 3) + atan2(x, 2) + abs(sin(x)) + min(x, 5) + max(cbrt(x), 1)
+print(total)

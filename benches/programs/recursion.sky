@@ -1,0 +1,10 @@
+# bench: N=25 quick=12
+# Naive doubly recursive Fibonacci: 242785 calls for fib(25).
+N = 25
+
+def fib(n):
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+print(fib(N))

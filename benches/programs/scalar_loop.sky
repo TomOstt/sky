@@ -1,0 +1,16 @@
+# bench: N=1000000 quick=1000
+# Scalar arithmetic with units: an explicit-Euler spring-mass update. The
+# checksum is the final position, velocity and energy, so the loop cannot be
+# skipped.
+N = 1000000
+m = 2 kg
+k = 50 N/m
+dt = 0.000001 s
+x = 1 m
+v = 0 m/s
+for i in range(N):
+    a = -k * x / m
+    v = v + a * dt
+    x = x + v * dt
+E = 0.5 * m * v^2 + 0.5 * k * x^2
+print(x, v, E)

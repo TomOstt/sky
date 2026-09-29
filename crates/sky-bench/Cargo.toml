@@ -1,0 +1,23 @@
+[package]
+name = "sky-bench"
+description = "Benchmark suite for Sky's interpreters and compile-side phases (not shipped)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# A workspace member so `cargo fmt`, `clippy` and `test` cover it and it shares
+# Cargo.lock, but nothing depends on it, and it needs nothing beyond workspace
+# crates: timing is `std::time::Instant` (no criterion).
+[dependencies]
+sky-ast = { path = "../sky-ast" }
+sky-derive = { path = "../sky-derive" }
+sky-diag = { path = "../sky-diag" }
+sky-interp = { path = "../sky-interp" }
+sky-ir = { path = "../sky-ir" }
+sky-ir-interp = { path = "../sky-ir-interp" }
+sky-lower = { path = "../sky-lower" }
+sky-opt = { path = "../sky-opt" }
+sky-syntax = { path = "../sky-syntax" }
+sky-types = { path = "../sky-types" }

@@ -138,6 +138,14 @@
 //! make every reader skip it. Names the checker keeps out of merges (an arm
 //! that returned takes no part) are kept out here too.
 //!
+//! # Derivatives
+//!
+//! `derivative(f, x)(args)` is a `call` of `df/dx`, the function
+//! `sky_ad::differentiate_into` adds to the module once all functions exist
+//! (see `derivative.rs`); the call keeps the second result, the
+//! derivative. A function `sky-ad` cannot differentiate is a
+//! [`LowerError`] on the call.
+//!
 //! # Rejected with a [`LowerError`]
 //!
 //! Anything `sky run` cannot execute either: attributes, `∂` and `∇`,

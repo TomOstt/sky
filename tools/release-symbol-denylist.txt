@@ -1,0 +1,13 @@
+# Rule: test-only hooks live in separate `#[cfg(test)] mod x;` files; rustc records the name of an inline cfg-removed item in release metadata.
+# Names that must never appear in a release artifact (the release rlibs,
+# their .rmeta metadata, or the sky binary). Checked by
+# tools/check_release_symbols.sh in CI (job release-symbols).
+#
+# One name per line; `#` starts a comment. A line matches as a plain
+# substring of `strings -a` and `nm -a` output, so mangled symbols match too.
+#
+# Test-only constructors and hooks go here in the SAME commit that
+# introduces them, for example the upcoming sky-interp tag constructor.
+
+# sky-project: the race tests' hook entry point (src/import/tests.rs).
+resolve_with_hook

@@ -1,0 +1,84 @@
+tests/ui/lexer/ok_indentation.sky:1:1: error: expected an expression, found keyword `def`; statements and blocks are not supported by the parser yet
+  |
+1 | def classify(x):
+  | ^^^
+
+tests/ui/lexer/ok_indentation.sky:2:5: error: unexpected indentation: indented blocks are not supported yet
+  |
+2 |     if x > 0:
+  |     ^
+
+tests/ui/lexer/ok_indentation.sky:2:5: error: expected an expression, found keyword `if`; statements and blocks are not supported by the parser yet
+  |
+2 |     if x > 0:
+  |     ^^
+
+tests/ui/lexer/ok_indentation.sky:3:9: error: unexpected indentation: indented blocks are not supported yet
+  |
+3 |         return 1
+  |         ^
+
+tests/ui/lexer/ok_indentation.sky:3:9: error: expected an expression, found keyword `return`; statements and blocks are not supported by the parser yet
+  |
+3 |         return 1
+  |         ^^^^^^
+
+tests/ui/lexer/ok_indentation.sky:4:5: error: expected an expression, found keyword `else`; statements and blocks are not supported by the parser yet
+  |
+4 |     else:
+  |     ^^^^
+
+tests/ui/lexer/ok_indentation.sky:5:9: error: unexpected indentation: indented blocks are not supported yet
+  |
+5 |         if x == 0:
+  |         ^
+
+tests/ui/lexer/ok_indentation.sky:5:9: error: expected an expression, found keyword `if`; statements and blocks are not supported by the parser yet
+  |
+5 |         if x == 0:
+  |         ^^
+
+tests/ui/lexer/ok_indentation.sky:6:13: error: unexpected indentation: indented blocks are not supported yet
+  |
+6 |             return 0
+  |             ^
+
+tests/ui/lexer/ok_indentation.sky:6:13: error: expected an expression, found keyword `return`; statements and blocks are not supported by the parser yet
+  |
+6 |             return 0
+  |             ^^^^^^
+
+tests/ui/lexer/ok_indentation.sky:11:9: error: expected an expression, found keyword `return`; statements and blocks are not supported by the parser yet
+   |
+11 |         return 0 - 1
+   |         ^^^^^^
+
+tests/ui/lexer/ok_indentation.sky:13:1: error: expected an expression, found keyword `for`; statements and blocks are not supported by the parser yet
+   |
+13 | for i in range(3):
+   | ^^^
+
+tests/ui/lexer/ok_indentation.sky:14:5: error: unexpected indentation: indented blocks are not supported yet
+   |
+14 |     total = total + i
+   |     ^
+
+tests/ui/lexer/ok_indentation.sky:15:1: error: expected an expression, found keyword `equation`; statements and blocks are not supported by the parser yet
+   |
+15 | equation spring:
+   | ^^^^^^^^
+
+tests/ui/lexer/ok_indentation.sky:16:5: error: unexpected indentation: indented blocks are not supported yet
+   |
+16 |     field u
+   |     ^
+
+tests/ui/lexer/ok_indentation.sky:16:5: error: expected an expression, found keyword `field`; statements and blocks are not supported by the parser yet
+   |
+16 |     field u
+   |     ^^^^^
+
+tests/ui/lexer/ok_indentation.sky:17:5: error: expected an expression, found keyword `solve`; statements and blocks are not supported by the parser yet
+   |
+17 |     solve u
+   |     ^^^^^

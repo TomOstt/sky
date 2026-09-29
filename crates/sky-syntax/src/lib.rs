@@ -12,6 +12,7 @@
 //! confusable identifiers produce warnings (see [`confusable`]).
 
 pub mod confusable;
+pub mod edition;
 mod invisible_table;
 pub mod lexer;
 mod nfkc;
@@ -20,6 +21,7 @@ mod nfkc_table;
 pub mod source;
 pub mod token;
 
+pub use edition::Edition;
 pub use lexer::{lex, LexError, LexErrorKind, Lexed};
 /// Unicode version of the NFKC data the lexer checks identifiers against
 /// (the same as `sky_diag::DISPLAY_UNSAFE_UNICODE_VERSION`).

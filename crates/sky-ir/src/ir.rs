@@ -31,27 +31,9 @@ use sky_units::Dimension;
 use crate::op::OpKind;
 
 /// The language edition a module was written for (`ROADMAP.md`, idea 75):
-/// the meaning of old code never changes silently. v1 has one.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub enum Edition {
-    #[default]
-    E2026,
-}
-
-impl Edition {
-    pub fn year(self) -> u16 {
-        match self {
-            Edition::E2026 => 2026,
-        }
-    }
-
-    pub fn from_year(year: u16) -> Option<Edition> {
-        match year {
-            2026 => Some(Edition::E2026),
-            _ => None,
-        }
-    }
-}
+/// the meaning of old code never changes silently. Defined in `sky-syntax`,
+/// where `sky-project` also reads it from `sky.toml`.
+pub use sky_syntax::Edition;
 
 /// How a number is represented. L1 leaves it [`Repr::Unchosen`]; precision
 /// passes (roadmap Phase 3) choose. [`Repr::Exact`] marks values that stay

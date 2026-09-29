@@ -27,8 +27,14 @@ fn number_glued_to_a_name_is_still_a_unit_for_the_parser() {
     assert!(sky_syntax::lex("10km").is_err());
     let src = "10km";
     let tokens = [
-        sky_ast::Token { kind: sky_ast::TokenKind::Int, span: sky_ast::Span::new(0, 2) },
-        sky_ast::Token { kind: sky_ast::TokenKind::Ident, span: sky_ast::Span::new(2, 4) },
+        sky_ast::Token {
+            kind: sky_ast::TokenKind::Int,
+            span: sky_ast::Span::new(0, 2),
+        },
+        sky_ast::Token {
+            kind: sky_ast::TokenKind::Ident,
+            span: sky_ast::Span::new(2, 4),
+        },
     ];
     let (expr, errors) = sky_ast::parse_expr(&tokens, src);
     assert!(errors.is_empty());
@@ -41,7 +47,11 @@ fn unclosed_rational_exponent() {
     let src = "1 m^(1/2)";
     let errors = common::tokens_errors(&common::lex_prefix(src, 7), src);
     assert_eq!(errors.len(), 1);
-    assert!(errors[0].message.contains("malformed rational"), "{}", errors[0].message);
+    assert!(
+        errors[0].message.contains("malformed rational"),
+        "{}",
+        errors[0].message
+    );
 }
 
 #[test]
@@ -89,11 +99,7 @@ fn spaced_operators_are_arithmetic_on_the_quantity() {
 
 #[test]
 fn a_name_is_a_unit_only_directly_after_a_number() {
-    check(&[
-        ("2 * km", "(* 2 km)"),
-        ("x*km", "(* x km)"),
-        ("km", "km"),
-    ]);
+    check(&[("2 * km", "(* 2 km)"), ("x*km", "(* x km)"), ("km", "km")]);
 }
 
 #[test]
@@ -118,7 +124,13 @@ fn unit_values_carry_exponents() {
     else {
         panic!("not a unit literal");
     };
-    let sky_ast::UnitExpr::Pow { num, den, exponent_span, .. } = unit else {
+    let sky_ast::UnitExpr::Pow {
+        num,
+        den,
+        exponent_span,
+        ..
+    } = unit
+    else {
         panic!("not a power");
     };
     assert_eq!((num, den), (-3, 2));
@@ -134,8 +146,15 @@ fn one_error(src: &str) -> sky_ast::ParseError {
 #[test]
 fn juxtaposed_units_are_an_error_suggesting_star() {
     let err = one_error("5 kg m");
-    assert!(err.message.contains("after the unit `kg`"), "{}", err.message);
-    assert_eq!(err.help.as_deref(), Some("compound units are written with `*` and no spaces: `kg*m`"));
+    assert!(
+        err.message.contains("after the unit `kg`"),
+        "{}",
+        err.message
+    );
+    assert_eq!(
+        err.help.as_deref(),
+        Some("compound units are written with `*` and no spaces: `kg*m`")
+    );
     assert_eq!(common::at("5 kg m", err.span), "m");
 
     let err = one_error("9.8 m/s s");
@@ -182,11 +201,24 @@ fn huge_exponents_are_errors_not_panics() {
         "1 m^(9223372036854775808/1)",
     ] {
         let err = one_error(src);
-        assert!(err.message.contains("not a valid 64-bit integer"), "{src:?}: {}", err.message);
+        assert!(
+            err.message.contains("not a valid 64-bit integer"),
+            "{src:?}: {}",
+            err.message
+        );
     }
     check(&[
-        ("1 m^9223372036854775807", "(unit 1 (^ m 9223372036854775807))"),
-        ("1 m^-9223372036854775807", "(unit 1 (^ m -9223372036854775807))"),
-        ("1 m^(1/18446744073709551615)", "(unit 1 (^ m 1/18446744073709551615))"),
+        (
+            "1 m^9223372036854775807",
+            "(unit 1 (^ m 9223372036854775807))",
+        ),
+        (
+            "1 m^-9223372036854775807",
+            "(unit 1 (^ m -9223372036854775807))",
+        ),
+        (
+            "1 m^(1/18446744073709551615)",
+            "(unit 1 (^ m 1/18446744073709551615))",
+        ),
     ]);
 }

@@ -26,7 +26,10 @@ pub fn lex_prefix(src: &str, keep: usize) -> Vec<Token> {
 pub fn sexpr(src: &str) -> String {
     let tokens = lex(src);
     let (expr, errors) = sky_ast::parse_expr(&tokens, src);
-    assert!(errors.is_empty(), "unexpected errors for {src:?}: {errors:#?}");
+    assert!(
+        errors.is_empty(),
+        "unexpected errors for {src:?}: {errors:#?}"
+    );
     expr.expect("no expression").to_sexpr(src)
 }
 
@@ -35,7 +38,10 @@ pub fn sexpr(src: &str) -> String {
 pub fn module_sexpr(src: &str) -> String {
     let tokens = lex(src);
     let (module, errors) = sky_ast::parse_module(&tokens, src);
-    assert!(errors.is_empty(), "unexpected errors for {src:?}: {errors:#?}");
+    assert!(
+        errors.is_empty(),
+        "unexpected errors for {src:?}: {errors:#?}"
+    );
     module.to_sexpr(src)
 }
 
@@ -45,7 +51,10 @@ pub fn expr_errors(src: &str) -> Vec<sky_ast::ParseError> {
 
 pub fn tokens_errors(tokens: &[Token], src: &str) -> Vec<sky_ast::ParseError> {
     let (expr, errors) = sky_ast::parse_expr(tokens, src);
-    assert!(expr.is_some() || !errors.is_empty(), "None without an error for {src:?}");
+    assert!(
+        expr.is_some() || !errors.is_empty(),
+        "None without an error for {src:?}"
+    );
     errors
 }
 

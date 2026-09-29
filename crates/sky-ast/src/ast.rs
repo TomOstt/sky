@@ -151,9 +151,9 @@ impl UnitExpr {
     pub fn span(&self) -> Span {
         match self {
             UnitExpr::Name(id) => id.span,
-            UnitExpr::Mul { span, .. } | UnitExpr::Div { span, .. } | UnitExpr::Pow { span, .. } => {
-                *span
-            }
+            UnitExpr::Mul { span, .. }
+            | UnitExpr::Div { span, .. }
+            | UnitExpr::Pow { span, .. } => *span,
         }
     }
 }
@@ -221,7 +221,10 @@ pub struct Stmt {
 pub enum StmtKind {
     Expr(Expr),
     /// `target = value`
-    Assign { target: Ident, value: Expr },
+    Assign {
+        target: Ident,
+        value: Expr,
+    },
     /// `name: ty` or `name: ty = value`
     Binding {
         name: Ident,

@@ -22,9 +22,7 @@
 use sky_diag::{Diagnostic, Label};
 use sky_syntax::{Span, Token, TokenKind};
 
-use crate::ast::{
-    span_text, Expr, ExprKind, Ident, Literal, Module, Stmt, StmtKind, UnitExpr,
-};
+use crate::ast::{span_text, Expr, ExprKind, Ident, Literal, Module, Stmt, StmtKind, UnitExpr};
 use crate::precedence::{infix_binding_power, is_postfix_start, prefix_binding_power, POSTFIX_BP};
 
 /// Maximum nesting: recursive sub-expressions plus operators folded into one
@@ -504,7 +502,8 @@ impl<'t, 's> Parser<'t, 's> {
                 })
             }
             TokenKind::LParen => {
-                let (args, close) = self.parse_delimited(tok.span, TokenKind::RParen, "`)`", true)?;
+                let (args, close) =
+                    self.parse_delimited(tok.span, TokenKind::RParen, "`)`", true)?;
                 Some(Expr {
                     span: lhs.span.join(close),
                     kind: ExprKind::Call {

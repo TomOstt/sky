@@ -23,18 +23,57 @@ impl Rng {
 const KINDS: &[TokenKind] = {
     use TokenKind::*;
     &[
-        Int, Float, Ident, Str, Newline, Indent, Dedent, Eof, LParen, RParen, LBracket, RBracket,
-        Comma, Colon, Assign, Plus, Minus, Star, Slash, Caret, At, Inverse, Partial,
-        Nabla, Eq, Ne, Lt, Le, Gt, Ge, Dot, Arrow, Keyword(Kw::Def), Keyword(Kw::Return),
-        Keyword(Kw::If), Keyword(Kw::Else), Keyword(Kw::For), Keyword(Kw::In),
-        Keyword(Kw::Import), Keyword(Kw::Equation), Keyword(Kw::Solve), Keyword(Kw::Field),
+        Int,
+        Float,
+        Ident,
+        Str,
+        Newline,
+        Indent,
+        Dedent,
+        Eof,
+        LParen,
+        RParen,
+        LBracket,
+        RBracket,
+        Comma,
+        Colon,
+        Assign,
+        Plus,
+        Minus,
+        Star,
+        Slash,
+        Caret,
+        At,
+        Inverse,
+        Partial,
+        Nabla,
+        Eq,
+        Ne,
+        Lt,
+        Le,
+        Gt,
+        Ge,
+        Dot,
+        Arrow,
+        Keyword(Kw::Def),
+        Keyword(Kw::Return),
+        Keyword(Kw::If),
+        Keyword(Kw::Else),
+        Keyword(Kw::For),
+        Keyword(Kw::In),
+        Keyword(Kw::Import),
+        Keyword(Kw::Equation),
+        Keyword(Kw::Solve),
+        Keyword(Kw::Field),
     ]
 };
 
 /// Weighted toward the kinds that drive unit literals and nesting.
 fn kind(rng: &mut Rng) -> TokenKind {
     use TokenKind::*;
-    const HOT: &[TokenKind] = &[Int, Ident, Star, Slash, Caret, Minus, LParen, RParen, Newline];
+    const HOT: &[TokenKind] = &[
+        Int, Ident, Star, Slash, Caret, Minus, LParen, RParen, Newline,
+    ];
     if rng.below(2) == 0 {
         HOT[rng.below(HOT.len())]
     } else {
@@ -44,7 +83,10 @@ fn kind(rng: &mut Rng) -> TokenKind {
 
 fn exercise(tokens: &[Token], src: &str) {
     let (expr, errors) = parse_expr(tokens, src);
-    assert!(expr.is_some() || !errors.is_empty(), "None without an error");
+    assert!(
+        expr.is_some() || !errors.is_empty(),
+        "None without an error"
+    );
     if let Some(e) = expr {
         let _ = e.to_sexpr(src);
     }
@@ -58,15 +100,31 @@ fn exercise(tokens: &[Token], src: &str) {
 #[test]
 fn random_tokens_with_garbage_spans() {
     let mut rng = Rng(0x5eed_1234_abcd_ef01);
-    const PIECES: &[&str] = &["a", "1", "é", "∂", "⁻¹", " ", "2.5", "_", "\n", "99999999999999999999"];
+    const PIECES: &[&str] = &[
+        "a",
+        "1",
+        "é",
+        "∂",
+        "⁻¹",
+        " ",
+        "2.5",
+        "_",
+        "\n",
+        "99999999999999999999",
+    ];
     for _ in 0..5_000 {
-        let src: String = (0..rng.below(16)).map(|_| PIECES[rng.below(PIECES.len())]).collect();
+        let src: String = (0..rng.below(16))
+            .map(|_| PIECES[rng.below(PIECES.len())])
+            .collect();
         let max = src.len() as u64 + 4;
         let tokens: Vec<Token> = (0..rng.below(48))
             .map(|_| Token {
                 kind: kind(&mut rng),
                 // Independent start/end: inverted, out of range, mid-char.
-                span: Span { start: (rng.next() % max) as u32, end: (rng.next() % max) as u32 },
+                span: Span {
+                    start: (rng.next() % max) as u32,
+                    end: (rng.next() % max) as u32,
+                },
             })
             .collect();
         exercise(&tokens, &src);
@@ -123,11 +181,17 @@ fn random_tokens_with_well_formed_spans() {
             let k = kind(&mut rng);
             let start = src.len() as u32;
             src.push_str(canonical_text(k));
-            tokens.push(Token { kind: k, span: Span::new(start, src.len() as u32) });
+            tokens.push(Token {
+                kind: k,
+                span: Span::new(start, src.len() as u32),
+            });
         }
         if rng.below(2) == 0 {
             let end = src.len() as u32;
-            tokens.push(Token { kind: TokenKind::Eof, span: Span::point(end) });
+            tokens.push(Token {
+                kind: TokenKind::Eof,
+                span: Span::point(end),
+            });
         }
         exercise(&tokens, &src);
     }

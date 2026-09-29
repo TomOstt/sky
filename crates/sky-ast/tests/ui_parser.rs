@@ -43,7 +43,10 @@ fn check(path: &str, src: &str) -> (String, bool) {
         Err(e) => e.diagnostics().cloned().collect(),
     };
     let file = SourceFile::new(path, src);
-    let rendered: Vec<String> = diagnostics.iter().map(|d| d.render_to_string(&file)).collect();
+    let rendered: Vec<String> = diagnostics
+        .iter()
+        .map(|d| d.render_to_string(&file))
+        .collect();
     let has_error = diagnostics.iter().any(|d| d.severity == Severity::Error);
     (rendered.join("\n"), has_error)
 }
@@ -67,7 +70,10 @@ fn ui_parser() {
         }
     }
     files.retain(|p| p.extension().is_some_and(|x| x == "sky"));
-    assert!(!files.is_empty(), "no .sky files under crates/sky-ast/tests/ui");
+    assert!(
+        !files.is_empty(),
+        "no .sky files under crates/sky-ast/tests/ui"
+    );
 
     let bless = std::env::var_os("SKY_BLESS").is_some();
     let mut failures = Vec::new();

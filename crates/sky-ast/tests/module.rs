@@ -69,7 +69,9 @@ fn recovery_skips_to_the_next_line() {
     let (module, errors) = parse_module(&tokens, src);
     assert_eq!(module.to_sexpr(src), "(= y 2)\n(= w 4)");
     assert_eq!(errors.len(), 2, "{errors:#?}");
-    assert!(errors[0].message.contains("expected an expression, found end of line"));
+    assert!(errors[0]
+        .message
+        .contains("expected an expression, found end of line"));
     assert!(errors[1].message.contains("unexpected integer literal `3`"));
 }
 
@@ -84,14 +86,22 @@ fn invalid_targets_and_chained_assignment() {
     ] {
         let errors = module_errors(src);
         assert_eq!(errors.len(), 1, "{src:?}: {errors:#?}");
-        assert!(errors[0].message.contains(needle), "{src:?}: {}", errors[0].message);
+        assert!(
+            errors[0].message.contains(needle),
+            "{src:?}: {}",
+            errors[0].message
+        );
     }
 }
 
 #[test]
 fn keywords_are_not_supported_yet() {
     let errors = module_errors("def f(x):\n    return x\nx = 1\n");
-    assert!(errors[0].message.contains("keyword `def`"), "{}", errors[0].message);
+    assert!(
+        errors[0].message.contains("keyword `def`"),
+        "{}",
+        errors[0].message
+    );
     assert!(errors[0].message.contains("not supported"));
 }
 

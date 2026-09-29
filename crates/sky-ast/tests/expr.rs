@@ -150,11 +150,17 @@ fn calls_indexing_and_attributes() {
         ("Matrix[3, 4]", "(index Matrix 3 4)"),
         ("Matrix[M, N]", "(index Matrix M N)"),
         ("Tensor[2, 3, 4,]", "(index Tensor 2 3 4)"),
-        ("Matrix[3, 4] @ Matrix[4, 8]", "(@ (index Matrix 3 4) (index Matrix 4 8))"),
+        (
+            "Matrix[3, 4] @ Matrix[4, 8]",
+            "(@ (index Matrix 3 4) (index Matrix 4 8))",
+        ),
         ("a.b", "(attr a b)"),
         ("a.b.c", "(attr (attr a b) c)"),
         ("a.b(c)[d]⁻¹", "(inverse (index (call (attr a b) c) d))"),
-        ("np.linalg.lstsq(A, b)", "(call (attr (attr np linalg) lstsq) A b)"),
+        (
+            "np.linalg.lstsq(A, b)",
+            "(call (attr (attr np linalg) lstsq) A b)",
+        ),
         ("f(g(x), -y^2)", "(call f (call g x) (neg (^ y 2)))"),
         ("(a + b) * c", "(* (paren (+ a b)) c)"),
     ]);
@@ -163,12 +169,19 @@ fn calls_indexing_and_attributes() {
 #[test]
 fn plus_minus_ascii_is_plus_then_negation() {
     // PR #4 has no `±` token and lexes `+-` as `Plus`, `Minus`.
-    check(&[("x +- dx", "(+ x (neg dx))"), ("10 m +- 2 cm", "(+ (unit 10 m) (neg (unit 2 cm)))")]);
+    check(&[
+        ("x +- dx", "(+ x (neg dx))"),
+        ("10 m +- 2 cm", "(+ (unit 10 m) (neg (unit 2 cm)))"),
+    ]);
 }
 
 #[test]
 fn unicode_comparison_glyphs() {
-    check(&[("a ≠ b", "(!= a b)"), ("a ≤ b", "(<= a b)"), ("a ≥ b", "(>= a b)")]);
+    check(&[
+        ("a ≠ b", "(!= a b)"),
+        ("a ≤ b", "(<= a b)"),
+        ("a ≥ b", "(>= a b)"),
+    ]);
 }
 
 #[test]

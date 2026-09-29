@@ -72,7 +72,9 @@ mod tests {
     #[test]
     fn table_ordering_matches_the_documented_levels() {
         let lbp = |k| infix_binding_power(k).map(|(_, l, _)| l).unwrap_or(0);
-        let prefix = prefix_binding_power(TokenKind::Minus).map(|(_, bp)| bp).unwrap_or(0);
+        let prefix = prefix_binding_power(TokenKind::Minus)
+            .map(|(_, bp)| bp)
+            .unwrap_or(0);
         assert!(lbp(TokenKind::Lt) < lbp(TokenKind::Plus));
         assert!(lbp(TokenKind::Plus) < lbp(TokenKind::Star));
         assert!(lbp(TokenKind::Star) < prefix);

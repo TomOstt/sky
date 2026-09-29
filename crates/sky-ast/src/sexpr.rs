@@ -118,7 +118,11 @@ fn write_unit(out: &mut String, u: &UnitExpr, src: &str) {
     match u {
         UnitExpr::Name(id) => out.push_str(text(src, id.span)),
         UnitExpr::Mul { lhs, rhs, .. } | UnitExpr::Div { lhs, rhs, .. } => {
-            out.push_str(if matches!(u, UnitExpr::Mul { .. }) { "(* " } else { "(/ " });
+            out.push_str(if matches!(u, UnitExpr::Mul { .. }) {
+                "(* "
+            } else {
+                "(/ "
+            });
             write_unit(out, lhs, src);
             out.push(' ');
             write_unit(out, rhs, src);

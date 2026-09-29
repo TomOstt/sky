@@ -11,6 +11,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 sky-syntax = { path = "../crates/sky-syntax" }
+sky-diag = { path = "../crates/sky-diag" }
 
 # Keep the fuzz crate out of the main workspace so stable `cargo test --workspace` never builds it.
 [workspace]

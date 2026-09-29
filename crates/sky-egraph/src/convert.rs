@@ -41,13 +41,14 @@ use std::collections::{HashMap, HashSet};
 
 use egg::{EGraph, Extractor, Id, Language, RecExpr, Runner, SimpleScheduler, StopReason};
 use sky_diag::Span;
+use sky_ir::exact::{self, Analysis};
 use sky_ir::{
     BlockId, Effect, Function, NumberType, OpData, OpId, OpKind, Repr, Type, ValueData, ValueDef,
     ValueId,
 };
 use sky_units::Rational;
 
-use crate::analysis::{add_node, CostModel, Graph, LeafInfo, SkyAnalysis};
+use crate::analysis::{add_node_with_facts, CostModel, Graph, LeafInfo, NodeFacts, SkyAnalysis};
 use crate::lang::{Lit, LitVal, Op, SkyNode};
 use crate::rules;
 use crate::{Rewrite, RewriteConfig, RewriteContract, SegmentReport, Stop};
@@ -61,6 +62,10 @@ pub(crate) fn rewrite_function(
     let mut rewrites = Vec::new();
     let mut reports = Vec::new();
     let uses = use_counts(func);
+    // Facts about the operations as the program wrote them. A rewrite adds
+    // values but never changes what an existing value is, so the table
+    // stays valid for every segment.
+    let facts = exact::analyze(func);
     for b in 0..func.blocks.len() {
         let block = BlockId(b as u32);
         // A `fused` body is opaque: its `neg` means `0 - x` (see `OpKind::Fused`).
@@ -73,7 +78,7 @@ pub(crate) fn rewrite_function(
         // segments hold positions.
         let mut per_segment = Vec::new();
         for seg in segments(func, block).into_iter().rev() {
-            per_segment.push(rewrite_segment(func, block, &seg, &uses, cfg));
+            per_segment.push(rewrite_segment(func, block, &seg, &uses, &facts, cfg));
         }
         for (r, report) in per_segment.into_iter().rev() {
             rewrites.extend(r);
@@ -235,6 +240,7 @@ fn rewrite_segment(
     block: BlockId,
     seg: &Segment,
     uses: &[u32],
+    facts: &Analysis,
     cfg: &RewriteConfig,
 ) -> (Vec<Rewrite>, Option<SegmentReport>) {
     let exprs: Vec<(usize, OpId)> = seg
@@ -259,15 +265,16 @@ fn rewrite_segment(
     // ---- build the RecExpr ----
     let mut expr: RecExpr<SkyNode> = RecExpr::default();
     // Per node of `expr`: the IR type and span it came from.
-    let mut meta: Vec<(Option<NumberType>, Option<Span>)> = Vec::new();
+    let mut meta: Vec<(Option<NumberType>, Option<Span>, Option<NodeFacts>)> = Vec::new();
     // Per node of `expr`: which fallible original op (by order) made it.
     let mut fallible_of: Vec<Option<usize>> = Vec::new();
     let mut push = |expr: &mut RecExpr<SkyNode>,
                     node: SkyNode,
                     ty: Option<NumberType>,
                     span: Option<Span>,
+                    node_facts: Option<NodeFacts>,
                     fallible: Option<usize>| {
-        meta.push((ty, span));
+        meta.push((ty, span, node_facts));
         fallible_of.push(fallible);
         expr.add(node)
     };
@@ -304,7 +311,14 @@ fn rewrite_segment(
                 name: func.value(*v).name.clone().unwrap_or_else(|| v.to_string()),
             });
             leaf_values.push(*v);
-            let r = push(&mut expr, SkyNode::leaf(Op::Leaf(idx)), ty, span, None);
+            let r = push(
+                &mut expr,
+                SkyNode::leaf(Op::Leaf(idx)),
+                ty,
+                span,
+                None,
+                None,
+            );
             leaf_rec.insert(*v, r);
             args.push(r);
         }
@@ -342,6 +356,7 @@ fn rewrite_segment(
                     Some(NumberType::scalar(sky_units::Dimension::DIMENSIONLESS)),
                     Some(op.span),
                     None,
+                    None,
                 );
                 args.push(e);
                 Op::PowC
@@ -354,11 +369,24 @@ fn rewrite_segment(
         } else {
             None
         };
+        // The facts describe the program as written. `Fast` rewrites may
+        // change a value in its last bits, which could move a value across
+        // the edge of a range, so only `Reproducible` (bit-identical
+        // rewrites) may rely on them.
+        let node_facts = facts
+            .known(op.results[0])
+            .filter(|_| cfg.contract == RewriteContract::Reproducible)
+            .map(|k| NodeFacts {
+                positive: k.is_positive(),
+                nonzero: k.is_nonzero(),
+                infallible: facts.proof(*id).is_some(),
+            });
         let r = push(
             &mut expr,
             SkyNode::new(node_op, args),
             result_ty,
             Some(op.span),
+            node_facts,
             fallible,
         );
         rec_of_value.insert(op.results[0], r);
@@ -384,6 +412,7 @@ fn rewrite_segment(
         None,
         None,
         None,
+        None,
     );
 
     // ---- saturate ----
@@ -392,8 +421,8 @@ fn rewrite_segment(
     let mut fallible_classes: HashMap<usize, Id> = HashMap::new();
     for (i, node) in expr.as_ref().iter().enumerate() {
         let mapped = node.clone().map_children(|c| eg_of[usize::from(c)]);
-        let (ty, span) = meta[i].clone();
-        let id = add_node(&mut eg, mapped, ty, span);
+        let (ty, span, node_facts) = meta[i].clone();
+        let id = add_node_with_facts(&mut eg, mapped, ty, span, node_facts);
         eg_of.push(id);
         if let Some(k) = fallible_of[i] {
             fallible_classes.insert(k, id);

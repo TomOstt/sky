@@ -407,6 +407,19 @@ fn build_abs(eg: &mut Graph, root: Id, b: &mut Binds) -> Option<Id> {
     Some(add_node(eg, node, None, span))
 }
 
+fn match_div_self(eg: &Graph, root: Id, contract: RewriteContract) -> Vec<Binds> {
+    let mut out = Vec::new();
+    for n in nodes(eg, root).iter().filter(|n| n.op == Op::Div) {
+        let (a, b) = (eg.find(n.args[0]), eg.find(n.args[1]));
+        // `x / x` is exactly `1.0` for every finite nonzero `x`. The
+        // rewrite stops evaluating `x`, so `x` must be droppable too.
+        if a == b && is_scalar(eg, a) && eg[a].data.nonzero && droppable(eg, a, contract) {
+            out.push(vec![a]);
+        }
+    }
+    out
+}
+
 fn match_div_one(eg: &Graph, root: Id, _: RewriteContract) -> Vec<Binds> {
     nodes(eg, root)
         .iter()
@@ -555,6 +568,11 @@ static RULES: &[Rule] = &[
         "ALG-009", Exact, "{0}^1" => "{0}",
         "powi(x, 1) is x, and cannot overflow",
         match_pow_one, keep_first
+    ),
+    rule!(
+        "ALG-010", Conditional, "{0} / {0}" => "1",
+        "x / x is exactly 1 in IEEE arithmetic for every finite nonzero x; the exactness analysis proved x is not zero, and x itself cannot fail, since the rewrite stops evaluating it",
+        match_div_self, build_one
     ),
     rule!(
         "EXP-001", RealOnly, "exp(log({0}))" => "{0}",

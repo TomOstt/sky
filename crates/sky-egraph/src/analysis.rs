@@ -20,6 +20,8 @@ use crate::RewriteContract;
 
 pub type Graph = EGraph<SkyNode, SkyAnalysis>;
 
+type Pending = Option<(Option<NumberType>, Option<Span>, Option<NodeFacts>)>;
+
 /// What is known about the sign of a value. Ordered by strength.
 ///
 /// `NonNeg` means the `f64` is `>= +0.0` and is never `-0.0` (so adding
@@ -48,6 +50,10 @@ pub struct Info {
     /// may drop a subterm without changing failure behaviour.
     pub infallible: bool,
     pub sign: Sign,
+    /// The class is provably not zero as an `f64` (a nonzero constant, or a
+    /// fact from the exactness analysis). `Sign::Pos` does not imply it: a
+    /// positive real can underflow to `+0.0`.
+    pub nonzero: bool,
     /// The join of the spans of the operations merged into the class.
     pub span: Option<Span>,
     /// The first node inserted into the class and its insertion number; it
@@ -63,6 +69,21 @@ pub struct LeafInfo {
     pub span: Option<Span>,
     /// Printed in explanations.
     pub name: String,
+}
+
+/// What the exactness analysis (`sky_ir::exact`) proved about the operation
+/// a node was made from, on top of what the e-graph derives from the node's
+/// shape. Every field is a fact about the `f64` the interpreter computes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct NodeFacts {
+    /// The result is strictly greater than zero.
+    pub positive: bool,
+    /// The result is not zero.
+    pub nonzero: bool,
+    /// The operation cannot fail with these operands (division by a nonzero
+    /// constant, `sqrt` of a positive one, `x * 0.5`, ...), although its
+    /// kind can.
+    pub infallible: bool,
 }
 
 /// A rule application that changed the e-graph, kept for explanations.
@@ -88,8 +109,9 @@ pub struct Firing {
 pub struct SkyAnalysis {
     pub contract: RewriteContract,
     pub leaves: Vec<LeafInfo>,
-    /// Type and span for the next node added (see [`add_node`]).
-    pending: Option<(Option<NumberType>, Option<Span>)>,
+    /// Type, span and analysis facts for the next node added (see
+    /// [`add_node`]).
+    pending: Pending,
     seq: u64,
     /// Span of each node as added, with its insertion number.
     pub node_spans: HashMap<SkyNode, (u64, Span)>,
@@ -115,7 +137,19 @@ impl SkyAnalysis {
 /// whose types the checker computed) and span. A node that already exists
 /// keeps its class and its data.
 pub fn add_node(eg: &mut Graph, node: SkyNode, ty: Option<NumberType>, span: Option<Span>) -> Id {
-    eg.analysis.pending = Some((ty, span));
+    add_node_with_facts(eg, node, ty, span, None)
+}
+
+/// Like [`add_node`], for a node made from an operation of the program, with
+/// what the exactness analysis proved about it.
+pub fn add_node_with_facts(
+    eg: &mut Graph,
+    node: SkyNode,
+    ty: Option<NumberType>,
+    span: Option<Span>,
+    facts: Option<NodeFacts>,
+) -> Id {
+    eg.analysis.pending = Some((ty, span, facts));
     let id = eg.add(node);
     eg.analysis.pending = None;
     id
@@ -125,7 +159,8 @@ impl Analysis<SkyNode> for SkyAnalysis {
     type Data = Info;
 
     fn make(eg: &mut Graph, node: &SkyNode, _id: Id) -> Info {
-        let (given_ty, span) = eg.analysis.pending.take().unwrap_or((None, None));
+        let (given_ty, span, facts) = eg.analysis.pending.take().unwrap_or((None, None, None));
+        let facts = facts.unwrap_or_default();
         let seq = eg.analysis.seq;
         eg.analysis.seq += 1;
         if let Some(s) = span {
@@ -154,19 +189,32 @@ impl Analysis<SkyNode> for SkyAnalysis {
         let infallible = match node.op {
             Op::Lit(_) | Op::Leaf(_) => true,
             Op::Roots | Op::Neg | Op::Transpose => all_kids,
-            Op::Math(_) => node.op.math_fn().is_some_and(|f| !f.can_fail()) && all_kids,
-            // Arithmetic can overflow, divide by zero or leave the reals.
+            Op::Math(_) => {
+                (node.op.math_fn().is_some_and(|f| !f.can_fail()) || facts.infallible) && all_kids
+            }
+            // Arithmetic can overflow, divide by zero or leave the reals,
+            // unless the analysis proved it cannot with these operands.
             Op::Add | Op::Sub | Op::Mul | Op::Div | Op::PowC | Op::Pow | Op::Inv | Op::MatMul => {
-                false
+                facts.infallible && all_kids
             }
         };
-        let sign = derive_sign(node.op, &kids, value);
+        let mut sign = derive_sign(node.op, &kids, value);
+        if facts.positive {
+            sign = sign.max(Sign::Pos);
+        }
+        let nonzero = facts.nonzero
+            || match node.op {
+                Op::Lit(_) => value.is_some_and(|v| v != 0.0),
+                Op::Neg => kids.first().is_some_and(|k| k.nonzero),
+                _ => false,
+            };
         Info {
             ty,
             value,
             rat,
             infallible,
             sign,
+            nonzero,
             span,
             orig: (seq, node.clone()),
         }
@@ -188,6 +236,7 @@ impl Analysis<SkyNode> for SkyAnalysis {
         a.rat = a.rat.or(b.rat);
         a.infallible |= b.infallible;
         a.sign = a.sign.max(b.sign);
+        a.nonzero |= b.nonzero;
         a.span = match (a.span, b.span) {
             (Some(x), Some(y)) => Some(x.join(y)),
             (x, y) => x.or(y),

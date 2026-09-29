@@ -51,8 +51,8 @@ fn every_rule_has_a_unique_id_and_a_justification() {
         assert!(r.id.contains('-'), "{}", r.id);
     }
     for id in [
-        "TRIG-001", "ALG-001", "ALG-002", "ALG-003", "ALG-004", "ALG-005", "EXP-001", "EXP-002",
-        "LA-001", "LA-002", "LA-003",
+        "TRIG-001", "ALG-001", "ALG-002", "ALG-003", "ALG-004", "ALG-005", "ALG-010", "EXP-001",
+        "EXP-002", "LA-001", "LA-002", "LA-003",
     ] {
         assert!(ids.contains(&id), "missing {id}");
     }
@@ -629,4 +629,203 @@ fn only_rules_restricts_the_set() {
     };
     let rules = fired(&mut f, &cfg);
     assert_eq!(rules, ["ALG-006"]);
+}
+
+// ---- facts from the exactness analysis (`sky_ir::exact`) ----
+
+/// An expression builder over one parameter.
+type Build = dyn Fn(&mut T, sky_ir::ValueId) -> sky_ir::ValueId;
+
+const EDGE_INPUTS: [f64; 9] = [
+    0.0, -0.0, 1.0, -2.5, 1e-310, 5e-324, 1e200, 1.7e308, -1.7e308,
+];
+
+fn same_on_edges(before: &Function, after: &Function) {
+    for x in EDGE_INPUTS {
+        assert!(
+            same_outcome(&run(before, &[x]), &run(after, &[x])),
+            "x = {x}"
+        );
+    }
+}
+
+#[test]
+fn alg_003_fires_when_the_analysis_proves_the_operand_cannot_fail() {
+    // Halving and dividing by two cannot overflow, whatever x is.
+    let by_two = |t: &mut T, x| {
+        let a = {
+            let two = t.rat(2, 1);
+            t.bin(OpKind::Div, x, two)
+        };
+        let b = {
+            let two = t.rat(2, 1);
+            t.bin(OpKind::Div, x, two)
+        };
+        t.bin(OpKind::Sub, a, b)
+    };
+    let times_half = |t: &mut T, x| {
+        let a = {
+            let h = t.rat(1, 2);
+            t.bin(OpKind::Mul, x, h)
+        };
+        let b = {
+            let h = t.rat(1, 2);
+            t.bin(OpKind::Mul, x, h)
+        };
+        t.bin(OpKind::Sub, a, b)
+    };
+    // sqrt and log of a positive constant cannot fail either.
+    let sqrt_two = |t: &mut T, _x| {
+        let a = {
+            let two = t.rat(2, 1);
+            t.math(MathFn::Sqrt, &[two])
+        };
+        let b = {
+            let two = t.rat(2, 1);
+            t.math(MathFn::Sqrt, &[two])
+        };
+        t.bin(OpKind::Sub, a, b)
+    };
+    let log_three = |t: &mut T, _x| {
+        let a = {
+            let three = t.rat(3, 1);
+            t.math(MathFn::Log, &[three])
+        };
+        let b = {
+            let three = t.rat(3, 1);
+            t.math(MathFn::Log, &[three])
+        };
+        t.bin(OpKind::Sub, a, b)
+    };
+    for build in [&by_two as &Build, &times_half, &sqrt_two, &log_three] {
+        let mut f = unary(build);
+        let before = f.clone();
+        assert_eq!(fired(&mut f, &repro()), ["ALG-003"]);
+        assert_eq!(kinds(&f), ["const.float", "return"]);
+        same_on_edges(&before, &f);
+    }
+}
+
+#[test]
+fn alg_003_still_refuses_operands_that_can_fail() {
+    // x / 0.5 doubles x, so it overflows for a large x; x * 2 too; 1 / x
+    // fails at zero; sqrt(x) for a negative x; log(x) for x <= 0.
+    let builds: [&Build; 5] = [
+        &|t, x| {
+            let mk = |t: &mut T| {
+                let h = t.rat(1, 2);
+                t.bin(OpKind::Div, x, h)
+            };
+            let (a, b) = (mk(t), mk(t));
+            t.bin(OpKind::Sub, a, b)
+        },
+        &|t, x| {
+            let mk = |t: &mut T| {
+                let two = t.rat(2, 1);
+                t.bin(OpKind::Mul, x, two)
+            };
+            let (a, b) = (mk(t), mk(t));
+            t.bin(OpKind::Sub, a, b)
+        },
+        &|t, x| {
+            let mk = |t: &mut T| {
+                let one = t.rat(1, 1);
+                t.bin(OpKind::Div, one, x)
+            };
+            let (a, b) = (mk(t), mk(t));
+            t.bin(OpKind::Sub, a, b)
+        },
+        &|t, x| {
+            let (a, b) = (t.math(MathFn::Sqrt, &[x]), t.math(MathFn::Sqrt, &[x]));
+            t.bin(OpKind::Sub, a, b)
+        },
+        &|t, x| {
+            let (a, b) = (t.math(MathFn::Log, &[x]), t.math(MathFn::Log, &[x]));
+            t.bin(OpKind::Sub, a, b)
+        },
+    ];
+    for build in builds {
+        let mut f = unary(build);
+        let before = f.clone();
+        assert!(fired(&mut f, &repro()).is_empty());
+        assert_eq!(f, before);
+    }
+}
+
+#[test]
+fn alg_010_x_over_x_needs_x_provably_nonzero() {
+    // sqrt(2) / sqrt(2) is exactly 1.
+    let mut f = unary(|t, _x| {
+        let a = {
+            let two = t.rat(2, 1);
+            t.math(MathFn::Sqrt, &[two])
+        };
+        let b = {
+            let two = t.rat(2, 1);
+            t.math(MathFn::Sqrt, &[two])
+        };
+        t.bin(OpKind::Div, a, b)
+    });
+    let before = f.clone();
+    assert_eq!(fired(&mut f, &repro()), ["ALG-010"]);
+    assert_eq!(kinds(&f), ["const.float", "return"]);
+    same_on_edges(&before, &f);
+    assert_eq!(value(&f, &[7.0]), 1.0);
+
+    // x / x for a parameter fails at zero, so it stays.
+    let mut g = unary(|t, x| t.bin(OpKind::Div, x, x));
+    let before = g.clone();
+    assert!(fired(&mut g, &repro()).is_empty());
+    assert_eq!(g, before);
+
+    // x * 0.5 / x * 0.5 is zero for x = 0, so it stays too.
+    let mut h = unary(|t, x| {
+        let mk = |t: &mut T| {
+            let half = t.rat(1, 2);
+            t.bin(OpKind::Mul, x, half)
+        };
+        let (a, b) = (mk(t), mk(t));
+        t.bin(OpKind::Div, a, b)
+    });
+    let before = h.clone();
+    assert!(fired(&mut h, &repro()).is_empty());
+    assert_eq!(h, before);
+}
+
+#[test]
+fn a_nonzero_float_can_still_be_a_zero_over_the_reals() {
+    // sqrt(2) * sqrt(2) - 2 is exactly 0 over the reals, and 4.4e-16 in
+    // f64. Dividing by it is fine at run time, so `d / d` may be folded to
+    // 1 (it is 1 in f64), and nothing may treat `d` as zero.
+    let mut f = unary(|t, _x| {
+        let mk = |t: &mut T| {
+            let two = t.rat(2, 1);
+            let s = t.math(MathFn::Sqrt, &[two]);
+            let sq = t.bin(OpKind::Mul, s, s);
+            let two2 = t.rat(2, 1);
+            t.bin(OpKind::Sub, sq, two2)
+        };
+        let (a, b) = (mk(t), mk(t));
+        t.bin(OpKind::Div, a, b)
+    });
+    let before = f.clone();
+    let rules = fired(&mut f, &repro());
+    assert!(rules.contains(&"ALG-010"), "{rules:?}");
+    assert_eq!(value(&f, &[1.0]), 1.0);
+    assert_eq!(value(&before, &[1.0]), 1.0);
+}
+
+#[test]
+fn facts_are_not_used_by_the_fast_contract() {
+    // Fast rewrites may change a value's last bits, which can push a razor
+    // thin fact over its edge, so only Reproducible uses the facts.
+    let mut f = unary(|t, _x| {
+        let mk = |t: &mut T| {
+            let two = t.rat(2, 1);
+            t.math(MathFn::Sqrt, &[two])
+        };
+        let (a, b) = (mk(t), mk(t));
+        t.bin(OpKind::Div, a, b)
+    });
+    assert!(!fired(&mut f, &fast()).contains(&"ALG-010"));
 }

@@ -170,6 +170,8 @@ impl fmt::Display for Range {
             f.write_str("any finite number")
         } else if let Some(p) = self.as_point() {
             f.write_str(&num_text(p))
+        } else if self.lo == -self.hi {
+            write!(f, "at most {} in size", num_text(self.hi))
         } else if self.lo == -f64::MAX {
             write!(f, "at most {}", num_text(self.hi))
         } else if self.hi == f64::MAX {
@@ -395,8 +397,8 @@ pub fn math(f: MathFn, args: &[Range]) -> Step {
             let x = args[1];
             Step {
                 range: Range {
-                    lo: -3.1416,
-                    hi: 3.1416,
+                    lo: -next_up(std::f64::consts::PI),
+                    hi: next_up(std::f64::consts::PI),
                 },
                 // Only the zero vector fails.
                 may_fail: a.contains_zero() && x.contains_zero(),

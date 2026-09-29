@@ -239,6 +239,110 @@ fn repl_output_can_be_pasted_back() {
 }
 
 #[test]
+fn repl_echoes_values_shown_in_a_unit() {
+    let o = repl(
+        "v = 90 km/h\n\
+         v\n\
+         v as km/h\n\
+         (v as m/s)\n\
+         1 AU as km\n\
+         511 keV as MeV\n\
+         u = [0.1 m, 0.2 m]\n\
+         u as mm\n\
+         print(v as km/h, v)\n\
+         v * 2 as km/h\n",
+    );
+    assert_eq!(o.status.code(), Some(0));
+    assert_eq!(
+        out(&o),
+        "25 m/s\n90 km/h\n25 m/s\n149597870.7 km\n0.511 MeV\n[100 mm, 200 mm]\n90 km/h 25 m/s\n180 km/h\n"
+    );
+    assert_eq!(err(&o), "");
+}
+
+#[test]
+fn repl_shown_values_are_display_only_and_errors_do_not_poison_the_session() {
+    let o = repl(
+        "v = 90 km/h\n\
+         v as kg\n\
+         w = v as km/h\n\
+         (v as km/h) + 1\n\
+         v as km/h as m\n\
+         v as parsecs\n\
+         v as km/h\n",
+    );
+    assert_eq!(o.status.code(), Some(0));
+    // Only the last line echoes; `w` was never bound.
+    assert_eq!(out(&o), "90 km/h\n");
+    let e = err(&o);
+    assert!(
+        e.contains("<repl>:1:1: error: cannot show a velocity in kg"),
+        "{e}"
+    );
+    assert!(
+        e.contains("error: a value shown in km/h can only be printed"),
+        "{e}"
+    );
+    assert!(
+        e.contains("error: a value can be shown in only one unit"),
+        "{e}"
+    );
+    assert!(e.contains("error: unknown unit `parsecs`"), "{e}");
+    assert!(e.contains("= help: did you mean `pc`?"), "{e}");
+}
+
+#[test]
+fn run_prints_values_in_the_units_people_think_in() {
+    let o = run_script(
+        "as-units",
+        "v = 90 km/h\n\
+         print(v)\n\
+         print(v as km/h)\n\
+         print(\"1 AU is\", 1 AU as km)\n\
+         print(\"E =\", 511 keV as eV, 511 keV as MeV)\n\
+         u = [100 mm, 200 mm]\n\
+         print(u as mm)\n\
+         v as km/h\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(
+        out(&o),
+        "25 m/s\n90 km/h\n1 AU is 149597870.7 km\nE = 511000 eV 0.511 MeV\n[100 mm, 200 mm]\n"
+    );
+}
+
+#[test]
+fn run_rejects_a_wrong_dimension_and_arithmetic_on_shown_values() {
+    let o = run_script("as-wrong", "print(\"MARKER\")\nprint(90 km/h as kg)\n");
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(out(&o), "");
+    assert!(
+        err(&o).contains("prog.sky:2:7: error: cannot show a velocity in kg"),
+        "{}",
+        err(&o)
+    );
+    let o = run_script("as-arith", "print((1 km as m) + 1)\n");
+    assert_eq!(o.status.code(), Some(1));
+    assert!(
+        err(&o).contains("error: a value shown in m can only be printed"),
+        "{}",
+        err(&o)
+    );
+}
+
+#[test]
+fn a_display_overflow_is_a_runtime_error() {
+    let o = run_script("as-overflow", "print(1)\nprint(1e300 m as nm)\n");
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(out(&o), "1\n");
+    assert!(
+        err(&o).contains("error: arithmetic overflow"),
+        "{}",
+        err(&o)
+    );
+}
+
+#[test]
 fn repl_recovers_from_errors_without_poisoning_the_session() {
     let o = repl(
         "x = 1 m\n\

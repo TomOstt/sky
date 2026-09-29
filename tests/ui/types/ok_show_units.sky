@@ -14,3 +14,6 @@ print(E as kg*m^2/s^2)
 print(1 h + 30 min as min)
 print((v * 2) as km/h)
 print(v * 2 as km/h)
+# To compute with a number of km/h, divide by the unit: a plain number.
+speed = v / (1 km/h)
+print(speed + 1)

@@ -373,6 +373,7 @@ dependencies = [
  "sky-diag",
  "sky-interp",
  "sky-ir",
+ "sky-ir-interp",
  "sky-lower",
  "sky-opt",
  "sky-project",

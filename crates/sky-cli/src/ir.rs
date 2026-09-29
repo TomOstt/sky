@@ -14,6 +14,7 @@ use std::fmt;
 use sky_ast::Module as Ast;
 use sky_diag::{Diagnostic, Span};
 use sky_ir::PassError;
+use sky_lower::LowerError;
 use sky_types::Checked;
 
 use sky_opt::CHOLESKY_RULE;
@@ -155,6 +156,62 @@ pub fn build(module: &Ast, src: &str, checked: &Checked, print: bool, explain: b
         after: report.printed,
         notes,
     }))
+}
+
+/// A checked program prepared for `sky run`'s SIR engine.
+pub enum Runnable {
+    /// The optimized, verified module, ready for `sky_ir_interp::run`.
+    Ready(Box<sky_ir::Module>),
+    /// SIR cannot run this program yet: the tree-walker must (`auto`), or
+    /// the run fails (`--engine=sir`).
+    Unsupported(LowerError),
+    /// A pass produced invalid IR: a bug in it, not in the program.
+    Internal(String),
+}
+
+/// Lowers `module` (checked without errors) and runs the default pipeline
+/// with verification after every pass, for `sky run` to execute.
+///
+/// # Programs SIR does not run
+///
+/// A [`LowerError`] is one. A program with an input declaration (`A:
+/// Matrix[3, 3]` with no value) is another, though it lowers: the
+/// declaration becomes a parameter of `<main>` that nothing can supply, so
+/// the SIR interpreter refuses the run up front, while the tree-walker
+/// executes every statement before the declaration and fails only there.
+/// Output already printed is part of the behaviour, so such a program stays
+/// on the tree-walker instead of failing earlier and with less output.
+pub fn prepare_run(module: &Ast, src: &str, checked: &Checked) -> Runnable {
+    let mut ir = match sky_lower::lower_for_run(module, src, checked) {
+        Ok(ir) => ir,
+        Err(e) => return Runnable::Unsupported(e),
+    };
+    if let Some(main) = ir.function(sky_ir::Module::MAIN) {
+        if !main.param_values().is_empty() {
+            return Runnable::Unsupported(LowerError {
+                message: "an input declaration has no value to run with".to_string(),
+                span: main.span,
+                note: Some("the tree-walking interpreter reports it where it is reached".into()),
+            });
+        }
+    }
+    // Verified before the first pass and after each, so the interpreter
+    // never sees IR the verifier rejects.
+    match sky_opt::default_pipeline().verify_each(true).run(&mut ir) {
+        Ok(_) => Runnable::Ready(Box::new(ir)),
+        // IR the verifier rejects before any pass ran came out of lowering
+        // itself: a program it does not handle yet (`"a" + "b"` types as
+        // unknown to the checker, which leaves the error to run time, and
+        // lowers to an `add` of strings), not one a pass broke. The
+        // tree-walker gives it its run-time error.
+        Err(PassError::InvalidInput(errors)) => Runnable::Unsupported(LowerError {
+            message: "lowering produced SIR that does not verify".to_string(),
+            span: errors.first().map_or(module.span, |e| e.span),
+            note: errors.first().map(|e| e.message.clone()),
+        }),
+        // After a pass it is the pass that is wrong: a bug to surface.
+        Err(e) => Runnable::Internal(internal(&e)),
+    }
 }
 
 fn internal(e: &PassError) -> String {

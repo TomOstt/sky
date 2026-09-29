@@ -1,0 +1,2 @@
+# m^(i64::MAX/2) squared is exactly m^i64::MAX: it fits, so it is not an error.
+show ([m]^(9223372036854775807/2))^2

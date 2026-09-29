@@ -9,6 +9,11 @@
 //! * [`DimUnifier`]: unification of dimension terms containing dimension variables.
 //!
 //! Unification only ever compares dimensions; unit scale factors never take part.
+//!
+//! Every checker-facing operation returns `Result` and reports exponent
+//! overflow as [`DimError::ExponentOverflow`] (or [`UnifyError::Overflow`])
+//! instead of panicking. The arithmetic operators on [`Rational`] and
+//! [`Dimension`] panic on overflow and are meant only for constants and tests.
 
 #![forbid(unsafe_code)]
 
@@ -17,7 +22,7 @@ pub mod rational;
 pub mod unify;
 pub mod unit;
 
-pub use dimension::{BaseDim, Dimension};
+pub use dimension::{BaseDim, DimError, Dimension};
 pub use rational::{Rational, RationalError};
-pub use unify::{DimMismatch, DimTerm, DimUnifier, DimVar};
+pub use unify::{DimMismatch, DimTerm, DimUnifier, DimVar, UnifyError};
 pub use unit::{is_unit_symbol, lookup, Unit, UNITS};

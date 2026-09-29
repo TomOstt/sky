@@ -6,7 +6,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use sky_units::{lookup, BaseDim, DimTerm, DimUnifier, DimVar, Dimension, Rational};
+use sky_units::{lookup, BaseDim, DimError, DimTerm, DimUnifier, DimVar, Dimension, Rational};
+
+type Res<T> = Result<T, DimError>;
 
 struct Parser<'a> {
     chars: Vec<char>,
@@ -50,41 +52,41 @@ impl Parser<'_> {
         self.chars[start..self.pos].iter().collect()
     }
 
-    fn parse_all(&mut self) -> DimTerm {
-        let t = self.expr();
+    fn parse_all(&mut self) -> Res<DimTerm> {
+        let t = self.expr()?;
         self.ws();
         assert!(self.peek().is_none(), "trailing input in {:?}", self.src());
-        t
+        Ok(t)
     }
 
     // expr := factor (('*' | '·' | '/') factor)*
-    fn expr(&mut self) -> DimTerm {
-        let mut t = self.factor();
+    fn expr(&mut self) -> Res<DimTerm> {
+        let mut t = self.factor()?;
         loop {
             self.ws();
             match self.peek() {
                 Some('*' | '·') => {
                     self.bump();
-                    t = t * self.factor();
+                    t = t.mul(&self.factor()?)?;
                 }
                 Some('/') => {
                     self.bump();
-                    t = t / self.factor();
+                    t = t.div(&self.factor()?)?;
                 }
-                _ => return t,
+                _ => return Ok(t),
             }
         }
     }
 
     // factor := atom ('^' exponent)?
-    fn factor(&mut self) -> DimTerm {
-        let base = self.atom();
+    fn factor(&mut self) -> Res<DimTerm> {
+        let base = self.atom()?;
         self.ws();
         if self.peek() == Some('^') {
             self.bump();
             base.pow_rat(self.exponent())
         } else {
-            base
+            Ok(base)
         }
     }
 
@@ -126,11 +128,11 @@ impl Parser<'_> {
     }
 
     // atom := '(' expr ')' | '1' | '[' unit ']' | '?' ident | L | M | T | I | Θ | N | J
-    fn atom(&mut self) -> DimTerm {
+    fn atom(&mut self) -> Res<DimTerm> {
         self.ws();
-        match self.bump() {
+        Ok(match self.bump() {
             Some('(') => {
-                let t = self.expr();
+                let t = self.expr()?;
                 self.expect(')');
                 t
             }
@@ -158,11 +160,11 @@ impl Parser<'_> {
                 DimTerm::known(Dimension::base(b))
             }
             None => panic!("unexpected end of {:?}", self.src()),
-        }
+        })
     }
 }
 
-fn parse(src: &str, vars: &mut HashMap<String, DimVar>, unifier: &mut DimUnifier) -> DimTerm {
+fn parse(src: &str, vars: &mut HashMap<String, DimVar>, unifier: &mut DimUnifier) -> Res<DimTerm> {
     Parser {
         chars: src.chars().collect(),
         pos: 0,
@@ -185,15 +187,23 @@ fn run_case(src: &str) -> (String, bool) {
             let (l, r) = rest
                 .split_once(" with ")
                 .unwrap_or_else(|| panic!("expected `unify A with B`: {line:?}"));
-            let l = parse(l, &mut vars, &mut unifier);
-            let r = parse(r, &mut vars, &mut unifier);
-            if let Err(e) = unifier.unify(&l, &r) {
+            let result = parse(l, &mut vars, &mut unifier)
+                .and_then(|l| Ok((l, parse(r, &mut vars, &mut unifier)?)))
+                .map_err(|e| e.to_string())
+                .and_then(|(l, r)| unifier.unify(&l, &r).map_err(|e| e.to_string()));
+            if let Err(e) = result {
                 out.push(format!("error: {e}"));
                 return (out.join("\n"), true);
             }
         } else if let Some(rest) = line.strip_prefix("show ") {
-            let t = parse(rest, &mut vars, &mut unifier);
-            out.push(format!("{} = {}", rest.trim(), unifier.apply(&t)));
+            let shown = parse(rest, &mut vars, &mut unifier).and_then(|t| unifier.apply(&t));
+            match shown {
+                Ok(t) => out.push(format!("{} = {t}", rest.trim())),
+                Err(e) => {
+                    out.push(format!("error: {e}"));
+                    return (out.join("\n"), true);
+                }
+            }
         } else {
             panic!("unknown command: {line:?}");
         }

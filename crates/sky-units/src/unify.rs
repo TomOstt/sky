@@ -10,27 +10,30 @@
 //! variables never appear on the right-hand side of another binding.
 //!
 //! Unification compares dimensions only, never unit scale factors.
+//!
+//! Every operation here returns `Result`: exponent overflow is reported as
+//! [`DimError::ExponentOverflow`] (or [`UnifyError::Overflow`]) and never
+//! panics. [`DimTerm`] deliberately has no arithmetic operator impls.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::ops::{Div, Mul};
 use std::sync::Arc;
 
-use crate::dimension::{write_factors, write_power, Dimension};
-use crate::rational::Rational;
+use crate::dimension::{exponent_overflow, write_factors, write_power, DimError, Dimension};
+use crate::rational::{Rational, RationalError};
 
 /// A dimension variable. Identity is the numeric id; the name is for display.
 #[derive(Clone, Debug)]
 pub struct DimVar {
-    id: u32,
+    id: u64,
     name: Arc<str>,
 }
 
 impl DimVar {
     /// The variable's unique id within its [`DimUnifier`].
-    pub fn id(&self) -> u32 {
+    pub fn id(&self) -> u64 {
         self.id
     }
 
@@ -126,25 +129,53 @@ impl DimTerm {
         self.is_ground().then_some(self.known)
     }
 
-    /// `self ^ r`. Panics on exponent overflow.
-    pub fn pow_rat(&self, r: Rational) -> Self {
-        if r.is_zero() {
-            return DimTerm::known(Dimension::DIMENSIONLESS);
+    /// `self · rhs`.
+    pub fn mul(&self, rhs: &DimTerm) -> Result<DimTerm, DimError> {
+        let mut out = self.clone();
+        for (v, &e) in &rhs.vars {
+            out.mul_var(v, e)?;
         }
-        DimTerm {
-            vars: self.vars.iter().map(|(v, &e)| (v.clone(), e * r)).collect(),
-            known: self.known.pow_rat(r),
-        }
+        out.known = self.known.checked_mul(rhs.known)?;
+        Ok(out)
     }
 
-    /// `self ^ n`. Panics on exponent overflow.
-    pub fn pow_int(&self, n: i64) -> Self {
+    /// `self / rhs`.
+    pub fn div(&self, rhs: &DimTerm) -> Result<DimTerm, DimError> {
+        // Subtract exponents directly rather than multiplying by
+        // `rhs.inverse()`: negating an `i64::MIN` exponent overflows even
+        // when the quotient itself fits.
+        let mut out = self.clone();
+        for (v, &e) in &rhs.vars {
+            out.add_var_exponent(v, e, Rational::checked_sub)?;
+        }
+        out.known = self.known.checked_div(rhs.known)?;
+        Ok(out)
+    }
+
+    /// `self ^ r`.
+    pub fn pow_rat(&self, r: Rational) -> Result<DimTerm, DimError> {
+        if r.is_zero() {
+            return Ok(DimTerm::known(Dimension::DIMENSIONLESS));
+        }
+        let mut vars = BTreeMap::new();
+        for (v, &e) in &self.vars {
+            // Both factors are non-zero, so the product is too.
+            vars.insert(v.clone(), e.checked_mul(r).map_err(exponent_overflow)?);
+        }
+        Ok(DimTerm {
+            vars,
+            known: self.known.pow_rat(r)?,
+        })
+    }
+
+    /// `self ^ n`.
+    pub fn pow_int(&self, n: i64) -> Result<DimTerm, DimError> {
         self.pow_rat(Rational::integer(n))
     }
 
     /// `self ^ -1`.
-    pub fn inverse(&self) -> Self {
-        self.pow_int(-1)
+    pub fn inverse(&self) -> Result<DimTerm, DimError> {
+        self.pow_rat(Rational::integer(-1))
     }
 
     /// The term with `v` removed (its factor set to 1).
@@ -154,13 +185,24 @@ impl DimTerm {
         t
     }
 
-    fn mul_var(&mut self, v: &DimVar, e: Rational) {
-        let sum = self.var_exponent(v) + e;
+    fn mul_var(&mut self, v: &DimVar, e: Rational) -> Result<(), DimError> {
+        self.add_var_exponent(v, e, Rational::checked_add)
+    }
+
+    /// Replaces `v`'s exponent `x` with `op(x, e)`, dropping it if zero.
+    fn add_var_exponent(
+        &mut self,
+        v: &DimVar,
+        e: Rational,
+        op: fn(Rational, Rational) -> Result<Rational, RationalError>,
+    ) -> Result<(), DimError> {
+        let sum = op(self.var_exponent(v), e).map_err(exponent_overflow)?;
         if sum.is_zero() {
             self.vars.remove(v);
         } else {
             self.vars.insert(v.clone(), sum);
         }
+        Ok(())
     }
 
     /// A diagnostic description: `length (L)` for named ground dimensions,
@@ -182,26 +224,6 @@ impl From<Dimension> for DimTerm {
 impl From<DimVar> for DimTerm {
     fn from(v: DimVar) -> Self {
         DimTerm::var(v)
-    }
-}
-
-impl Mul for DimTerm {
-    type Output = DimTerm;
-    fn mul(mut self, rhs: Self) -> Self {
-        for (v, e) in &rhs.vars {
-            self.mul_var(v, *e);
-        }
-        self.known = self.known * rhs.known;
-        self
-    }
-}
-
-impl Div for DimTerm {
-    type Output = DimTerm;
-    // Division is multiplication by the inverse, which clippy flags as suspicious.
-    #[allow(clippy::suspicious_arithmetic_impl)]
-    fn div(self, rhs: Self) -> Self {
-        self * rhs.inverse()
     }
 }
 
@@ -249,10 +271,50 @@ impl fmt::Display for DimMismatch {
 
 impl std::error::Error for DimMismatch {}
 
+/// Why [`DimUnifier::unify`] failed.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum UnifyError {
+    /// The two sides have different dimensions.
+    Mismatch(DimMismatch),
+    /// Solving would need an exponent that does not fit in `i64`.
+    Overflow(DimError),
+}
+
+impl fmt::Display for UnifyError {
+    /// The mismatch message, or `dimension exponent too large`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UnifyError::Mismatch(m) => m.fmt(f),
+            UnifyError::Overflow(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for UnifyError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            UnifyError::Mismatch(m) => Some(m),
+            UnifyError::Overflow(e) => Some(e),
+        }
+    }
+}
+
+impl From<DimMismatch> for UnifyError {
+    fn from(m: DimMismatch) -> Self {
+        UnifyError::Mismatch(m)
+    }
+}
+
+impl From<DimError> for UnifyError {
+    fn from(e: DimError) -> Self {
+        UnifyError::Overflow(e)
+    }
+}
+
 /// Creates dimension variables and solves equations between dimension terms.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct DimUnifier {
-    next_id: u32,
+    next_id: u64,
     /// Idempotent: right-hand sides mention only unbound variables.
     subst: BTreeMap<DimVar, DimTerm>,
 }
@@ -266,10 +328,12 @@ impl DimUnifier {
     /// A fresh, unbound dimension variable with a display name.
     pub fn fresh(&mut self, name: impl Into<Arc<str>>) -> DimVar {
         let id = self.next_id;
+        // Not reachable from exponent arithmetic: exhausting u64 ids would
+        // take 2^64 calls to `fresh`.
         self.next_id = self
             .next_id
             .checked_add(1)
-            .expect("too many dimension variables");
+            .expect("dimension variable ids exhausted");
         DimVar {
             id,
             name: name.into(),
@@ -277,51 +341,61 @@ impl DimUnifier {
     }
 
     /// `t` with every bound variable replaced by its solution.
-    pub fn apply(&self, t: &DimTerm) -> DimTerm {
+    pub fn apply(&self, t: &DimTerm) -> Result<DimTerm, DimError> {
         let mut out = DimTerm::known(t.known);
         for (v, &e) in &t.vars {
             match self.subst.get(v) {
-                Some(sol) => out = out * sol.pow_rat(e),
-                None => out.mul_var(v, e),
+                Some(sol) => out = out.mul(&sol.pow_rat(e)?)?,
+                None => out.mul_var(v, e)?,
             }
         }
-        out
+        Ok(out)
     }
 
     /// The current solution for `v` (just `v` itself if it is unbound).
-    pub fn resolve(&self, v: &DimVar) -> DimTerm {
+    pub fn resolve(&self, v: &DimVar) -> Result<DimTerm, DimError> {
         self.apply(&DimTerm::var(v.clone()))
     }
 
     /// Makes `expected` and `found` equal, extending the substitution, or
-    /// reports why they cannot be. On error the unifier is left unchanged.
-    ///
-    /// Panics only if an exponent overflows `i64`.
-    pub fn unify(&mut self, expected: &DimTerm, found: &DimTerm) -> Result<(), DimMismatch> {
-        let a = self.apply(expected);
-        let b = self.apply(found);
+    /// reports why they cannot be. Never panics. On any error, including
+    /// overflow, the unifier is left unchanged.
+    pub fn unify(&mut self, expected: &DimTerm, found: &DimTerm) -> Result<(), UnifyError> {
+        let a = self.apply(expected)?;
+        let b = self.apply(found)?;
         // a = b  ⇔  a / b = 1.
-        let residual = a.clone() / b.clone();
+        let residual = a.div(&b)?;
         let Some((v, c)) = residual.vars().next().map(|(v, c)| (v.clone(), c)) else {
             return if residual.known.is_dimensionless() {
                 Ok(())
             } else {
-                Err(DimMismatch {
+                Err(UnifyError::Mismatch(DimMismatch {
                     expected: a,
                     found: b,
-                })
+                }))
             };
         };
         // v^c · rest = 1  ⇒  v = rest^(-1/c). `rest` mentions no bound
         // variables (both sides were applied) and does not mention v.
-        let solution = residual.without(&v).pow_rat(-c.recip());
-        for rhs in self.subst.values_mut() {
+        let power = c
+            .checked_recip()
+            .and_then(Rational::checked_neg)
+            .map_err(exponent_overflow)?;
+        let solution = residual.without(&v).pow_rat(power)?;
+        // Build the new substitution completely before committing, so an
+        // overflow part-way through leaves `self` untouched.
+        let mut next = BTreeMap::new();
+        for (w, rhs) in &self.subst {
             let e = rhs.var_exponent(&v);
-            if !e.is_zero() {
-                *rhs = rhs.without(&v) * solution.pow_rat(e);
-            }
+            let rhs = if e.is_zero() {
+                rhs.clone()
+            } else {
+                rhs.without(&v).mul(&solution.pow_rat(e)?)?
+            };
+            next.insert(w.clone(), rhs);
         }
-        self.subst.insert(v, solution);
+        next.insert(v, solution);
+        self.subst = next;
         Ok(())
     }
 }
@@ -334,6 +408,10 @@ mod tests {
         DimTerm::known(d)
     }
 
+    fn v(x: &DimVar) -> DimTerm {
+        DimTerm::var(x.clone())
+    }
+
     #[test]
     fn ground_equal_and_unequal() {
         let mut u = DimUnifier::new();
@@ -343,6 +421,7 @@ mod tests {
         let err = u
             .unify(&k(Dimension::LENGTH), &k(Dimension::TEMPERATURE))
             .unwrap_err();
+        assert!(matches!(err, UnifyError::Mismatch(_)));
         assert_eq!(
             err.to_string(),
             "cannot unify length (L) with temperature (Θ)"
@@ -354,10 +433,10 @@ mod tests {
         // α·L = L·T  ⇒  α = T
         let mut u = DimUnifier::new();
         let a = u.fresh("α");
-        let lhs = DimTerm::var(a.clone()) * k(Dimension::LENGTH);
+        let lhs = v(&a).mul(&k(Dimension::LENGTH)).unwrap();
         let rhs = k(Dimension::LENGTH * Dimension::TIME);
         u.unify(&lhs, &rhs).unwrap();
-        assert_eq!(u.resolve(&a), k(Dimension::TIME));
+        assert_eq!(u.resolve(&a), Ok(k(Dimension::TIME)));
     }
 
     #[test]
@@ -365,12 +444,9 @@ mod tests {
         // α² = L²  ⇒  α = L
         let mut u = DimUnifier::new();
         let a = u.fresh("α");
-        u.unify(
-            &DimTerm::var(a.clone()).pow_int(2),
-            &k(Dimension::LENGTH.pow_int(2)),
-        )
-        .unwrap();
-        assert_eq!(u.resolve(&a), k(Dimension::LENGTH));
+        let l2 = Dimension::LENGTH.pow_int(2).unwrap();
+        u.unify(&v(&a).pow_int(2).unwrap(), &k(l2)).unwrap();
+        assert_eq!(u.resolve(&a), Ok(k(Dimension::LENGTH)));
     }
 
     #[test]
@@ -378,9 +454,9 @@ mod tests {
         // α² = L  ⇒  α = L^(1/2)
         let mut u = DimUnifier::new();
         let a = u.fresh("α");
-        u.unify(&DimTerm::var(a.clone()).pow_int(2), &k(Dimension::LENGTH))
+        u.unify(&v(&a).pow_int(2).unwrap(), &k(Dimension::LENGTH))
             .unwrap();
-        assert_eq!(u.resolve(&a).to_string(), "L^(1/2)");
+        assert_eq!(u.resolve(&a).unwrap().to_string(), "L^(1/2)");
     }
 
     #[test]
@@ -388,12 +464,10 @@ mod tests {
         let mut u = DimUnifier::new();
         let a = u.fresh("α");
         let b = u.fresh("β");
-        u.unify(&DimTerm::var(a.clone()), &DimTerm::var(b.clone()))
-            .unwrap();
-        u.unify(&DimTerm::var(b.clone()), &k(Dimension::MASS))
-            .unwrap();
-        assert_eq!(u.resolve(&a), k(Dimension::MASS));
-        assert_eq!(u.resolve(&b), k(Dimension::MASS));
+        u.unify(&v(&a), &v(&b)).unwrap();
+        u.unify(&v(&b), &k(Dimension::MASS)).unwrap();
+        assert_eq!(u.resolve(&a), Ok(k(Dimension::MASS)));
+        assert_eq!(u.resolve(&b), Ok(k(Dimension::MASS)));
     }
 
     #[test]
@@ -403,10 +477,7 @@ mod tests {
         let a = u.fresh("α");
         let before = u.clone();
         let err = u
-            .unify(
-                &DimTerm::var(a.clone()),
-                &(DimTerm::var(a) * k(Dimension::LENGTH)),
-            )
+            .unify(&v(&a), &v(&a).mul(&k(Dimension::LENGTH)).unwrap())
             .unwrap_err();
         assert_eq!(err.to_string(), "cannot unify α with α·L");
         assert_eq!(u, before);
@@ -417,18 +488,100 @@ mod tests {
         // α·L = α·L is trivially fine and binds nothing.
         let mut u = DimUnifier::new();
         let a = u.fresh("α");
-        let t = DimTerm::var(a.clone()) * k(Dimension::LENGTH);
+        let t = v(&a).mul(&k(Dimension::LENGTH)).unwrap();
         u.unify(&t, &t).unwrap();
-        assert_eq!(u.resolve(&a), DimTerm::var(a));
+        assert_eq!(u.resolve(&a), Ok(v(&a)));
     }
 
     #[test]
     fn display_of_terms() {
         let mut u = DimUnifier::new();
         let a = u.fresh("α");
-        let t = DimTerm::var(a).pow_int(2) * k(Dimension::VELOCITY);
+        let t = v(&a)
+            .pow_int(2)
+            .unwrap()
+            .mul(&k(Dimension::VELOCITY))
+            .unwrap();
         assert_eq!(t.to_string(), "α²·L·T⁻¹");
         assert_eq!(k(Dimension::DIMENSIONLESS).to_string(), "1");
         assert_eq!(k(Dimension::ENERGY).describe(), "energy (L²·M·T⁻²)");
+    }
+
+    /// Regression (Eng Lead review of #2): `m^(9223372036854775807/2)` squared
+    /// is exact; cubed is an `Err`, never a panic.
+    #[test]
+    fn term_half_max_exponent_regression() {
+        let m = k(crate::lookup("m").unwrap().dim);
+        let big = m.pow_rat(Rational::new(i64::MAX, 2)).unwrap();
+        let max = k(Dimension::LENGTH.pow_int(i64::MAX).unwrap());
+        assert_eq!(big.pow_int(2), Ok(max.clone()));
+        assert_eq!(big.mul(&big), Ok(max.clone()));
+        assert_eq!(big.pow_int(3), Err(DimError::ExponentOverflow));
+        assert_eq!(max.mul(&m), Err(DimError::ExponentOverflow));
+        let min = k(Dimension::LENGTH.pow_int(i64::MIN).unwrap());
+        assert_eq!(min.inverse(), Err(DimError::ExponentOverflow));
+        assert_eq!(m.div(&min), Err(DimError::ExponentOverflow));
+    }
+
+    /// Found by `huge_mul_div_inverse_are_exact_or_err`: dividing by a term
+    /// whose exponent is `i64::MIN` must not go through its inverse.
+    #[test]
+    fn div_by_min_exponent_is_exact_when_quotient_fits() {
+        let mut u = DimUnifier::new();
+        let a = u.fresh("α");
+        let min = Rational::integer(i64::MIN);
+        let x = v(&a)
+            .pow_rat(min)
+            .unwrap()
+            .mul(&k(Dimension::LENGTH.pow_rat(min).unwrap()))
+            .unwrap();
+        assert_eq!(x.div(&x), Ok(k(Dimension::DIMENSIONLESS)));
+        assert_eq!(x.inverse(), Err(DimError::ExponentOverflow));
+    }
+
+    #[test]
+    fn variable_exponent_overflow_is_an_error() {
+        let mut u = DimUnifier::new();
+        let a = u.fresh("α");
+        let big = v(&a).pow_int(i64::MAX).unwrap();
+        assert_eq!(big.pow_int(2), Err(DimError::ExponentOverflow));
+        assert_eq!(big.mul(&v(&a)), Err(DimError::ExponentOverflow));
+    }
+
+    #[test]
+    fn unify_overflow_is_an_error_and_leaves_state() {
+        // α^(1/MAX) = L²  ⇒  α = L^(2·MAX), which does not fit.
+        let mut u = DimUnifier::new();
+        let a = u.fresh("α");
+        let b = u.fresh("β");
+        u.unify(&v(&b), &v(&a).pow_int(2).unwrap()).unwrap();
+        let before = u.clone();
+        let lhs = v(&a).pow_rat(Rational::new(1, i64::MAX)).unwrap();
+        let l2 = k(Dimension::LENGTH.pow_int(2).unwrap());
+        let err = u.unify(&lhs, &l2).unwrap_err();
+        assert_eq!(err, UnifyError::Overflow(DimError::ExponentOverflow));
+        assert_eq!(err.to_string(), "dimension exponent too large");
+        assert_eq!(u, before);
+    }
+
+    #[test]
+    fn overflow_while_rewriting_existing_bindings_leaves_state() {
+        // α = β^MAX binds α (lowest id). Solving β = L² then fits for β
+        // itself, but rewriting α's binding would need α = L^(2·MAX).
+        let mut u = DimUnifier::new();
+        let a = u.fresh("α");
+        let b = u.fresh("β");
+        u.unify(&v(&a), &v(&b).pow_int(i64::MAX).unwrap()).unwrap();
+        assert_eq!(u.resolve(&b), Ok(v(&b)));
+        let before = u.clone();
+        let l2 = k(Dimension::LENGTH.pow_int(2).unwrap());
+        let err = u.unify(&v(&b), &l2).unwrap_err();
+        assert_eq!(err, UnifyError::Overflow(DimError::ExponentOverflow));
+        assert_eq!(u, before);
+        u.unify(&v(&b), &k(Dimension::LENGTH)).unwrap();
+        assert_eq!(
+            u.resolve(&a),
+            Ok(k(Dimension::LENGTH.pow_int(i64::MAX).unwrap()))
+        );
     }
 }

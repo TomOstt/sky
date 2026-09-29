@@ -3,8 +3,9 @@
 //! Values are always normalized: the denominator is positive and
 //! `gcd(|num|, den) == 1`, so derived equality and hashing are structural.
 //! Arithmetic is computed in `i128` and checked on the way back to `i64`;
-//! it never wraps. The `checked_*` methods return an error, and the operator
-//! impls panic on overflow.
+//! it never wraps. The `checked_*` methods return an error. The operator
+//! impls, [`Rational::new`], and [`Rational::recip`] panic instead, and exist
+//! for constants and tests; checker code uses the `checked_*` forms.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -118,7 +119,11 @@ impl Rational {
 
     /// Checked subtraction.
     pub fn checked_sub(self, rhs: Self) -> Result<Self, RationalError> {
-        self.checked_add(rhs.checked_neg()?)
+        // Computed directly, not as `self + (-rhs)`: negating an `i64::MIN`
+        // numerator overflows even when the difference fits.
+        let (a, b, c, d) = self.wide(rhs);
+        let n = (a * d).checked_sub(c * b).ok_or(RationalError::Overflow)?;
+        Self::from_i128(n, b * d)
     }
 
     /// Checked multiplication.
@@ -290,6 +295,20 @@ mod tests {
         assert_eq!(
             big.checked_mul(Rational::new(1, i64::MAX)),
             Ok(Rational::ONE)
+        );
+    }
+
+    #[test]
+    fn subtracting_min_is_exact_when_the_difference_fits() {
+        let min = Rational::integer(i64::MIN);
+        assert_eq!(min.checked_sub(min), Ok(Rational::ZERO));
+        assert_eq!(
+            Rational::integer(-1).checked_sub(min),
+            Ok(Rational::integer(i64::MAX))
+        );
+        assert_eq!(
+            Rational::ZERO.checked_sub(min),
+            Err(RationalError::Overflow)
         );
     }
 

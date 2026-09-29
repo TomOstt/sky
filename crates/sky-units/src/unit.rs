@@ -29,11 +29,15 @@ const fn unit(name: &'static str, dim: Dimension, scale: f64) -> Unit {
 }
 
 /// Every unit known to v0.1.
+///
+/// `h` is the hour (3600 s), not Planck's constant.
 pub static UNITS: &[Unit] = &[
     unit("m", Dimension::LENGTH, 1.0),
     unit("km", Dimension::LENGTH, 1000.0),
     unit("s", Dimension::TIME, 1.0),
     unit("min", Dimension::TIME, 60.0),
+    // `h` is the hour (3600 s), not Planck's constant. Physical constants
+    // such as h and ħ are not units and will live in a separate table.
     unit("h", Dimension::TIME, 3600.0),
     unit("kg", Dimension::MASS, 1.0),
     unit("K", Dimension::TEMPERATURE, 1.0),

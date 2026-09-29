@@ -5,6 +5,30 @@ use std::ops::{Div, Mul};
 
 use crate::rational::{Rational, RationalError};
 
+/// An error from dimension arithmetic.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum DimError {
+    /// An exponent's numerator or denominator no longer fits in `i64`.
+    ExponentOverflow,
+}
+
+impl fmt::Display for DimError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DimError::ExponentOverflow => f.write_str("dimension exponent too large"),
+        }
+    }
+}
+
+impl std::error::Error for DimError {}
+
+/// Maps an exponent-arithmetic failure to [`DimError`]. Dimension arithmetic
+/// only adds, subtracts, and multiplies exponents (and takes reciprocals of
+/// non-zero ones), so the only reachable failure is overflow.
+pub(crate) fn exponent_overflow(_: RationalError) -> DimError {
+    DimError::ExponentOverflow
+}
+
 /// One of the seven SI base dimensions, in SI order.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub enum BaseDim {
@@ -63,6 +87,12 @@ impl BaseDim {
 ///
 /// Dimensions form an abelian group under multiplication, with
 /// [`Dimension::DIMENSIONLESS`] as the identity.
+///
+/// Checker code must use the fallible methods ([`checked_mul`](Self::checked_mul),
+/// [`checked_div`](Self::checked_div), [`pow_int`](Self::pow_int),
+/// [`pow_rat`](Self::pow_rat), [`inverse`](Self::inverse)), which return
+/// [`DimError::ExponentOverflow`] instead of panicking. The `*` and `/`
+/// operators panic on overflow and exist only for constants and tests.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Dimension {
     exps: [Rational; 7],
@@ -133,42 +163,37 @@ impl Dimension {
     fn try_map(
         self,
         f: impl Fn(usize, Rational) -> Result<Rational, RationalError>,
-    ) -> Result<Self, RationalError> {
+    ) -> Result<Self, DimError> {
         let mut out = [Rational::ZERO; 7];
         for (i, e) in self.exps.into_iter().enumerate() {
-            out[i] = f(i, e)?;
+            out[i] = f(i, e).map_err(exponent_overflow)?;
         }
         Ok(Dimension { exps: out })
     }
 
-    /// `self · rhs`, or an error if an exponent overflows.
-    pub fn checked_mul(self, rhs: Self) -> Result<Self, RationalError> {
+    /// `self · rhs`.
+    pub fn checked_mul(self, rhs: Self) -> Result<Self, DimError> {
         self.try_map(|i, e| e.checked_add(rhs.exps[i]))
     }
 
-    /// `self / rhs`, or an error if an exponent overflows.
-    pub fn checked_div(self, rhs: Self) -> Result<Self, RationalError> {
+    /// `self / rhs`.
+    pub fn checked_div(self, rhs: Self) -> Result<Self, DimError> {
         self.try_map(|i, e| e.checked_sub(rhs.exps[i]))
     }
 
-    /// `self ^ r` for a rational power, or an error if an exponent overflows.
-    pub fn checked_pow_rat(self, r: Rational) -> Result<Self, RationalError> {
-        self.try_map(|_, e| e.checked_mul(r))
-    }
-
-    /// `self ^ n`. Panics on exponent overflow.
-    pub fn pow_int(self, n: i64) -> Self {
+    /// `self ^ n`.
+    pub fn pow_int(self, n: i64) -> Result<Self, DimError> {
         self.pow_rat(Rational::integer(n))
     }
 
-    /// `self ^ r`, e.g. `L.pow_rat(1/2) == L^(1/2)`. Panics on exponent overflow.
-    pub fn pow_rat(self, r: Rational) -> Self {
-        expect_exp(self.checked_pow_rat(r))
+    /// `self ^ r`, e.g. `L.pow_rat(1/2) == Ok(L^(1/2))`.
+    pub fn pow_rat(self, r: Rational) -> Result<Self, DimError> {
+        self.try_map(|_, e| e.checked_mul(r))
     }
 
     /// The multiplicative inverse, `self ^ -1`.
-    pub fn inverse(self) -> Self {
-        self.pow_int(-1)
+    pub fn inverse(self) -> Result<Self, DimError> {
+        self.try_map(|_, e| e.checked_neg())
     }
 
     /// A human name for common dimensions, used in diagnostics
@@ -192,13 +217,15 @@ static NAMES: &[(Dimension, &str)] = &[
     (Dimension::VELOCITY, "velocity"),
 ];
 
-fn expect_exp(r: Result<Dimension, RationalError>) -> Dimension {
+fn expect_exp(r: Result<Dimension, DimError>) -> Dimension {
     match r {
         Ok(d) => d,
-        Err(e) => panic!("dimension exponent: {e}"),
+        Err(e) => panic!("{e}"),
     }
 }
 
+/// Panics on exponent overflow; for constants and tests only.
+/// Checker code uses [`Dimension::checked_mul`].
 impl Mul for Dimension {
     type Output = Dimension;
     fn mul(self, rhs: Self) -> Self {
@@ -206,6 +233,8 @@ impl Mul for Dimension {
     }
 }
 
+/// Panics on exponent overflow; for constants and tests only.
+/// Checker code uses [`Dimension::checked_div`].
 impl Div for Dimension {
     type Output = Dimension;
     fn div(self, rhs: Self) -> Self {
@@ -281,27 +310,35 @@ mod tests {
 
     #[test]
     fn display() {
-        let accel = Dimension::LENGTH / Dimension::TIME.pow_int(2);
+        let accel = Dimension::LENGTH / Dimension::TIME.pow_int(2).unwrap();
         assert_eq!(accel.to_string(), "L·T⁻²");
         assert_eq!(Dimension::ENERGY.to_string(), "L²·M·T⁻²");
         assert_eq!(Dimension::DIMENSIONLESS.to_string(), "1");
+        let half = Rational::new(1, 2);
         assert_eq!(
-            Dimension::LENGTH.pow_rat(Rational::new(1, 2)).to_string(),
+            Dimension::LENGTH.pow_rat(half).unwrap().to_string(),
             "L^(1/2)"
         );
         assert_eq!(
-            Dimension::TIME.pow_rat(Rational::new(-3, 2)).to_string(),
+            Dimension::TIME
+                .pow_rat(Rational::new(-3, 2))
+                .unwrap()
+                .to_string(),
             "T^(-3/2)"
         );
-        assert_eq!(Dimension::TEMPERATURE.pow_int(10).to_string(), "Θ¹⁰");
+        assert_eq!(
+            Dimension::TEMPERATURE.pow_int(10).unwrap().to_string(),
+            "Θ¹⁰"
+        );
     }
 
     #[test]
     fn names() {
         assert_eq!(Dimension::LENGTH.name(), Some("length"));
         assert_eq!(Dimension::TEMPERATURE.name(), Some("temperature"));
+        let v2 = Dimension::VELOCITY.pow_int(2).unwrap();
         assert_eq!(
-            (Dimension::MASS * Dimension::VELOCITY.pow_int(2)).name(),
+            Dimension::MASS.checked_mul(v2).unwrap().name(),
             Some("energy")
         );
         assert_eq!(Dimension::DIMENSIONLESS.name(), Some("dimensionless"));
@@ -311,17 +348,67 @@ mod tests {
     #[test]
     fn group_basics() {
         let v = Dimension::VELOCITY;
-        assert!((v * v.inverse()).is_dimensionless());
-        assert_eq!(v / v, Dimension::DIMENSIONLESS);
+        let inv = v.inverse().unwrap();
+        assert!(v.checked_mul(inv).unwrap().is_dimensionless());
+        assert_eq!(v.checked_div(v), Ok(Dimension::DIMENSIONLESS));
         assert_eq!(Dimension::base(BaseDim::Current), Dimension::CURRENT);
         assert_eq!(BaseDim::from_symbol("Θ"), Some(BaseDim::Temperature));
-        let sqrt_l = Dimension::LENGTH.pow_rat(Rational::new(1, 2));
-        assert_eq!(sqrt_l * sqrt_l, Dimension::LENGTH);
+        let sqrt_l = Dimension::LENGTH.pow_rat(Rational::new(1, 2)).unwrap();
+        assert_eq!(sqrt_l.checked_mul(sqrt_l), Ok(Dimension::LENGTH));
     }
 
     #[test]
-    fn overflow_is_reported() {
-        let huge = Dimension::LENGTH.pow_int(i64::MAX);
-        assert!(huge.checked_mul(Dimension::LENGTH).is_err());
+    fn overflow_is_an_error() {
+        let huge = Dimension::LENGTH.pow_int(i64::MAX).unwrap();
+        assert_eq!(
+            huge.checked_mul(Dimension::LENGTH),
+            Err(DimError::ExponentOverflow)
+        );
+        assert_eq!(huge.pow_int(2), Err(DimError::ExponentOverflow));
+        let min = Dimension::LENGTH.pow_int(i64::MIN).unwrap();
+        assert_eq!(min.inverse(), Err(DimError::ExponentOverflow));
+        assert_eq!(
+            min.checked_div(Dimension::LENGTH),
+            Err(DimError::ExponentOverflow)
+        );
+        // Denominators overflow too: 1/MAX + 1/(MAX-1) needs a denominator > i64::MAX.
+        let a = Dimension::LENGTH
+            .pow_rat(Rational::new(1, i64::MAX))
+            .unwrap();
+        let b = Dimension::LENGTH
+            .pow_rat(Rational::new(1, i64::MAX - 1))
+            .unwrap();
+        assert_eq!(a.checked_mul(b), Err(DimError::ExponentOverflow));
+        assert_eq!(
+            DimError::ExponentOverflow.to_string(),
+            "dimension exponent too large"
+        );
+    }
+
+    /// Regression (Eng Lead review of #2): `m^(9223372036854775807/2)` squared.
+    /// The exact result, `m^9223372036854775807`, fits in `i64`, so squaring
+    /// returns it exactly; any further growth is an `Err`, never a panic.
+    #[test]
+    fn half_max_exponent_squared_regression() {
+        let m = crate::lookup("m").unwrap().dim;
+        let half_max = Rational::new(i64::MAX, 2);
+        let big = m.pow_rat(half_max).unwrap();
+        let max = Dimension::LENGTH.pow_int(i64::MAX).unwrap();
+        assert_eq!(big.pow_int(2), Ok(max));
+        assert_eq!(big.checked_mul(big), Ok(max));
+        assert_eq!(big.pow_int(3), Err(DimError::ExponentOverflow));
+        assert_eq!(big.pow_int(4), Err(DimError::ExponentOverflow));
+        assert_eq!(max.pow_int(2), Err(DimError::ExponentOverflow));
+        assert_eq!(max.checked_mul(m), Err(DimError::ExponentOverflow));
+        assert_eq!(
+            big.pow_rat(Rational::new(3, 1)),
+            Err(DimError::ExponentOverflow)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "dimension exponent too large")]
+    fn operators_panic_and_are_for_constants_only() {
+        let _ = Dimension::LENGTH.pow_int(i64::MAX).unwrap() * Dimension::LENGTH;
     }
 }

@@ -10,9 +10,9 @@ concurrency:
   group: fuzz-nightly
   cancel-in-progress: false
 env:
-  # Seconds of fuzzing per target (-max_total_time). Tom's original decision
-  # was 600 (10 minutes); 300 is the Actions-budget proposal pending his
-  # choice between the two.
+  # Seconds of fuzzing per target (-max_total_time). Duration is Eng Lead's
+  # call (Tom delegated it); 300 s fits the GitHub Free 2,000-minute budget.
+  # Changing to 600 is this one line.
   FUZZ_SECONDS: 300
 jobs:
   # Skip the scheduled run when main hasn't moved since the last successful

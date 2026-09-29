@@ -1,7 +1,8 @@
 //! The v0.1 unit table: each unit is a dimension plus a scale factor to the
 //! coherent SI unit of that dimension (so `km` is length with scale 1000).
 //!
-//! The derived SI units `N`, `Pa`, `W`, and `Hz` are coherent (scale 1).
+//! `ms` is the millisecond (time, scale 0.001). The derived SI units `N`,
+//! `Pa`, `W`, and `Hz` are coherent (scale 1).
 //! Because `rad` is dimensionless, `Hz` and `rad/s` have the same dimension,
 //! so a missing 2π between frequency and angular frequency is not caught (a
 //! known v0.1 limitation).
@@ -40,6 +41,9 @@ pub static UNITS: &[Unit] = &[
     unit("m", Dimension::LENGTH, 1.0),
     unit("km", Dimension::LENGTH, 1000.0),
     unit("s", Dimension::TIME, 1.0),
+    // The millisecond. `ms` is one symbol, not `m*s` (compound units need
+    // an explicit `*`).
+    unit("ms", Dimension::TIME, 0.001),
     unit("min", Dimension::TIME, 60.0),
     // `h` is the hour (3600 s), not Planck's constant. Physical constants
     // such as h and ħ are not units and will live in a separate table.
@@ -96,6 +100,35 @@ mod tests {
     }
 
     #[test]
+    fn millisecond_is_time_with_scale_one_thousandth() {
+        let ms = lookup("ms").unwrap();
+        assert_eq!(ms.dim, Dimension::TIME);
+        assert_eq!(ms.dim, lookup("s").unwrap().dim);
+        assert_eq!(ms.scale, 0.001);
+        // `ms` is its own symbol, not metre times second.
+        assert_ne!(
+            ms.dim,
+            Dimension::LENGTH.checked_mul(Dimension::TIME).unwrap()
+        );
+    }
+
+    #[test]
+    fn millisecond_values_in_the_spec() {
+        // spec v0.1, "Unit values": a literal converts to SI once, as
+        // `x * scale`, and the result is an ordinary f64. `10 ms` is exactly
+        // 0.01 and `100 ms` is 0.1, but `3 * (100 ms)` is
+        // 0.30000000000000004, so `3 * (100 ms) == 0.3 s` is false.
+        let ms = lookup("ms").unwrap().scale;
+        let s = lookup("s").unwrap().scale;
+        assert_eq!(10.0 * ms, 0.01);
+        assert_eq!(100.0 * ms, 0.1);
+        let lhs = 3.0 * (100.0 * ms);
+        assert_ne!(lhs, 0.3 * s);
+        assert_eq!(lhs.to_bits(), (0.3_f64).to_bits() + 1);
+        assert_eq!(format!("{lhs:?}"), "0.30000000000000004");
+    }
+
+    #[test]
     fn exact_constants() {
         assert_eq!(lookup("eV").unwrap().scale, 1.602176634e-19);
         assert_eq!(lookup("eV").unwrap().dim, lookup("J").unwrap().dim);
@@ -118,8 +151,8 @@ mod tests {
         assert_eq!(
             names,
             [
-                "m", "km", "s", "min", "h", "kg", "K", "J", "eV", "pc", "AU", "rad", "N", "Pa",
-                "W", "Hz"
+                "m", "km", "s", "ms", "min", "h", "kg", "K", "J", "eV", "pc", "AU", "rad", "N",
+                "Pa", "W", "Hz"
             ]
         );
         for u in UNITS {

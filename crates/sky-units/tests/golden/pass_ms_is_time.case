@@ -1,0 +1,6 @@
+# `dt = 10 ms`: ms is time (scale 0.001), the same dimension as s.
+# The parse of `dt = 10 ms` is pinned in tests/unit_literals.rs.
+unify [ms] with T
+unify [ms] with [s]
+unify [km]/[ms] with [m]/[s]
+show [ms]

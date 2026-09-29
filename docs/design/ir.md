@@ -76,6 +76,7 @@ Planned extension points, which v1 leaves out: an error bound per value (interva
 | Constants | `const.rational`, `const.float`, `const.bool`, `const.str`, `const.symbol` (π, e, √2) |
 | Arithmetic | `add`, `sub`, `mul`, `div`, `neg`, `pow` (with a constant rational exponent attribute when known), `inverse` |
 | Linear algebra | `matmul`, `transpose`, `solve` (produced by rewrites, never written by users in v1) |
+| Arrays | `array.literal`, `index`, `slice`, `zeros`, `identity`, `len`; `add`, `sub`, `mul` (scaling), `div`, `neg`, `inverse` and `matmul` also work on arrays |
 | Comparison and logic | `cmp.{eq,ne,lt,le,gt,ge}` (on Bools and strings only `eq`/`ne`), `not`; `and`/`or` short-circuit, so they lower to `if` |
 | Control | `if` (regions), `while` (regions), `yield`, `call`, `return` |
 | Display | `show "unit"` (`v as km/h`: the operand written in a unit, a `str`, only ever printed) |
@@ -206,5 +207,5 @@ What was done instead: `--explain` runs the pass pipeline and shows its explanat
 ## Open questions
 - **Build the IR ourselves or use MLIR directly?** The proposal is our own L1 and L2 in Rust (fast to build, keeps the Rust-only toolchain, Sky-specific types), with MLIR as a possible L3/L4 target in Phase 5 through `melior`. This needs a decision before milestone 1.
 - **Should checking move onto SIR?** One source of truth is attractive, but AST-level diagnostics are easier to make good. Revisit after Phase 2.
-- **Arrays at run time:** SIR needs array values before the interpreter can run matrix code. Is v1 dense-only, with sparse formats as L2 facts?
+- **Arrays at run time:** v1 arrays are dense and row-major (vectors and matrices, never empty), and the reference interpreter runs them with the same code as `sky run`. Are sparse formats L2 facts?
 - **Symbolic shapes at run time:** specialise per concrete shape (idea 62), or compile shape-polymorphic code with checks?

@@ -232,6 +232,13 @@ impl Printer<'_> {
             OpKind::Solve { method } => {
                 let _ = write!(self.out, "[{}]", method.mnemonic());
             }
+            OpKind::ArrayLiteral { cols: Some(c) } => {
+                let _ = write!(self.out, "[{c}]");
+            }
+            OpKind::Slice { axes } => {
+                let items: Vec<&str> = axes.iter().map(|a| a.text()).collect();
+                let _ = write!(self.out, "[{}]", items.join(", "));
+            }
             OpKind::Call { callee } => {
                 self.out.push_str(" @");
                 write_name(&mut self.out, callee, true);

@@ -3,8 +3,8 @@
 
 use sky_diag::Span;
 use sky_ir::{
-    CmpOp, Edition, Effect, EffectSet, Function, FunctionBuilder, Module, NumberType, OpKind, Repr,
-    SolveMethod, Type,
+    CmpOp, Edition, Effect, EffectSet, Function, FunctionBuilder, MathFn, Module, NumberType,
+    OpKind, Repr, SliceAxis, SolveMethod, Type,
 };
 use sky_types::{Shape, ShapeDim, ShapeVar, Tag, TagSet};
 use sky_units::{Dimension, Rational};
@@ -190,6 +190,124 @@ pub fn all_ops() -> Module {
         vector(n.clone()),
         sp(31, 40),
     );
+    // Arrays: a 2x2 literal of lengths, positions, slices and builders.
+    let lit = b.op1(
+        OpKind::ArrayLiteral { cols: Some(2) },
+        vec![c1, c1, c1, c1],
+        num(
+            Dimension::LENGTH,
+            Shape::matrix(2, 2),
+            TagSet::EMPTY,
+            Repr::Unchosen,
+        ),
+        sp(41, 45),
+    );
+    let zero = b.op1(
+        OpKind::ConstRational(Rational::ZERO),
+        vec![],
+        one(),
+        sp(0, 0),
+    );
+    let two = b.op1(
+        OpKind::ConstRational(Rational::integer(2)),
+        vec![],
+        one(),
+        sp(0, 0),
+    );
+    let entry = b.op1(OpKind::Index, vec![lit, zero, zero], len(), sp(46, 48));
+    let row = b.op1(
+        OpKind::Index,
+        vec![lit, zero],
+        num(
+            Dimension::LENGTH,
+            Shape::vector(2),
+            TagSet::EMPTY,
+            Repr::Unchosen,
+        ),
+        sp(0, 0),
+    );
+    let part = b.op1(
+        OpKind::Slice {
+            axes: vec![
+                SliceAxis::Range {
+                    start: true,
+                    stop: true,
+                },
+                SliceAxis::At,
+            ],
+        },
+        vec![lit, zero, two, zero],
+        num(
+            Dimension::LENGTH,
+            Shape::vector(2),
+            TagSet::EMPTY,
+            Repr::Unchosen,
+        ),
+        sp(0, 0),
+    );
+    let whole = b.op1(
+        OpKind::Slice {
+            axes: vec![
+                SliceAxis::Range {
+                    start: false,
+                    stop: false,
+                },
+                SliceAxis::Range {
+                    start: true,
+                    stop: false,
+                },
+            ],
+        },
+        vec![lit, zero],
+        num(
+            Dimension::LENGTH,
+            Shape::matrix(2, 2),
+            TagSet::EMPTY,
+            Repr::Unchosen,
+        ),
+        sp(0, 0),
+    );
+    let head = b.op1(
+        OpKind::Slice {
+            axes: vec![SliceAxis::Range {
+                start: false,
+                stop: true,
+            }],
+        },
+        vec![row, two],
+        num(
+            Dimension::LENGTH,
+            Shape::vector(2),
+            TagSet::EMPTY,
+            Repr::Unchosen,
+        ),
+        sp(0, 0),
+    );
+    let zs = b.op1(OpKind::Zeros, vec![two], vector(2), sp(0, 0));
+    let zm = b.op1(
+        OpKind::Zeros,
+        vec![two, two],
+        num(
+            Dimension::DIMENSIONLESS,
+            Shape::matrix(2, 2),
+            TagSet::EMPTY,
+            Repr::Unchosen,
+        ),
+        sp(0, 0),
+    );
+    let eye = b.op1(
+        OpKind::Identity,
+        vec![two],
+        num(
+            Dimension::DIMENSIONLESS,
+            Shape::matrix(2, 2),
+            TagSet::from_tags(Tag::ALL).closure(),
+            Repr::Unchosen,
+        ),
+        sp(0, 0),
+    );
+    let count = b.op1(OpKind::Len, vec![lit], one(), sp(0, 0));
+    let root2 = b.op1(OpKind::Math(MathFn::Sqrt), vec![sq], len(), sp(0, 0));
     let mut last_cmp = c3;
     for op in [
         CmpOp::Eq,
@@ -265,7 +383,8 @@ pub fn all_ops() -> Module {
     b.op(
         OpKind::Print,
         vec![
-            called[0], c4, c5, a_inv, prod, at, solved, neg, root, p, recip, c2, c3, shown,
+            called[0], c4, c5, a_inv, prod, at, solved, neg, root, p, recip, c2, c3, shown, entry,
+            row, part, whole, head, zs, zm, eye, count, root2,
         ],
         vec![],
         sp(1, 9),

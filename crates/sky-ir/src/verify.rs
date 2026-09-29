@@ -46,6 +46,8 @@
 //!   the module has no other error, because inference reads the structure
 //!   the other checks establish.
 
+mod arrays;
+
 use std::fmt;
 
 use sky_diag::{Diagnostic, Span};
@@ -610,7 +612,12 @@ impl<'a> FnVerifier<'a> {
             | OpKind::Inverse
             | OpKind::Transpose
             | OpKind::Show { .. }
+            | OpKind::Identity
+            | OpKind::Len
             | OpKind::Not => (Some(1), Some(1)),
+            OpKind::ArrayLiteral { .. } | OpKind::Index | OpKind::Slice { .. } | OpKind::Zeros => {
+                (None, Some(1))
+            }
             OpKind::If => (Some(1), None),
             OpKind::While => (None, Some(op.operands.len())),
             OpKind::Yield | OpKind::Return | OpKind::Print => (None, Some(0)),
@@ -676,6 +683,11 @@ impl<'a> FnVerifier<'a> {
             OpKind::MatMul => self.check_matmul(o, op),
             OpKind::Transpose => self.check_transpose(o, op),
             OpKind::Solve { method } => self.check_solve(o, op, *method),
+            OpKind::ArrayLiteral { cols } => self.check_array_literal(o, op, *cols),
+            OpKind::Index => self.check_index(o, op),
+            OpKind::Slice { axes } => self.check_slice(o, op, axes),
+            OpKind::Zeros | OpKind::Identity => self.check_zeros_or_identity(o, op),
+            OpKind::Len => self.check_len(o, op),
             OpKind::Cmp(c) => self.check_cmp(o, op, *c),
             OpKind::Not => {
                 let t = self.f.ty(op.operands[0]);

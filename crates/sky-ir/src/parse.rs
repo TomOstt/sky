@@ -17,7 +17,10 @@
 //! attr     := "" | FLOAT | RATIONAL | "true" | "false" | STRING       (constants)
 //!           | "[" RATIONAL "]"                                        (pow.const)
 //!           | "[" "cholesky" "]"                                      (solve)
+//!           | "[" INT "]"                                             (array.literal of a matrix: the row length)
+//!           | "[" item ("," item)* "]"                                (slice)
 //!           | "@" NAME "(" [operands] ")"                             (call; no operand list)
+//! item     := "at" | ":" | "lo" ":" | ":" "hi" | "lo" ":" "hi"      (a position, or a range with the bounds it has)
 //! region   := "{" block* "}"          (the function body's first block is implicit)
 //! operands := value ("," value)*      values := value ("," value)*     value := "%" NAME
 //! span     := "@" START ".." END      (byte offsets; omitted means 0..0)
@@ -55,7 +58,7 @@ use crate::builder::FunctionBuilder;
 use crate::ir::{
     Edition, Effect, EffectSet, Module, NumberType, OpId, RegionId, Repr, Type, ValueId,
 };
-use crate::op::{CmpOp, OpKind, SolveMethod};
+use crate::op::{CmpOp, MathFn, OpKind, SliceAxis, SolveMethod};
 use crate::verify::MAX_REGION_DEPTH;
 
 /// A syntax error and where it is (byte offsets into the text).
@@ -725,6 +728,36 @@ impl<'a> Parser<'a> {
                 self.expect(']')?;
                 OpKind::Solve { method }
             }
+            "array.literal" => {
+                self.skip_inline();
+                let cols = if self.peek() == Some('[') {
+                    self.expect('[')?;
+                    self.skip_inline();
+                    let c = self.uint()?;
+                    self.expect(']')?;
+                    Some(c)
+                } else {
+                    None
+                };
+                OpKind::ArrayLiteral { cols }
+            }
+            "index" => OpKind::Index,
+            "slice" => {
+                self.expect('[')?;
+                let mut axes = Vec::new();
+                loop {
+                    axes.push(self.slice_axis()?);
+                    self.skip_inline();
+                    if !self.eat(',') {
+                        break;
+                    }
+                }
+                self.expect(']')?;
+                OpKind::Slice { axes }
+            }
+            "zeros" => OpKind::Zeros,
+            "identity" => OpKind::Identity,
+            "len" => OpKind::Len,
             "cmp.eq" => OpKind::Cmp(CmpOp::Eq),
             "cmp.ne" => OpKind::Cmp(CmpOp::Ne),
             "cmp.lt" => OpKind::Cmp(CmpOp::Lt),
@@ -747,9 +780,12 @@ impl<'a> Parser<'a> {
                 OpKind::Call { callee }
             }
             "" => return self.err("expected an operation"),
-            other => {
-                return self.err_at(word_at, self.pos, format!("unknown operation `{other}`"));
-            }
+            other => match MathFn::ALL.into_iter().find(|f| f.mnemonic() == other) {
+                Some(f) => OpKind::Math(f),
+                None => {
+                    return self.err_at(word_at, self.pos, format!("unknown operation `{other}`"));
+                }
+            },
         };
         let operands = match operands {
             Some(o) => o,
@@ -806,6 +842,38 @@ impl<'a> Parser<'a> {
             None | Some('\n' | '}') => Ok(()),
             Some(_) => self.err("expected the end of the line"),
         }
+    }
+
+    /// One item of a `slice`'s `[...]`: `at`, `:`, `lo:`, `:hi` or `lo:hi`.
+    fn slice_axis(&mut self) -> Res<SliceAxis> {
+        self.skip_inline();
+        let start = self.pos;
+        let first = self.word();
+        if first == "at" {
+            return Ok(SliceAxis::At);
+        }
+        let has_start = match first {
+            "" => false,
+            "lo" => true,
+            _ => {
+                return self.err_at(
+                    start,
+                    self.pos,
+                    "expected `at`, `:`, `lo:`, `:hi` or `lo:hi`",
+                )
+            }
+        };
+        self.expect(':')?;
+        let at = self.pos;
+        let has_stop = match self.word() {
+            "" => false,
+            "hi" => true,
+            _ => return self.err_at(at, self.pos, "expected `hi` or the end of the item"),
+        };
+        Ok(SliceAxis::Range {
+            start: has_start,
+            stop: has_stop,
+        })
     }
 
     // ----- types -----

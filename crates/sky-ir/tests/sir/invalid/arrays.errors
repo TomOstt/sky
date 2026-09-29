@@ -1,0 +1,13 @@
+@f: entries of `array.literal` have different dimensions: L and T (op0) @ 1..2
+@f: `array.literal` of 2 operand(s) arranged as a vector has shape Vector[2], found Vector[3] (op1) @ 3..4
+@f: operand 0 of `array.literal` must be a scalar, found shape Vector[3] (op2) @ 5..6
+@f: `index` needs a vector or matrix, found a scalar (op3) @ 7..8
+@f: too many indices: shape Matrix[3,4] has 2 axis(es), `index` subscripts 3 (op4) @ 9..10
+@f: operand 1 of `index` must be a dimensionless scalar, found Scalar with dimension T (op5) @ 11..12
+@f: the result of `index` should have shape (4), found Vector[3] (op6) @ 13..14
+@f: `slice` with 1 item(s) takes 3 operand(s), found 2 (op7) @ 15..16
+@f: the result of `slice` should have shape (3, 4), found Vector[4] (op8) @ 17..18
+@f: size operand 0 of `zeros` must be a dimensionless scalar, found Scalar with dimension L (op9) @ 19..20
+@f: the result of `zeros` should be a matrix, found shape Vector[3] (op10) @ 21..22
+@f: the result of `identity` should be a square matrix, found shape Matrix[2,3] (op11) @ 23..24
+@f: `len` needs a vector or a matrix, found a scalar (op12) @ 25..26

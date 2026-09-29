@@ -55,6 +55,52 @@ impl SolveMethod {
     }
 }
 
+/// One item of a `slice`'s subscript: what the source wrote for one axis,
+/// in `A[i, lo:hi, :]`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum SliceAxis {
+    /// A position `i`: the axis is dropped from the result. One operand.
+    At,
+    /// A range `lo:hi`: the axis stays, with the entries `lo <= i < hi`.
+    /// `start` says whether the range has a lower bound (else it starts at
+    /// 0) and `stop` whether it has an upper bound (else it runs to the end
+    /// of the axis). One operand per bound present, `lo` first.
+    Range { start: bool, stop: bool },
+}
+
+impl SliceAxis {
+    /// How many operands this item takes.
+    pub fn operands(self) -> usize {
+        match self {
+            SliceAxis::At => 1,
+            SliceAxis::Range { start, stop } => usize::from(start) + usize::from(stop),
+        }
+    }
+
+    /// The item as the text format writes it: `at`, `:`, `lo:`, `:hi`, `lo:hi`.
+    pub fn text(self) -> &'static str {
+        match self {
+            SliceAxis::At => "at",
+            SliceAxis::Range {
+                start: false,
+                stop: false,
+            } => ":",
+            SliceAxis::Range {
+                start: true,
+                stop: false,
+            } => "lo:",
+            SliceAxis::Range {
+                start: false,
+                stop: true,
+            } => ":hi",
+            SliceAxis::Range {
+                start: true,
+                stop: true,
+            } => "lo:hi",
+        }
+    }
+}
+
 /// The math functions (`sqrt`, `exp`, `sin`, ...): the one list, with each
 /// function's arity, dimension rule and failure behaviour, lives in
 /// sky-units and is shared by the checker, both interpreters and SIR.
@@ -109,8 +155,9 @@ pub enum OpKind {
     Math(MathFn),
     /// `A @ B`: two operands, one result.
     MatMul,
-    /// `Aᵀ`: one operand, one result. Pure: it can't fail. (Running it
-    /// needs arrays at run time, which v1 interpreters don't have yet.)
+    /// `Aᵀ`: one operand, one result. Pure: it can't fail. A scalar is its
+    /// own transpose and a matrix `M×N` becomes `N×M`; a vector or a
+    /// higher-rank tensor has no transpose.
     Transpose,
     /// `A⁻¹ @ b` computed without forming `A⁻¹`: two operands (`A`, `b`),
     /// one result. Produced by the Cholesky rewrite pass.
@@ -135,6 +182,74 @@ pub enum OpKind {
     Show {
         unit: String,
     },
+
+    // ----- arrays -----
+    //
+    // Arrays are dense, row-major, and never empty: a vector has one axis
+    // and a matrix two (v0.1 has no higher ranks), every entry is a finite
+    // number, and all entries share the array's dimension. A number's type
+    // says whether it is an array: `shape` is `()` for a scalar. The
+    // arithmetic operations above (`add`, `sub`, `mul`, `div`, `neg`,
+    // `inverse`, `matmul`, `transpose`, `solve`) already work on arrays;
+    // these operations make arrays and take them apart.
+    /// `[a, b, c]` and `[[a, b], [c, d]]`: `N >= 1` operands, one result.
+    /// The operands are scalars of one dimension, in row-major order.
+    /// `cols` says how they are arranged: `None` is a vector `(N)`, and
+    /// `Some(c)` a matrix whose rows have `c` entries, `(N/c, c)` (so `c`
+    /// divides `N`; `[[1, 2, 3]]` is a matrix of one row, not a vector).
+    /// The result has the operands' dimension, and its type restates the
+    /// shape, so every dimension of it is a number. The arrangement is an
+    /// attribute as well because the result's type is `Unknown` when an
+    /// entry's type is (`[x, 1]` for an unannotated parameter `x`): the
+    /// shape is then only in `cols`. Pure.
+    ///
+    /// The result's tags are whatever the checker proved about the literal
+    /// (a declaration such as `P: PositiveDefinite Matrix[2, 2] = [[4, 1],
+    /// [1, 3]]` is proven from the entries); the verifier only checks that
+    /// they are closed and sit on a square matrix.
+    ArrayLiteral {
+        cols: Option<u64>,
+    },
+    /// `A[i]`, `A[i, j]`: an operand `A` (a vector or matrix) followed by
+    /// `k` positions, one per leading axis (`1 <= k <=` the rank), one
+    /// result. Each position is a dimensionless scalar that must be a
+    /// non-negative integer less than its axis's length. The result has
+    /// `A`'s dimension and the trailing `rank - k` axes: a scalar for
+    /// `v[i]` and `A[i, j]`, a row for `A[i]`. No tags. Effect `Fail`: a
+    /// position that is not a valid index, or is out of bounds, fails at
+    /// run time (a constant position is checked by the checker before).
+    Index,
+    /// `A[i, lo:hi, :]`: an operand `A`, then the operands of each item in
+    /// order (see [`SliceAxis`]), one result. `axes` has at most one item
+    /// per axis (trailing axes without an item stay whole); a position drops
+    /// its axis and a range keeps it, with length `hi - lo`. Bounds are
+    /// dimensionless non-negative integers, `lo <= hi <=` the axis length,
+    /// and a range is never empty (`lo < hi`). Same result rules and effect
+    /// as [`OpKind::Index`]; lowering emits `index` when no item is a
+    /// range.
+    Slice {
+        axes: Vec<SliceAxis>,
+    },
+    /// `zeros(n)`, `zeros(m, n)`: one or two operands (the sizes,
+    /// dimensionless positive integers), one result: a dimensionless array
+    /// of zeros of that shape (a vector for one size, a matrix for two).
+    /// When the sizes are known the result's shape says which. Effect
+    /// `Fail`: a size that is not a positive integer, or an array of more
+    /// than `MAX_ARRAY_ELEMENTS` entries, fails at run time.
+    Zeros,
+    /// `identity(n)`: one operand (the size, a dimensionless positive
+    /// integer), one result: the dimensionless `n × n` identity matrix.
+    /// Same failures as [`OpKind::Zeros`].
+    Identity,
+    /// `len(x)`: one operand (a vector or matrix), one result: the length of
+    /// its first axis, a dimensionless scalar. Lowering writes a constant
+    /// instead when the first axis's length is known from the operand's
+    /// type (evaluating the operand still happens, for its failures and
+    /// effects); this operation covers a length that is only known at run
+    /// time (a function's `Vector[N]` parameter) or not at all (an operand
+    /// of unknown type). Effect `Fail`: only an operand that is not an
+    /// array fails, which a typed operand never is.
+    Len,
 
     // ----- comparison and logic -----
     /// Two operands (scalars of equal dimension, two Bools, or two
@@ -229,6 +344,13 @@ impl OpKind {
             OpKind::Transpose => "transpose",
             OpKind::Solve { .. } => "solve",
             OpKind::Show { .. } => "show",
+
+            OpKind::ArrayLiteral { .. } => "array.literal",
+            OpKind::Index => "index",
+            OpKind::Slice { .. } => "slice",
+            OpKind::Zeros => "zeros",
+            OpKind::Identity => "identity",
+            OpKind::Len => "len",
             OpKind::Cmp(c) => match c {
                 CmpOp::Eq => "cmp.eq",
                 CmpOp::Ne => "cmp.ne",
@@ -258,6 +380,7 @@ impl OpKind {
             | OpKind::ConstNothing
             | OpKind::Neg
             | OpKind::Transpose
+            | OpKind::ArrayLiteral { .. }
             | OpKind::Cmp(_)
             | OpKind::Not => (EffectSet::PURE, false, false, false),
             // Overflow to infinity fails (numbers are always finite).
@@ -274,6 +397,12 @@ impl OpKind {
             // A singular matrix or a zero scalar fails.
             OpKind::Inverse | OpKind::Solve { .. } => (fail, false, false, false),
             OpKind::MatMul => (fail, false, false, true),
+            // A bad or out-of-bounds index, or a bad size, fails.
+            OpKind::Index
+            | OpKind::Slice { .. }
+            | OpKind::Zeros
+            | OpKind::Identity
+            | OpKind::Len => (fail, false, false, false),
             // Control flow has the effects of its regions; the verifier and
             // passes compute those from the contents.
             OpKind::If | OpKind::While => (EffectSet::PURE, false, false, false),

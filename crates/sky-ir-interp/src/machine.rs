@@ -534,9 +534,15 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             let v = reciprocal("⁻¹", act.get(a, s)?, s, s)?;
             act.define(op, vec![v])
         }
-        OpKind::MatMul | OpKind::Transpose | OpKind::Solve { .. } => {
-            Err(arrays_unsupported(s).into())
-        }
+        OpKind::MatMul
+        | OpKind::Transpose
+        | OpKind::Solve { .. }
+        | OpKind::ArrayLiteral { .. }
+        | OpKind::Index
+        | OpKind::Slice { .. }
+        | OpKind::Zeros
+        | OpKind::Identity
+        | OpKind::Len => Err(arrays_unsupported(s).into()),
 
         OpKind::Cmp(c) => {
             let [a, b] = fixed(op)?;

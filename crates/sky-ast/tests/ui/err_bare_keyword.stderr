@@ -1,4 +1,5 @@
-crates/sky-ast/tests/ui/err_bare_keyword.sky:1:1: error: expected an expression, found keyword `solve`; statements and blocks are not supported by the parser yet
+crates/sky-ast/tests/ui/err_bare_keyword.sky:1:1: error: `solve` is reserved for a future version
   |
 1 | solve = 1
   | ^^^^^
+  = help: reserved words cannot be used as names; pick another name

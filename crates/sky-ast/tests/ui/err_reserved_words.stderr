@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_reserved_words.sky:1:1: error: `equation` is reserved for a future version
+  |
+1 | equation spring:
+  | ^^^^^^^^
+  = help: reserved words cannot be used as names; pick another name

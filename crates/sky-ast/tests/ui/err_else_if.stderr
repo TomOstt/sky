@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_else_if.sky:3:1: error: `else if` is not valid
+  |
+3 | else if b:
+  | ^^^^^^^
+  = help: write `elif`

@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_stray_indent.sky:2:5: error: unexpected indentation
+  |
+2 |     y = 2
+  |     ^
+  = help: only the body of an `if`, `while`, or `def` is indented; otherwise align this line with the one before it

@@ -1,0 +1,5 @@
+a = 1 if c else 2
+b = x or y if p and q else z
+c = a if p else b if q else r
+d = not p if q else -r
+e = (a if p else b) + 1

@@ -1,0 +1,11 @@
+crates/sky-ast/tests/ui/err_empty_block.sky:1:8: error: expected an indented block after `def`
+  |
+1 | def f():
+  |        ^
+  = help: use `pass` for a block that does nothing
+
+crates/sky-ast/tests/ui/err_empty_block.sky:4:9: error: expected an indented block after `if`
+  |
+4 |     if b:
+  |         ^
+  = help: use `pass` for a block that does nothing

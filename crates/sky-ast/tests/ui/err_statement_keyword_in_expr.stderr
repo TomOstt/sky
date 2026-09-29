@@ -1,0 +1,17 @@
+crates/sky-ast/tests/ui/err_statement_keyword_in_expr.sky:1:5: error: expected an expression, found keyword `return`
+  |
+1 | x = return 1
+  |     ^^^^^^
+  = help: `return` starts a statement, so it cannot be part of an expression
+
+crates/sky-ast/tests/ui/err_statement_keyword_in_expr.sky:2:5: error: expected an expression, found keyword `while`
+  |
+2 | y = while
+  |     ^^^^^
+  = help: `while` starts a statement, so it cannot be part of an expression
+
+crates/sky-ast/tests/ui/err_statement_keyword_in_expr.sky:3:5: error: expected an expression, found keyword `pass`
+  |
+3 | z = pass
+  |     ^^^^
+  = help: `pass` starts a statement, so it cannot be part of an expression

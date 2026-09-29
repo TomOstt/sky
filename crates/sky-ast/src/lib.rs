@@ -18,8 +18,8 @@ mod sexpr;
 pub mod stack;
 
 pub use ast::{
-    AssignTarget, BinaryOp, BoolOp, CompoundOp, Expr, ExprKind, Ident, IndexItem, Literal, Module,
-    Stmt, StmtKind, UnaryOp, UnitExpr,
+    AssignTarget, BinaryOp, Block, BoolOp, CompoundOp, Expr, ExprKind, Ident, IndexItem, Literal,
+    Module, Param, Stmt, StmtKind, UnaryOp, UnitExpr,
 };
 pub use parser::{
     parse_expr, parse_module, ParseError, MAX_DEPTH, MAX_QUOTED_BYTES, MAX_QUOTED_CHARS,

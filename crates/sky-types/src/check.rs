@@ -449,6 +449,8 @@ impl<'s> Checker<'s> {
                 let name = self.ident(name);
                 self.env.bind(name, bound);
             }
+            // Placeholder until the checker walks blocks (next commit).
+            _ => {}
         }
     }
 
@@ -846,6 +848,7 @@ impl<'s> Checker<'s> {
                 self.expr(base);
                 Ty::Unknown
             }
+            ExprKind::IfElse { .. } => Ty::Unknown,
             ExprKind::Binary {
                 op,
                 op_span,

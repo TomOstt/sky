@@ -1,14 +1,4 @@
-tests/ui/lexer/ok_crlf.sky:1:1: error: expected an expression, found keyword `def`; statements and blocks are not supported by the parser yet
+tests/ui/lexer/ok_crlf.sky:4:5: error: cannot find `f` in this scope
   |
-1 | def f(x):
-  | ^^^
-
-tests/ui/lexer/ok_crlf.sky:2:5: error: unexpected indentation: indented blocks are not supported yet
-  |
-2 |     return x
-  |     ^
-
-tests/ui/lexer/ok_crlf.sky:2:5: error: expected an expression, found keyword `return`; statements and blocks are not supported by the parser yet
-  |
-2 |     return x
-  |     ^^^^^^
+4 | y = f(1)
+  |     ^ not defined

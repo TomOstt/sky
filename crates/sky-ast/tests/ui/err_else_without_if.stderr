@@ -1,0 +1,11 @@
+crates/sky-ast/tests/ui/err_else_without_if.sky:2:1: error: `else` without a matching `if`
+  |
+2 | else:
+  | ^^^^
+  = help: an `elif` or `else` must directly follow the block of an `if` or `elif`, at the same indentation
+
+crates/sky-ast/tests/ui/err_else_without_if.sky:5:1: error: `elif` without a matching `if`
+  |
+5 | elif x:
+  | ^^^^
+  = help: an `elif` or `else` must directly follow the block of an `if` or `elif`, at the same indentation

@@ -253,6 +253,17 @@ pub enum ExprKind {
     },
     /// `( inner )`, kept as a node so spans and a future CST stay faithful.
     Paren(Box<Expr>),
+    /// `then if cond else else_`, Python's conditional expression. It binds
+    /// more loosely than `or` (level 0 of the precedence table), so
+    /// `a or b if c else d` is `(a or b) if c else d`, and it nests to the
+    /// right in the `else` arm: `a if c else b if d else e` is
+    /// `a if c else (b if d else e)`. `cond` must be a Bool of shape `()`
+    /// (no truthiness); only the chosen arm is evaluated.
+    IfElse {
+        then: Box<Expr>,
+        cond: Box<Expr>,
+        else_: Box<Expr>,
+    },
 }
 
 /// One item inside `[...]`.
@@ -397,6 +408,51 @@ pub enum StmtKind {
         op_span: Span,
         value: Expr,
     },
+    /// `if c: ... elif c2: ... else: ...`. Always at least one branch (the
+    /// `if`, then each `elif` in order); `else_block` is the `else`. The
+    /// statement's span runs from `if` to the end of its last block.
+    If {
+        branches: Vec<(Expr, Block)>,
+        else_block: Option<Block>,
+    },
+    /// `while cond: body`. Loops share the enclosing scope, like `if`.
+    While {
+        cond: Expr,
+        body: Block,
+    },
+    /// `def name(params) -> ret: body`. Annotations are ordinary
+    /// expressions, like a binding's (`Matrix[3, 3]` is an `Index`).
+    Def {
+        name: Ident,
+        params: Vec<Param>,
+        /// The `T` of `-> T`.
+        ret: Option<Expr>,
+        body: Block,
+    },
+    /// `return` or `return value`.
+    Return(Option<Expr>),
+    Pass,
+    Break,
+    Continue,
+}
+
+/// An indented run of statements after a `:`. Never empty in a tree the
+/// parser returned without errors (an empty block is a parse error).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Block {
+    pub stmts: Vec<Stmt>,
+    /// From the start of the first statement to the end of the last (the
+    /// zero-width `Indent`/`Dedent` tokens and newlines are not included).
+    pub span: Span,
+}
+
+/// One parameter of a `def`: `name` or `name: ty`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Param {
+    pub name: Ident,
+    pub ty: Option<Expr>,
+    /// The name through the end of the annotation.
+    pub span: Span,
 }
 
 /// A file's top-level statements.

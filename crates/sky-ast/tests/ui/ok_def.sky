@@ -1,0 +1,11 @@
+def kinetic(m, v: Vector[3]) -> Matrix[3, 3]:
+    x = m
+    return x
+
+def noop():
+    pass
+
+def early(x,):
+    if x:
+        return
+    return x

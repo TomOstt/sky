@@ -1,0 +1,5 @@
+(= a (ifelse c 1 2))
+(= b (ifelse (and p q) (or x y) z))
+(= c (ifelse p a (ifelse q b r)))
+(= d (ifelse q (not p) (neg r)))
+(= e (+ (paren (ifelse p a b)) 1))

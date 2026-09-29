@@ -8,12 +8,19 @@
 //! `(a)` → `(paren a)`, `x = 1` → `(= x 1)`, `A: T = v` → `(: A T v)`,
 //! `a.b = x` → `(= (attr a b) x)`, `x += e` → `(+= x e)`,
 //! `true` → `true`, `not a` → `(not a)`, `a and b and c` → `(and a b c)`,
-//! `a and b or c` → `(or (and a b) c)`.
+//! `a and b or c` → `(or (and a b) c)`, `a if c else b` → `(ifelse c a b)`.
+//!
+//! Compound statements print on one line, blocks as `(block stmt...)`:
+//! `if c: A elif d: B else: C` → `(if c (block A) d (block B) (else (block C)))`,
+//! `while c: A` → `(while c (block A))`,
+//! `def f(x, y: T) -> R: A` → `(def f (params x (: y T)) (returns R) (block A))`
+//! (`(returns ..)` only with `->`), `return e` → `(return e)`, `return` →
+//! `(return)`, `pass` → `(pass)`, likewise `(break)` and `(continue)`.
 
 use sky_syntax::Span;
 
 use crate::ast::{
-    span_text, AssignTarget, Expr, ExprKind, IndexItem, Module, Stmt, StmtKind, UnitExpr,
+    span_text, AssignTarget, Block, Expr, ExprKind, IndexItem, Module, Stmt, StmtKind, UnitExpr,
 };
 
 fn text(src: &str, span: Span) -> &str {
@@ -60,9 +67,86 @@ impl Stmt {
                 }
                 out.push(')');
             }
+            StmtKind::If {
+                branches,
+                else_block,
+            } => {
+                out.push_str("(if");
+                for (cond, block) in branches {
+                    out.push(' ');
+                    write_expr(&mut out, cond, src);
+                    out.push(' ');
+                    write_block(&mut out, block, src);
+                }
+                if let Some(block) = else_block {
+                    out.push_str(" (else ");
+                    write_block(&mut out, block, src);
+                    out.push(')');
+                }
+                out.push(')');
+            }
+            StmtKind::While { cond, body } => {
+                out.push_str("(while ");
+                write_expr(&mut out, cond, src);
+                out.push(' ');
+                write_block(&mut out, body, src);
+                out.push(')');
+            }
+            StmtKind::Def {
+                name,
+                params,
+                ret,
+                body,
+            } => {
+                out.push_str("(def ");
+                out.push_str(text(src, name.span));
+                out.push_str(" (params");
+                for p in params {
+                    out.push(' ');
+                    match &p.ty {
+                        None => out.push_str(text(src, p.name.span)),
+                        Some(ty) => {
+                            out.push_str("(: ");
+                            out.push_str(text(src, p.name.span));
+                            out.push(' ');
+                            write_expr(&mut out, ty, src);
+                            out.push(')');
+                        }
+                    }
+                }
+                out.push(')');
+                if let Some(ret) = ret {
+                    out.push_str(" (returns ");
+                    write_expr(&mut out, ret, src);
+                    out.push(')');
+                }
+                out.push(' ');
+                write_block(&mut out, body, src);
+                out.push(')');
+            }
+            StmtKind::Return(value) => {
+                out.push_str("(return");
+                if let Some(v) = value {
+                    out.push(' ');
+                    write_expr(&mut out, v, src);
+                }
+                out.push(')');
+            }
+            StmtKind::Pass => out.push_str("(pass)"),
+            StmtKind::Break => out.push_str("(break)"),
+            StmtKind::Continue => out.push_str("(continue)"),
         }
         out
     }
+}
+
+fn write_block(out: &mut String, block: &Block, src: &str) {
+    out.push_str("(block");
+    for stmt in &block.stmts {
+        out.push(' ');
+        out.push_str(&stmt.to_sexpr(src));
+    }
+    out.push(')');
 }
 
 impl Module {
@@ -157,6 +241,7 @@ fn write_expr(out: &mut String, e: &Expr, src: &str) {
         ExprKind::Index { base, items } => write_index(out, base, items, src),
         ExprKind::Attribute { base, name } => write_attr(out, base, name.span, src),
         ExprKind::Paren(inner) => node(out, "paren", src, &[inner]),
+        ExprKind::IfElse { then, cond, else_ } => node(out, "ifelse", src, &[cond, then, else_]),
     }
 }
 

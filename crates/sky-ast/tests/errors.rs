@@ -226,7 +226,7 @@ fn keywords_are_attribute_names_only_after_a_dot() {
     );
 
     // A bare keyword is still not a name.
-    for src in ["solve = 1", "x = solve", "f(solve)", "if"] {
+    for src in ["x = solve", "f(solve)", "x = def", "y = f(while)"] {
         let errors = common::module_errors(src);
         assert_eq!(errors.len(), 1, "{src:?}: {errors:#?}");
         assert!(
@@ -235,6 +235,13 @@ fn keywords_are_attribute_names_only_after_a_dot() {
             errors[0].message
         );
     }
+    // At the start of a statement a reserved word says so instead.
+    let errors = common::module_errors("solve = 1");
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert_eq!(
+        errors[0].message,
+        "`solve` is reserved for a future version"
+    );
     // Only a name or keyword may follow `.`.
     let errors = expr_errors("x.(y)");
     assert_eq!(

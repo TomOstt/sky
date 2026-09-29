@@ -25,19 +25,21 @@ use sky_diag::{display_safe, Diagnostic, Label};
 use sky_syntax::{Kw, Span, Token, TokenKind};
 
 use crate::ast::{
-    span_text, AssignTarget, BinaryOp, BoolOp, CompoundOp, Expr, ExprKind, Ident, IndexItem,
-    Literal, Module, Stmt, StmtKind, UnaryOp, UnitExpr,
+    span_text, AssignTarget, BinaryOp, Block, BoolOp, CompoundOp, Expr, ExprKind, Ident, IndexItem,
+    Literal, Module, Param, Stmt, StmtKind, UnaryOp, UnitExpr,
 };
 use crate::precedence::{
-    bool_binding_power, infix_binding_power, is_postfix_start, prefix_binding_power, NOT_BP,
-    POSTFIX_BP,
+    bool_binding_power, infix_binding_power, is_postfix_start, prefix_binding_power,
+    CONDITIONAL_BP, CONDITIONAL_COND_BP, NOT_BP, POSTFIX_BP,
 };
 
 /// Maximum nesting depth. Each level counts once: a `(`...`)` group, a prefix
 /// operator (including `not`), a call, an index (its slices included: the
 /// bounds of `a[i:j]` sit one level below `a`), an attribute, a `⁻¹`, each
 /// infix operator folded into an operand, and each `and`/`or` run (however
-/// long: a run is one flat node). `x` uses 0, `(((x)))` 3, `f(g(x))` 2,
+/// long: a run is one flat node), each `a if c else b`, and each block (the
+/// body of an `if`, `elif`, `else`, `while`, or `def`), so blocks and the
+/// expressions inside them share one budget. `x` uses 0, `(((x)))` 3, `f(g(x))` 2,
 /// `a^b^c` 2, `a + b + c` 2, `not not x` 2, and `a and b and c` 1. The count
 /// bounds both recursion and AST height (which keeps recursive `Drop` and
 /// printing safe).
@@ -126,39 +128,15 @@ pub fn parse_expr(tokens: &[Token], src: &str) -> (Option<Expr>, Vec<ParseError>
     (expr, p.errors)
 }
 
-/// Parses top-level simple statements separated by `Newline`. On an error,
-/// the rest of the line is skipped and parsing resumes on the next line.
+/// Parses a file's statements: simple statements and the block statements
+/// `if`/`elif`/`else`, `while`, and `def`, whose bodies are `Indent` ... `Dedent`
+/// runs of statements. Every error is recorded and parsing resumes at the
+/// next line (or, for a bad block header, after the header's block), so one
+/// mistake doesn't desynchronize the block structure: see
+/// `Parser::recover_header`.
 pub fn parse_module(tokens: &[Token], src: &str) -> (Module, Vec<ParseError>) {
     let mut p = Parser::new(tokens, src);
-    let mut stmts = Vec::new();
-    loop {
-        match p.peek() {
-            TokenKind::Eof => break,
-            // Blank lines, and dedents matching an indent reported below.
-            TokenKind::Newline | TokenKind::Dedent => {
-                p.bump();
-                continue;
-            }
-            TokenKind::Indent => {
-                let t = p.bump();
-                p.errors.push(ParseError::new(
-                    "unexpected indentation: indented blocks are not supported yet",
-                    t.span,
-                ));
-                continue;
-            }
-            _ => {}
-        }
-        let start = p.pos;
-        p.depth = 0;
-        match p.parse_stmt() {
-            Some(stmt) => stmts.push(stmt),
-            None => p.recover_to_line_end(),
-        }
-        if p.pos == start {
-            p.bump(); // Guarantee progress.
-        }
-    }
+    let stmts = p.parse_stmts(false);
     let end = u32::try_from(src.len()).unwrap_or(u32::MAX);
     let module = Module {
         stmts,
@@ -269,8 +247,445 @@ impl<'t, 's> Parser<'t, 's> {
 
     // ----- statements -----
 
+    /// The statements up to the end of the enclosing block (its `Dedent`,
+    /// consumed) or of the input. Runs at the current nesting depth: a
+    /// statement never inherits depth from the one before it.
+    fn parse_stmts(&mut self, in_block: bool) -> Vec<Stmt> {
+        let depth = self.depth;
+        let mut stmts = Vec::new();
+        loop {
+            self.depth = depth;
+            match self.peek() {
+                TokenKind::Eof => break,
+                // Blank lines. Dedents belong to the block that ends here; a
+                // stray one at the top level (only in hand-made tokens) is
+                // ignored.
+                TokenKind::Newline => {
+                    self.bump();
+                    continue;
+                }
+                TokenKind::Dedent => {
+                    self.bump();
+                    if in_block {
+                        break;
+                    }
+                    continue;
+                }
+                TokenKind::Indent => {
+                    self.stray_indent(&mut stmts);
+                    continue;
+                }
+                _ => {}
+            }
+            let start = self.pos;
+            if let Some(stmt) = self.parse_item() {
+                stmts.push(stmt);
+            }
+            if self.pos == start {
+                self.bump(); // Guarantee progress.
+            }
+        }
+        self.depth = depth;
+        stmts
+    }
+
+    /// An `Indent` where a statement should start: nothing before it opens a
+    /// block. Reports it, then parses the indented lines as a block anyway
+    /// and splices their statements in, so the `Dedent` that ends them
+    /// doesn't end the block we are in.
+    #[cold]
+    #[inline(never)]
+    fn stray_indent(&mut self, stmts: &mut Vec<Stmt>) {
+        let t = self.bump();
+        self.errors
+            .push(ParseError::new("unexpected indentation", t.span).with_help(
+                "only the body of an `if`, `while`, or `def` is indented; \
+                 otherwise align this line with the one before it",
+            ));
+        if let Some(block) = self.parse_block_body(t.span) {
+            stmts.extend(block.stmts);
+        }
+    }
+
+    /// One statement. `None` means an error was recorded and the position is
+    /// at a line boundary (the start of the next line, or of the block's
+    /// `Dedent`), so the caller just carries on.
+    fn parse_item(&mut self) -> Option<Stmt> {
+        let tok = self.current();
+        let TokenKind::Keyword(kw) = tok.kind else {
+            return self.parse_simple_item();
+        };
+        match kw {
+            Kw::If => self.parse_if(),
+            Kw::While => self.parse_while(),
+            Kw::Def => self.parse_def(),
+            Kw::For | Kw::Import | Kw::Equation | Kw::Solve | Kw::Field | Kw::Else | Kw::Elif => {
+                self.reject_statement(tok, kw)
+            }
+            _ => self.parse_simple_item(),
+        }
+    }
+
+    /// A statement that ends at its line: expression, assignment, binding,
+    /// `return`, `pass`, `break`, `continue`.
+    fn parse_simple_item(&mut self) -> Option<Stmt> {
+        let stmt = self.parse_stmt();
+        if stmt.is_none() {
+            self.recover_to_line_end();
+        }
+        stmt
+    }
+
+    /// Skips the rest of the line and, if the line opens a block (an
+    /// `Indent` follows), the whole block. For statements that are rejected
+    /// as a whole (`for`, `import`, ...): their body is not parsed.
+    fn recover_stmt(&mut self) {
+        self.recover_to_line_end();
+        if self.peek() == TokenKind::Indent {
+            self.bump();
+            self.skip_block_rest();
+        }
+    }
+
+    /// Recovery from a bad block header (`if x = 1:`, `def f(:`): skips the
+    /// rest of the line, then parses the body if one follows, dropping it.
+    /// The body's own errors are still reported, and its `Dedent` is
+    /// consumed here, so the enclosing block stays in sync.
+    fn recover_header(&mut self, header: Span) {
+        self.recover_to_line_end();
+        if self.peek() == TokenKind::Indent {
+            self.bump();
+            let _ = self.parse_block_body(header);
+        }
+    }
+
+    /// Skips to the `Dedent` matching an `Indent` already consumed, and
+    /// past it. Iterative, so it is safe at any nesting.
+    fn skip_block_rest(&mut self) {
+        let mut level = 1u32;
+        loop {
+            match self.peek() {
+                TokenKind::Eof => return,
+                TokenKind::Indent => level = level.saturating_add(1),
+                TokenKind::Dedent => {
+                    level -= 1;
+                    if level == 0 {
+                        self.bump();
+                        return;
+                    }
+                }
+                _ => {}
+            }
+            self.bump();
+        }
+    }
+
+    /// `for`, `import`, the reserved words, and an `else`/`elif` with no
+    /// `if` before it, where a statement starts.
+    #[cold]
+    #[inline(never)]
+    fn reject_statement(&mut self, tok: Token, kw: Kw) -> Option<Stmt> {
+        let word = kw.as_str();
+        let err = match kw {
+            Kw::For => ParseError::new("`for` loops are not supported yet", tok.span)
+                .with_help("Sky has no iterable values yet; loop with `while` and a counter"),
+            Kw::Import => ParseError::new("`import` is not supported yet", tok.span)
+                .with_help("there is no module loader yet; keep the code in one file for now"),
+            Kw::Equation | Kw::Solve | Kw::Field => ParseError::new(
+                format!("`{word}` is reserved for a future version"),
+                tok.span,
+            )
+            .with_help("reserved words cannot be used as names; pick another name"),
+            _ => ParseError::new(format!("`{word}` without a matching `if`"), tok.span).with_help(
+                "an `elif` or `else` must directly follow the block of an `if` or `elif`, \
+                 at the same indentation",
+            ),
+        };
+        self.errors.push(err);
+        self.bump();
+        self.recover_stmt();
+        None
+    }
+
+    /// `if cond: ... (elif cond: ...)* (else: ...)?`, with `if` current. A
+    /// clause with a bad header is reported and dropped, and the clauses
+    /// after it are still parsed, so one bad `elif` doesn't turn the `else`
+    /// after it into a second error.
+    fn parse_if(&mut self) -> Option<Stmt> {
+        let start = self.current().span;
+        let mut clause = self.bump();
+        let mut branches: Vec<(Expr, Block)> = Vec::new();
+        let mut else_block = None;
+        let mut end = clause.span;
+        loop {
+            if clause.kind == TokenKind::Keyword(Kw::Else) {
+                if let Some(block) = self.parse_body(clause.span, "`else`") {
+                    end = block.span;
+                    else_block = Some(block);
+                }
+                break;
+            }
+            let what = if clause.kind == TokenKind::Keyword(Kw::If) {
+                "`if`"
+            } else {
+                "`elif`"
+            };
+            match self.expr_bp(0) {
+                Some(cond) => {
+                    if let Some(block) = self.parse_body(clause.span, what) {
+                        end = block.span;
+                        branches.push((cond, block));
+                    }
+                }
+                None => self.recover_header(clause.span),
+            }
+            match self.peek() {
+                TokenKind::Keyword(Kw::Elif) => clause = self.bump(),
+                TokenKind::Keyword(Kw::Else) => {
+                    clause = self.bump();
+                    if let Some(t) = self.else_if(clause) {
+                        clause = t;
+                    }
+                }
+                _ => break,
+            }
+        }
+        if branches.is_empty() {
+            return None;
+        }
+        Some(Stmt {
+            span: start.join(end),
+            kind: StmtKind::If {
+                branches,
+                else_block,
+            },
+        })
+    }
+
+    /// `else if`, which Python spells `elif`: reports it, consumes the `if`,
+    /// and returns a token to continue as an `elif` clause.
+    #[cold]
+    #[inline(never)]
+    fn else_if(&mut self, else_tok: Token) -> Option<Token> {
+        if self.peek() != TokenKind::Keyword(Kw::If) {
+            return None;
+        }
+        let if_tok = self.bump();
+        let span = else_tok.span.join(if_tok.span);
+        self.errors
+            .push(ParseError::new("`else if` is not valid", span).with_help("write `elif`"));
+        Some(Token {
+            kind: TokenKind::Keyword(Kw::Elif),
+            span,
+        })
+    }
+
+    /// `while cond: body`, with `while` current.
+    fn parse_while(&mut self) -> Option<Stmt> {
+        let kw = self.bump();
+        let Some(cond) = self.expr_bp(0) else {
+            self.recover_header(kw.span);
+            return None;
+        };
+        let body = self.parse_body(kw.span, "`while`")?;
+        Some(Stmt {
+            span: kw.span.join(body.span),
+            kind: StmtKind::While { cond, body },
+        })
+    }
+
+    /// `def name(params) (-> ret)?: body`, with `def` current.
+    fn parse_def(&mut self) -> Option<Stmt> {
+        let kw = self.bump();
+        let Some((name, params, ret)) = self.parse_signature(kw.span) else {
+            self.recover_header(kw.span);
+            return None;
+        };
+        let body = self.parse_body(kw.span, "`def`")?;
+        Some(Stmt {
+            span: kw.span.join(body.span),
+            kind: StmtKind::Def {
+                name,
+                params,
+                ret,
+                body,
+            },
+        })
+    }
+
+    /// `name(param, ...) (-> ret)?` up to (not including) the `:`.
+    fn parse_signature(&mut self, kw: Span) -> Option<(Ident, Vec<Param>, Option<Expr>)> {
+        let name_tok = self.current();
+        if name_tok.kind != TokenKind::Ident {
+            let message = format!(
+                "expected a function name after `def`, found {}",
+                self.describe(name_tok)
+            );
+            return self.fail_def(message, name_tok.span, kw, "`def` starts here");
+        }
+        self.bump();
+        let open = self.current();
+        if open.kind != TokenKind::LParen {
+            let message = format!(
+                "expected `(` after the function name, found {}",
+                self.describe(open)
+            );
+            return self.fail_def(message, open.span, name_tok.span, "function name");
+        }
+        self.bump();
+        let mut params: Vec<Param> = Vec::new();
+        while self.peek() != TokenKind::RParen {
+            let param = self.parse_param(open.span)?;
+            params.push(param);
+            match self.peek() {
+                TokenKind::Comma => {
+                    self.bump();
+                }
+                TokenKind::RParen => {}
+                _ => {
+                    let last = params.last().map_or(open.span, |p| p.span);
+                    let message = format!(
+                        "expected `,` or `)` after the parameter, found {}",
+                        self.describe(self.current())
+                    );
+                    let at = self.current().span;
+                    return self.fail_def(message, at, last, "this parameter");
+                }
+            }
+        }
+        self.bump(); // `)`
+        let ret = if self.peek() == TokenKind::Arrow {
+            self.bump();
+            Some(self.parse_type_annotation()?)
+        } else {
+            None
+        };
+        Some((
+            Ident {
+                span: name_tok.span,
+            },
+            params,
+            ret,
+        ))
+    }
+
+    /// `name` or `name: type`.
+    fn parse_param(&mut self, open: Span) -> Option<Param> {
+        let tok = self.current();
+        if tok.kind != TokenKind::Ident {
+            let message = format!("expected a parameter name, found {}", self.describe(tok));
+            return self.fail_def(message, tok.span, open, "parameters start here");
+        }
+        self.bump();
+        let mut span = tok.span;
+        let mut ty = None;
+        if self.peek() == TokenKind::Colon {
+            self.bump();
+            let t = self.parse_type_annotation()?;
+            span = span.join(t.span);
+            ty = Some(t);
+        }
+        if self.peek() == TokenKind::Assign {
+            return self.fail_default_value(span);
+        }
+        Some(Param {
+            name: Ident { span: tok.span },
+            ty,
+            span,
+        })
+    }
+
+    /// A parameter or return annotation. For now an ordinary expression,
+    /// exactly like a binding's annotation; the checker reads it as a shape.
+    fn parse_type_annotation(&mut self) -> Option<Expr> {
+        self.expr_bp(0)
+    }
+
+    /// The `:` NEWLINE INDENT statements DEDENT after a block header.
+    /// `header` is the keyword's span and `what` names it (`` `if` ``).
+    /// `None` means an error was recorded and the position is at a line
+    /// boundary; see [`Self::parse_item`].
+    fn parse_body(&mut self, header: Span, what: &str) -> Option<Block> {
+        let colon = self.current();
+        if colon.kind != TokenKind::Colon {
+            return self.fail_expected_colon(colon, header, what);
+        }
+        self.bump();
+        match self.peek() {
+            TokenKind::Newline => {
+                self.bump();
+                if self.peek() == TokenKind::Indent {
+                    self.bump();
+                    return self.parse_block_body(header);
+                }
+                self.fail_empty_block(colon.span, what)
+            }
+            // A hand-made stream can end or dedent without a `Newline`.
+            TokenKind::Eof | TokenKind::Dedent => self.fail_empty_block(colon.span, what),
+            _ => self.parse_inline_body(colon.span, what),
+        }
+    }
+
+    /// The statements of a block, with its `Indent` already consumed, up to
+    /// and including its `Dedent`. Counts one nesting level.
+    fn parse_block_body(&mut self, header: Span) -> Option<Block> {
+        let saved = self.depth;
+        self.depth = self.depth.saturating_add(1);
+        if self.depth > MAX_DEPTH {
+            self.depth = saved;
+            self.skip_block_rest();
+            return self.fail_block_too_deep(header);
+        }
+        let at = self.prev_span().unwrap_or(header);
+        let stmts = self.parse_stmts(true);
+        self.depth = saved;
+        Some(block(stmts, at))
+    }
+
+    /// A body on the header's own line (`if x: y = 1`), which Sky does not
+    /// accept (spec, "Blocks and control flow"). Reports it, but parses the
+    /// statement as the body anyway, so what follows is not misread.
+    #[cold]
+    #[inline(never)]
+    fn parse_inline_body(&mut self, colon: Span, what: &str) -> Option<Block> {
+        let first = self.current();
+        self.errors.push(
+            ParseError::new(
+                format!("the body of {what} must be on its own indented line"),
+                first.span,
+            )
+            .with_secondary(colon, "the block starts after this `:`")
+            .with_help("put the body on its own indented line"),
+        );
+        // A compound statement here would recurse without counting depth.
+        let compound = matches!(
+            first.kind,
+            TokenKind::Keyword(
+                Kw::If | Kw::While | Kw::Def | Kw::For | Kw::Import | Kw::Else | Kw::Elif
+            )
+        );
+        if compound {
+            self.recover_stmt();
+            return None;
+        }
+        let stmt = self.parse_simple_item()?;
+        let span = stmt.span;
+        Some(Block {
+            stmts: vec![stmt],
+            span,
+        })
+    }
+
+    // ----- statements (simple) -----
+
     fn parse_stmt(&mut self) -> Option<Stmt> {
-        let first = self.expr_bp(0)?;
+        let first = match self.peek() {
+            TokenKind::Keyword(Kw::Return) => return self.parse_return(),
+            TokenKind::Keyword(kw @ (Kw::Pass | Kw::Break | Kw::Continue)) => {
+                return self.parse_bare_keyword(kw)
+            }
+            _ => self.expr_bp(0)?,
+        };
         let tok = self.current();
         // The statement's own `=` or compound operator, for chain errors.
         let mut first_op = None;
@@ -330,6 +745,38 @@ impl<'t, 's> Parser<'t, 's> {
             },
         };
         self.expect_stmt_end(&stmt, first_op)?;
+        Some(stmt)
+    }
+
+    /// `return` or `return value`, with `return` current.
+    fn parse_return(&mut self) -> Option<Stmt> {
+        let kw = self.bump();
+        let value = match self.peek() {
+            TokenKind::Newline | TokenKind::Eof | TokenKind::Dedent => None,
+            _ => Some(self.expr_bp(0)?),
+        };
+        let end = value.as_ref().map_or(kw.span, |v| v.span);
+        let stmt = Stmt {
+            span: kw.span.join(end),
+            kind: StmtKind::Return(value),
+        };
+        self.expect_stmt_end(&stmt, None)?;
+        Some(stmt)
+    }
+
+    /// `pass`, `break`, or `continue`, with the keyword current.
+    fn parse_bare_keyword(&mut self, kw: Kw) -> Option<Stmt> {
+        let tok = self.bump();
+        let kind = match kw {
+            Kw::Pass => StmtKind::Pass,
+            Kw::Break => StmtKind::Break,
+            _ => StmtKind::Continue,
+        };
+        let stmt = Stmt {
+            span: tok.span,
+            kind,
+        };
+        self.expect_stmt_end(&stmt, None)?;
         Some(stmt)
     }
 
@@ -401,15 +848,35 @@ impl<'t, 's> Parser<'t, 's> {
             kind if kind == TokenKind::Assign || compound_op(kind).is_some() => {
                 self.fail_assign_after(stmt, first_op, tok)
             }
+            _ if matches!(
+                stmt.kind,
+                StmtKind::Pass | StmtKind::Break | StmtKind::Continue
+            ) =>
+            {
+                let word = self.text(stmt.span);
+                self.errors.push(
+                    ParseError::new(
+                        format!(
+                            "expected end of line after `{word}`, found {}",
+                            self.describe(tok)
+                        ),
+                        tok.span,
+                    )
+                    .with_secondary(stmt.span, "this statement takes no value"),
+                );
+                None
+            }
             _ => {
                 let last = match &stmt.kind {
-                    StmtKind::Expr(e) => e,
+                    StmtKind::Expr(e) => e.span,
                     StmtKind::Assign { value, .. } | StmtKind::CompoundAssign { value, .. } => {
-                        value
+                        value.span
                     }
-                    StmtKind::Binding { ty, value, .. } => value.as_ref().unwrap_or(ty),
+                    StmtKind::Binding { ty, value, .. } => value.as_ref().unwrap_or(ty).span,
+                    // Simple statements only; block statements never get here.
+                    _ => stmt.span,
                 };
-                let err = self.unexpected_after(last.span, "end of line");
+                let err = self.unexpected_after(last, "end of line");
                 self.errors.push(err);
                 None
             }
@@ -449,6 +916,10 @@ impl<'t, 's> Parser<'t, 's> {
                     prev_comparison = None;
                     self.parse_bool_run(lhs, op, op_span, r_bp)?
                 }
+                Step::Conditional(if_span) => {
+                    prev_comparison = None;
+                    self.parse_conditional(lhs, if_span)?
+                }
                 Step::Inverse(op_span) => inverse(lhs, op_span),
                 Step::Attribute(name) => attribute(lhs, name),
                 Step::Call(open) => self.parse_call(lhs, open)?,
@@ -486,6 +957,19 @@ impl<'t, 's> Parser<'t, 's> {
             }
         }
         Some(bool_op(op, operands, op_spans))
+    }
+
+    /// `then if cond else else_` with `if` (`if_span`) already consumed and
+    /// counted. The condition is an `or` expression and the `else` arm may
+    /// be another conditional, so the operator is right-associative.
+    fn parse_conditional(&mut self, then: Expr, if_span: Span) -> Option<Expr> {
+        let cond = self.expr_bp(CONDITIONAL_COND_BP)?;
+        if self.peek() != TokenKind::Keyword(Kw::Else) {
+            return self.fail_missing_else(&then, &cond, if_span);
+        }
+        self.bump();
+        let else_ = self.expr_bp(CONDITIONAL_BP)?;
+        Some(conditional(then, cond, else_))
     }
 
     fn parse_call(&mut self, callee: Expr, open: Span) -> Option<Expr> {
@@ -528,6 +1012,14 @@ impl<'t, 's> Parser<'t, 's> {
                 // Unreachable by construction; report instead of panicking.
                 _ => self.fail_expected_expression(tok),
             };
+        }
+        if tok.kind == TokenKind::Keyword(Kw::If) {
+            if CONDITIONAL_BP < min_bp {
+                return Some(Step::Done);
+            }
+            self.bump();
+            self.enter(tok.span)?;
+            return Some(Step::Conditional(tok.span));
         }
         if let Some((op, l_bp, r_bp)) = bool_binding_power(tok.kind) {
             if l_bp < min_bp {
@@ -792,6 +1284,95 @@ impl<'t, 's> Parser<'t, 's> {
 
     #[cold]
     #[inline(never)]
+    fn fail_block_too_deep<T>(&mut self, header: Span) -> Option<T> {
+        self.errors.push(
+            ParseError::new(
+                format!("blocks are nested too deeply (the limit is {MAX_DEPTH} levels)"),
+                header,
+            )
+            .with_help("split the inner blocks into a function"),
+        );
+        None
+    }
+
+    /// The token after a block header is not `:`. Recovers past the header
+    /// and its block.
+    #[cold]
+    #[inline(never)]
+    fn fail_expected_colon<T>(&mut self, found: Token, header: Span, what: &str) -> Option<T> {
+        let mut err = ParseError::new(
+            format!("expected `:` after {what}, found {}", self.describe(found)),
+            found.span,
+        )
+        .with_secondary(header, format!("{what} starts here"));
+        err = match found.kind {
+            TokenKind::Assign => err.with_help("`=` assigns; to compare, write `==`"),
+            _ => err.with_help("end the header line with `:`"),
+        };
+        self.errors.push(err);
+        self.recover_header(header);
+        None
+    }
+
+    /// `:` and a newline, but no indented line after it. Nothing to skip:
+    /// the position is already on the next statement.
+    #[cold]
+    #[inline(never)]
+    fn fail_empty_block<T>(&mut self, colon: Span, what: &str) -> Option<T> {
+        self.errors.push(
+            ParseError::new(format!("expected an indented block after {what}"), colon)
+                .with_help("use `pass` for a block that does nothing"),
+        );
+        None
+    }
+
+    /// A malformed `def` header; `at` is the culprit and `context` the
+    /// span it should be read against, labelled `label`.
+    #[cold]
+    #[inline(never)]
+    fn fail_def<T>(&mut self, message: String, at: Span, context: Span, label: &str) -> Option<T> {
+        self.errors
+            .push(ParseError::new(message, at).with_secondary(context, label));
+        None
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn fail_default_value<T>(&mut self, param: Span) -> Option<T> {
+        let eq = self.current();
+        self.errors.push(
+            ParseError::new("default parameter values are not supported yet", eq.span)
+                .with_secondary(param, "this parameter")
+                .with_help("pass the value at every call"),
+        );
+        None
+    }
+
+    /// `a if c` with no `else` after the condition.
+    #[cold]
+    #[inline(never)]
+    fn fail_missing_else<T>(&mut self, then: &Expr, cond: &Expr, if_span: Span) -> Option<T> {
+        let tok = self.current();
+        let then_text = self.text(then.span);
+        let cond_text = self.text(cond.span);
+        self.errors.push(
+            ParseError::new(
+                format!(
+                    "expected `else` in the conditional expression, found {}",
+                    self.describe(tok)
+                ),
+                tok.span,
+            )
+            .with_secondary(if_span, "this `if` needs an `else`")
+            .with_help(format!(
+                "a conditional expression has two arms: `{then_text} if {cond_text} else ...`"
+            )),
+        );
+        None
+    }
+
+    #[cold]
+    #[inline(never)]
     fn fail_double_star<T>(&mut self, span: Span) -> Option<T> {
         self.errors.push(
             ParseError::new("`**` is not an operator", span).with_help("Sky writes powers as `^`"),
@@ -958,17 +1539,39 @@ impl<'t, 's> Parser<'t, 's> {
     #[inline(never)]
     fn fail_expected_expression<T>(&mut self, tok: Token) -> Option<T> {
         let message = match tok.kind {
-            TokenKind::Keyword(kw @ (Kw::And | Kw::Or)) => format!(
-                "expected an expression, found keyword `{}`",
-                kw.as_str()
-            ),
-            TokenKind::Keyword(kw) => format!(
-                "expected an expression, found keyword `{}`; statements and blocks are not supported by the parser yet",
-                kw.as_str()
-            ),
+            TokenKind::Keyword(kw @ (Kw::And | Kw::Or)) => {
+                format!("expected an expression, found keyword `{}`", kw.as_str())
+            }
+            TokenKind::Keyword(kw) => {
+                format!("expected an expression, found keyword `{}`", kw.as_str())
+            }
             _ => format!("expected an expression, found {}", self.describe(tok)),
         };
-        self.errors.push(ParseError::new(message, tok.span));
+        let mut err = ParseError::new(message, tok.span);
+        if let TokenKind::Keyword(kw) = tok.kind {
+            match kw {
+                Kw::If => {
+                    err = err.with_help(
+                        "for a value that depends on a condition, write `a if cond else b`",
+                    );
+                }
+                Kw::And | Kw::Or | Kw::Not | Kw::True | Kw::False => {}
+                Kw::Equation | Kw::Solve | Kw::Field => {
+                    err = err.with_help("this word is reserved for a future version");
+                }
+                Kw::In => {
+                    err = err
+                        .with_help("`in` only appears in `for` loops, which are not supported yet")
+                }
+                _ => {
+                    err = err.with_help(format!(
+                        "`{}` starts a statement, so it cannot be part of an expression",
+                        kw.as_str()
+                    ));
+                }
+            }
+        }
+        self.errors.push(err);
         None
     }
 
@@ -1403,6 +2006,8 @@ enum Step {
         op_span: Span,
         r_bp: u8,
     },
+    /// The `if` of `a if c else b`, already consumed.
+    Conditional(Span),
     Inverse(Span),
     Attribute(Ident),
     /// Holds the span of the opening `(` or `[`, already consumed.
@@ -1423,6 +2028,29 @@ fn binary(op: BinaryOp, op_span: Span, lhs: Expr, rhs: Expr) -> Expr {
             rhs: Box::new(rhs),
         },
     }
+}
+
+#[inline(never)]
+fn conditional(then: Expr, cond: Expr, else_: Expr) -> Expr {
+    Expr {
+        span: then.span.join(else_.span),
+        kind: ExprKind::IfElse {
+            then: Box::new(then),
+            cond: Box::new(cond),
+            else_: Box::new(else_),
+        },
+    }
+}
+
+/// A block from its statements. `at` (the `Indent`, or the block's
+/// header) is the span of a block whose statements all failed to parse.
+#[inline(never)]
+fn block(stmts: Vec<Stmt>, at: Span) -> Block {
+    let span = match (stmts.first(), stmts.last()) {
+        (Some(a), Some(b)) => a.span.join(b.span),
+        _ => at,
+    };
+    Block { stmts, span }
 }
 
 #[inline(never)]

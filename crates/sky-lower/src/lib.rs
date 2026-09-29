@@ -62,6 +62,10 @@
 //!   arm (below).
 //! * `and`/`or` are a running Bool updated by sibling `if`s, one per
 //!   operand (below); `a if c else b` is an `if` with a result.
+//! * `for i in range(a, b, s)` is that `while` over a hidden carried index
+//!   (`<i1>`, `<i2>`, ...) that the body's first operations copy into `i`
+//!   and advance; see `for_loop.rs`. `for x in v` over an array is a
+//!   [`LowerError`] until SIR has array values.
 //!
 //! # Flat chains
 //!
@@ -97,13 +101,6 @@
 //! that gates a loop's condition or an `elif` condition. `tests/depth.rs`
 //! checks the bound on generated programs, and the chain tests in
 //! `tests/robustness.rs` lower chains of thousands.
-//! * `for i in range(a, b, s)` is that `while` over a hidden carried index
-//!   (`<i1>`, `<i2>`, ...) that the body's first operations copy into `i`
-//!   and advance; see `for_loop.rs`. `for x in v` over an array is a
-//!   [`LowerError`] until SIR has array values.
-//! * `and`/`or` are nested `if`s, so the right operand runs only when the
-//!   left does not decide the result; `a if c else b` is an `if` with a
-//!   result.
 //!
 //! # `break`, `continue` and early `return`
 //!

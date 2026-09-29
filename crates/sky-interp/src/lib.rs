@@ -51,8 +51,9 @@ mod value;
 #[cfg(test)]
 mod array_tests;
 #[cfg(test)]
-mod show_tests;
 mod for_tests;
+#[cfg(test)]
+mod show_tests;
 #[cfg(test)]
 mod tests;
 

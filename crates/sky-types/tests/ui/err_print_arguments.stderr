@@ -1,0 +1,18 @@
+crates/sky-types/tests/ui/err_print_arguments.sky:1:7: error: cannot find `nope` in this scope
+  |
+1 | print(nope)
+  |       ^^^^ not defined
+
+crates/sky-types/tests/ui/err_print_arguments.sky:2:11: error: cannot add length and time
+  |
+2 | print(1 m + 1 s)
+  |           ^ mismatched dimensions
+  |       --- length
+  |             --- time
+  = note: both operands of `+` must have the same dimension
+  = help: convert one side, or fix the unit
+
+crates/sky-types/tests/ui/err_print_arguments.sky:3:1: error: cannot find `print` in this scope
+  |
+3 | print
+  | ^^^^^ not defined

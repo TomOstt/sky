@@ -4,8 +4,8 @@
 //! number literals with units, names and their bindings, the arithmetic and
 //! comparison operators, `@`, postfix `⁻¹` (and `inv(x)`), `^`, the Bool
 //! literals `true`/`false`, and `and`/`or`/`not` (strict Bool operands, no
-//! truthiness, per the spec's "Booleans and conditions"). Anything
-//! else (strings, other calls, indexing, attributes, `∂`, `∇`) is typed as
+//! truthiness, per the spec's "Booleans and conditions"), and the builtin
+//! `print(...)` call. Anything else (strings, other calls, indexing, attributes, `∂`, `∇`) is typed as
 //! [`Ty::Unknown`] without a diagnostic, and an operator with an unknown
 //! operand is unknown too, so one error never cascades.
 //!
@@ -831,6 +831,13 @@ impl<'s> Checker<'s> {
                     let t = self.expr(arg);
                     return self.invert(t, callee.span, arg.span);
                 }
+                if self.is_print(callee) {
+                    // The builtin: any arguments, no result to use.
+                    for a in args {
+                        self.expr(a);
+                    }
+                    return Ty::Unknown;
+                }
                 self.expr(callee);
                 for a in args {
                     self.expr(a);
@@ -873,6 +880,14 @@ impl<'s> Checker<'s> {
             }
             _ => None,
         }
+    }
+
+    /// The builtin `print(...)`: callee `print` while the program has not
+    /// bound that name itself (a user's own `print` shadows it, as with
+    /// `inv`). Without this the callee would be an undefined name.
+    fn is_print(&self, callee: &Expr) -> bool {
+        matches!(&callee.kind, ExprKind::Name(id)
+            if self.ident(id) == "print" && self.env.get("print").is_none())
     }
 
     fn unit(&mut self, u: &UnitExpr) -> Option<Dimension> {

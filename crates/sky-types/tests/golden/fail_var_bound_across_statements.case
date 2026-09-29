@@ -1,0 +1,3 @@
+# Once N = 3, a later constraint N = 4 fails.
+unify Vector[N] with Vector[3]
+unify Vector[N] with Vector[4]

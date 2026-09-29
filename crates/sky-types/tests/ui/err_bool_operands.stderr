@@ -33,9 +33,9 @@ crates/sky-types/tests/ui/err_bool_operands.sky:7:5: error: `and` needs a Bool o
   = note: v0.1 has no truthiness
   = note: a condition must be a single value
 
-crates/sky-types/tests/ui/err_bool_operands.sky:8:9: error: `not` needs a Bool operand, found Scalar [L·M·T⁻²]
+crates/sky-types/tests/ui/err_bool_operands.sky:8:9: error: `not` needs a Bool operand, found Scalar [L·M·T⁻¹]
   |
-8 | e = not (3 kg*m/s^2)
-  |         ^^^^^^^^^^^^ not a Bool
+8 | e = not (3 kg*m/s)
+  |         ^^^^^^^^^^ not a Bool
   = note: v0.1 has no truthiness
-  = help: compare it instead, e.g. `(3 kg*m/s^2) != 0 kg*m/s^2`
+  = help: compare it instead, e.g. `(3 kg*m/s) != 0 kg*m/s`

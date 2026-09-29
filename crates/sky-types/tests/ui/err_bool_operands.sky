@@ -5,4 +5,4 @@ a = x and true
 b = not x
 c = true or (v @ v) or 1
 d = v and true
-e = not (3 kg*m/s^2)
+e = not (3 kg*m/s)

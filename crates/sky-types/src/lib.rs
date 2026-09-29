@@ -2,7 +2,7 @@
 //!
 //! This crate is pure: no I/O, no evaluation of user code, and no panics on
 //! checker-facing paths (every fallible operation returns `Result`). The parts
-//! here do not depend on the AST yet:
+//! here are AST-free (the checker walk over `sky-ast` comes in #19):
 //!
 //! * [`shape`]: symbolic shapes ([`Shape`], [`ShapeDim`]) and equality-only
 //!   unification ([`ShapeUnifier`]). There is no dimension arithmetic such as

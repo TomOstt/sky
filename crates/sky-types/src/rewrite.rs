@@ -14,10 +14,10 @@ use crate::tags::Tag;
 /// The syntactic form of the left operand of `@`, as the checker sees it.
 #[derive(Clone, Copy, Debug)]
 pub enum MatmulLhs<'a> {
-    /// The explicit inverse operator applied to an operand (`A⁻¹`, or its
-    /// ASCII spelling). This is the only form eligible for the rewrite.
+    /// The explicit inverse applied to an operand (`A⁻¹`, or `inv(A)`). This
+    /// is the only form eligible for the rewrite.
     Inverse(&'a TensorType),
-    /// A power such as `A ** -1`. Never rewritten, even when the exponent is -1.
+    /// A power such as `A^-1`. Never rewritten, even when the exponent is -1.
     Power {
         /// The base's type.
         base: &'a TensorType,

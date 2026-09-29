@@ -3,8 +3,8 @@
 
 use proptest::prelude::*;
 use sky_types::{
-    inverse, matmul, matmul_tags, preserved_by_inverse, preserved_by_transpose, Shape, ShapeDim,
-    ShapeUnifier, ShapeVar, Tag, TagSet, TensorType,
+    elementwise, inverse, matmul, matmul_tags, preserved_by_inverse, preserved_by_transpose, Shape,
+    ShapeDim, ShapeUnifier, ShapeVar, Tag, TagSet, TensorType,
 };
 
 fn tag_set() -> impl Strategy<Value = TagSet> {
@@ -117,6 +117,19 @@ proptest! {
         prop_assert!(!m.contains(Tag::PositiveDefinite));
         // ... and claims Symmetric only as a consequence of Diagonal.
         prop_assert!(!m.contains(Tag::Symmetric) || m.contains(Tag::Diagonal));
+
+        // Elementwise ops (`+`, `-`, ...) claim no tags at all, whatever the
+        // operands carry: e.g. `P - P` is the zero matrix, not PD.
+        let mut u = ShapeUnifier::new();
+        let sq = Shape::matrix(3u64, 3u64);
+        let ta = TensorType::tagged(&mut u, sq.clone(), a).unwrap();
+        let tb = TensorType::tagged(&mut u, sq, b).unwrap();
+        for (l, r) in [(&ta, &tb), (&tb, &ta), (&ta, &ta)] {
+            let e = elementwise(&mut u, l, r).unwrap();
+            prop_assert!(e.tags().is_closed());
+            prop_assert!(l.tags().join(r.tags()).is_subtag_of(e.tags()));
+            prop_assert!(e.tags().is_empty(), "elementwise kept {}", e.tags());
+        }
     }
 
     /// After any sequence of unifications, every successful one still holds,

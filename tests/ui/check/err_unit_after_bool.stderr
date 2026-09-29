@@ -1,0 +1,6 @@
+tests/ui/check/err_unit_after_bool.sky:2:13: error: unexpected name `m` after an expression; a unit may only follow a numeric literal
+  |
+2 | done = true m
+  |             ^
+  |        ---- this is not a numeric literal
+  = help: write a unit right after a number (`10 m`), or multiply explicitly (`... * m`)

@@ -1,0 +1,4 @@
+tests/ui/check/err_while_not_supported_yet.sky:4:7: error: expected end of line, found keyword `not`
+  |
+4 | while not done: done = true
+  |       ^^^

@@ -1,0 +1,4 @@
+# KNOWN GAP: the parser does not support `while` yet. This golden flips to a
+# clean check (`ok`) when `while` lands; re-bless it then.
+done = false
+while not done: done = true

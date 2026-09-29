@@ -139,6 +139,10 @@ pub fn matmul(
 /// tags. That is conservative: some tags survive some operators (a sum of
 /// symmetric matrices is symmetric), but v0.1 claims none. The tags are
 /// [`tag_result`]`(`[`TagOp::Elementwise`]`, ..)`.
+///
+/// On error the unifier is unchanged; on success the bindings are committed,
+/// so a caller with a further check to make (the checker compares element
+/// dimensions afterwards) must pass a copy and keep it only if that passes.
 pub fn elementwise(
     u: &mut ShapeUnifier,
     lhs: &TensorType,

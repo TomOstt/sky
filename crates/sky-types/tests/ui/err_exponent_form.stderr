@@ -1,0 +1,5 @@
+crates/sky-types/tests/ui/err_exponent_form.sky:2:11: error: the exponent must be a constant number when the base has a unit
+  |
+2 | a = (4 m)^1e-1
+  |           ^^^^
+  |     ----- this is length

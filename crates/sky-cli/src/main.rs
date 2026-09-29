@@ -8,6 +8,22 @@ use sky_project::SystemIdentity;
 
 const USAGE: &str = "usage: sky check [--explain] <file.sky>\n       sky <run|repl> [file]";
 
+/// The `sky` command line.
+///
+/// # Exit status
+///
+/// The one place the exit codes are defined (the README repeats it):
+///
+/// * `0`: ok. `sky check` found no error (warnings alone do not fail it).
+/// * `1`: diagnostics with at least one error, whatever the phase: a lexer,
+///   parser or checker error, or a refused project root (a `sky.toml` that
+///   is a link, foreign-owned or world-writable). Also `sky run` and
+///   `sky repl`, which are not implemented yet.
+/// * `2`: a usage error (unknown command, wrong arguments), or an input that
+///   cannot be read (missing, not a regular file, too large, not UTF-8).
+///
+/// So `2` means "the check did not run on your source" and `1` means "it ran
+/// and rejected it". (A Rust panic would exit 101; that is a bug.)
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {

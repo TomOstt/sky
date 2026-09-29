@@ -54,12 +54,12 @@ use sky_ast::{
 use sky_diag::{Diagnostic, Severity, Span};
 use sky_units::{lookup, Dimension, Rational};
 
-use crate::quote::quote;
 use crate::rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 use crate::rules::{elementwise, inverse, matmul, TensorType};
 use crate::scale::{negated_tags, scaled_tags};
 use crate::shape::{Shape, ShapeDim, ShapeError, ShapeUnifier, ShapeVar};
 use crate::tags::TagSet;
+use sky_diag::display_capped as quote;
 
 /// The type of a numeric value: element dimension plus shape and tags.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -301,6 +301,25 @@ fn describe(d: &Dimension) -> String {
         Some(n) => n.to_string(),
         None => d.to_string(),
     }
+}
+
+/// The exact value of a decimal literal's source text, `INT.FRAC`, as a
+/// reduced [`Rational`]: `0.5` is 1/2, `1.5` is 3/2, `2.0` is 2. Never goes
+/// through `f64`, so `0.1` is exactly 1/10. `None` for an exponent form
+/// (`1e-1`), separators, or a numerator or denominator that does not fit in
+/// `i64`: the caller reports "must be a constant number".
+fn exact_decimal(text: &str) -> Option<Rational> {
+    let (int, frac) = text.split_once('.')?;
+    // Trailing zeros carry no value (`2.500` is `2.5`), and dropping them
+    // keeps a long but harmless literal from overflowing the denominator.
+    let frac = frac.trim_end_matches('0');
+    let all_numeric = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
+    if int.is_empty() || !all_numeric(int) || !all_numeric(frac) {
+        return None;
+    }
+    let num: i64 = format!("{int}{frac}").parse().ok()?;
+    let den = 10i64.checked_pow(u32::try_from(frac.len()).ok()?)?;
+    Rational::checked_new(num, den).ok()
 }
 
 fn rank_noun(rank: usize) -> String {
@@ -1041,10 +1060,13 @@ impl<'s> Checker<'s> {
         }
     }
 
-    /// A constant exponent: an integer literal, possibly negated or
-    /// parenthesized, or a quotient of two such (`(1/2)`).
+    /// A constant exponent: an integer or decimal literal, possibly negated
+    /// or parenthesized, or a quotient of two such (`(1/2)`). A decimal
+    /// literal is read from its source text as the exact fraction it spells
+    /// (`0.5` is 1/2); see [`exact_decimal`].
     fn const_exponent(&self, e: &Expr) -> Option<Rational> {
         match &e.kind {
+            ExprKind::Literal(Literal::Float(span)) => exact_decimal(self.text(*span)),
             ExprKind::Literal(Literal::Int(span)) => {
                 self.text(*span).parse::<i64>().ok().map(Rational::integer)
             }
@@ -1241,7 +1263,18 @@ impl<'s> Checker<'s> {
         match (lv.is_scalar(), rv.is_scalar()) {
             (true, true) => {}
             (false, false) => {
-                if let Err(e) = elementwise(&mut self.env.shapes, &lv.ty, &rv.ty) {
+                // Shape variables are solved only if the whole operation
+                // type-checks. When the dimensions differ the operation fails
+                // below (after the shape error, which has priority), so probe
+                // on a copy then; otherwise commit.
+                let mut probe;
+                let shapes = if lv.dim == rv.dim {
+                    &mut self.env.shapes
+                } else {
+                    probe = self.env.shapes.clone();
+                    &mut probe
+                };
+                if let Err(e) = elementwise(shapes, &lv.ty, &rv.ty) {
                     let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
                     self.error(
                         Diagnostic::error(e.to_string(), op_span)
@@ -1504,6 +1537,56 @@ mod tests {
         env.bind_array("b", Shape::vector(3u64), TagSet::EMPTY, Dimension::LENGTH)
             .unwrap();
         env
+    }
+
+    #[test]
+    fn decimal_exponents_are_exact_fractions() {
+        for (text, num, den) in [
+            ("0.5", 1, 2),
+            ("1.5", 3, 2),
+            ("0.25", 1, 4),
+            ("2.0", 2, 1),
+            ("2.500", 5, 2),
+            ("0.1", 1, 10),
+            ("10.0", 10, 1),
+            ("0.0", 0, 1),
+            ("9223372036854775807.0", i64::MAX, 1),
+            ("0.000000000000000000", 0, 1),
+        ] {
+            assert_eq!(exact_decimal(text), Some(Rational::new(num, den)), "{text}");
+        }
+        for text in [
+            "1e-1",
+            "1.5e3",
+            "1e5",
+            "1_0.5",
+            "0.5_5",
+            "9223372036854775808.0", // does not fit i64
+            "0.0000000000000000001", // denominator 10^19 does not fit i64
+            "1.0000000000000000001",
+            "5",
+            ".5",
+            "-0.5",
+        ] {
+            assert_eq!(exact_decimal(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn decimal_exponent_powers_a_unit() {
+        let c = check_src("x = (9 m)^0.5\ny = (8 m)^1e-1\n", Env::new());
+        let msgs: Vec<_> = c.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(
+            msgs,
+            ["the exponent must be a constant number when the base has a unit"]
+        );
+        let Some(Ty::Value(x)) = c.env.get("x") else {
+            panic!("x is a value");
+        };
+        assert_eq!(
+            x.dim,
+            Dimension::LENGTH.pow_rat(Rational::new(1, 2)).unwrap()
+        );
     }
 
     #[test]

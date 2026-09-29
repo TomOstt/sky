@@ -47,7 +47,9 @@ jobs:
         with:
           tool: cargo-fuzz
       # Short smoke run on every PR: 60 seconds from the seed corpus.
-      - run: cargo +nightly fuzz run lex -- -max_total_time=60
+      # --target is explicit because the prebuilt cargo-fuzz is a musl binary
+      # and would otherwise default to the musl target, which ASan rejects.
+      - run: cargo +nightly fuzz run lex --target x86_64-unknown-linux-gnu -- -max_total_time=60
       - if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

@@ -272,22 +272,23 @@ fn annotated_binding_binds_its_value() {
     let mut env = RuntimeEnv::new();
     run_in(&mut env, "a: Vector[3] = 1\n").unwrap();
     assert_eq!(env.get("a"), Some(&Value::scalar(1.0)));
-    // A declaration without a value would be an array.
+    // A declaration without a value is an input nothing supplies.
     let e = run_in(&mut env, "A: Matrix[3, 3]\n").unwrap_err();
-    assert_eq!(e.message, "arrays are not supported by the interpreter yet");
+    assert_eq!(e.message, "`A` is declared but has no value");
 }
 
 #[test]
-fn arrays_are_a_runtime_error_not_a_panic() {
-    let want = "arrays are not supported by the interpreter yet";
-    assert_eq!(err("x = 1\nx[0]").message, want);
+fn indexing_a_non_array_is_a_runtime_error_not_a_panic() {
+    assert_eq!(err("x = 1\nx[0]").message, "cannot index a number");
     let mut env = RuntimeEnv::new();
     run_in(&mut env, "A = 2\n").unwrap();
-    assert_eq!(run_in(&mut env, "A[0, :]\n").unwrap_err().message, want);
-    assert_eq!(run_in(&mut env, "A @ A\n").unwrap_err().message, want);
     assert_eq!(
-        run_in(&mut env, "Matrix[3, 3]\n").unwrap_err().message,
-        want
+        run_in(&mut env, "A[0, :]\n").unwrap_err().message,
+        "cannot index a number"
+    );
+    assert_eq!(
+        run_in(&mut env, "A @ A\n").unwrap_err().message,
+        "`@` needs two arrays, found a number and a number"
     );
 }
 

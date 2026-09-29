@@ -13,10 +13,20 @@ pub enum Value {
     /// A number in SI with its dimension. Always finite. Dimensionless
     /// numbers use [`Dimension::DIMENSIONLESS`].
     ///
-    /// Arrays will be a sibling variant holding the element dimension and a
-    /// shape; this is the rank-0 case.
+    /// Arrays are the sibling variant [`Value::Array`]; this is the rank-0
+    /// case.
     Number {
         value: f64,
+        dim: Dimension,
+    },
+    /// A vector (one entry in `dims`) or matrix (two) of numbers that share
+    /// one dimension, row-major: entry `(i, j)` of an `m` by `n` matrix is
+    /// `data[i * n + j]`. Every entry is finite, `data.len()` is the product
+    /// of `dims`, and no axis is empty. Arrays are immutable values (v0.1
+    /// has no element writes). Build one with [`Value::array`].
+    Array {
+        dims: Vec<usize>,
+        data: Vec<f64>,
         dim: Dimension,
     },
     Bool(bool),
@@ -43,6 +53,17 @@ impl Value {
         Value::Number { value, dim }
     }
 
+    /// An array of shape `dims` (rank 1 or 2) holding `data` row-major. The
+    /// caller upholds the invariants on [`Value::Array`]; they are only
+    /// checked in debug builds.
+    pub fn array(dims: Vec<usize>, data: Vec<f64>, dim: Dimension) -> Self {
+        debug_assert!((1..=2).contains(&dims.len()));
+        debug_assert!(dims.iter().all(|&d| d > 0));
+        debug_assert_eq!(dims.iter().product::<usize>(), data.len());
+        debug_assert!(data.iter().all(|x| x.is_finite()));
+        Value::Array { dims, data, dim }
+    }
+
     /// A dimensionless number.
     pub fn scalar(value: f64) -> Self {
         Value::Number {
@@ -55,6 +76,8 @@ impl Value {
     pub fn kind(&self) -> &'static str {
         match self {
             Value::Number { .. } => "a number",
+            Value::Array { dims, .. } if dims.len() == 1 => "a vector",
+            Value::Array { .. } => "a matrix",
             Value::Bool(_) => "a Bool",
             Value::Str(_) => "a string",
             Value::None => "none",
@@ -83,6 +106,40 @@ impl fmt::Display for Value {
                     Some(u) => write!(f, " {u}"),
                     None => Ok(()),
                 }
+            }
+            Value::Array { dims, data, dim } => {
+                // Every entry is written with the unit, so the text is
+                // valid Sky: `[1 m, 2 m]`, `[[1, 2], [3, 4]]`.
+                let unit = si_unit(dim);
+                let entry = |f: &mut fmt::Formatter<'_>, x: f64| -> fmt::Result {
+                    f.write_str(&format_number(x))?;
+                    match &unit {
+                        Some(u) => write!(f, " {u}"),
+                        None => Ok(()),
+                    }
+                };
+                let cols = dims.last().copied().unwrap_or(1).max(1);
+                let write_row = |f: &mut fmt::Formatter<'_>, row: &[f64]| -> fmt::Result {
+                    f.write_char('[')?;
+                    for (j, &x) in row.iter().enumerate() {
+                        if j > 0 {
+                            f.write_str(", ")?;
+                        }
+                        entry(f, x)?;
+                    }
+                    f.write_char(']')
+                };
+                if dims.len() == 1 {
+                    return write_row(f, data);
+                }
+                f.write_char('[')?;
+                for (i, row) in data.chunks(cols).enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write_row(f, row)?;
+                }
+                f.write_char(']')
             }
             Value::Bool(b) => f.write_str(if *b { "true" } else { "false" }),
             Value::Str(s) => {

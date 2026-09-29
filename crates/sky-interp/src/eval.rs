@@ -4,24 +4,26 @@
 //! are exhaustive on purpose (no `_ =>` arms), so a node another change adds
 //! to the AST fails to compile here instead of being silently ignored.
 
+use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
-
-use sky_ast::ast::span_text;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use sky_ast::ast::span_text;
+
 use sky_ast::{
-    AssignTarget, BinaryOp, Block, BoolOp, Expr, ExprKind, Literal, Module, Stmt, StmtKind,
-    UnaryOp, UnitExpr,
+    AssignTarget, BinaryOp, Block, BoolOp, Expr, ExprKind, IndexItem, Literal, Module, Stmt,
+    StmtKind, UnaryOp, UnitExpr,
 };
 use sky_diag::Span;
 use sky_syntax::lexer::unescape_str;
-use sky_units::{lookup, Dimension, Rational};
+use sky_types::{NumberError, UnitError};
+use sky_units::Dimension;
 
 use crate::arith::{
-    arith, arity_mismatch, arrays_unsupported, equal, expect_bool, order, overflow, pow,
-    reciprocal, recursion_too_deep, sign, ArithOp, StackMeter, MAX_CALL_DEPTH, R,
+    arith, arity_mismatch, equal, expect_bool, order, overflow, pow, reciprocal,
+    recursion_too_deep, sign, ArithOp, StackMeter, MAX_CALL_DEPTH, R,
 };
+use crate::array::{self, Ix};
 use crate::value::Function;
 use crate::{RuntimeEnv, RuntimeError, Value};
 
@@ -47,10 +49,28 @@ pub fn run_module<W: Write>(
     env: &mut RuntimeEnv,
     out: &mut W,
 ) -> Result<Option<Value>, RuntimeError> {
+    run_module_with(module, src, env, out, &HashSet::new())
+}
+
+/// Like [`run_module`], and honours the checker's rewrites: `solves` is
+/// `Checked::cholesky_solves`, the span of every `A⁻¹ @ b` the checker
+/// decided to rewrite to a Cholesky solve (its `A` is PositiveDefinite). At
+/// such a span the interpreter factors `A` and solves for `b` instead of
+/// forming `A⁻¹`. The spans must come from checking this same `src`. With an
+/// empty set the program still runs, computing the inverse and multiplying,
+/// which gives the same answer up to rounding.
+pub fn run_module_with<W: Write>(
+    module: &Module,
+    src: &str,
+    env: &mut RuntimeEnv,
+    out: &mut W,
+    solves: &HashSet<Span>,
+) -> Result<Option<Value>, RuntimeError> {
     let mut it = Interp {
         src,
         env,
         out,
+        solves,
         frames: Vec::new(),
         stack: StackMeter::new(),
     };
@@ -71,6 +91,8 @@ struct Interp<'a> {
     /// Module-level names.
     env: &'a mut RuntimeEnv,
     out: &'a mut dyn Write,
+    /// The `A⁻¹ @ b` sites to solve by Cholesky; see [`run_module_with`].
+    solves: &'a HashSet<Span>,
     /// The local variables of each active user-function call, innermost
     /// last. Inside a call, names are read from its frame and then from the
     /// module (Python's rule); assignments go to the frame.
@@ -218,9 +240,16 @@ impl<'a> Interp<'a> {
                     self.assign(name, v);
                     Ok(Flow::Normal(None))
                 }
-                // A declaration without a value only makes sense for an
-                // array (the annotation is a shape).
-                None => Err(arrays_unsupported(s.span)),
+                // A declaration without a value is an input: the checker
+                // takes its shape, tags and unit on trust, and nothing in
+                // v0.1 supplies one.
+                None => Err(RuntimeError::new(
+                    format!("`{}` is declared but has no value", self.text(name.span)),
+                    s.span,
+                )
+                .with_label("an input with nothing to read it from")
+                .with_note("a declaration without a value only gives the checker a type")
+                .with_help("give it a value: `name: type = value`")),
             },
         }
     }
@@ -295,7 +324,7 @@ impl<'a> Interp<'a> {
                     let r = self.eval(rhs)?;
                     self.binary_values(*op, l, r, e.span, lhs.span, rhs)
                 }
-                BinaryOp::MatMul => Err(arrays_unsupported(e.span)),
+                BinaryOp::MatMul => self.matmul(e, lhs, rhs),
             },
             ExprKind::BoolOp { op, operands, .. } => {
                 // The operand that settles the result: `false` for `and`,
@@ -320,7 +349,8 @@ impl<'a> Interp<'a> {
                 self.reciprocal("⁻¹", v, e.span, operand.span)
             }
             ExprKind::Call { callee, args } => self.call(e, callee, args),
-            ExprKind::Array(_) | ExprKind::Index { .. } => Err(arrays_unsupported(e.span)),
+            ExprKind::Array(elems) => self.array_literal(e, elems),
+            ExprKind::Index { base, items } => self.index(e, base, items),
             ExprKind::Attribute { base: _, name } => Err(RuntimeError::new(
                 format!(
                     "attribute `{}` is not supported by the interpreter yet",
@@ -347,61 +377,25 @@ impl<'a> Interp<'a> {
 
     /// Reads a numeric literal's text (`1_000`, `2.5e-3`) as an `f64`.
     fn number(&self, span: Span) -> R<f64> {
-        let text = self.text(span).replace('_', "");
-        match text.parse::<f64>() {
-            Ok(x) if x.is_finite() => Ok(x),
-            Ok(_) => Err(RuntimeError::new("number too large", span)
+        match sky_types::parse_number(self.text(span)) {
+            Ok(x) => Ok(x),
+            Err(NumberError::TooLarge) => Err(RuntimeError::new("number too large", span)
                 .with_label("does not fit in a 64-bit float")
                 .with_note("the largest Sky number is about 1.8e308")),
-            Err(_) => Err(RuntimeError::new("invalid number", span)),
+            Err(NumberError::Invalid) => Err(RuntimeError::new("invalid number", span)),
         }
     }
 
-    /// Applies unit `u` to the value `v`, factor by factor: `36 km/h` is
-    /// `36 * 1000 / 3600`, which is exactly 10, where multiplying by a
-    /// precomputed `1000/3600` would not be. A single unit is `v * scale`,
-    /// as the spec says. Returns the SI value and the dimension.
+    /// Applies unit `u` to the value `v`, factor by factor, as the checker
+    /// does when it proves properties of a literal (`sky_types::apply_unit`
+    /// is the one definition). Returns the SI value and the dimension.
     fn apply_unit(&self, u: &UnitExpr, v: f64) -> R<(f64, Dimension)> {
-        let overflow_dim = || RuntimeError::new("dimension exponent too large", u.span());
-        match u {
-            UnitExpr::Name(id) => {
-                let name = self.text(id.span);
-                match lookup(name) {
-                    Some(unit) => Ok((v * unit.scale, unit.dim)),
-                    None => Err(RuntimeError::new(format!("unknown unit `{name}`"), id.span)),
-                }
+        sky_types::apply_unit(self.src, u, v).map_err(|e| match e {
+            UnitError::Unknown(span) => {
+                RuntimeError::new(format!("unknown unit `{}`", self.text(span)), span)
             }
-            UnitExpr::Mul { lhs, rhs, .. } => {
-                let (v, d1) = self.apply_unit(lhs, v)?;
-                let (v, d2) = self.apply_unit(rhs, v)?;
-                Ok((v, d1.checked_mul(d2).map_err(|_| overflow_dim())?))
-            }
-            UnitExpr::Div { lhs, rhs, .. } => {
-                let (v, d1) = self.apply_unit(lhs, v)?;
-                let (scale, d2) = self.apply_unit(rhs, 1.0)?;
-                Ok((v / scale, d1.checked_div(d2).map_err(|_| overflow_dim())?))
-            }
-            UnitExpr::Pow { base, num, den, .. } => {
-                let (scale, d) = self.apply_unit(base, 1.0)?;
-                let exp = i64::try_from(*den)
-                    .ok()
-                    .and_then(|den| Rational::checked_new(*num, den).ok())
-                    .ok_or_else(overflow_dim)?;
-                let dim = d.pow_rat(exp).map_err(|_| overflow_dim())?;
-                let factor = if *den == 1 {
-                    // Integer exponent: multiply or divide, `s^-2` is `/ s^2`.
-                    let k = i32::try_from(num.unsigned_abs()).map_err(|_| overflow_dim())?;
-                    let p = scale.powi(k);
-                    if *num < 0 {
-                        return Ok((v / p, dim));
-                    }
-                    p
-                } else {
-                    scale.powf(*num as f64 / *den as f64)
-                };
-                Ok((v * factor, dim))
-            }
-        }
+            UnitError::Exponent(span) => RuntimeError::new("dimension exponent too large", span),
+        })
     }
 
     fn call(&mut self, call: &Expr, callee: &Expr, args: &[Expr]) -> R<Value> {
@@ -414,6 +408,7 @@ impl<'a> Interp<'a> {
                 match name {
                     "print" => return self.print(args),
                     "inv" => return self.inv(call, args),
+                    "zeros" | "identity" | "len" => return self.array_builtin(name, call, args),
                     _ => {}
                 }
             }
@@ -424,6 +419,123 @@ impl<'a> Interp<'a> {
                 RuntimeError::new(format!("cannot call {}", other.kind()), callee.span)
                     .with_label("not a function"),
             ),
+        }
+    }
+
+    /// `[a, b]` or `[[a, b], [c, d]]`: entries are evaluated left to right,
+    /// row by row. A matrix is a literal whose elements are all literals.
+    fn array_literal(&mut self, e: &Expr, elems: &[Expr]) -> R<Value> {
+        let matrix = elems.iter().all(|x| matches!(x.kind, ExprKind::Array(_)));
+        let mut rows = Vec::new();
+        if matrix {
+            for row in elems {
+                let ExprKind::Array(items) = &row.kind else {
+                    continue;
+                };
+                rows.push(self.entries(items)?);
+            }
+        } else {
+            rows.push(self.entries(elems)?);
+        }
+        array::literal(rows, !matrix, e.span)
+    }
+
+    fn entries(&mut self, items: &[Expr]) -> R<Vec<(Value, Span)>> {
+        items
+            .iter()
+            .map(|x| Ok((self.eval(x)?, x.span)))
+            .collect::<R<Vec<_>>>()
+    }
+
+    /// `base[items]`, reading only.
+    fn index(&mut self, e: &Expr, base: &Expr, items: &[IndexItem]) -> R<Value> {
+        let b = self.eval(base)?;
+        let mut ixs = Vec::with_capacity(items.len());
+        for item in items {
+            ixs.push(match item {
+                IndexItem::Expr(x) => Ix::At {
+                    i: array::to_index(&self.eval(x)?, x.span)?,
+                    span: x.span,
+                },
+                IndexItem::Slice {
+                    start, stop, span, ..
+                } => {
+                    let mut bound = |x: &Option<Expr>| match x {
+                        Some(x) => array::to_index(&self.eval(x)?, x.span).map(Some),
+                        None => Ok(None),
+                    };
+                    Ix::Slice {
+                        start: bound(start)?,
+                        stop: bound(stop)?,
+                        span: *span,
+                    }
+                }
+            });
+        }
+        array::index(&b, &ixs, e.span, base.span)
+    }
+
+    /// `l @ r`. Where the checker rewrote `A⁻¹ @ b` (`solves` holds the
+    /// span of the whole expression) the interpreter factors `A` and solves
+    /// for `b`, and never forms `A⁻¹`.
+    fn matmul(&mut self, e: &Expr, lhs: &Expr, rhs: &Expr) -> R<Value> {
+        if self.solves.contains(&e.span) {
+            if let Some(a) = self.inverted_operand(lhs) {
+                let av = self.eval(a)?;
+                let bv = self.eval(rhs)?;
+                return array::cholesky_solve(&av, &bv, e.span, a.span, rhs.span);
+            }
+        }
+        let l = self.eval(lhs)?;
+        let r = self.eval(rhs)?;
+        array::matmul(&l, &r, e.span, lhs.span, rhs.span)
+    }
+
+    /// `A` if `e` is `A⁻¹` or `inv(A)` (the builtin, not a user's own
+    /// `inv`), possibly parenthesized: the forms the checker rewrites.
+    fn inverted_operand<'x>(&self, e: &'x Expr) -> Option<&'x Expr> {
+        let mut e = e;
+        while let ExprKind::Paren(inner) = &e.kind {
+            e = inner;
+        }
+        match &e.kind {
+            ExprKind::Inverse { operand, .. } => Some(operand),
+            ExprKind::Call { callee, args } => match (&callee.kind, args.as_slice()) {
+                (ExprKind::Name(id), [arg])
+                    if self.text(id.span) == "inv" && self.lookup("inv").is_none() =>
+                {
+                    Some(arg)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// `zeros(n)`, `zeros(m, n)`, `identity(n)`, `len(x)`.
+    fn array_builtin(&mut self, name: &str, call: &Expr, args: &[Expr]) -> R<Value> {
+        let takes = |n: &str| {
+            RuntimeError::new(
+                format!("`{name}` takes {n}, found {}", args.len()),
+                call.span,
+            )
+        };
+        let mut sizes = Vec::with_capacity(args.len());
+        for a in args {
+            let v = self.eval(a)?;
+            if name == "len" {
+                let [_] = args else {
+                    return Err(takes("1 argument"));
+                };
+                return array::len(&v, a.span);
+            }
+            sizes.push(array::size_arg(name, &v, a.span)?);
+        }
+        match (name, sizes.as_slice()) {
+            ("zeros", [_] | [_, _]) => array::zeros(&sizes, call.span),
+            ("identity", [n]) => array::identity(*n, call.span),
+            ("zeros", _) => Err(takes("1 or 2 arguments")),
+            _ => Err(takes("1 argument")),
         }
     }
 
@@ -532,7 +644,7 @@ impl<'a> Interp<'a> {
             BinaryOp::Le => self.ordering(op, |a, b| a <= b, &l, &r, whole, lspan, rspan),
             BinaryOp::Gt => self.ordering(op, |a, b| a > b, &l, &r, whole, lspan, rspan),
             BinaryOp::Ge => self.ordering(op, |a, b| a >= b, &l, &r, whole, lspan, rspan),
-            BinaryOp::MatMul => Err(arrays_unsupported(whole)),
+            BinaryOp::MatMul => array::matmul(&l, &r, whole, lspan, rspan),
         }
     }
 

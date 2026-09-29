@@ -265,6 +265,28 @@ pub fn lower_with_defs(
     src: &str,
     checked: &Checked,
 ) -> Result<(Module, HashMap<Span, String>), LowerError> {
+    lower_impl(module, src, checked, false)
+}
+
+/// [`lower`] for a module that is about to be executed in place of the tree
+/// walker (`sky run`'s SIR engine), which must behave exactly as the tree
+/// walker does. It refuses, with a [`LowerError`], the programs whose SIR
+/// would run differently because SIR cannot express a check the tree walker
+/// makes at run time: today, a `for` over `range` with a bound or step
+/// computed at run time (see `for_loop.rs`). Everything else is [`lower`].
+///
+/// Tools that only look at the IR (`sky check --emit-ir`) keep using
+/// [`lower`], which lowers such a loop as far as `f64` arithmetic goes.
+pub fn lower_for_run(module: &Ast, src: &str, checked: &Checked) -> Result<Module, LowerError> {
+    lower_impl(module, src, checked, true).map(|(m, _)| m)
+}
+
+fn lower_impl(
+    module: &Ast,
+    src: &str,
+    checked: &Checked,
+    for_run: bool,
+) -> Result<(Module, HashMap<Span, String>), LowerError> {
     let main = FnState {
         b: Builder::new(Module::MAIN.to_string(), module.span),
         scope: Default::default(),
@@ -287,6 +309,7 @@ pub fn lower_with_defs(
         st: main,
         stack: Vec::new(),
         derivatives: Vec::new(),
+        for_run,
     };
     lw.collect_defs(&module.stmts);
     lw.collect_module_names(&module.stmts);

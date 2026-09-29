@@ -1,0 +1,6 @@
+# A predefined constant is a source of dimension too, and the derivation
+# says so instead of leaving `c` unexplained.
+m = 3 kg
+E = m * c^2
+t = 2 s
+bad = E + t

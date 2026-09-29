@@ -7,8 +7,9 @@ tests/ui/types/err_annotation_unit_mismatch.sky:2:9: error: expected mass, found
 tests/ui/types/err_annotation_unit_mismatch.sky:4:18: error: expected length, found velocity
   |
 4 | w: Vector[3] m = v
-  |                  ^ this is velocity
+  |                  ^ this is velocity (L·T⁻¹)
   |              - expected length because of this unit
+  = note: `v` is a velocity because it is declared `v: Vector[3] m/s` (line 3)
 
 tests/ui/types/err_annotation_unit_mismatch.sky:5:8: error: expected length, found dimensionless
   |

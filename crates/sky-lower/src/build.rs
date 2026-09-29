@@ -176,13 +176,10 @@ impl Builder {
         self.f.blocks[block.index()].args.clone()
     }
 
-    /// Finishes the function. Its effects are the union of every
-    /// operation's, nested ones included (control flow has the effects of
-    /// its regions; see `sky_ir::op`).
-    pub(crate) fn finish(mut self) -> Function {
-        self.f.effects = self.f.ops.iter().fold(EffectSet::PURE, |acc, o| {
-            acc.union(o.kind.properties().effects)
-        });
+    /// Finishes the function. Its effects are left pure: they depend on the
+    /// callees, so `lower` infers them for the whole module at the end
+    /// (`sky_ir::effects`).
+    pub(crate) fn finish(self) -> Function {
         self.f
     }
 

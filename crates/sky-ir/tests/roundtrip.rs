@@ -420,7 +420,7 @@ fn function_names_and_modules() {
 fn design_doc_example_parses() {
     let text = "\
 sir edition 2026
-fn @main() -> () effects(io) {
+fn @main() -> () effects(io, fail) {
   %0 = const.float 10000 : num[L; ()]
   %1 = const.rational 1/1000 : num[1; ()]
   %x = mul %0, %1 : num[L; ()]              @ 3..8
@@ -436,7 +436,7 @@ fn @main() -> () effects(io) {
         "\
 sir edition 2026
 
-fn @main() -> () effects(io) {
+fn @main() -> () effects(io, fail) {
   %0 = const.float 10000 : num[L; ()]
   %1 = const.rational 1/1000 : num[1; ()]
   %x = mul %0, %1 : num[L; ()] @ 3..8

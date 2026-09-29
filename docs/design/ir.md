@@ -93,6 +93,8 @@ Library-defined operations register in the same table (goal 5).
 
 `EffectSet ⊆ {Pure, Read, Write, IO, Random, Sync}`. `Pure` operations may be reordered, duplicated, eliminated, cached or run in parallel. Everything else keeps its relative order. Effects are inferred for functions (and can later be declared, as in `pure fn`, original vision §23). This is the minimum needed for safe reordering, communication avoidance and caching (ideas 22, 23, 68).
 
+v1 implements three of them (`io`, `fail`, `call`; the rest come with the operations that need them). `sky_ir::effects` infers a function's set as the union over its operations and nested regions, with a `call` taking the callee's effects (and keeping `call` as the mark that a call can also exhaust the call depth). Recursion is a fixed point: a caller is revisited whenever a callee's set grows. Lowering runs the inference instead of computing effects itself, and the verifier rejects a function whose declared effects miss an inferred one. Declaring more is allowed, so a pass that removes code leaves a valid module, and the `effects` pass can tighten the declarations afterwards.
+
 ### Facts
 
 `FactTable` holds knowledge that isn't part of a type, keyed by value or function: "this matrix is reused 400 times", "estimated condition number", "sparsity pattern", "shape variable N = 4096 at run time". Each fact records its provenance: declared, proven by a pass, or observed by profiling. Passes may rely only on proven or declared facts for correctness. Observed facts may guide *choices* but never *meaning*.
@@ -146,7 +148,7 @@ A human-readable, data-only format, round-trip exact (`parse(print(m)) == m`, af
 ```text
 sir edition 2026
 
-fn @main() -> () effects(io) {
+fn @main() -> () effects(io, fail) {
   %0 = const.float 10000 : num[L; ()]
   %1 = const.rational 1/1000 : num[1; ()]
   %x = mul %0, %1 : num[L; ()] @ 34..52

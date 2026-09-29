@@ -52,11 +52,16 @@ pub fn pd_matrix(n: ShapeVar) -> Type {
     )
 }
 
+/// A module of `functions`, with each function's effects inferred, so the
+/// verifier's effect check does not get in the way of tests about
+/// something else.
 pub fn module(functions: Vec<Function>) -> Module {
-    Module {
+    let mut m = Module {
         edition: Edition::E2026,
         functions,
-    }
+    };
+    let _ = sky_ir::effects::infer_effects(&mut m);
+    m
 }
 
 /// `fn callee(a: L) -> (L) { return a }`.

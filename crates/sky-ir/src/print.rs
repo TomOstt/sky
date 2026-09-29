@@ -3,7 +3,7 @@
 //! ```text
 //! sir edition 2026
 //!
-//! fn @main(%n: num[1; ()]) -> (num[L; ()]) effects(io) {
+//! fn @main(%n: num[1; ()]) -> (num[L; ()]) effects(io, fail) {
 //!   %0 = const.float 10000 : num[L; ()]
 //!   %x = mul %0, %n : num[L; ()] @ 34..52
 //!   print %x @ 60..68

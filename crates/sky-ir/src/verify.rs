@@ -38,8 +38,13 @@
 //! * **Tags.** Every [`NumberType`]'s tag set is closed, and a non-empty tag
 //!   set sits on a square matrix (the invariant of `TensorType`).
 //!
-//! Effects are not checked: `Function::effects` is declared, not derived,
-//! and the design's "effect consistency" rule needs an inference pass first.
+//! * **Effects.** A function's declared `effects` include what
+//!   [`crate::effects::infer`] computes from its body and its callees (the
+//!   design's "effect consistency"). Declaring *more* than inferred is fine:
+//!   a pass that removes code leaves the old declaration valid, and
+//!   [`crate::effects::InferEffects`] tightens it. This check runs only when
+//!   the module has no other error, because inference reads the structure
+//!   the other checks establish.
 
 use std::fmt;
 
@@ -50,10 +55,13 @@ use std::collections::BTreeMap;
 use sky_types::{Shape, ShapeDim, ShapeUnifier, Tag};
 use sky_units::Dimension;
 
+use crate::effects;
 use crate::ir::{
-    BlockId, Function, Module, NumberType, OpData, OpId, RegionId, Type, ValueDef, ValueId,
+    BlockId, EffectSet, Function, Module, NumberType, OpData, OpId, RegionId, Type, ValueDef,
+    ValueId,
 };
 use crate::op::{CmpOp, OpKind, SolveMethod};
+use crate::print::effect_name;
 
 /// The deepest nesting of regions the verifier, printer and parser accept.
 /// It bounds their recursion. It must leave room above Sky's own source
@@ -131,9 +139,43 @@ fn verify_inner(m: &Module) -> Result<(), Vec<VerifyError>> {
         FnVerifier::new(m, f, &mut errors).run();
     }
     if errors.is_empty() {
+        check_effects(m, &mut errors);
+    }
+    if errors.is_empty() {
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+/// Every function's declared effects include the inferred ones.
+fn check_effects(m: &Module, errors: &mut Vec<VerifyError>) {
+    let names = |e: EffectSet| {
+        let list: Vec<&str> = e.iter().map(effect_name).collect();
+        if list.is_empty() {
+            "none".to_string()
+        } else {
+            list.join(", ")
+        }
+    };
+    for (f, inferred) in m.functions.iter().zip(effects::infer(m)) {
+        let missing = inferred.difference(f.effects);
+        if !missing.is_pure() {
+            push(
+                errors,
+                VerifyError {
+                    message: format!(
+                        "the declared effects ({}) miss the inferred ones: {}",
+                        names(f.effects),
+                        names(missing)
+                    ),
+                    function: f.name.clone(),
+                    op: None,
+                    value: None,
+                    span: f.span,
+                },
+            );
+        }
     }
 }
 

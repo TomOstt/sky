@@ -144,6 +144,13 @@
 //! Also number literals that overflow `f64`, which the interpreter reports
 //! when it evaluates them.
 //!
+//! # Effects
+//!
+//! Lowering leaves every function's effects to `sky_ir::effects`, which it
+//! runs once over the finished module: the union over the operations, with
+//! calls taking their callee's effects (so a function that only calls a
+//! printing function is `io` too).
+//!
 //! # Where the verifier plugs in
 //!
 //! `lower` returns an unverified module. When `sky-ir` has its verifier,
@@ -263,10 +270,14 @@ pub fn lower(module: &Ast, src: &str, checked: &Checked) -> Result<Module, Lower
     out.sort_by_key(|(start, _)| *start);
     let mut functions = vec![st.b.finish()];
     functions.extend(out.into_iter().map(|(_, f)| f));
-    Ok(Module {
+    let mut module = Module {
         edition: Edition::default(),
         functions,
-    })
+    };
+    // Effects follow from the bodies and the calls between them; one pass
+    // owns that rule (`sky_ir::effects`), lowering does not repeat it.
+    let _ = sky_ir::effects::infer_effects(&mut module);
+    Ok(module)
 }
 
 /// Lexes, parses, checks and lowers `src`: the whole path from source text

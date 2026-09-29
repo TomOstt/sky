@@ -221,6 +221,18 @@ fn function_effects_are_the_union_of_their_operations() {
 }
 
 #[test]
+fn a_call_takes_the_callees_effects_through_any_depth() {
+    let m = lower_ok(
+        "def loud(x):\n    print(x)\n    return x\ndef mid(x):\n    return loud(x)\ndef top(x):\n    return mid(x)\na = top(1)\n",
+    );
+    for name in ["loud", "mid", "top"] {
+        assert!(func(&m, name).effects.contains(Effect::Io), "{name}");
+    }
+    assert!(func(&m, "top").effects.contains(Effect::Call));
+    assert!(main_fn(&m).effects.contains(Effect::Io));
+}
+
+#[test]
 fn a_call_evaluates_its_arguments_in_order_before_the_module_names() {
     let m = lower_ok("k = 1\ndef f(a, b):\n    return a + b + k\nr = f(2 * k, 3 * k)\n");
     let main = main_fn(&m);

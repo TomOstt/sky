@@ -10,8 +10,8 @@
 //! a builder ([`builder`]) used by lowering and tests, plus the
 //! infrastructure every pass relies on: the verifier ([`verify`]), the text
 //! format ([`print`] and [`parse`], round-trip exact), and the pass manager
-//! with explanations ([`pass`]). Lowering from the checked AST and the
-//! reference interpreter build on these.
+//! with explanations ([`pass`]), and effect inference ([`effects`]). Lowering
+//! from the checked AST and the reference interpreter build on these.
 //!
 //! # Levels
 //!
@@ -24,6 +24,7 @@
 pub mod builder;
 mod canon;
 mod display;
+pub mod effects;
 pub mod ir;
 pub mod op;
 pub mod parse;

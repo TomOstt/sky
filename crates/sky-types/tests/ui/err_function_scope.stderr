@@ -16,4 +16,5 @@ crates/sky-types/tests/ui/err_function_scope.sky:15:14: error: cannot add length
    |            - length
    |                --- time
    = note: both operands of `+` must have the same dimension
+   = note: `p` is a length because `p = 1 m` (line 13)
    = help: convert one side, or fix the unit

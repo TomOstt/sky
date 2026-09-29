@@ -5,4 +5,5 @@ tests/ui/types/err_failed_add_binds_nothing.sky:7:7: error: cannot add dimension
   |     - dimensionless
   |         - length
   = note: both operands of `+` must have the same dimension
-  = help: convert one side, or fix the unit
+  = note: `T` is a length because it is declared `T: Matrix[3, 3] m` (line 5)
+  = help: these differ by a factor of length: `S` is `T` divided by a length

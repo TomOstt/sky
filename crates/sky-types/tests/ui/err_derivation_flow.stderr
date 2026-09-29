@@ -1,0 +1,48 @@
+crates/sky-types/tests/ui/err_derivation_flow.sky:3:12: error: expected L², found length
+  |
+3 |     return w + h
+  |            ^^^^^ this is length
+2 | def area(w: m, h: m) -> m^2:
+  |                         --- declared here
+  = note: `w + h` is a length, where `w` is a length (parameter `w: m`, line 2) and `h` is a length (parameter `h: m`, line 2)
+
+crates/sky-types/tests/ui/err_derivation_flow.sky:9:14: error: cannot add velocity and mass
+  |
+9 | bad_call = s + 1 kg
+  |              ^ mismatched dimensions
+  |            - velocity (L·T⁻¹)
+  |                ---- mass
+  = note: both operands of `+` must have the same dimension
+  = note: `s` is a velocity because `s = speed(5 m, 2 s)` (line 8), where `speed(5 m, 2 s)` is a velocity (a function result, `def` on line 5)
+  = help: convert one side, or fix the unit
+
+crates/sky-types/tests/ui/err_derivation_flow.sky:16:15: error: cannot add length and time
+   |
+16 | bad_merge = x + 1 s
+   |               ^ mismatched dimensions
+   |             - length
+   |                 --- time
+   = note: both operands of `+` must have the same dimension
+   = note: `x` is a length because `x = 8 m` (line 15)
+   = help: convert one side, or fix the unit
+
+crates/sky-types/tests/ui/err_derivation_flow.sky:20:7: error: cannot add length and velocity
+   |
+20 | total += s
+   |       ^^ mismatched dimensions
+   | ----- length
+   |          - velocity (L·T⁻¹)
+   = note: both operands of `+` must have the same dimension
+   = note: `total` is a length because `total = 0 m` (line 19)
+   = note: `s` is a velocity because `s = speed(5 m, 2 s)` (line 8), where `speed(5 m, 2 s)` is a velocity (a function result, `def` on line 5)
+   = help: these differ by a factor of time: `total` is `s` times a time
+
+crates/sky-types/tests/ui/err_derivation_flow.sky:22:3: error: `*=` would change `n` from time to L·T
+   |
+22 | n *= x
+   |   ^^
+   | - this is time
+   = note: the result of `*=` must keep the type of `n`
+   = note: `n` is a time because `n = 3 s` (line 21)
+   = note: `x` is a length because `x = 8 m` (line 15)
+   = help: bind a new name instead: `y = n * …`

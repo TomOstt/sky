@@ -1,0 +1,22 @@
+# Through a function: a parameter's dimension comes from its annotation.
+def area(w: m, h: m) -> m^2:
+    return w + h
+
+def speed(dist: m, dt: s) -> m/s:
+    return dist / dt
+
+s = speed(5 m, 2 s)
+bad_call = s + 1 kg
+
+# Through an if-merge: both arms agree, so the note follows an arm.
+if s > 1 m/s:
+    x = 4 m
+else:
+    x = 8 m
+bad_merge = x + 1 s
+
+# Through compound assignment.
+total = 0 m
+total += s
+n = 3 s
+n *= x

@@ -1,0 +1,10 @@
+# N = kg·m·s⁻², Pa = N·m⁻², W = J·s⁻¹, Hz = s⁻¹, all coherent SI units.
+unify [N] with [kg]*[m]/[s]^2
+unify [Pa] with [N]/[m]^2
+unify [W] with [J]/[s]
+unify [Hz] with 1/[s]
+unify [N]*[m] with [J]
+show [N]
+show [Pa]
+show [W]
+show [Hz]

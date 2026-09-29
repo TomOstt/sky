@@ -1,0 +1,2 @@
+# `ms` is the millisecond, not metre times second: it is not length.
+unify [ms] with [m]

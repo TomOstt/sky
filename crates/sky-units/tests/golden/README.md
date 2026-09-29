@@ -23,9 +23,9 @@ Expressions:
 
 | Syntax                   | Meaning                                    |
 |--------------------------|--------------------------------------------|
-| `L M T I Θ N J`          | SI base dimensions                         |
+| `L M T I Θ N J`          | SI base dimensions (`N` is amount of substance, `J` luminous intensity) |
 | `1`                      | dimensionless                              |
-| `[km]`                   | the dimension of a unit from the unit table|
+| `[km]`                   | the dimension of a unit from the unit table (`[N]` is the newton, `[J]` the joule) |
 | `?a`                     | a dimension variable (fresh on first use)  |
 | `a * b`, `a · b`, `a / b`| product, quotient (left-associative)       |
 | `a^2`, `a^-1`, `a^(1/2)` | integer or rational power                  |

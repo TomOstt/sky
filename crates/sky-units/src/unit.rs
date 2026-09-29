@@ -1,6 +1,12 @@
 //! The v0.1 unit table: each unit is a dimension plus a scale factor to the
 //! coherent SI unit of that dimension (so `km` is length with scale 1000).
 //!
+//! `ms` is the millisecond (time, scale 0.001). The derived SI units `N`,
+//! `Pa`, `W`, and `Hz` are coherent (scale 1).
+//! Because `rad` is dimensionless, `Hz` and `rad/s` have the same dimension,
+//! so a missing 2π between frequency and angular frequency is not caught (a
+//! known v0.1 limitation).
+//!
 //! Affine units such as °C are deliberately absent in v0.1. Lookup is by
 //! symbol only; full-name aliases (`meters`, `kelvin`) are not provided yet.
 
@@ -35,6 +41,9 @@ pub static UNITS: &[Unit] = &[
     unit("m", Dimension::LENGTH, 1.0),
     unit("km", Dimension::LENGTH, 1000.0),
     unit("s", Dimension::TIME, 1.0),
+    // The millisecond. `ms` is one symbol, not `m*s` (compound units need
+    // an explicit `*`).
+    unit("ms", Dimension::TIME, 0.001),
     unit("min", Dimension::TIME, 60.0),
     // `h` is the hour (3600 s), not Planck's constant. Physical constants
     // such as h and ħ are not units and will live in a separate table.
@@ -46,6 +55,18 @@ pub static UNITS: &[Unit] = &[
     unit("pc", Dimension::LENGTH, PARSEC_IN_METRES),
     unit("AU", Dimension::LENGTH, ASTRONOMICAL_UNIT_IN_METRES),
     unit("rad", Dimension::DIMENSIONLESS, 1.0),
+    // Derived SI units with special names, all coherent (scale 1).
+    // `N` is the newton. It is unrelated to the base-dimension symbol N
+    // (amount of substance) in `Dimension`'s display, and to a shape
+    // variable written `N` in `Matrix[N, N]`: the parser only reads a unit
+    // right after a numeric literal (`10 N`).
+    unit("N", Dimension::FORCE, 1.0),
+    unit("Pa", Dimension::PRESSURE, 1.0),
+    unit("W", Dimension::POWER, 1.0),
+    // `Hz` is T⁻¹, the same dimension as `rad/s` because `rad` is
+    // dimensionless: a missing 2π between frequency and angular frequency is
+    // not a dimension error. A known v0.1 limitation.
+    unit("Hz", Dimension::FREQUENCY, 1.0),
 ];
 
 /// Looks a unit up by its exact symbol (case-sensitive), e.g. `lookup("km")`.
@@ -79,6 +100,35 @@ mod tests {
     }
 
     #[test]
+    fn millisecond_is_time_with_scale_one_thousandth() {
+        let ms = lookup("ms").unwrap();
+        assert_eq!(ms.dim, Dimension::TIME);
+        assert_eq!(ms.dim, lookup("s").unwrap().dim);
+        assert_eq!(ms.scale, 0.001);
+        // `ms` is its own symbol, not metre times second.
+        assert_ne!(
+            ms.dim,
+            Dimension::LENGTH.checked_mul(Dimension::TIME).unwrap()
+        );
+    }
+
+    #[test]
+    fn millisecond_values_in_the_spec() {
+        // spec v0.1, "Unit values": a literal converts to SI once, as
+        // `x * scale`, and the result is an ordinary f64. `10 ms` is exactly
+        // 0.01 and `100 ms` is 0.1, but `3 * (100 ms)` is
+        // 0.30000000000000004, so `3 * (100 ms) == 0.3 s` is false.
+        let ms = lookup("ms").unwrap().scale;
+        let s = lookup("s").unwrap().scale;
+        assert_eq!(10.0 * ms, 0.01);
+        assert_eq!(100.0 * ms, 0.1);
+        let lhs = 3.0 * (100.0 * ms);
+        assert_ne!(lhs, 0.3 * s);
+        assert_eq!(lhs.to_bits(), (0.3_f64).to_bits() + 1);
+        assert_eq!(format!("{lhs:?}"), "0.30000000000000004");
+    }
+
+    #[test]
     fn exact_constants() {
         assert_eq!(lookup("eV").unwrap().scale, 1.602176634e-19);
         assert_eq!(lookup("eV").unwrap().dim, lookup("J").unwrap().dim);
@@ -100,7 +150,10 @@ mod tests {
         let names: Vec<_> = UNITS.iter().map(|u| u.name).collect();
         assert_eq!(
             names,
-            ["m", "km", "s", "min", "h", "kg", "K", "J", "eV", "pc", "AU", "rad"]
+            [
+                "m", "km", "s", "ms", "min", "h", "kg", "K", "J", "eV", "pc", "AU", "rad", "N",
+                "Pa", "W", "Hz"
+            ]
         );
         for u in UNITS {
             assert!(u.scale.is_finite() && u.scale > 0.0, "{}", u.name);
@@ -124,6 +177,87 @@ mod tests {
         for not_unit in ["Km", "M", "L", "T", "meters", "kelvin", "°C", "km ", ""] {
             assert!(crate::lookup(not_unit).is_none(), "{not_unit:?}");
             assert!(!crate::is_unit_symbol(not_unit), "{not_unit:?}");
+        }
+    }
+
+    fn dim(name: &str) -> Dimension {
+        lookup(name).unwrap_or_else(|| panic!("{name}")).dim
+    }
+
+    #[test]
+    fn derived_si_units_equal_their_si_composition() {
+        let (m, kg, s) = (dim("m"), dim("kg"), dim("s"));
+        let m2 = m.pow_int(2).unwrap();
+        // N = kg·m·s⁻²
+        let newton = kg
+            .checked_mul(m)
+            .unwrap()
+            .checked_div(s.pow_int(2).unwrap())
+            .unwrap();
+        assert_eq!(dim("N"), newton);
+        // Pa = N·m⁻²
+        assert_eq!(dim("Pa"), dim("N").checked_div(m2).unwrap());
+        // W = J·s⁻¹
+        assert_eq!(dim("W"), dim("J").checked_div(s).unwrap());
+        // Hz = s⁻¹
+        assert_eq!(dim("Hz"), s.inverse().unwrap());
+        // Cross-checks: N·m = J, W·s = J, Pa·m² = N.
+        assert_eq!(dim("N").checked_mul(m).unwrap(), dim("J"));
+        assert_eq!(dim("W").checked_mul(s).unwrap(), dim("J"));
+        assert_eq!(dim("Pa").checked_mul(m2).unwrap(), dim("N"));
+        for u in ["N", "Pa", "W", "Hz"] {
+            assert_eq!(lookup(u).unwrap().scale, 1.0, "{u}");
+        }
+        assert_eq!(dim("N").name(), Some("force"));
+        assert_eq!(dim("Pa").name(), Some("pressure"));
+        assert_eq!(dim("W").name(), Some("power"));
+        assert_eq!(dim("Hz").name(), Some("frequency"));
+    }
+
+    #[test]
+    fn hertz_and_radians_per_second_share_a_dimension() {
+        // Known v0.1 limitation, not a bug: rad is dimensionless, so a
+        // missing 2π between Hz and rad/s is not a dimension error.
+        let rad_per_s = dim("rad").checked_div(dim("s")).unwrap();
+        assert_eq!(dim("Hz"), rad_per_s);
+    }
+
+    /// Shown by the guard tests below when they fail.
+    const DISPLAY_COLLISION: &str = "if you add `mol` or `cd`, rename the `N`/`J` dimension \
+         display symbols; they collide with newton/joule";
+
+    #[test]
+    fn newton_is_not_the_amount_dimension() {
+        // The unit `N` (force) and the base-dimension symbol `N` (amount of
+        // substance, shown by `Dimension`'s display) are different things.
+        assert_ne!(dim("N"), Dimension::AMOUNT, "{DISPLAY_COLLISION}");
+        assert_ne!(dim("J"), Dimension::LUMINOSITY, "{DISPLAY_COLLISION}");
+        assert_eq!(Dimension::AMOUNT.to_string(), "N", "{DISPLAY_COLLISION}");
+        assert_eq!(
+            Dimension::LUMINOSITY.to_string(),
+            "J",
+            "{DISPLAY_COLLISION}"
+        );
+        assert_eq!(dim("N").to_string(), "L·M·T⁻²");
+        assert_eq!(dim("J").to_string(), "L²·M·T⁻²");
+    }
+
+    /// Fails as soon as the table gains a unit (such as `mol` or `cd`)
+    /// whose dimension involves amount of substance or luminous intensity,
+    /// because error text would then show the bare symbols `N` and `J`,
+    /// which read as newton and joule.
+    #[test]
+    fn no_unit_exposes_the_n_or_j_display_symbols() {
+        use crate::dimension::BaseDim;
+        for u in UNITS {
+            for b in [BaseDim::Amount, BaseDim::Luminosity] {
+                assert!(
+                    u.dim.exponent(b).is_zero(),
+                    "{DISPLAY_COLLISION} (unit `{}` has dimension {})",
+                    u.name,
+                    u.dim
+                );
+            }
         }
     }
 

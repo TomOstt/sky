@@ -2,7 +2,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::safe::{display_safe, is_unsafe, ESCAPE_WIDTH};
+use crate::safe::{display_safe, escape_field, escape_width, Field};
 use crate::{Diagnostic, Label, SourceFile};
 
 /// A span resolved against a source file, ready to draw.
@@ -11,12 +11,12 @@ struct Mark<'a> {
     line: usize,
     col: usize,
     /// Whitespace before the marker: a tab for each tab in the source before
-    /// the span start, [`ESCAPE_WIDTH`] spaces for each escaped char, and a
-    /// space for every other char, so the markers line up under the
-    /// displayed (escaped) line.
+    /// the span start, as many spaces as its escape is long for each escaped
+    /// char, and a space for every other char, so the markers line up under
+    /// the displayed (escaped) line.
     indent: String,
     /// Number of marker chars: displayed width of the span on its first line
-    /// (an escaped char counts [`ESCAPE_WIDTH`]), at least 1.
+    /// (an escaped char counts the length of its escape), at least 1.
     width: usize,
     marker: char,
     label: Option<&'a str>,
@@ -39,7 +39,9 @@ fn resolve<'a>(file: &SourceFile, label: &'a Label, marker: char) -> Mark<'a> {
         indent: before.chars().fold(String::new(), |mut acc, c| {
             match c {
                 '\t' => acc.push('\t'),
-                c if is_unsafe(c) => acc.push_str(&" ".repeat(ESCAPE_WIDTH)),
+                c if Field::SourceLine.escapes(c) => {
+                    acc.extend(std::iter::repeat_n(' ', escape_width(c)))
+                }
                 _ => acc.push(' '),
             }
             acc
@@ -51,10 +53,10 @@ fn resolve<'a>(file: &SourceFile, label: &'a Label, marker: char) -> Mark<'a> {
     }
 }
 
-/// Columns `c` takes in the rendered output.
+/// Columns `c` takes in a rendered source line.
 fn display_width(c: char) -> usize {
-    if is_unsafe(c) {
-        ESCAPE_WIDTH
+    if Field::SourceLine.escapes(c) {
+        escape_width(c)
     } else {
         1
     }
@@ -92,7 +94,7 @@ impl Diagnostic {
         let mut shown_line = None;
         for m in std::iter::once(&primary).chain(&secondary) {
             if shown_line != Some(m.line) {
-                let src = display_safe(file.line_text(m.line).unwrap_or(""));
+                let src = escape_field(file.line_text(m.line).unwrap_or(""), Field::SourceLine);
                 if src.is_empty() {
                     writeln!(out, "{:>w$} |", m.line)?;
                 } else {
@@ -539,6 +541,70 @@ demo.sky:10:1: error: e
         );
     }
 
+    #[test]
+    fn supplementary_tag_characters_escape_to_nine_columns_under_a_span() {
+        // "ok" followed by hidden TAG LATIN CAPITAL LETTER A, B ("ASCII smuggling").
+        let src = "s = \"ok\u{E0041}\u{E0042}\" # end\n";
+        let d = Diagnostic::error("hidden tag characters", find(src, "\u{E0041}\u{E0042}"))
+            .with_label("tags")
+            .with_secondary(find(src, "end"), "after");
+        assert_eq!(
+            d.render_to_string(&file(src)),
+            r#"demo.sky:1:8: error: hidden tag characters
+  |
+1 | s = "ok\u{E0041}\u{E0042}" # end
+  |        ^^^^^^^^^^^^^^^^^^ tags
+  |                              --- after
+"#
+        );
+    }
+
+    #[test]
+    fn variation_selectors_are_escaped_and_counted_under_a_span() {
+        // BMP VS16 (8 columns) and supplementary VS17 (9 columns).
+        let src = "x = \"☺\u{FE0F}\" + \"a\u{E0100}\"\n";
+        let d = Diagnostic::warning("variation selector", find(src, "☺\u{FE0F}"))
+            .with_label("VS16")
+            .with_secondary(find(src, "a\u{E0100}"), "VS17");
+        assert_eq!(
+            d.render_to_string(&file(src)),
+            r#"demo.sky:1:6: warning: variation selector
+  |
+1 | x = "☺\u{FE0F}" + "a\u{E0100}"
+  |      ^^^^^^^^^ VS16
+  |                    ---------- VS17
+"#
+        );
+    }
+
+    #[test]
+    fn soft_hyphen_line_separator_and_hangul_filler_are_escaped() {
+        let src = "a\u{AD}b = c\u{2028}d + \u{3164}\n";
+        let d = Diagnostic::error("invisible", find(src, "\u{3164}"));
+        assert_eq!(
+            d.render_to_string(&file(src)),
+            r#"demo.sky:1:13: error: invisible
+  |
+1 | a\u{00AD}b = c\u{2028}d + \u{3164}
+  |                           ^^^^^^^^
+"#
+        );
+    }
+
+    #[test]
+    fn tabs_are_kept_in_source_lines_but_escaped_in_every_other_field() {
+        let src = "\tx =\t1\n";
+        let f = SourceFile::new("tab\tname.sky", src);
+        let d = Diagnostic::error("msg\twith tab", find(src, "1"))
+            .with_label("label\ttab")
+            .with_note("note\ttab")
+            .with_help("help\ttab");
+        assert_eq!(
+            d.render_to_string(&f),
+            "tab\\u{0009}name.sky:1:6: error: msg\\u{0009}with tab\n  |\n1 | \tx =\t1\n  | \t   \t^ label\\u{0009}tab\n  = note: note\\u{0009}tab\n  = help: help\\u{0009}tab\n"
+        );
+    }
+
     /// Deterministic xorshift64*, so failures reproduce without a dependency.
     struct Rng(u64);
     impl Rng {
@@ -566,8 +632,15 @@ demo.sky:10:1: error: e
             "\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}".chars(),
         );
         pool.extend("\u{200E}\u{200F}\u{061C}\u{200B}\u{200C}\u{200D}\u{2060}\u{FEFF}".chars());
-        pool.extend("∂⁻¹ħ€😀 \t\n\n\r".chars());
-        let is_escaped = |c: char| crate::safe::is_unsafe(c) && c != '\n';
+        pool.extend("∂⁻¹ħ€😀 \t\t\n\n\r".chars());
+        // A sample of the wider set: soft hyphen, CGJ, Arabic number sign, Hangul
+        // fillers, Mongolian VS, LS/PS, invisible operators, VS, interlinear
+        // annotation, Egyptian format controls, tags, supplementary VS.
+        pool.extend(
+            "\u{AD}\u{34F}\u{600}\u{115F}\u{1160}\u{180B}\u{180E}\u{2028}\u{2029}\u{2061}\u{2064}\u{206F}\u{3164}\u{FE0F}\u{FFA0}\u{FFF9}\u{FFFB}\u{13430}\u{E0001}\u{E0041}\u{E007F}\u{E0100}\u{E01EF}"
+                .chars(),
+        );
+        let is_escaped = |c: char| crate::is_display_unsafe(c) && c != '\n';
 
         let mut rng = Rng(0x5EED_5EED_5EED_5EED);
         for case in 0..3000 {
@@ -597,14 +670,30 @@ demo.sky:10:1: error: e
             }
             // Only the renderer's own newlines remain: after the header, every
             // line is a gutter row, a numbered source row, or a note/help row.
-            for line in out.lines().skip(1) {
+            // Tabs survive only in source rows and in underline indents.
+            let mut lines = out.lines();
+            let header = lines.next().unwrap();
+            assert!(
+                !header.contains('\t'),
+                "case {case}: tab in header {header:?}"
+            );
+            for line in lines {
+                let numbered = line.trim_start().starts_with(|c: char| c.is_ascii_digit());
                 let body = line.trim_start_matches(|c: char| c == ' ' || c.is_ascii_digit());
-                assert!(
-                    body.starts_with('|')
-                        || body.starts_with("= note: ")
-                        || body.starts_with("= help: "),
-                    "case {case}: unexpected line {line:?} in:\n{out}"
-                );
+                if let Some(row) = body.strip_prefix('|') {
+                    if !numbered {
+                        let label = row
+                            .trim_start_matches([' ', '\t'])
+                            .trim_start_matches(['^', '-']);
+                        assert!(!label.contains('\t'), "case {case}: tab in label {line:?}");
+                    }
+                } else {
+                    assert!(
+                        body.starts_with("= note: ") || body.starts_with("= help: "),
+                        "case {case}: unexpected line {line:?} in:\n{out}"
+                    );
+                    assert!(!body.contains('\t'), "case {case}: tab in {line:?}");
+                }
             }
         }
     }

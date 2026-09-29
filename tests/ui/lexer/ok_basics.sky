@@ -1,0 +1,21 @@
+# Bindings, comments, and every ASCII operator.
+import units
+
+x = 1          # trailing comment
+d = 3          # `d` is the stdlib derivative function, not syntax
+inv = 2
+grad = x
+
+y = (x + 2 - 3) * 4 / 5 ^ 2
+z = a @ b
+c = x == y
+c = x != y
+c = x < y
+c = x <= y
+c = x > y
+c = x >= y
+m = v.x
+s = "hello \"sky\"\n\t# not a comment"
+
+def area(w, h) -> Area:
+    return w * h

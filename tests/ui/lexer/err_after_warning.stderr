@@ -1,0 +1,10 @@
+tests/ui/lexer/err_after_warning.sky:1:1: warning: identifier `pаth` contains Cyrillic 'а' (U+0430), which looks like Latin 'a'
+  |
+1 | pаth = 1
+  | ^^^^ possibly confusable identifier
+
+tests/ui/lexer/err_after_warning.sky:2:5: error: unterminated string
+  |
+2 | q = "oops
+  |     ^^^^^ string starts here and is not closed on this line
+  = help: add a closing `"`

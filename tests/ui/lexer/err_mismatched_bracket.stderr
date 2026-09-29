@@ -1,0 +1,5 @@
+tests/ui/lexer/err_mismatched_bracket.sky:1:10: error: mismatched `)`: expected `]`
+  |
+1 | m = [1, 2)
+  |          ^ expected `]`
+  |     - `[` opened here

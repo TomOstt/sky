@@ -1,0 +1,10 @@
+# Newlines inside ( ) and [ ] join lines; indentation there is free-form.
+def f(a,
+        b,
+    c):
+    M = [[1.0, 2.0],
+         [3.0, 4.0]]
+    return g(M,
+  a,   # comment inside parens
+
+             b)

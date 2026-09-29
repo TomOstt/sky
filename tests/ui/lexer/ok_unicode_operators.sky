@@ -1,0 +1,13 @@
+# Every Unicode operator, and its ASCII spelling.
+df = ∂f/∂x
+df = d(f)/d(x)
+x = A⁻¹ @ b
+x = inv(A) @ b
+g = ∇φ
+g = grad(φ)
+ok = a ≤ b
+ok = a <= b
+ok = a ≥ b
+ok = a >= b
+ok = a ≠ b
+ok = a != b

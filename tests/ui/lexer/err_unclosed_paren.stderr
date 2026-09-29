@@ -1,0 +1,5 @@
+tests/ui/lexer/err_unclosed_paren.sky:1:6: error: unclosed `(`
+  |
+1 | y = f(1,
+  |      ^ this `(` is never closed
+  = help: add a matching `)`

@@ -1,0 +1,5 @@
+tests/ui/lexer/err_number_glued_to_unit.sky:1:12: error: invalid number literal `10km`
+  |
+1 | distance = 10km
+  |            ^^^^
+  = help: to give a number a unit, put a space before the unit: `10 km`

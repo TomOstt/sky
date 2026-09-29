@@ -1,0 +1,5 @@
+tests/ui/lexer/err_mixed_tabs_spaces.sky:3:1: error: indentation mixes tabs and spaces
+  |
+3 |     	return 1
+  | ^^^^^ tabs and spaces here
+  = help: indent with spaces only, or with tabs only

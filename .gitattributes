@@ -1,0 +1,2 @@
+# Golden inputs and outputs are compared byte for byte (CRLF, tabs, bare CR).
+tests/ui/** -text

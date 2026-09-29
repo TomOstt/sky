@@ -24,7 +24,7 @@
 use std::fmt::Write as _;
 
 use sky_ast::ast::span_text;
-use sky_ast::{parse_expr, ExprKind, UnitExpr};
+use sky_ast::{parse_unit_text, UnitExpr};
 use sky_diag::Span;
 use sky_types::{a_dimension, apply_unit, express_in_unit};
 
@@ -82,19 +82,8 @@ pub fn show_value(src: &str, unit: &UnitExpr, v: &Value, span: Span) -> R<Value>
 /// must be a unit as [`sky_ast`] reads one after a number; anything else is
 /// an error (SIR that names an unreadable unit is malformed).
 pub fn show_unit_text(text: &str, v: &Value, span: Span) -> R<Value> {
-    let src = format!("1 {text}");
-    let unit = sky_syntax::lex(&src)
-        .ok()
-        .and_then(|lexed| {
-            let (expr, errors) = parse_expr(&lexed.tokens, &src);
-            match expr?.kind {
-                ExprKind::UnitLiteral { unit, .. } if errors.is_empty() => Some(unit),
-                _ => None,
-            }
-        })
-        .filter(|u| span_text(&src, u.span()) == Some(text));
-    match unit {
-        Some(unit) => show_value(&src, &unit, v, span),
+    match parse_unit_text(text) {
+        Some(u) => show_value(&u.src, &u.unit, v, span),
         None => Err(RuntimeError::new(format!("`{text}` is not a unit"), span)),
     }
 }

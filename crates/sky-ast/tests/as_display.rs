@@ -160,3 +160,18 @@ fn nesting_counts_toward_the_depth_limit() {
     let src = format!("{}v as m{}", "(".repeat(n), ")".repeat(n));
     assert!(!expr_errors(&src).is_empty());
 }
+
+#[test]
+fn unit_text_is_exactly_one_unit_literal_unit() {
+    use sky_ast::parse_unit_text;
+    for text in ["m", "km/h", "kg*m^2/s^2", "MeV", "m^(1/2)", "s^-2", "μm"] {
+        let u = parse_unit_text(text).unwrap_or_else(|| panic!("{text:?} is a unit"));
+        assert_eq!(at(&u.src, u.unit.span()), text);
+    }
+    for text in [
+        "", " km", "km ", "km h", "km / h", "km/h + 1", "5", "km/", "km^", "(km)", "km as m", "\n",
+        "km\nm",
+    ] {
+        assert!(parse_unit_text(text).is_none(), "{text:?}");
+    }
+}

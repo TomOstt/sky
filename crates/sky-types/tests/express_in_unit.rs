@@ -36,8 +36,22 @@ fn both_directions_agree_on_the_dimension() {
 #[test]
 fn round_trips_within_rounding() {
     for text in [
-        "m", "km", "mm", "km/h", "kg*m^2/s^2", "eV", "MeV", "day", "AU", "pc", "m^(1/2)", "s^-2",
-        "m^2", "kW*h", "N*m", "AU/yr",
+        "m",
+        "km",
+        "mm",
+        "km/h",
+        "kg*m^2/s^2",
+        "eV",
+        "MeV",
+        "day",
+        "AU",
+        "pc",
+        "m^(1/2)",
+        "s^-2",
+        "m^2",
+        "kW*h",
+        "N*m",
+        "AU/yr",
     ] {
         let (src, u) = unit(text);
         for x in [0.001, 1.0, 3.5, 90.0, 12345.678] {

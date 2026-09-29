@@ -263,6 +263,7 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
                         f(*op_span);
                         stack.push(Node::Expr(operand));
                     }
+                    ExprKind::Array(elems) => stack.extend(elems.iter().map(Node::Expr)),
                     ExprKind::Call { callee, args } => {
                         stack.push(Node::Expr(callee));
                         stack.extend(args.iter().map(Node::Expr));

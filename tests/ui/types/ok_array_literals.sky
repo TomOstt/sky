@@ -1,0 +1,13 @@
+# Array literals: the shape is exact, the unit is the entries' unit, and a
+# literal has no tags of its own.
+v = [1 m, 2 m, 3 m]
+w = [1, 2, 3]
+A = [[1, 2], [3, 4]]
+B = [[1 N, 2 N, 3 N],
+     [4 N, 5 N, 6 N]]
+t = [v[0], v[1] + 1 m]
+C: Matrix[2, 2] = [[1, 2], [3, 4]]
+d: Vector[2] m = [1 m, 2 m]
+sum = v + v
+scaled = 2 * A
+prod = A @ [1, 1]

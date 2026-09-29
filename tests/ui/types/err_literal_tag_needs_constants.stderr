@@ -1,0 +1,9 @@
+tests/ui/types/err_literal_tag_needs_constants.sky:2:29: error: `[[a, 1], [1, a]]` is not known to be Symmetric
+  |
+2 | S: Symmetric Matrix[2, 2] = [[a, 1], [1, a]]
+  |                             ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [1]
+  |    ---------------------- expected because of this annotation
+  |                               - this entry is not a numeric literal
+  = note: the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it
+  = note: the checker proves Symmetric of a literal only when every entry is a numeric literal
+  = help: fix the entries, or declare the Symmetric property on an input the value is computed from

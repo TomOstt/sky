@@ -1,4 +1,5 @@
-tests/ui/lexer/ok_implicit_joining.sky:5:9: error: expected an expression, found `[`
+tests/ui/lexer/ok_implicit_joining.sky:7:12: error: cannot find `g` in this scope
   |
-5 |     M = [[1.0, 2.0],
-  |         ^
+7 |     return g(M,
+  |            ^ not defined
+  = help: a function body sees only names defined above its `def`

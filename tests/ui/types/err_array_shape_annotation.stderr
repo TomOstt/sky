@@ -1,0 +1,11 @@
+tests/ui/types/err_array_shape_annotation.sky:1:18: error: mismatched shapes: shape mismatch at axis 0: expected 3, found 2 (Vector[3] vs Vector[2])
+  |
+1 | v: Vector[3] m = [1 m, 2 m]
+  |                  ^^^^^^^^^^ this is Vector[2] [L]
+  |    ----------- expected because of this annotation
+
+tests/ui/types/err_array_shape_annotation.sky:2:19: error: mismatched shapes: shape mismatch at axis 1: expected 3, found 2 (Matrix[2,3] vs Matrix[2,2])
+  |
+2 | A: Matrix[2, 3] = [[1, 2], [3, 4]]
+  |                   ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [1]
+  |    ------------ expected because of this annotation

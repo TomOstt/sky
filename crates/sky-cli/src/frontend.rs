@@ -1,6 +1,8 @@
 //! The front end shared by `check`, `run` and `repl`: lex, parse, and
 //! type-check one source text, and collect every diagnostic.
 
+use std::collections::HashSet;
+
 use sky_ast::{Module, ParseError};
 use sky_diag::{Diagnostic, Severity, SourceFile, Span};
 use sky_syntax::Edition;
@@ -16,6 +18,9 @@ pub struct FrontEnd {
     /// The checker's environment after the last statement. Meaningful only
     /// when [`FrontEnd::ok`]; the REPL keeps it for the next line.
     pub env: Env,
+    /// The `A⁻¹ @ b` sites the checker rewrote to Cholesky solves, which the
+    /// interpreter must honour (see `sky_interp::run_module_with`).
+    pub cholesky_solves: HashSet<Span>,
     /// Whether no diagnostic is an error.
     pub ok: bool,
 }
@@ -41,6 +46,7 @@ impl FrontEnd {
 pub fn analyze(src: &str, env: Env, explain: bool, _edition: Edition) -> FrontEnd {
     let mut module_out = None;
     let mut env_out = env.clone();
+    let mut solves = HashSet::new();
     let mut diagnostics: Vec<Diagnostic> = match sky_syntax::lex(src) {
         Err(e) => e.diagnostics().cloned().collect(),
         Ok(lexed) => {
@@ -70,6 +76,7 @@ pub fn analyze(src: &str, env: Env, explain: bool, _edition: Edition) -> FrontEn
                     }
                 }
                 env_out = checked.env;
+                solves = checked.cholesky_solves;
                 module_out = Some(module);
             } else {
                 diagnostics.extend(errors.into_iter().map(ParseError::into_diagnostic));
@@ -85,6 +92,7 @@ pub fn analyze(src: &str, env: Env, explain: bool, _edition: Edition) -> FrontEn
         diagnostics,
         module: module_out,
         env: env_out,
+        cholesky_solves: solves,
         ok,
     }
 }

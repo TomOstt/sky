@@ -1,0 +1,4 @@
+# One element with a different dimension is an error on that element.
+v = [1 m, 2 s, 3 m]
+A = [[1 m, 2 m], [3 m, 4 kg]]
+d: Vector[2] s = [1 m, 2 m]

@@ -99,18 +99,13 @@ impl std::error::Error for IrRuntimeError {}
 ///
 /// Lowering turns a file's value-less declarations (`A: Matrix[3, 3]`, an
 /// input with no value) into parameters of `<main>`. Nothing can supply
-/// them yet, and such inputs are arrays, so a `<main>` with parameters fails
-/// the way `sky run` does on the same file.
+/// them in v0.1, so a `<main>` with parameters fails with the same error
+/// `sky run` gives on the same file.
 pub fn run(module: &Module, out: &mut impl Write) -> Result<(), IrRuntimeError> {
     if let Some(main) = module.function(Module::MAIN) {
-        if !main.param_values().is_empty() {
-            let span = main
-                .ops
-                .iter()
-                .map(|o| o.span)
-                .find(|s| !s.is_empty())
-                .unwrap_or(main.span);
-            return Err(sky_interp::arith::arrays_unsupported(span).into());
+        if let Some(&first) = main.param_values().first() {
+            let name = main.value(first).name.as_deref().unwrap_or("an input");
+            return Err(sky_interp::arith::declared_without_value(name, main.span).into());
         }
     }
     machine::call(module, Module::MAIN, Vec::new(), out).map(|_| ())

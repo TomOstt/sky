@@ -76,6 +76,11 @@ impl Lower<'_> {
                 e.span,
             )
             .with_note(ARRAYS)),
+            ExprKind::Array(_) => Err(LowerError::new(
+                "array literals are not supported in SIR yet",
+                e.span,
+            )
+            .with_note(ARRAYS)),
             ExprKind::Attribute { name, .. } => Err(LowerError::new(
                 format!("attribute `{}` is not supported yet", self.text(name.span)),
                 e.span,
@@ -396,4 +401,4 @@ impl Lower<'_> {
 
 /// Why arrays are rejected.
 pub(crate) const ARRAYS: &str =
-    "the checker accepts array types in v0.1, but neither `sky run` nor SIR can execute arrays yet";
+    "`sky run` executes arrays, but SIR has no array values yet, so this program can't be lowered";

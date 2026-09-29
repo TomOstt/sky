@@ -1,0 +1,4 @@
+# A PositiveDefinite literal proven from its entries feeds the rewrite.
+K: PositiveDefinite Matrix[2, 2] = [[4, 1], [1, 3]]
+f = [1, 2]
+u = K⁻¹ @ f

@@ -4,23 +4,25 @@
 //! are exhaustive on purpose (no `_ =>` arms), so a node another change adds
 //! to the AST fails to compile here instead of being silently ignored.
 
+use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
-
-use sky_ast::ast::span_text;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use sky_ast::ast::span_text;
+
 use sky_ast::{
-    AssignTarget, BinaryOp, Block, BoolOp, Expr, ExprKind, Literal, Module, Stmt, StmtKind, UnaryOp,
+    AssignTarget, BinaryOp, Block, BoolOp, Expr, ExprKind, IndexItem, Literal, Module, Stmt,
+    StmtKind, UnaryOp,
 };
 use sky_diag::Span;
 use sky_syntax::lexer::unescape_str;
 use sky_units::MathFn;
 
 use crate::arith::{
-    arith, arity_mismatch, arrays_unsupported, equal, expect_bool, order, pow, reciprocal,
-    recursion_too_deep, sign, ArithOp, StackMeter, MAX_CALL_DEPTH, R,
+    arith, arity_mismatch, equal, expect_bool, order, pow, reciprocal, recursion_too_deep, sign,
+    ArithOp, StackMeter, MAX_CALL_DEPTH, R,
 };
+use crate::array::{self, Ix};
 use crate::literal::{number_literal, unit_literal_si};
 use crate::value::Function;
 use crate::{RuntimeEnv, RuntimeError, Value};
@@ -47,10 +49,28 @@ pub fn run_module<W: Write>(
     env: &mut RuntimeEnv,
     out: &mut W,
 ) -> Result<Option<Value>, RuntimeError> {
+    run_module_with(module, src, env, out, &HashSet::new())
+}
+
+/// Like [`run_module`], and honours the checker's rewrites: `solves` is
+/// `Checked::cholesky_solves`, the span of every `A⁻¹ @ b` the checker
+/// decided to rewrite to a Cholesky solve (its `A` is PositiveDefinite). At
+/// such a span the interpreter factors `A` and solves for `b` instead of
+/// forming `A⁻¹`. The spans must come from checking this same `src`. With an
+/// empty set the program still runs, computing the inverse and multiplying,
+/// which gives the same answer up to rounding.
+pub fn run_module_with<W: Write>(
+    module: &Module,
+    src: &str,
+    env: &mut RuntimeEnv,
+    out: &mut W,
+    solves: &HashSet<Span>,
+) -> Result<Option<Value>, RuntimeError> {
     let mut it = Interp {
         src,
         env,
         out,
+        solves,
         frames: Vec::new(),
         stack: StackMeter::new(),
     };
@@ -71,6 +91,8 @@ struct Interp<'a> {
     /// Module-level names.
     env: &'a mut RuntimeEnv,
     out: &'a mut dyn Write,
+    /// The `A⁻¹ @ b` sites to solve by Cholesky; see [`run_module_with`].
+    solves: &'a HashSet<Span>,
     /// The local variables of each active user-function call, innermost
     /// last. Inside a call, names are read from its frame and then from the
     /// module (Python's rule); assignments go to the frame.
@@ -218,9 +240,13 @@ impl<'a> Interp<'a> {
                     self.assign(name, v);
                     Ok(Flow::Normal(None))
                 }
-                // A declaration without a value only makes sense for an
-                // array (the annotation is a shape).
-                None => Err(arrays_unsupported(s.span)),
+                // A declaration without a value is an input: the checker
+                // takes its shape, tags and unit on trust, and nothing in
+                // v0.1 supplies one.
+                None => Err(crate::arith::declared_without_value(
+                    self.text(name.span),
+                    s.span,
+                )),
             },
         }
     }
@@ -291,7 +317,7 @@ impl<'a> Interp<'a> {
                     let r = self.eval(rhs)?;
                     self.binary_values(*op, l, r, e.span, lhs.span, rhs)
                 }
-                BinaryOp::MatMul => Err(arrays_unsupported(e.span)),
+                BinaryOp::MatMul => self.matmul(e, lhs, rhs),
             },
             ExprKind::BoolOp { op, operands, .. } => {
                 // The operand that settles the result: `false` for `and`,
@@ -316,7 +342,8 @@ impl<'a> Interp<'a> {
                 self.reciprocal("⁻¹", v, e.span, operand.span)
             }
             ExprKind::Call { callee, args } => self.call(e, callee, args),
-            ExprKind::Index { .. } => Err(arrays_unsupported(e.span)),
+            ExprKind::Array(elems) => self.array_literal(e, elems),
+            ExprKind::Index { base, items } => self.index(e, base, items),
             ExprKind::Attribute { base: _, name } => Err(RuntimeError::new(
                 format!(
                     "attribute `{}` is not supported by the interpreter yet",
@@ -356,6 +383,7 @@ impl<'a> Interp<'a> {
                 match name {
                     "print" => return self.print(args),
                     "inv" => return self.inv(call, args),
+                    "zeros" | "identity" | "len" => return self.array_builtin(name, call, args),
                     _ => {
                         if let Some(f) = MathFn::from_name(name) {
                             return self.math(f, call, args);
@@ -370,6 +398,123 @@ impl<'a> Interp<'a> {
                 RuntimeError::new(format!("cannot call {}", other.kind()), callee.span)
                     .with_label("not a function"),
             ),
+        }
+    }
+
+    /// `[a, b]` or `[[a, b], [c, d]]`: entries are evaluated left to right,
+    /// row by row. A matrix is a literal whose elements are all literals.
+    fn array_literal(&mut self, e: &Expr, elems: &[Expr]) -> R<Value> {
+        let matrix = elems.iter().all(|x| matches!(x.kind, ExprKind::Array(_)));
+        let mut rows = Vec::new();
+        if matrix {
+            for row in elems {
+                let ExprKind::Array(items) = &row.kind else {
+                    continue;
+                };
+                rows.push(self.entries(items)?);
+            }
+        } else {
+            rows.push(self.entries(elems)?);
+        }
+        array::literal(rows, !matrix, e.span)
+    }
+
+    fn entries(&mut self, items: &[Expr]) -> R<Vec<(Value, Span)>> {
+        items
+            .iter()
+            .map(|x| Ok((self.eval(x)?, x.span)))
+            .collect::<R<Vec<_>>>()
+    }
+
+    /// `base[items]`, reading only.
+    fn index(&mut self, e: &Expr, base: &Expr, items: &[IndexItem]) -> R<Value> {
+        let b = self.eval(base)?;
+        let mut ixs = Vec::with_capacity(items.len());
+        for item in items {
+            ixs.push(match item {
+                IndexItem::Expr(x) => Ix::At {
+                    i: array::to_index(&self.eval(x)?, x.span)?,
+                    span: x.span,
+                },
+                IndexItem::Slice {
+                    start, stop, span, ..
+                } => {
+                    let mut bound = |x: &Option<Expr>| match x {
+                        Some(x) => array::to_index(&self.eval(x)?, x.span).map(Some),
+                        None => Ok(None),
+                    };
+                    Ix::Slice {
+                        start: bound(start)?,
+                        stop: bound(stop)?,
+                        span: *span,
+                    }
+                }
+            });
+        }
+        array::index(&b, &ixs, e.span, base.span)
+    }
+
+    /// `l @ r`. Where the checker rewrote `A⁻¹ @ b` (`solves` holds the
+    /// span of the whole expression) the interpreter factors `A` and solves
+    /// for `b`, and never forms `A⁻¹`.
+    fn matmul(&mut self, e: &Expr, lhs: &Expr, rhs: &Expr) -> R<Value> {
+        if self.solves.contains(&e.span) {
+            if let Some(a) = self.inverted_operand(lhs) {
+                let av = self.eval(a)?;
+                let bv = self.eval(rhs)?;
+                return array::cholesky_solve(&av, &bv, e.span, a.span, rhs.span);
+            }
+        }
+        let l = self.eval(lhs)?;
+        let r = self.eval(rhs)?;
+        array::matmul(&l, &r, e.span, lhs.span, rhs.span)
+    }
+
+    /// `A` if `e` is `A⁻¹` or `inv(A)` (the builtin, not a user's own
+    /// `inv`), possibly parenthesized: the forms the checker rewrites.
+    fn inverted_operand<'x>(&self, e: &'x Expr) -> Option<&'x Expr> {
+        let mut e = e;
+        while let ExprKind::Paren(inner) = &e.kind {
+            e = inner;
+        }
+        match &e.kind {
+            ExprKind::Inverse { operand, .. } => Some(operand),
+            ExprKind::Call { callee, args } => match (&callee.kind, args.as_slice()) {
+                (ExprKind::Name(id), [arg])
+                    if self.text(id.span) == "inv" && self.lookup("inv").is_none() =>
+                {
+                    Some(arg)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// `zeros(n)`, `zeros(m, n)`, `identity(n)`, `len(x)`.
+    fn array_builtin(&mut self, name: &str, call: &Expr, args: &[Expr]) -> R<Value> {
+        let takes = |n: &str| {
+            RuntimeError::new(
+                format!("`{name}` takes {n}, found {}", args.len()),
+                call.span,
+            )
+        };
+        let mut sizes = Vec::with_capacity(args.len());
+        for a in args {
+            let v = self.eval(a)?;
+            if name == "len" {
+                let [_] = args else {
+                    return Err(takes("1 argument"));
+                };
+                return array::len(&v, a.span);
+            }
+            sizes.push(array::size_arg(name, &v, a.span)?);
+        }
+        match (name, sizes.as_slice()) {
+            ("zeros", [_] | [_, _]) => array::zeros(&sizes, call.span),
+            ("identity", [n]) => array::identity(*n, call.span),
+            ("zeros", _) => Err(takes("1 or 2 arguments")),
+            _ => Err(takes("1 argument")),
         }
     }
 
@@ -489,7 +634,7 @@ impl<'a> Interp<'a> {
             BinaryOp::Le => self.ordering(op, |a, b| a <= b, &l, &r, whole, lspan, rspan),
             BinaryOp::Gt => self.ordering(op, |a, b| a > b, &l, &r, whole, lspan, rspan),
             BinaryOp::Ge => self.ordering(op, |a, b| a >= b, &l, &r, whole, lspan, rspan),
-            BinaryOp::MatMul => Err(arrays_unsupported(whole)),
+            BinaryOp::MatMul => array::matmul(&l, &r, whole, lspan, rspan),
         }
     }
 

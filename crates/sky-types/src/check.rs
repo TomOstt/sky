@@ -5,10 +5,12 @@
 //! comparison operators, `@`, postfix `⁻¹` (and `inv(x)`), `^`, the Bool
 //! literals `true`/`false`, and `and`/`or`/`not` (strict Bool operands, no
 //! truthiness, per the spec's "Booleans and conditions"), the builtin
-//! `print(...)` call, and calls to user functions. Anything else (strings,
-//! indexing, attributes, `∂`, `∇`, calls to names that are not functions) is typed as
-//! [`Ty::Unknown`] without a diagnostic, and an operator with an unknown
-//! operand is unknown too, so one error never cascades.
+//! `print(...)` call, and calls to user functions. Array literals, indexing
+//! and the builtins `zeros`, `identity` and `len` are in [`crate::array`].
+//! Anything else (strings, attributes, `∂`, `∇`, calls to names that are not
+//! functions) is typed as [`Ty::Unknown`] without a diagnostic, and an
+//! operator with an unknown operand is unknown too, so one error never
+//! cascades.
 //!
 //! Blocks, control flow, and functions (`if`/`while`/`def`, scoping, calls to
 //! user functions) live in [`crate::flow`]; the rules are in the spec's
@@ -49,7 +51,7 @@
 //! the parser (see the crate's `deep_nesting` test).
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -61,6 +63,7 @@ use sky_ast::{
 use sky_diag::{Diagnostic, Severity, Span};
 use sky_units::{lookup, lookup_constant, suggest_unit, Dimension, Rational, CONSTANTS};
 
+use crate::array::LiteralProof;
 use crate::flow::{FnCtx, FuncSig, LoopFrame};
 use crate::provenance::{label_dim, Provenance};
 use crate::rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
@@ -321,6 +324,12 @@ pub struct Checked {
     /// Rewrite decisions made after [`MAX_STORED_REWRITES`] were stored.
     /// They are still rewrites; only their explanations are dropped.
     pub rewrites_omitted: usize,
+    /// The span of every `A⁻¹ @ b` (the whole expression) the checker
+    /// decided to rewrite to a Cholesky solve. Unlike [`Checked::rewrites`]
+    /// it is not capped: it is what the interpreter reads to honour the
+    /// rewrite, so every site must be in it. Checking the same code twice
+    /// (a loop body) adds the same span once.
+    pub cholesky_solves: HashSet<Span>,
     /// The environment after the last statement.
     pub env: Env,
     /// The type of every expression the walk typed, keyed by the
@@ -386,6 +395,7 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         diagnostics: Vec::new(),
         rewrites: Vec::new(),
         rewrites_omitted: 0,
+        solves: HashSet::new(),
         fns: Vec::new(),
         loops: Vec::new(),
         diverged: false,
@@ -401,6 +411,7 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         diagnostics: c.diagnostics,
         rewrites: c.rewrites,
         rewrites_omitted: c.rewrites_omitted,
+        cholesky_solves: c.solves,
         env: c.env,
         expr_types: c.expr_types,
         binding_types: c.binding_types,
@@ -429,6 +440,8 @@ pub(crate) struct Checker<'s> {
     diagnostics: Vec<Diagnostic>,
     rewrites: Vec<RewriteSite>,
     rewrites_omitted: usize,
+    /// See [`Checked::cholesky_solves`].
+    solves: HashSet<Span>,
     /// The `def`s being checked, innermost last.
     pub(crate) fns: Vec<FnCtx>,
     /// The `while` loops around the current statement within the current
@@ -441,7 +454,7 @@ pub(crate) struct Checker<'s> {
     pub(crate) prov: Provenance,
     /// See [`Checked::expr_types`]. Recording is write-only: nothing in the
     /// walk reads these tables, so they cannot change a diagnostic.
-    expr_types: HashMap<Span, Ty>,
+    pub(crate) expr_types: HashMap<Span, Ty>,
     /// See [`Checked::binding_types`].
     binding_types: HashMap<Span, Ty>,
     /// See [`Checked::funcs`].
@@ -476,7 +489,7 @@ fn exact_decimal(text: &str) -> Option<Rational> {
     Rational::checked_new(num, den).ok()
 }
 
-fn rank_noun(rank: usize) -> String {
+pub(crate) fn rank_noun(rank: usize) -> String {
     match rank {
         0 => "scalar".to_string(),
         1 => "vector".to_string(),
@@ -830,8 +843,13 @@ impl<'s> Checker<'s> {
             }
         }
         // The first property the user wrote that the value isn't known to
-        // have (the closure adds implied ones, which they didn't write).
-        let missing = written.iter().find(|t| !v.ty.tags().closure().contains(*t));
+        // have (the closure adds implied ones, which they didn't write). A
+        // matrix literal of numbers can prove some from its entries.
+        let proof = LiteralProof::of(self.src, value);
+        let have = v.ty.tags().closure();
+        let missing = written
+            .iter()
+            .find(|t| !have.contains(*t) && !proof.as_ref().is_some_and(|p| p.proves(*t)));
         if let Some(tag) = missing {
             let label = self.this_is(&v);
             let subject = self.quoted(value.span);
@@ -844,8 +862,23 @@ impl<'s> Checker<'s> {
             .with_note(
                 "the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it",
             );
-            d = match &value.kind {
-                ExprKind::Name(_) => {
+            d = match (&value.kind, &proof) {
+                (_, Some(p)) => {
+                    let f = p.failure(tag);
+                    for (span, label) in f.entries {
+                        d = d.with_secondary(span, label);
+                    }
+                    d = d.with_note(f.note);
+                    if tag == Tag::Orthogonal {
+                        d.with_help("declare Orthogonal on an input, or build the matrix from `identity(n)`")
+                    } else {
+                        d.with_help(format!(
+                            "fix the entries, or declare the {} property on an input the value is computed from",
+                            tag.name()
+                        ))
+                    }
+                }
+                (ExprKind::Name(_), _) => {
                     let shape = self.env.shapes.apply(v.ty.shape());
                     d.with_help(format!(
                         "if `{subject}` is an input with this property, declare it that way where it is defined: `{subject}: {} {shape}`",
@@ -1265,6 +1298,7 @@ impl<'s> Checker<'s> {
                 }
                 self.invert(t, *op_span, operand.span)
             }
+            ExprKind::Array(elems) => self.array_literal(elems),
             ExprKind::Call { callee, args } => {
                 if let Some(arg) = self.inv_call(callee, args) {
                     let t = self.expr(arg);
@@ -1280,14 +1314,13 @@ impl<'s> Checker<'s> {
                 if let Some(t) = self.math_call(callee, args, e.span) {
                     return t;
                 }
+                if let Some(t) = self.builtin_call(callee, args, e.span) {
+                    return t;
+                }
                 let callee_ty = self.expr(callee);
                 self.call(callee_ty, callee, args, e.span)
             }
-            ExprKind::Index { base, items } => {
-                self.expr(base);
-                self.index_items(items);
-                Ty::Unknown
-            }
+            ExprKind::Index { base, items } => self.index_expr(base, items),
             ExprKind::Attribute { base, .. } => {
                 self.expr(base);
                 Ty::Unknown
@@ -1467,6 +1500,7 @@ impl<'s> Checker<'s> {
             if let Some(rewrite) =
                 cholesky_rewrite(MatmulLhs::Inverse(&av.ty), &rv.ty, &self.env.shapes)
             {
+                self.solves.insert(span);
                 if self.rewrites.len() < MAX_STORED_REWRITES {
                     let rewrite = self.name_operands(rewrite, operand, rhs);
                     self.rewrites.push(RewriteSite {
@@ -1720,10 +1754,22 @@ impl<'s> Checker<'s> {
                     (_, true) => format!("cannot subtract a {noun} from a scalar"),
                 };
                 let c = self.operand_text(sc_e);
+                // The identity builtin needs a constant size; a symbolic
+                // one is spelled `n` for the user to fill in.
+                let n = match self.env.shapes.apply(arr.ty.shape()).dims() {
+                    [ShapeDim::Known(n), _] => n.to_string(),
+                    _ => "n".to_string(),
+                };
                 let (ones, identity) = if left_scalar {
-                    (format!("{c} * ones({a}) {sym} {a}"), format!("I {sym} {a}"))
+                    (
+                        format!("{c} * ones({a}) {sym} {a}"),
+                        format!("identity({n}) {sym} {a}"),
+                    )
                 } else {
-                    (format!("{a} {sym} {c} * ones({a})"), format!("{a} {sym} I"))
+                    (
+                        format!("{a} {sym} {c} * ones({a})"),
+                        format!("{a} {sym} identity({n})"),
+                    )
                 };
                 let sc = if left_scalar { &lv } else { &rv };
                 let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
@@ -2110,7 +2156,7 @@ mod tests {
             help,
             vec![
                 vec![
-                    "write `A + 2 * ones(A)` for every element, or `A + I` for the identity"
+                    "write `A + 2 * ones(A)` for every element, or `A + identity(n)` for the identity"
                         .to_string()
                 ],
                 vec!["write `v + 2 * ones(v)` for every element".to_string()],

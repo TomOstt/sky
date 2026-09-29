@@ -28,7 +28,7 @@ tests/ui/types/err_scalar_plus_vector.sky:11:7: error: cannot add a matrix to a 
    |       ^ no broadcasting between a scalar and an array
    |     - this is Scalar [1]
    |         - this is Matrix[N,N] [1]
-   = help: write `2 * ones(S) + S` for every element, or `I + S` for the identity
+   = help: write `2 * ones(S) + S` for every element, or `identity(n) + S` for the identity
 
 tests/ui/types/err_scalar_plus_vector.sky:12:7: error: cannot subtract a scalar from a vector
    |

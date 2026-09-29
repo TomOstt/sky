@@ -1,0 +1,61 @@
+tests/ui/types/err_array_index.sky:3:7: error: index 3 is out of bounds for axis 0 of length 3
+  |
+3 | a = v[3]
+  |       ^ valid indices are 0 to 2
+  |     - this is Vector[3] [1]
+
+tests/ui/types/err_array_index.sky:4:10: error: index 2 is out of bounds for axis 1 of length 2
+  |
+4 | b = A[0, 2]
+  |          ^ valid indices are 0 to 1
+  |     - this is Matrix[2,2] [1]
+
+tests/ui/types/err_array_index.sky:5:7: error: index 2 is out of bounds for axis 0 of length 2
+  |
+5 | p = A[2, 0]
+  |       ^ valid indices are 0 to 1
+  |     - this is Matrix[2,2] [1]
+
+tests/ui/types/err_array_index.sky:6:10: error: too many indices: Vector[3] has 1 axis, found 2 indices
+  |
+6 | d = v[1, 1]
+  |          ^ this index has no axis
+  |     - this is Vector[3] [1]
+
+tests/ui/types/err_array_index.sky:7:7: error: an index must be dimensionless
+  |
+7 | e = v[1 m]
+  |       ^^^ this is length
+
+tests/ui/types/err_array_index.sky:8:7: error: an index must be an integer, found `1.5`
+  |
+8 | f = v[1.5]
+  |       ^^^ not an integer
+
+tests/ui/types/err_array_index.sky:9:7: error: an index cannot be negative
+  |
+9 | g = v[-1]
+  |       ^^ negative
+  = note: v0.1 counts from 0 and has no negative indices
+
+tests/ui/types/err_array_index.sky:10:7: error: this slice is empty
+   |
+10 | q = v[2:1]
+   |       ^^^ 2 is not less than 1
+   = note: arrays are never empty in v0.1
+
+tests/ui/types/err_array_index.sky:11:7: error: slice end 4 is out of bounds for axis 0 of length 3
+   |
+11 | j = v[0:4]
+   |       ^^^ the axis has 3 elements
+
+tests/ui/types/err_array_index.sky:13:5: error: cannot index a scalar
+   |
+13 | t = s[0]
+   |     ^ this is Scalar [1]
+   = note: only vectors and matrices have elements
+
+tests/ui/types/err_array_index.sky:14:7: error: an index must be an integer, found Bool
+   |
+14 | u = v[true]
+   |       ^^^^ this is Bool

@@ -1,0 +1,5 @@
+tests/ui/types/err_array_empty.sky:1:5: error: an array literal needs at least one element
+  |
+1 | v = []
+  |     ^^
+  = help: the elements fix an array's dimension and `[]` has none; for zeros write `zeros(n)`

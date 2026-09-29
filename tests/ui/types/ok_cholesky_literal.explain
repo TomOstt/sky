@@ -1,0 +1,6 @@
+tests/ui/types/ok_cholesky_literal.sky:4:5: note: `K⁻¹ @ f` is rewritten to a Cholesky solve
+  |
+4 | u = K⁻¹ @ f
+  |     ^^^^^^^
+  |     - positive definite
+  = note: rewrite `K⁻¹ @ f` to a Cholesky solve: K is Matrix[2,2] and PositiveDefinite, f is Vector[2]. Factor K = L·Lᵀ (L lower-triangular), solve L·y = f, then Lᵀ·x = y. x = K⁻¹·f is Vector[2], and K⁻¹ is never formed.

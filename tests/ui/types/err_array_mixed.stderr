@@ -1,0 +1,37 @@
+tests/ui/types/err_array_mixed.sky:1:9: error: cannot mix numbers and rows in an array literal: this is a row
+  |
+1 | a = [1, [2, 3]]
+  |         ^^^^^^ expected numbers, like the other elements
+  |      - the first element
+  = help: a vector is `[1, 2, 3]` and a matrix is written as rows, `[[1, 2], [3, 4]]`
+
+tests/ui/types/err_array_mixed.sky:2:14: error: cannot mix numbers and rows in an array literal: this is a number
+  |
+2 | b = [[1, 2], 3]
+  |              ^ expected rows, like the other elements
+  |      ------ the first element
+  = help: a vector is `[1, 2, 3]` and a matrix is written as rows, `[[1, 2], [3, 4]]`
+
+tests/ui/types/err_array_mixed.sky:3:7: error: array literals have at most two levels
+  |
+3 | g = [[[1]]]
+  |       ^^^ a third level
+  = note: v0.1 has vectors and matrices, and no literal for a rank-3 tensor
+
+tests/ui/types/err_array_mixed.sky:4:6: error: an array element must be a number, found Bool
+  |
+4 | d = [true, 2]
+  |      ^^^^ this is Bool
+  = note: v0.1 has no truthiness: a Bool is never a number
+
+tests/ui/types/err_array_mixed.sky:6:6: error: an array element must be a number, found a matrix
+  |
+6 | f = [e, e]
+  |      ^ this is Matrix[2,2] [1]
+  = help: write a matrix as rows: `[[1, 2], [3, 4]]`
+
+tests/ui/types/err_array_mixed.sky:6:9: error: an array element must be a number, found a matrix
+  |
+6 | f = [e, e]
+  |         ^ this is Matrix[2,2] [1]
+  = help: write a matrix as rows: `[[1, 2], [3, 4]]`

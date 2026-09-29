@@ -50,11 +50,16 @@ impl Walk<'_> {
                     self.expr(o, false);
                 }
             }
+            ExprKind::Array(elements) => {
+                for el in elements {
+                    self.expr(el, false);
+                }
+            }
             ExprKind::Call { callee, args } => {
-                // Builtins (`print`, `inv`, the math functions) are
+                // Builtins (`print`, `inv`, the array and math functions) are
                 // recognised by name, so their callee is never typed.
                 let builtin = matches!(&callee.kind, ExprKind::Name(id)
-                    if matches!(&self.src[id.span.range()], "print" | "inv")
+                    if matches!(&self.src[id.span.range()], "print" | "inv" | "zeros" | "identity" | "len")
                         || sky_units::MathFn::from_name(&self.src[id.span.range()]).is_some())
                     && !self.checked.expr_types.contains_key(&callee.span);
                 self.expr(callee, builtin);

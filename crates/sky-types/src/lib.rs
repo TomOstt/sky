@@ -25,8 +25,10 @@
 
 #![forbid(unsafe_code)]
 
+mod array;
 mod builtins;
 pub mod check;
+pub mod constant;
 mod flow;
 mod provenance;
 pub mod rewrite;
@@ -39,6 +41,9 @@ pub mod tags;
 pub use check::{
     check_module, check_module_with, const_exponent, Checked, Env, RewriteSite, Ty, ValueTy,
     MAX_STORED_REWRITES,
+};
+pub use constant::{
+    apply_unit, entry_value, parse_number, NumberError, UnitError, MAX_ARRAY_ELEMENTS,
 };
 pub use flow::FuncSig;
 pub use rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};

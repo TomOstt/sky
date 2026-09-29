@@ -1,0 +1,9 @@
+tests/ui/types/err_literal_tag_not_diagonal.sky:1:28: error: `[[1, 0], [0.5, 1]]` is not known to be Diagonal
+  |
+1 | D: Diagonal Matrix[2, 2] = [[1, 0], [0.5, 1]]
+  |                            ^^^^^^^^^^^^^^^^^^ this is Matrix[2,2] [1]
+  |    --------------------- expected because of this annotation
+  |                                      --- entry [1, 0]
+  = note: the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it
+  = note: entry [1, 0] is 0.5, not zero
+  = help: fix the entries, or declare the Diagonal property on an input the value is computed from

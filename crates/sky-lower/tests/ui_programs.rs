@@ -44,6 +44,21 @@ const REJECTED: &[(&str, &str)] = &[
         "only functions defined with `def`",
     ),
     ("ok_math_functions.sky", "only functions defined with `def`"),
+    // Arrays run in `sky run` but have no SIR values yet.
+    ("ok_array_builtins.sky", "only functions defined with `def`"),
+    ("ok_array_index.sky", "not supported"),
+    (
+        "ok_array_literals.sky",
+        "array literals are not supported in SIR yet",
+    ),
+    (
+        "ok_cholesky_literal.sky",
+        "array literals are not supported in SIR yet",
+    ),
+    (
+        "ok_literal_tag_proofs.sky",
+        "array literals are not supported in SIR yet",
+    ),
 ];
 
 #[test]

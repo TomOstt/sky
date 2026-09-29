@@ -268,6 +268,10 @@ fn write_expr(out: &mut String, e: &Expr, src: &str) {
             node(out, op.keyword(), src, &children);
         }
         ExprKind::Inverse { operand, .. } => node(out, "inverse", src, &[operand]),
+        ExprKind::Array(elems) => {
+            let children: Vec<&Expr> = elems.iter().collect();
+            node(out, "array", src, &children);
+        }
         ExprKind::Call { callee, args } => {
             let mut children = vec![&**callee];
             children.extend(args.iter());

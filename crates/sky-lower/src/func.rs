@@ -429,6 +429,11 @@ impl Lower<'_> {
                     self.scan_expr(x, defined, direct, callees);
                 }
             }
+            ExprKind::Array(elements) => {
+                for el in elements {
+                    self.scan_expr(el, defined, direct, callees);
+                }
+            }
             ExprKind::Index { base, items } => {
                 self.scan_expr(base, defined, direct, callees);
                 self.scan_items(items, defined, direct, callees);

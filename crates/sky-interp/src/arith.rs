@@ -170,6 +170,11 @@ pub fn expect_bool(kw: &str, v: &Value, span: Span) -> R<bool> {
 /// `-v` or `+v`.
 pub fn sign(negate: bool, v: Value, operand: Span) -> R<Value> {
     match v {
+        Value::Array { dims, data, dim } => Ok(if negate {
+            crate::array::negate(&dims, &data, dim)
+        } else {
+            Value::array(dims, data, dim)
+        }),
         Value::Number { value, dim } => Ok(Value::number(if negate { -value } else { value }, dim)),
         other => Err(RuntimeError::new(
             format!(
@@ -194,6 +199,9 @@ pub enum ArithOp {
 /// `l op r` on two evaluated operands. `whole` is the span of the
 /// expression, `lspan` and `rspan` those of its operands.
 pub fn arith(op: ArithOp, l: &Value, r: &Value, whole: Span, lspan: Span, rspan: Span) -> R<Value> {
+    if matches!(l, Value::Array { .. }) || matches!(r, Value::Array { .. }) {
+        return crate::array::arith(op, l, r, whole, lspan, rspan);
+    }
     match op {
         ArithOp::Add | ArithOp::Sub => {
             let (verb, prep) = if op == ArithOp::Add {
@@ -358,9 +366,14 @@ pub fn pow_scalar(b: f64, x: f64, whole: Span, base_span: Span) -> R<f64> {
     finite(value, whole)
 }
 
-/// `1/x` with the inverse dimension; `what` names the spelling (`⁻¹` or
+/// `1/x` with the inverse dimension, or the matrix inverse for an array;
+/// `what` names the spelling (`⁻¹` or
 /// `inv`) in the error for a non-number.
 pub fn reciprocal(what: &str, v: &Value, whole: Span, operand: Span) -> R<Value> {
+    // A matrix has an inverse, not a reciprocal.
+    if matches!(v, Value::Array { .. }) {
+        return crate::array::inverse(v, whole, operand);
+    }
     let Value::Number { value, dim } = v else {
         return Err(RuntimeError::new(
             format!("`{what}` needs a number, found {}", v.kind()),
@@ -374,4 +387,14 @@ pub fn reciprocal(what: &str, v: &Value, whole: Span, operand: Span) -> R<Value>
         .inverse()
         .map_err(|_| RuntimeError::new("dimension exponent too large", whole))?;
     Ok(Value::number(finite(1.0 / value, whole)?, dim))
+}
+
+/// A declaration without a value (`A: Matrix[3, 3]`) reached at run time:
+/// an input nothing supplies in v0.1. Shared by both interpreters (the SIR
+/// one sees such inputs as parameters of `<main>`).
+pub fn declared_without_value(name: &str, span: Span) -> RuntimeError {
+    RuntimeError::new(format!("`{name}` is declared but has no value"), span)
+        .with_label("an input with nothing to read it from")
+        .with_note("a declaration without a value only gives the checker a type")
+        .with_help("give it a value: `name: type = value`")
 }

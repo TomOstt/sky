@@ -1,0 +1,42 @@
+tests/ui/types/err_array_builtins.sky:1:5: error: `zeros` takes 1 or 2 arguments, found 0
+  |
+1 | a = zeros()
+  |     ^^^^^^^ wrong number of arguments
+
+tests/ui/types/err_array_builtins.sky:2:5: error: `zeros` takes 1 or 2 arguments, found 3
+  |
+2 | b = zeros(1, 2, 3)
+  |     ^^^^^^^^^^^^^^ wrong number of arguments
+
+tests/ui/types/err_array_builtins.sky:3:11: error: `zeros` needs a positive size, found `0`
+  |
+3 | p = zeros(0)
+  |           ^ not positive
+  = note: arrays are never empty in v0.1
+
+tests/ui/types/err_array_builtins.sky:4:11: error: `zeros` needs an integer size, found `2.5`
+  |
+4 | d = zeros(2.5)
+  |           ^^^ not an integer
+
+tests/ui/types/err_array_builtins.sky:6:14: error: `identity` needs a constant size, found `n`
+  |
+6 | e = identity(n)
+  |              ^ not a constant
+  = note: an array's size is part of its type, so it is known before the program runs
+  = help: write the number, e.g. `identity(3)`
+
+tests/ui/types/err_array_builtins.sky:7:11: error: `zeros` needs a size, a dimensionless integer
+  |
+7 | f = zeros(3 m)
+  |           ^^^ this is Scalar [L]
+
+tests/ui/types/err_array_builtins.sky:8:9: error: `len` needs a vector or a matrix, found a scalar
+  |
+8 | g = len(1)
+  |         ^ this is Scalar [1]
+
+tests/ui/types/err_array_builtins.sky:9:5: error: the array from `identity` is too large
+  |
+9 | q = identity(100000)
+  |     ^^^^^^^^^^^^^^^^ more than 16777216 elements

@@ -239,3 +239,32 @@ fn inverse_is_never_lowered_to_a_power() {
     assert!(matches!(operand.kind, ExprKind::Literal(Literal::Int(_))));
     assert_eq!(common::at(src, rhs.span), "-1");
 }
+
+#[test]
+fn array_literals() {
+    check(&[
+        ("[1, 2, 3]", "(array 1 2 3)"),
+        ("[1 m, 2 m,]", "(array (unit 1 m) (unit 2 m))"),
+        ("[[1, 2], [3, 4]]", "(array (array 1 2) (array 3 4))"),
+        ("[a + b, -c]", "(array (+ a b) (neg c))"),
+        ("[1, 2][0]", "(index (array 1 2) 0)"),
+        ("A @ [1, 2]", "(@ A (array 1 2))"),
+        // Newlines inside brackets are not statement ends.
+        ("[[1, 2],\n [3, 4]]", "(array (array 1 2) (array 3 4))"),
+    ]);
+}
+
+#[test]
+fn array_literal_errors() {
+    let errs = common::expr_errors("[]");
+    assert_eq!(errs.len(), 1);
+    assert_eq!(
+        errs[0].message,
+        "an array literal needs at least one element"
+    );
+    assert!(errs[0]
+        .help
+        .as_deref()
+        .is_some_and(|h| h.contains("zeros(n)")));
+    assert_eq!(common::expr_errors("[1 2]").len(), 1);
+}

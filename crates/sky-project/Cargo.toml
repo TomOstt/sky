@@ -1,0 +1,16 @@
+[package]
+name = "sky-project"
+description = "Project-root discovery and import resolution for Sky"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+sky-diag = { path = "../sky-diag" }
+
+[target.'cfg(unix)'.dependencies]
+# geteuid() and getpwuid_r(): std has no API for the effective uid or the
+# passwd home directory. FFI declarations only; no build script.
+libc = { version = "0.2", default-features = false }

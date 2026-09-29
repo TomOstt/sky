@@ -36,6 +36,10 @@
 //!   the reverse);
 //! - a dedent to a column that matches no enclosing block;
 //! - unterminated strings, unknown escapes, unmatched or mismatched brackets;
+//! - an identifier that is not in Unicode NFKC form (`e` + U+0301 instead
+//!   of `é`, `ﬁ`, fullwidth `ｘ`, mathematical `𝑥`, MICRO SIGN `µ`). The
+//!   source is never normalized, and keywords match the raw text only;
+//!   the NFKC form appears only in the error's help;
 //! - the glyph `±`: uncertainty is not part of Sky v0.1. The ASCII sequence
 //!   `+-` is simply `Plus` then `Minus`, so `a+-b` is `a + (-b)` as in Python.
 
@@ -45,6 +49,7 @@ use sky_diag::Diagnostic;
 
 use crate::confusable::check_identifier;
 use crate::invisible_table::DEFAULT_IGNORABLE_IDENT;
+use crate::nfkc;
 use crate::source::find_bidi_control;
 use crate::token::{Kw, Token, TokenKind};
 use crate::{Span, MAX_SOURCE_BYTES};
@@ -87,6 +92,8 @@ pub enum LexErrorKind {
     SourceTooLarge,
     BareCarriageReturn,
     UnexpectedChar,
+    /// An identifier that is not in Unicode NFKC form.
+    NonNfkcIdentifier,
     MixedIndentation,
     InconsistentDedent,
     InvalidNumber,
@@ -253,18 +260,28 @@ fn is_invisible(c: char) -> bool {
     in_ranges(DEFAULT_IGNORABLE_IDENT, c) || in_ranges(INVISIBLE_EXTRA, c)
 }
 
-fn is_ident_start(c: char) -> bool {
+pub(crate) fn is_ident_start(c: char) -> bool {
     // Some invisible characters are XID_Start (the Hangul fillers U+115F,
     // U+1160, U+3164, U+FFA0), so an identifier could otherwise start with,
     // or consist entirely of, an invisible character.
-    c == '_' || (unicode_ident::is_xid_start(c) && !is_invisible(c))
+    c == '_'
+        || (unicode_ident::is_xid_start(c) && !is_invisible(c) && !has_middle_dot_compatibility(c))
 }
 
-fn is_ident_continue(c: char) -> bool {
+pub(crate) fn is_ident_continue(c: char) -> bool {
     unicode_ident::is_xid_continue(c)
         && !is_invisible(c)
         && c != '\u{00B7}' // MIDDLE DOT: reads as multiplication
         && c != '\u{0387}' // GREEK ANO TELEIA: canonically equivalent to U+00B7
+        && !has_middle_dot_compatibility(c)
+}
+
+/// `Ŀ` (U+013F) and `ŀ` (U+0140) are XID_Start, but their NFKC forms are
+/// `L·` and `l·`, with the MIDDLE DOT the lexer rejects in identifiers. They
+/// are rejected too, so the NFKC form of every identifier is an identifier
+/// (`nfkc::tests::nfkc_of_every_identifier_character_is_an_identifier`).
+fn has_middle_dot_compatibility(c: char) -> bool {
+    matches!(c, '\u{013F}' | '\u{0140}')
 }
 
 /// `'c' (U+XXXX)`, or just `U+XXXX` for characters that are unsafe or
@@ -281,6 +298,9 @@ fn unexpected_char_help(c: char) -> Option<&'static str> {
     Some(match c {
         '\u{2212}' => "for subtraction, use ASCII `-`",
         '×' | '\u{22C5}' | '·' => "for multiplication, use `*` (or `@` for matrix product)",
+        '\u{013F}' | '\u{0140}' => {
+            "this letter contains a middle dot (`·`), which reads as multiplication"
+        }
         '÷' => "for division, use `/`",
         '±' => "uncertainty (±) is not supported in v0.1",
         '⁻' => "the inverse operator is the glyph `⁻¹` (or the function `inv`)",
@@ -415,7 +435,7 @@ impl<'a> Lexer<'a> {
                 }
                 '0'..='9' => self.number(start)?,
                 '"' => self.string(start)?,
-                c if is_ident_start(c) => self.ident(start),
+                c if is_ident_start(c) => self.ident(start)?,
                 '(' | '[' => {
                     self.brackets.push((c, self.span_from(start)));
                     if c == '(' {
@@ -661,13 +681,21 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn ident(&mut self, start: usize) -> TokenKind {
+    fn ident(&mut self, start: usize) -> LexResult<TokenKind> {
         while self.peek().is_some_and(is_ident_continue) {
             self.bump();
         }
         let text = &self.src[start..self.pos];
+        // Keywords match the raw text only; the NFKC form never decides the
+        // token kind (`ｉｆ` is an error, not `if`).
         if let Some(kw) = Kw::from_ident(text) {
-            return TokenKind::Keyword(kw);
+            return Ok(TokenKind::Keyword(kw));
+        }
+        if !text.is_ascii() && !nfkc::is_nfkc(text) {
+            return err(
+                LexErrorKind::NonNfkcIdentifier,
+                non_nfkc_diagnostic(text, self.span_from(start)),
+            );
         }
         if self.checked_idents.insert(text) {
             if let Some(finding) = check_identifier(text) {
@@ -680,7 +708,7 @@ impl<'a> Lexer<'a> {
                 );
             }
         }
-        TokenKind::Ident
+        Ok(TokenKind::Ident)
     }
 
     fn close_bracket(&mut self, close: char, start: usize) -> LexResult<TokenKind> {
@@ -711,6 +739,93 @@ impl<'a> Lexer<'a> {
             TokenKind::RBracket
         })
     }
+}
+
+/// `s` with every non-ASCII character written as the renderer writes an
+/// escaped character (`\u{00E9}`), so differences that do not show when the
+/// text is printed (a combining mark, a compatibility variant) are visible.
+fn escape_non_ascii(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_ascii() {
+            out.push(c);
+        } else {
+            out.push_str(&format!("\\u{{{:04X}}}", c as u32));
+        }
+    }
+    out
+}
+
+/// Compatibility characters whose NFKC form is a different, specific letter
+/// that scientific code means: `(char, its name, intended char, its name)`.
+const INTENDED_LETTERS: &[(char, &str, char, &str)] = &[
+    (
+        '\u{00B5}',
+        "MICRO SIGN",
+        '\u{03BC}',
+        "GREEK SMALL LETTER MU",
+    ),
+    ('\u{212A}', "KELVIN SIGN", 'K', "LATIN CAPITAL LETTER K"),
+    (
+        '\u{210F}',
+        "PLANCK CONSTANT OVER TWO PI",
+        '\u{0127}',
+        "LATIN SMALL LETTER H WITH STROKE",
+    ),
+    (
+        '\u{2126}',
+        "OHM SIGN",
+        '\u{03A9}',
+        "GREEK CAPITAL LETTER OMEGA",
+    ),
+    (
+        '\u{212B}',
+        "ANGSTROM SIGN",
+        '\u{00C5}',
+        "LATIN CAPITAL LETTER A WITH RING ABOVE",
+    ),
+    ('\u{210E}', "PLANCK CONSTANT", 'h', "LATIN SMALL LETTER H"),
+];
+
+/// True if `s` would lex as one identifier (or keyword) token under the
+/// lexer's own character rules.
+fn is_identifier(s: &str) -> bool {
+    let mut chars = s.chars();
+    chars.next().is_some_and(is_ident_start) && chars.all(is_ident_continue)
+}
+
+/// The error for an identifier that is not in NFKC. The NFKC form is only
+/// used to write the message; the source is never normalized.
+fn non_nfkc_diagnostic(text: &str, span: Span) -> Diagnostic {
+    let normalized = nfkc::nfkc(text);
+    // XID_Start/XID_Continue are closed under NFKC, so the NFKC form of an
+    // identifier is always an identifier; `nfkc` tests check this for every
+    // identifier character. No user-facing message for the impossible case.
+    debug_assert!(
+        is_identifier(&normalized),
+        "NFKC form {normalized:?} of identifier {text:?} is not an identifier"
+    );
+    let mut diag = Diagnostic::error("identifier is not in Unicode NFKC form", span)
+        .with_label("not in NFKC form")
+        .with_note(format!(
+            "`{}` is not in NFKC (Unicode Normalization Form KC), and Sky never normalizes identifiers",
+            escape_non_ascii(text)
+        ));
+    if let Some(kw) = Kw::from_ident(&normalized) {
+        return diag.with_help(format!("did you mean `{}`", kw.as_str()));
+    }
+    for &(c, name, intended, intended_name) in INTENDED_LETTERS {
+        if text.contains(c) {
+            diag = diag.with_help(format!(
+                "{name} U+{:04X} is not a letter for identifiers; use {intended_name} U+{:04X} (`{intended}`)",
+                c as u32, intended as u32
+            ));
+        }
+    }
+    diag.with_help(format!(
+        "write it in NFKC form: `{}`",
+        escape_non_ascii(&normalized)
+    ))
 }
 
 fn describe_escape(c: char) -> String {

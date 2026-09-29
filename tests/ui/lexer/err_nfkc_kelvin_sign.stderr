@@ -1,0 +1,7 @@
+tests/ui/lexer/err_nfkc_kelvin_sign.sky:1:9: error: identifier is not in Unicode NFKC form
+  |
+1 | T = 300 K
+  |         ^ not in NFKC form
+  = note: `\u{212A}` is not in NFKC (Unicode Normalization Form KC), and Sky never normalizes identifiers
+  = help: KELVIN SIGN U+212A is not a letter for identifiers; use LATIN CAPITAL LETTER K U+004B (`K`)
+  = help: write it in NFKC form: `K`

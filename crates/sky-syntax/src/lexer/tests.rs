@@ -1150,14 +1150,15 @@ fn confusable_identifier_warns_once_per_name() {
 
 #[test]
 fn confusable_whole_script_and_mixed_script_warnings() {
-    let l = lexed("х = 1\nxЖ = 2\nµm = 3\n");
+    // (MICRO SIGN `µm` used to warn here; it is now a non-NFKC error, see
+    // `micro_kelvin_and_planck_signs_name_the_intended_letter`.)
+    let l = lexed("х = 1\nxЖ = 2\n");
     let msgs: Vec<_> = l.warnings.iter().map(|w| w.message.as_str()).collect();
     assert_eq!(
         msgs,
         [
             "identifier `х` contains Cyrillic 'х' (U+0445), which looks like Latin 'x'",
             "identifier `xЖ` mixes Latin and Cyrillic scripts",
-            "identifier `µm` contains MICRO SIGN U+00B5, which looks like 'μ' (U+03BC); use 'μ' instead",
         ]
     );
 }
@@ -1214,4 +1215,291 @@ s = \"done\"";
     let count = |kind| k.iter().filter(|&&x| x == kind).count();
     assert_eq!(count(Indent), 4);
     assert_eq!(count(Dedent), 4);
+}
+
+// ---- NFKC identifiers -----------------------------------------------------
+
+/// Asserts `src` fails with a non-NFKC error on exactly `ident`, and returns
+/// the error.
+fn assert_non_nfkc(src: &str, ident: &str) -> LexError {
+    let e = assert_err(src, LexErrorKind::NonNfkcIdentifier, ident);
+    assert_eq!(
+        e.diagnostic.message,
+        "identifier is not in Unicode NFKC form"
+    );
+    assert_eq!(
+        e.diagnostic.primary.message.as_deref(),
+        Some("not in NFKC form")
+    );
+    assert_eq!(
+        e.diagnostic.notes,
+        [format!(
+            "`{}` is not in NFKC (Unicode Normalization Form KC), and Sky never normalizes identifiers",
+            escape_non_ascii(ident)
+        )]
+    );
+    e
+}
+
+#[test]
+fn decomposed_identifier_is_rejected_not_normalized() {
+    // `é` precomposed is fine; `e` + COMBINING ACUTE ACCENT looks the same
+    // but would be a different name, so it is an error.
+    let src = "\u{00E9} = 1\ne\u{0301} = 2\n";
+    let e = assert_non_nfkc(src, "e\u{0301}");
+    assert_eq!(e.diagnostic.primary.span, Span::new(7, 10));
+    assert_eq!(e.diagnostic.help, ["write it in NFKC form: `\\u{00E9}`"]);
+    assert_eq!(lexed("\u{00E9} = 1\n").tokens[0].kind, Ident);
+}
+
+#[test]
+fn compatibility_variants_are_rejected() {
+    for (src, ident, nf) in [
+        ("\u{FB01}le = 1\n", "\u{FB01}le", "file"), // LATIN SMALL LIGATURE FI
+        ("\u{FF58} = 1\n", "\u{FF58}", "x"),        // FULLWIDTH x
+        ("\u{1D431} = 1\n", "\u{1D431}", "x"),      // MATHEMATICAL BOLD SMALL X
+        ("\u{1D465} = 1\n", "\u{1D465}", "x"),      // MATHEMATICAL ITALIC SMALL X
+        ("y = a\u{1D465}\n", "a\u{1D465}", "ax"),
+    ] {
+        let e = assert_non_nfkc(src, ident);
+        assert_eq!(
+            e.diagnostic.help.last().unwrap(),
+            &format!("write it in NFKC form: `{nf}`")
+        );
+    }
+}
+
+#[test]
+fn keywords_match_raw_text_only() {
+    // Fullwidth `ｉｆ` is not the keyword `if`: it is an error whose help
+    // names the keyword.
+    let e = assert_non_nfkc("\u{FF49}\u{FF46} x:\n", "\u{FF49}\u{FF46}");
+    assert_eq!(e.diagnostic.help, ["did you mean `if`"]);
+    let e = assert_non_nfkc("y = \u{FF44}ef\n", "\u{FF44}ef");
+    assert_eq!(e.diagnostic.help, ["did you mean `def`"]);
+    // TODO(#18): `ｔｒｕｅ` / `ｆａｌｓｅ` should say "did you mean `true`" /
+    // "`false`" once the `true` and `false` keywords land.
+}
+
+#[test]
+fn micro_kelvin_and_planck_signs_name_the_intended_letter() {
+    let e = assert_non_nfkc("size = 5 \u{00B5}m\n", "\u{00B5}m");
+    assert_eq!(
+        e.diagnostic.help,
+        [
+            "MICRO SIGN U+00B5 is not a letter for identifiers; use GREEK SMALL LETTER MU U+03BC (`\u{03BC}`)",
+            "write it in NFKC form: `\\u{03BC}m`",
+        ]
+    );
+    let e = assert_non_nfkc("T = 300 \u{212A}\n", "\u{212A}");
+    assert_eq!(
+        e.diagnostic.help,
+        [
+            "KELVIN SIGN U+212A is not a letter for identifiers; use LATIN CAPITAL LETTER K U+004B (`K`)",
+            "write it in NFKC form: `K`",
+        ]
+    );
+    let e = assert_non_nfkc("E = \u{210F} * w\n", "\u{210F}");
+    assert_eq!(
+        e.diagnostic.help,
+        [
+            "PLANCK CONSTANT OVER TWO PI U+210F is not a letter for identifiers; use LATIN SMALL LETTER H WITH STROKE U+0127 (`\u{0127}`)",
+            "write it in NFKC form: `\\u{0127}`",
+        ]
+    );
+    // The intended letters themselves are fine.
+    assert!(lexed("size = 5 \u{03BC}m\nT = 300 K\nE = \u{0127} * w\n")
+        .warnings
+        .is_empty());
+}
+
+#[test]
+fn nfkc_maybe_characters_are_compared_in_full() {
+    // COMBINING GRAVE ACCENT is NFKC_QC=Maybe: after `a` it composes to `à`,
+    // after `x` (no precomposed form) it is fine.
+    let e = assert_non_nfkc("a\u{0300} = 1\n", "a\u{0300}");
+    assert_eq!(e.diagnostic.help, ["write it in NFKC form: `\\u{00E0}`"]);
+    assert_eq!(lexed("x\u{0300} = 1\n").tokens[0].kind, Ident);
+    // Hangul jamo compose into a syllable.
+    let e = assert_non_nfkc("\u{1100}\u{1161} = 1\n", "\u{1100}\u{1161}");
+    assert_eq!(e.diagnostic.help, ["write it in NFKC form: `\\u{AC00}`"]);
+    assert_eq!(lexed("\u{AC00} = 1\n").tokens[0].kind, Ident);
+}
+
+#[test]
+fn non_xid_compatibility_characters_are_invalid_characters_not_nfkc_errors() {
+    // `½` is NFKC_QC=No but not XID_Continue, so it ends the identifier `x`
+    // and is an unexpected character.
+    let e = assert_err("y = x\u{00BD}\n", LexErrorKind::UnexpectedChar, "\u{00BD}");
+    assert_eq!(
+        e.diagnostic.message,
+        "unexpected character '\u{00BD}' (U+00BD)"
+    );
+    // `ŀ`'s NFKC form contains the MIDDLE DOT, so it is not an identifier
+    // character at all.
+    assert_err("\u{0140} = 1\n", LexErrorKind::UnexpectedChar, "\u{0140}");
+    assert_err("a\u{013F}b = 1\n", LexErrorKind::UnexpectedChar, "\u{013F}");
+}
+
+#[test]
+fn escape_non_ascii_matches_the_renderer_escape() {
+    // Same `\u{XXXX}` spelling as sky_diag's escaping of unsafe characters.
+    for c in ['\u{200D}', '\u{E0100}', '\u{00AD}'] {
+        assert_eq!(
+            escape_non_ascii(&c.to_string()),
+            sky_diag::display_safe(&c.to_string())
+        );
+    }
+    assert_eq!(escape_non_ascii("e\u{0301}x"), "e\\u{0301}x");
+}
+
+/// Every NFKC_QC=No code point is rejected inside an identifier: as a
+/// non-NFKC identifier when the lexer accepts it as an identifier
+/// character, and otherwise as an unexpected character.
+#[test]
+fn every_nfkc_qc_no_code_point_is_rejected_in_identifiers() {
+    let mut as_ident = 0;
+    let mut as_unexpected = 0;
+    for &(lo, hi) in crate::nfkc_table::NFKC_QC_NO {
+        for c in (lo..=hi).filter_map(char::from_u32) {
+            let src = format!("a{c}b = 1\n");
+            let e = lex(&src).expect_err(&format!("U+{:04X}", c as u32));
+            if is_ident_continue(c) {
+                assert_eq!(
+                    e.kind,
+                    LexErrorKind::NonNfkcIdentifier,
+                    "U+{:04X}",
+                    c as u32
+                );
+                assert_eq!(e.diagnostic.primary.span.range(), 0..2 + c.len_utf8());
+                as_ident += 1;
+            } else {
+                assert_eq!(e.kind, LexErrorKind::UnexpectedChar, "U+{:04X}", c as u32);
+                assert_eq!(e.diagnostic.primary.span.range(), 1..1 + c.len_utf8());
+                as_unexpected += 1;
+            }
+            // At the start of an identifier too.
+            let e = lex(&format!("{c}b = 1\n")).expect_err(&format!("U+{:04X}", c as u32));
+            if is_ident_start(c) {
+                assert_eq!(
+                    e.kind,
+                    LexErrorKind::NonNfkcIdentifier,
+                    "U+{:04X}",
+                    c as u32
+                );
+            } else {
+                assert_eq!(e.kind, LexErrorKind::UnexpectedChar, "U+{:04X}", c as u32);
+            }
+        }
+    }
+    assert!(as_ident > 0 && as_unexpected > 0);
+    let total: u32 = crate::nfkc_table::NFKC_QC_NO
+        .iter()
+        .map(|&(lo, hi)| hi - lo + 1)
+        .sum();
+    assert_eq!((as_ident + as_unexpected) as u32, total);
+}
+
+mod nfkc_properties {
+    use super::*;
+    use proptest::prelude::*;
+    use std::sync::OnceLock;
+
+    /// All identifier-start and identifier-continue characters, plus a few
+    /// that exercise composition (combining marks, Hangul jamo) and
+    /// compatibility variants.
+    fn pools() -> &'static (Vec<char>, Vec<char>) {
+        static POOLS: OnceLock<(Vec<char>, Vec<char>)> = OnceLock::new();
+        POOLS.get_or_init(|| {
+            let all: Vec<char> = (0..=0x10FFFFu32).filter_map(char::from_u32).collect();
+            let starts = all.iter().copied().filter(|&c| is_ident_start(c)).collect();
+            let conts = all
+                .iter()
+                .copied()
+                .filter(|&c| is_ident_continue(c))
+                .collect();
+            (starts, conts)
+        })
+    }
+
+    const INTERESTING: &[char] = &[
+        'a',
+        'e',
+        'x',
+        'K',
+        '\u{0300}',
+        '\u{0301}',
+        '\u{0323}',
+        '\u{0340}',
+        '\u{00E9}',
+        '\u{1100}',
+        '\u{1161}',
+        '\u{11A8}',
+        '\u{AC00}',
+        '\u{FB01}',
+        '\u{FF58}',
+        '\u{1D431}',
+        '\u{00B5}',
+        '\u{212A}',
+        '\u{210F}',
+        '\u{2126}',
+        '\u{3099}',
+        '\u{304B}',
+        '\u{0F73}',
+        '\u{1E0A}',
+        '\u{0CCA}',
+        '_',
+        '1',
+    ];
+
+    fn start_char() -> impl Strategy<Value = char> {
+        prop_oneof![
+            (0..pools().0.len()).prop_map(|i| pools().0[i]),
+            prop::sample::select(INTERESTING).prop_filter("start", |&c| is_ident_start(c)),
+        ]
+    }
+
+    fn continue_char() -> impl Strategy<Value = char> {
+        prop_oneof![
+            (0..pools().1.len()).prop_map(|i| pools().1[i]),
+            prop::sample::select(INTERESTING),
+        ]
+    }
+
+    fn identifier() -> impl Strategy<Value = String> {
+        (start_char(), prop::collection::vec(continue_char(), 0..8)).prop_map(|(s, rest)| {
+            let mut out = String::from(s);
+            out.extend(rest);
+            out
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2000))]
+
+        /// The NFKC form of any identifier lexes as exactly one identifier
+        /// (or keyword) token, and the identifier itself is accepted exactly
+        /// when it is already in NFKC.
+        #[test]
+        fn nfkc_form_of_an_identifier_is_one_identifier(id in identifier()) {
+            prop_assume!(is_identifier(&id));
+            let nf = nfkc::nfkc(&id);
+            prop_assert_eq!(nfkc::nfkc(&nf), nf.clone(), "NFKC is idempotent");
+            let l = lex(&nf).map_err(|e| TestCaseError::fail(format!("{nf:?}: {:?}", e.diagnostic)))?;
+            let kinds: Vec<_> = l.tokens.iter().map(|t| t.kind).collect();
+            prop_assert!(
+                matches!(kinds[0], Ident | Keyword(_)) && kinds[1..] == [Newline, Eof],
+                "{:?} lexes as {:?}", nf, kinds
+            );
+            prop_assert_eq!(l.tokens[0].span.range(), 0..nf.len());
+            match lex(&id) {
+                Ok(_) => prop_assert!(nfkc::is_nfkc(&id)),
+                Err(e) => {
+                    prop_assert_eq!(e.kind, LexErrorKind::NonNfkcIdentifier);
+                    prop_assert!(!nfkc::is_nfkc(&id));
+                    prop_assert_eq!(e.diagnostic.primary.span.range(), 0..id.len());
+                }
+            }
+        }
+    }
 }

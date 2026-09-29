@@ -14,10 +14,16 @@
 pub mod confusable;
 mod invisible_table;
 pub mod lexer;
+mod nfkc;
+#[rustfmt::skip] // generated; long data arrays
+mod nfkc_table;
 pub mod source;
 pub mod token;
 
 pub use lexer::{lex, LexError, LexErrorKind, Lexed};
+/// Unicode version of the NFKC data the lexer checks identifiers against
+/// (the same as `sky_diag::DISPLAY_UNSAFE_UNICODE_VERSION`).
+pub use nfkc_table::UNICODE_VERSION as NFKC_UNICODE_VERSION;
 /// The largest source file Sky reads or lexes, in bytes (16 MiB).
 ///
 /// This is the single source-size limit, shared by the lexer ([`lex`]

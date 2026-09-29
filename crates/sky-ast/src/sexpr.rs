@@ -5,7 +5,7 @@
 //! `m^(1/2)` → `(^ m 1/2)`, `A⁻¹ @ b` → `(@ (inverse A) b)`,
 //! `f(a)` → `(call f a)`, `M[3, 4]` → `(index M 3 4)`, `a.b` → `(attr a b)`,
 //! `(a)` → `(paren a)`, `x = 1` → `(= x 1)`, `A: T = v` → `(: A T v)`,
-//! `not a` → `(not a)`, `a and b and c` → `(and a b c)`,
+//! `true` → `true`, `not a` → `(not a)`, `a and b and c` → `(and a b c)`,
 //! `a and b or c` → `(or (and a b) c)`.
 
 use sky_syntax::Span;

@@ -26,19 +26,26 @@ impl Ident {
     }
 }
 
-/// A literal token. The value is the token text; it is not decoded here
-/// (number parsing and string escapes belong to later phases).
+/// A literal token. Numbers and strings keep only their span: the value is
+/// the token text, decoded by later phases (number parsing, string escapes).
+/// A Bool has nothing to decode, so it carries its value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Literal {
     Int(Span),
     Float(Span),
     Str(Span),
+    /// `true` or `false`, the only Bool literals.
+    Bool {
+        value: bool,
+        span: Span,
+    },
 }
 
 impl Literal {
     pub fn span(&self) -> Span {
         match *self {
             Literal::Int(s) | Literal::Float(s) | Literal::Str(s) => s,
+            Literal::Bool { span, .. } => span,
         }
     }
 

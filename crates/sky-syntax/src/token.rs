@@ -93,6 +93,8 @@ pub enum Kw {
     And,
     Or,
     Not,
+    True,
+    False,
 }
 
 impl Kw {
@@ -111,6 +113,8 @@ impl Kw {
             "and" => Kw::And,
             "or" => Kw::Or,
             "not" => Kw::Not,
+            "true" => Kw::True,
+            "false" => Kw::False,
             _ => return None,
         })
     }
@@ -130,6 +134,8 @@ impl Kw {
             Kw::And => "and",
             Kw::Or => "or",
             Kw::Not => "not",
+            Kw::True => "true",
+            Kw::False => "false",
         }
     }
 }

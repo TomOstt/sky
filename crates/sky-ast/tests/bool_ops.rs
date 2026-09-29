@@ -3,7 +3,7 @@
 
 mod common;
 use common::{at, expr_errors, lex, sexpr};
-use sky_ast::{parse_expr, BoolOp, ExprKind, UnaryOp, MAX_DEPTH};
+use sky_ast::{parse_expr, BoolOp, ExprKind, Literal, UnaryOp, MAX_DEPTH};
 
 fn check(cases: &[(&str, &str)]) {
     for (src, want) in cases {
@@ -247,4 +247,68 @@ fn long_runs_do_not_recurse_per_operand() {
     // Operands with their own comparisons and `not`s.
     let rich = format!("not x < 1{}", " and not x < 1".repeat(n));
     assert_eq!(parse_on_small_stack(rich), (n + 1, 0));
+}
+
+#[test]
+fn bool_literals() {
+    check(&[
+        ("true", "true"),
+        ("false", "false"),
+        ("not false", "(not false)"),
+        (
+            "true or (3 m + 2 s)",
+            "(or true (paren (+ (unit 3 m) (unit 2 s))))",
+        ),
+        ("a == true and false", "(and (== a true) false)"),
+        ("f(true, false)", "(call f true false)"),
+        // Keywords stay attribute names.
+        ("x.true or y.false", "(or (attr x true) (attr y false))"),
+        // Python spellings are plain names (the checker explains them).
+        ("True and False", "(and True False)"),
+    ]);
+    for (src, value) in [("true", true), ("false", false)] {
+        let (expr, errors) = parse_expr(&lex(src), src);
+        assert!(errors.is_empty(), "{errors:#?}");
+        let expr = expr.expect("expression");
+        let ExprKind::Literal(Literal::Bool { value: v, span }) = expr.kind else {
+            panic!("not a Bool literal: {expr:#?}");
+        };
+        assert_eq!(v, value);
+        assert_eq!(at(src, span), src);
+        assert_eq!(expr.span, span);
+    }
+}
+
+#[test]
+fn a_unit_cannot_follow_a_bool() {
+    for (src, name) in [("true m", "m"), ("false kg", "kg"), ("x = true km", "km")] {
+        let errors = common::module_errors(src);
+        assert_eq!(errors.len(), 1, "{src:?}: {errors:#?}");
+        assert_eq!(
+            errors[0].message,
+            format!(
+                "unexpected name `{name}` after an expression; a unit may only follow a numeric literal"
+            ),
+            "{src:?}"
+        );
+        assert_eq!(at(src, errors[0].span), name);
+    }
+    // Nor can a bool be a unit, or be assigned to.
+    assert!(!common::module_errors("x = 10 true").is_empty());
+    assert!(!common::module_errors("true = 1").is_empty());
+}
+
+#[test]
+fn bool_literal_spans_inside_expressions() {
+    let src = "a or false";
+    let (expr, _) = parse_expr(&lex(src), src);
+    let expr = expr.expect("expression");
+    let ExprKind::BoolOp { operands, .. } = &expr.kind else {
+        panic!("{expr:#?}");
+    };
+    let ExprKind::Literal(Literal::Bool { value, span }) = operands[1].kind else {
+        panic!("{:#?}", operands[1]);
+    };
+    assert!(!value);
+    assert_eq!((span.start, span.end), (5, 10));
 }

@@ -125,6 +125,34 @@ pub(crate) fn assigned_vars(stmts: &[Stmt], src: &str, out: &mut BTreeSet<String
     }
 }
 
+/// The names bound inside the `if`, `while` and `for` statements of `stmts`
+/// (however deeply), and the variables of the `for`s among them: the names
+/// whose binding may or may not happen, depending on the path. Nested `def`s
+/// are separate.
+pub(crate) fn conditionally_bound(stmts: &[Stmt], src: &str, out: &mut BTreeSet<String>) {
+    for s in stmts {
+        match &s.kind {
+            StmtKind::If {
+                branches,
+                else_block,
+            } => {
+                for (_, b) in branches {
+                    assigned_vars(&b.stmts, src, out);
+                }
+                if let Some(b) = else_block {
+                    assigned_vars(&b.stmts, src, out);
+                }
+            }
+            StmtKind::While { body, .. } => assigned_vars(&body.stmts, src, out),
+            StmtKind::For { var, body, .. } => {
+                out.insert(span_text(src, var.span).unwrap_or("").to_string());
+                assigned_vars(&body.stmts, src, out);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Whether a statement cannot fall through, by the checker's rule (its
 /// `diverged` flag): `return`, `break`, `continue`, an `if` with an `else`
 /// whose every branch diverges, and `while true` with no `break`. The

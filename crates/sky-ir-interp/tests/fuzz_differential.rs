@@ -514,11 +514,16 @@ fn lowering_loses_a_name_bound_beside_a_break_arm() {
 }
 
 /// `sky run` reads a rebound constant as the new value after the `if`;
-/// the lowered code still reads the constant's own value (`pi`, `c`, ...),
-/// at module level, in a function, and in a loop.
+/// the lowered code used to read the constant's own value (`pi`, `c`, ...),
+/// at module level, in a function, and in a loop. Fixed: a constant bound
+/// inside a block is an ordinary variable in the scope, seeded with its
+/// value.
 #[test]
-#[ignore = "bug: lowering ignores a predefined constant rebound inside an if or while"]
 fn lowering_ignores_a_constant_rebound_in_a_block() {
+    // A function that reads the module's constant, which a block rebound.
+    assert_agree("def h():\n    return pi\nx = 1\nif x > 0:\n    pi = 2\nprint(h(), pi)\n");
+    // A `for` variable named like a constant.
+    assert_agree("for c in range(3):\n    print(c)\nprint(c)\n");
     assert_agree("x = 1\nif x > 0:\n    c = 2 m/s\nprint(c)\n");
     assert_agree("def f(n):\n    if n > 0:\n        pi = 2\n    return pi\nprint(f(1), f(0))\n");
     assert_agree("k = 0\nwhile k < 2:\n    k += 1\n    g_n = k * 1 m/s^2\nprint(g_n)\n");

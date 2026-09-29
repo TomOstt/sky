@@ -43,6 +43,15 @@
 //! variable, else the module's" is an ordinary lookup, and a call passes
 //! the *module's* values, never the caller's locals.
 //!
+//! A predefined constant is a literal only where **no binding of its name
+//! can be in scope**: the interpreter keeps constants in the same
+//! environment as variables, so `if c: pi = 2` changes `pi` after the `if`.
+//! A constant that the file or a function binds inside an `if`, `while` or
+//! `for` is therefore put in scope as a `const.float` at the start of that
+//! function (`Lower::seed_constants`) and is an ordinary variable from then
+//! on (merged after the `if`, carried by the loop); one the module rebinds
+//! anywhere is a global as above.
+//!
 //! # Variables are SSA
 //!
 //! Lowering keeps a map from name to the current SSA value, with the
@@ -320,6 +329,7 @@ fn lower_impl(
     lw.collect_defs(&module.stmts);
     lw.collect_module_names(&module.stmts);
     lw.collect_literal_bindings(&module.stmts);
+    lw.seed_constants(&module.stmts, module.span);
     lw.block(&module.stmts, &Needed::new())?;
     lw.st
         .b

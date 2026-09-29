@@ -390,10 +390,10 @@ struct Gen<'a> {
 /// inside the loop).
 const GATE_MERGE_AFTER_JUMP: bool = false;
 
-/// `lowering_ignores_a_constant_rebound_in_a_block`: rebinding a predefined
-/// constant (`c = 2 m/s`) inside an `if` or `while`, at module level or in a
-/// function: after the block, lowering still reads the constant's own value.
-const GATE_CONST_REBIND_IN_BLOCK: bool = true;
+/// `lowering_ignores_a_constant_rebound_in_a_block`: fixed (rebinding a
+/// predefined constant (`c = 2 m/s`) inside an `if` or `while`, at module
+/// level or in a function, was ignored after the block).
+const GATE_CONST_REBIND_IN_BLOCK: bool = false;
 
 /// `sir_text_parse_accepts_the_math_operations_the_printer_writes`: fixed
 /// (the SIR parser reads `math.*`), so the generator uses math freely.

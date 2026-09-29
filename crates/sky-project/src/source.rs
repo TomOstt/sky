@@ -10,15 +10,10 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use sky_diag::{display_safe, Diagnostic, SourceFile, Span};
+use sky_syntax::MAX_SOURCE_BYTES;
 
-/// The largest source file Sky reads: 16 MiB.
-///
-/// `sky_diag::Span` holds `u32` byte offsets, so a source must stay under
-/// 4 GiB. 16 MiB is far above any real Sky file and keeps a hostile or
-/// runaway file from exhausting memory.
-pub const MAX_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
-
-const _: () = assert!(MAX_SOURCE_BYTES < u32::MAX as u64);
+// `sky_diag::Span` holds `u32` byte offsets.
+const _: () = assert!(MAX_SOURCE_BYTES < u32::MAX as usize);
 
 /// Why a source file could not be read.
 #[derive(Debug)]
@@ -75,7 +70,7 @@ fn open_entry(path: &Path) -> io::Result<File> {
 /// or allocating. The read itself is also capped at the limit, because the
 /// file can grow after the `fstat`. The contents must be UTF-8.
 pub fn read_source(file: &File, path: &Path) -> Result<String, SourceError> {
-    read_source_limited(file, path, MAX_SOURCE_BYTES)
+    read_source_limited(file, path, MAX_SOURCE_BYTES as u64)
 }
 
 pub(crate) fn read_source_limited(
@@ -275,8 +270,8 @@ mod tests {
     fn limit_message_names_the_file_and_the_limit() {
         let e = SourceError::TooLarge {
             path: "big\u{1b}[2J.sky".into(),
-            size: Some(MAX_SOURCE_BYTES + 1),
-            limit: MAX_SOURCE_BYTES,
+            size: Some(MAX_SOURCE_BYTES as u64 + 1),
+            limit: MAX_SOURCE_BYTES as u64,
         };
         assert_eq!(
             e.to_string(),

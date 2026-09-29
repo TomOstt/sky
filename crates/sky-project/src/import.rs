@@ -46,7 +46,7 @@ impl ProjectModule {
     }
 
     /// Reads the module's source from the held handle, with the regular-file
-    /// check and [`crate::MAX_SOURCE_BYTES`] cap of [`read_source`].
+    /// check and [`sky_syntax::MAX_SOURCE_BYTES`] cap of [`read_source`].
     pub fn read_source(&self) -> Result<String, SourceError> {
         read_source(&self.file, &self.path)
     }

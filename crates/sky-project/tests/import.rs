@@ -10,9 +10,8 @@ use std::time::Duration;
 
 use common::{me, my_uid, FakeIdentity, TempDir};
 use sky_diag::{SourceFile, Span};
-use sky_project::{
-    parse_module_path, resolve_import, ImportError, Module, Project, SourceError, MAX_SOURCE_BYTES,
-};
+use sky_project::{parse_module_path, resolve_import, ImportError, Module, Project, SourceError};
+use sky_syntax::MAX_SOURCE_BYTES;
 
 const STDLIB: &[&str] = &["math", "linalg", "linalg.cholesky", "units"];
 
@@ -364,7 +363,7 @@ fn oversized_module_is_refused_before_reading() {
     // because the fstat size is checked first.
     fs::File::create(&big)
         .unwrap()
-        .set_len(MAX_SOURCE_BYTES + 1)
+        .set_len(MAX_SOURCE_BYTES as u64 + 1)
         .unwrap();
     let Ok(Module::Project(m)) = resolve_import("big", &project(t.path()), STDLIB, &me(&t)) else {
         panic!("expected the module to open");
@@ -372,8 +371,8 @@ fn oversized_module_is_refused_before_reading() {
     match m.read_source() {
         Err(SourceError::TooLarge { path, size, limit }) => {
             assert_eq!(path, big);
-            assert_eq!(size, Some(MAX_SOURCE_BYTES + 1));
-            assert_eq!(limit, MAX_SOURCE_BYTES);
+            assert_eq!(size, Some(MAX_SOURCE_BYTES as u64 + 1));
+            assert_eq!(limit, MAX_SOURCE_BYTES as u64);
         }
         other => panic!("expected TooLarge, got {other:?}"),
     }

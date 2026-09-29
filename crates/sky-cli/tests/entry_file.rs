@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use sky_project::MAX_SOURCE_BYTES;
+use sky_syntax::MAX_SOURCE_BYTES;
 
 fn scratch(name: &str) -> PathBuf {
     let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
@@ -77,7 +77,7 @@ fn oversized_file_is_refused_with_the_limit() {
     // before reading or allocating anything.
     fs::File::create(&big)
         .unwrap()
-        .set_len(MAX_SOURCE_BYTES + 1)
+        .set_len(MAX_SOURCE_BYTES as u64 + 1)
         .unwrap();
     let out = sky_check(&big);
     assert_eq!(out.status.code(), Some(2));

@@ -23,7 +23,7 @@
 //!   directories not world-writable unless sticky), and returns the open
 //!   file, so the module is never reopened by name.
 //! - [`read_source`] and [`read_entry_file`] read a source from a handle:
-//!   regular files only, at most [`MAX_SOURCE_BYTES`].
+//!   regular files only, at most [`sky_syntax::MAX_SOURCE_BYTES`].
 
 mod discover;
 mod identity;
@@ -35,4 +35,4 @@ mod walk;
 pub use discover::{discover, DiscoverError, Discovery, Project, MANIFEST};
 pub use identity::{Identity, SystemIdentity};
 pub use import::{parse_module_path, resolve_import, ImportError, Module, ProjectModule};
-pub use source::{read_entry_file, read_source, SourceError, MAX_SOURCE_BYTES};
+pub use source::{read_entry_file, read_source, SourceError};

@@ -13,7 +13,7 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             };
             // One open, then fstat and a capped read of that handle: only a
-            // regular file of at most MAX_SOURCE_BYTES is read, and a FIFO
+            // regular file of at most sky_syntax::MAX_SOURCE_BYTES is read, and a FIFO
             // can't block the open.
             let src = match sky_project::read_entry_file(Path::new(path)) {
                 Ok(s) => s,

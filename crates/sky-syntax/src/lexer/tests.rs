@@ -1778,3 +1778,64 @@ fn write_as_help_shows_characters_and_escapes() {
         "write it in NFKC form: `a\\u{200D}b`"
     );
 }
+
+/// More than 30 combining marks in a row (after decomposition) is an error
+/// at the 31st, with a constant-size message, found before any
+/// normalization, even in a 16 MiB identifier.
+#[test]
+fn too_many_combining_marks() {
+    let ok = format!("x{} = 1\n", "\u{0300}".repeat(30));
+    assert!(lex(&ok).is_ok());
+    let bad = format!("y = x{} + 1\n", "\u{0300}".repeat(31));
+    let e = lex(&bad).unwrap_err();
+    assert_eq!(e.kind, LexErrorKind::TooManyCombiningMarks);
+    let at = "y = x".len() + 30 * 2;
+    assert_eq!(e.diagnostic.primary.span.range(), at..at + 2);
+    assert_eq!(
+        e.diagnostic.message,
+        "too many combining marks in a row (at most 30)"
+    );
+    // U+0344 is two marks after decomposition.
+    let e = lex(&format!("x{}\u{0344}", "\u{0316}".repeat(29))).unwrap_err();
+    assert_eq!(e.kind, LexErrorKind::TooManyCombiningMarks);
+    assert_eq!(
+        e.diagnostic.primary.span.range(),
+        1 + 29 * 2..1 + 29 * 2 + 2
+    );
+    // A 16 MiB run: same message, same size, no normalization.
+    let mut huge = String::from("x");
+    while huge.len() + 2 < crate::MAX_SOURCE_BYTES {
+        huge.push('\u{0300}');
+    }
+    huge.push('\n');
+    let big = lex(&huge).unwrap_err();
+    let small = lex(&bad).unwrap_err();
+    assert_eq!(big.kind, LexErrorKind::TooManyCombiningMarks);
+    assert_eq!(big.diagnostic.primary.span.range(), 1 + 60..1 + 62);
+    assert_eq!(big.diagnostic.message, small.diagnostic.message);
+    assert_eq!(big.diagnostic.notes, small.diagnostic.notes);
+    assert_eq!(big.diagnostic.help, small.diagnostic.help);
+}
+
+/// The escaped prefix of a long non-NFKC identifier does not end between a
+/// letter and its combining marks: it stops before the letter.
+#[test]
+fn long_identifier_prefix_keeps_marks_with_their_letter() {
+    // Characters 0..63: U+FB01 and 62 `a`s, then `e`; the 65th character
+    // (the cut) is a U+0301 on that `e`.
+    let id = format!("\u{FB01}{}e\u{0301}\u{0323}bbb", "a".repeat(62));
+    let e = lex(&id).unwrap_err();
+    assert_eq!(e.kind, LexErrorKind::NonNfkcIdentifier);
+    assert_eq!(
+        e.diagnostic.notes[0],
+        format!(
+            "`\\u{{FB01}}{}…` ({} bytes) is not in NFKC (Unicode Normalization Form KC), and Sky never normalizes identifiers",
+            "a".repeat(62),
+            id.len()
+        )
+    );
+    // A starter at the cut is not moved.
+    let id = format!("\u{FB01}{}b", "a".repeat(64));
+    let e = lex(&id).unwrap_err();
+    assert!(e.diagnostic.notes[0].starts_with(&format!("`\\u{{FB01}}{}…`", "a".repeat(63))));
+}

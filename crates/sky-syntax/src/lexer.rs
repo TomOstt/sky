@@ -94,6 +94,9 @@ pub enum LexErrorKind {
     UnexpectedChar,
     /// An identifier that is not in Unicode NFKC form.
     NonNfkcIdentifier,
+    /// An identifier with more than 30 combining marks in a row (the
+    /// Unicode stream-safe limit).
+    TooManyCombiningMarks,
     MixedIndentation,
     InconsistentDedent,
     InvalidNumber,
@@ -709,11 +712,38 @@ impl<'a> Lexer<'a> {
         if let Some(kw) = Kw::from_ident(text) {
             return Ok(TokenKind::Keyword(kw));
         }
-        if !text.is_ascii() && !nfkc::is_nfkc(text) {
-            return err(
-                LexErrorKind::NonNfkcIdentifier,
-                non_nfkc_diagnostic(text, self.span_from(start)),
-            );
+        if !text.is_ascii() {
+            match nfkc::check(text) {
+                nfkc::Check::Nfkc => {}
+                nfkc::Check::NotNfkc => {
+                    return err(
+                        LexErrorKind::NonNfkcIdentifier,
+                        non_nfkc_diagnostic(text, self.span_from(start)),
+                    );
+                }
+                nfkc::Check::TooManyNonStarters { at } => {
+                    let mark = text[at..].chars().next().expect("offset of a character");
+                    let lo = start + at;
+                    return err(
+                        LexErrorKind::TooManyCombiningMarks,
+                        Diagnostic::error(
+                            format!(
+                                "too many combining marks in a row (at most {})",
+                                nfkc::MAX_NON_STARTERS
+                            ),
+                            Span::new(lo as u32, (lo + mark.len_utf8()) as u32),
+                        )
+                        .with_label(format!(
+                            "combining mark {} in a row",
+                            nfkc::MAX_NON_STARTERS + 1
+                        ))
+                        .with_note(format!(
+                            "an identifier may have at most {} combining marks (characters with a nonzero canonical combining class, counted after decomposition) in a row, the Unicode stream-safe limit (UAX #15)",
+                            nfkc::MAX_NON_STARTERS
+                        )),
+                    );
+                }
+            }
         }
         if self.checked_idents.insert(text) {
             if let Some(finding) = check_identifier(text) {
@@ -779,8 +809,9 @@ const SHOWN_CHARS: usize = 64;
 /// Longest identifier (in characters) that gets the full non-NFKC error:
 /// the whole identifier quoted, its NFKC form computed and shown, and the
 /// keyword check. Longer identifiers get an escaped prefix and their byte
-/// length only, so a 16 MiB identifier neither costs a normalization nor
-/// makes a message the size of the source. No longer identifier can
+/// length only, so the message for a 16 MiB identifier costs no
+/// normalization and stays small (the check that found the error,
+/// `nfkc::check`, normalizes only short segments). No longer identifier can
 /// normalize to a keyword: keywords are at most 8 ASCII characters, every
 /// character's NFKD is non-empty, and composition only produces non-ASCII
 /// characters, so an ASCII NFKC form has at least as many characters as
@@ -861,9 +892,16 @@ fn non_nfkc_diagnostic(text: &str, span: Span) -> Diagnostic {
     let diag = Diagnostic::error("identifier is not in Unicode NFKC form", span)
         .with_label("not in NFKC form");
     let long_prefix = text.char_indices().nth(FULL_NFKC_HELP_MAX_CHARS);
-    let Some((cut, _)) = long_prefix else {
+    let Some((cut, at_cut)) = long_prefix else {
         return short_non_nfkc_diagnostic(diag, text);
     };
+    // Do not cut between a letter and its combining marks: end the prefix
+    // before the letter instead (at most 64 characters back).
+    let cut = text[..cut + at_cut.len_utf8()]
+        .char_indices()
+        .rev()
+        .find(|&(_, c)| !nfkc::is_non_starter(c))
+        .map_or(cut, |(i, _)| if i == 0 { cut } else { i });
     let diag = diag
         .with_note(format!(
             "`{}…` ({} bytes) is not in NFKC (Unicode Normalization Form KC), and Sky never normalizes identifiers",

@@ -317,8 +317,8 @@ mod alloc_count {
 }
 
 /// The check the lexer runs on every non-ASCII identifier allocates nothing
-/// when the quick check answers Yes (the common case) or No; only a Maybe
-/// answer builds the NFKC form to compare.
+/// when the quick check answers Yes (the common case) or No; a Maybe answer
+/// allocates one small buffer, reused for every segment.
 #[test]
 fn fast_path_allocates_nothing() {
     for s in [
@@ -340,9 +340,10 @@ fn fast_path_allocates_nothing() {
         assert!(!yes);
         assert_eq!(n, 0, "is_nfkc({s:?}) allocated");
     }
-    // Maybe does allocate (the NFKC form); documents the known cost.
-    let (n, _) = alloc_count::count(|| is_nfkc("x\u{0300}"));
-    assert!(n > 0);
+    // Maybe allocates the segment buffer once.
+    let (n, yes) = alloc_count::count(|| check("x\u{0300}"));
+    assert_eq!(yes, Check::Nfkc);
+    assert_eq!(n, 1);
     // In the lexer, an NFKC-Yes identifier costs no more allocations than
     // an ASCII one of the same shape.
     let (ascii, _) = alloc_count::count(|| crate::lex("cafe = 1\n").unwrap());
@@ -367,5 +368,307 @@ fn canonical_ordering_is_n_log_n() {
         assert!(out.starts_with('\u{1EA1}'));
         let bound = 8 * n * (usize::BITS - n.leading_zeros()) as usize;
         assert!(lookups <= bound, "n={n}: {lookups} ccc lookups > {bound}");
+    }
+}
+
+/// `CHAR_PROPS` (from the generator) agrees, for every code point, with
+/// `CCC`, the NFKC_QC tables, and counting the non-starters of its full
+/// decomposition here.
+#[test]
+fn non_starter_counts_match_the_decompositions() {
+    let mut failures = Vec::new();
+    for c in (0..=0x10FFFFu32).filter(|&c| char::from_u32(c).is_some()) {
+        let d = decomposition(c, &mut [0; 3]).to_vec();
+        let lead = d.iter().take_while(|&&x| ccc(x) != 0).count();
+        let trail = d.iter().rev().take_while(|&&x| ccc(x) != 0).count();
+        let all = lead == d.len();
+        let expected = (lead as u8, trail as u8, all);
+        let got = non_starters(c);
+        let info = CharInfo::of(c);
+        if got != expected || info.ccc != ccc(c) || info.qc != quick_check_char(c) {
+            failures.push(format!("U+{c:04X}: {info:?} != {expected:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(non_starters(0x0344), (2, 2, true)); // U+0308 U+0301
+    assert_eq!(non_starters(0x0F73), (2, 2, true)); // U+0F71 U+0F72
+    assert_eq!(ccc(0x0F73), 0, "a starter that decomposes to non-starters");
+    assert_eq!(non_starters(0x01D6), (0, 2, false)); // u U+0308 U+0304
+    assert_eq!(non_starters(0x0300), (1, 1, true));
+    assert_eq!(non_starters(u32::from('a')), (0, 0, false));
+}
+
+fn is_second_of_a_composition(c: u32) -> bool {
+    (V_BASE..V_BASE + V_COUNT).contains(&c)
+        || (T_BASE + 1..T_BASE + T_COUNT).contains(&c)
+        || COMPOSITION.iter().any(|&(_, b, _)| b == c)
+}
+
+/// "Stable" (a segment boundary) is derived from the data, and it means
+/// what the segment check relies on, for every code point: a stable
+/// character never combines with the character before it (it is not the
+/// second of any composition, Hangul included), and neither does the first
+/// character of its decomposition, which is a starter. Conversely, every
+/// second of a composition is NFKC_QC=Maybe, which is why `is_stable` can
+/// use the quick-check value. All ASCII is stable (the fast path).
+#[test]
+fn stable_characters_never_combine_with_what_precedes() {
+    let seconds: std::collections::BTreeSet<u32> = COMPOSITION
+        .iter()
+        .map(|&(_, b, _)| b)
+        .chain(V_BASE..V_BASE + V_COUNT)
+        .chain(T_BASE + 1..T_BASE + T_COUNT)
+        .collect();
+    for &b in &seconds {
+        assert_eq!(quick_check_char(b), QuickCheck::Maybe, "U+{b:04X}");
+    }
+    let mut stable = 0;
+    for c in (0..=0x10FFFFu32).filter(|&c| char::from_u32(c).is_some()) {
+        if !CharInfo::of(c).is_stable() {
+            assert!(c >= 0x80, "ASCII U+{c:04X} is not stable");
+            continue;
+        }
+        stable += 1;
+        assert!(!seconds.contains(&c), "U+{c:04X}");
+        let first = decomposition(c, &mut [0; 3])[0];
+        assert_eq!(ccc(first), 0, "U+{c:04X}");
+        assert!(!seconds.contains(&first), "U+{c:04X} -> U+{first:04X}");
+    }
+    assert!(stable > 1_000_000, "{stable}");
+    assert!(is_second_of_a_composition(0x1161));
+    assert!(
+        !CharInfo::of(0x1161).is_stable(),
+        "Hangul V joins a preceding L"
+    );
+    assert!(!CharInfo::of(0x0F73).is_stable());
+    assert!(CharInfo::of(0x1100).is_stable());
+}
+
+#[test]
+fn stream_safe_limit() {
+    let marks = |n: usize| "\u{0316}".repeat(n);
+    assert_eq!(check(&format!("a{}", marks(30))), Check::Nfkc);
+    assert_eq!(
+        check(&format!("a{}", marks(31))),
+        Check::TooManyNonStarters { at: 1 + 30 * 2 }
+    );
+    // The count restarts at each starter.
+    assert_eq!(check(&format!("a{0}b{0}", marks(30))), Check::Nfkc);
+    // Counted after decomposition: U+01D6 ends in two marks, U+0344 is two.
+    assert_eq!(check(&format!("\u{01D6}{}", marks(28))), Check::Nfkc);
+    assert_eq!(
+        check(&format!("\u{01D6}{}", marks(29))),
+        Check::TooManyNonStarters { at: 2 + 28 * 2 }
+    );
+    assert_eq!(
+        check(&format!("a{}\u{0344}", marks(29))),
+        Check::TooManyNonStarters { at: 1 + 29 * 2 }
+    );
+    // Under the limit U+0344 is simply not NFKC.
+    assert_eq!(check(&format!("a{}\u{0344}", marks(28))), Check::NotNfkc);
+    // The limit is found before the NFKC answer when it comes first...
+    assert_eq!(
+        check(&format!("x{}\u{FB01}", "\u{0300}".repeat(31))),
+        Check::TooManyNonStarters { at: 1 + 30 * 2 }
+    );
+    // ... and not after it.
+    assert_eq!(check(&format!("\u{FB01}{}", marks(31))), Check::NotNfkc);
+    // Without the limit, the same strings are just checked for NFKC.
+    assert!(is_nfkc(&format!("a{}", marks(1000))));
+    assert!(is_nfkc(&format!("x{}", "\u{0300}".repeat(1000))));
+}
+
+/// The segment check normalizes a segment in a buffer that does not grow
+/// with the input: a long valid identifier on the Maybe path allocates the
+/// same as a 1 KiB one (one buffer), whatever its segments look like, and
+/// lexing a 16 MiB one allocates the same as lexing a 1 KiB one.
+#[test]
+fn maybe_path_allocates_a_constant() {
+    fn shapes(bytes: usize) -> Vec<(&'static str, String)> {
+        let fill = |unit: &str, tail: &str| {
+            let mut s = String::with_capacity(bytes);
+            while s.len() + unit.len() + tail.len() <= bytes {
+                s.push_str(unit);
+            }
+            s.push_str(tail);
+            s
+        };
+        vec![
+            // One short segment at the end.
+            ("U+01D6* x U+0300", fill("\u{01D6}", "x\u{0300}")),
+            // A segment per character pair.
+            ("(x U+0300)*", fill("x\u{0300}", "")),
+            // One segment the size of the input: Hangul V jamo never join
+            // each other, and none is stable.
+            ("a U+1161*", format!("a{}", fill("\u{1161}", ""))),
+            // Hangul LVT syllables then a T that does not join.
+            ("U+AC01* U+11A8", fill("\u{AC01}", "\u{11A8}")),
+        ]
+    }
+    // 2 MiB here keeps the debug-build test quick; the lexer case below is
+    // the full 16 MiB.
+    let small = shapes(1 << 10);
+    let big = shapes(2 << 20);
+    for ((name, s), (_, b)) in small.iter().zip(&big) {
+        let (n_small, r) = alloc_count::count(|| check(s));
+        assert_eq!(r, Check::Nfkc, "{name}");
+        let (n_big, r) = alloc_count::count(|| check(b));
+        assert_eq!(r, Check::Nfkc, "{name}");
+        assert!(n_big <= 1, "{name}: {n_big} allocations");
+        assert_eq!(n_small, n_big, "{name}");
+    }
+    // Through the lexer too: the same number of allocations at 1 KiB and
+    // 16 MiB (the token vector has the same length).
+    let source = |bytes: usize| {
+        let mut s = String::with_capacity(bytes);
+        while s.len() + "\u{01D6}x\u{0300} = 1".len() <= bytes {
+            s.push('\u{01D6}');
+        }
+        s.push_str("x\u{0300} = 1");
+        s
+    };
+    let (small, big) = (source(1 << 10), source(crate::MAX_SOURCE_BYTES));
+    let (n_small, r) = alloc_count::count(|| crate::lex(&small).map(|l| l.tokens.len()));
+    assert_eq!(r.unwrap(), 5);
+    let (n_big, r) = alloc_count::count(|| crate::lex(&big).map(|l| l.tokens.len()));
+    assert_eq!(r.unwrap(), 5);
+    assert_eq!(n_small, n_big);
+}
+
+/// Gilfoyle's case: a Maybe character at the start of a long valid
+/// identifier costs a few lookups, not a normalization of the rest.
+/// `CCC_LOOKUPS` counts normalization work (the scan itself reads
+/// `CHAR_PROPS`); normalizing the whole identifier would be over a million.
+#[test]
+fn early_maybe_does_not_normalize_the_rest() {
+    let src = format!("x\u{0300}{}", "a".repeat(1 << 20));
+    CCC_LOOKUPS.with(|c| c.set(0));
+    let l = crate::lex(&src).unwrap();
+    let lookups = CCC_LOOKUPS.with(Cell::get);
+    assert_eq!(l.tokens[0].kind, crate::TokenKind::Ident);
+    assert_eq!(l.tokens[0].span.range(), 0..src.len());
+    assert!(lookups < 1_000, "{lookups} ccc lookups");
+}
+
+mod segments {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn pool(pred: impl Fn(u32) -> bool) -> Vec<char> {
+        (0..=0x10FFFFu32)
+            .filter(|&c| pred(c))
+            .filter_map(char::from_u32)
+            .collect()
+    }
+
+    /// Characters weighted toward what makes segments and the stream-safe
+    /// count hard: Hangul L/V/T jamo and syllables, characters whose
+    /// decomposition has several non-starters (U+0344, U+0F73, U+01D6,
+    /// ...), NFKC_QC=Maybe characters, combining marks, and a few plain
+    /// starters that compose with them; rarely any scalar.
+    fn tricky_char() -> impl Strategy<Value = char> {
+        let jamo = pool(|c| {
+            (0x1100..=0x1112).contains(&c)
+                || (0x1161..=0x1175).contains(&c)
+                || (0x11A7..=0x11C2).contains(&c)
+        });
+        let multi = pool(|c| {
+            let (lead, trail, _) = non_starters(c);
+            lead >= 2 || trail >= 2
+        });
+        let maybe = pool(|c| quick_check_char(c) == QuickCheck::Maybe);
+        let marks = pool(|c| ccc(c) != 0);
+        prop_oneof![
+            3 => proptest::sample::select(jamo),
+            1 => (0u32..11172).prop_map(|s| char::from_u32(S_BASE + s).unwrap()),
+            3 => proptest::sample::select(multi),
+            4 => proptest::sample::select(maybe),
+            4 => proptest::sample::select(marks),
+            3 => proptest::sample::select(vec![
+                'a', 'e', 'o', 'u', 'x', 'A', 'U', '\u{00E9}', '\u{00FC}', '\u{01D6}',
+                '\u{0B47}', '\u{0DD9}', '\u{0F40}', '\u{1025}', '\u{AC00}',
+            ]),
+            1 => any::<char>(),
+        ]
+    }
+
+    /// A stable character from the same kinds of characters.
+    fn stable_char() -> impl Strategy<Value = char> {
+        let stable = pool(|c| {
+            CharInfo::of(c).is_stable()
+                && (c < 0x80
+                    || (0x1100..=0x11FF).contains(&c)
+                    || (S_BASE..S_BASE + S_COUNT).contains(&c)
+                    || non_starters(c).1 >= 1
+                    || COMPOSITION.iter().any(|&(a, _, _)| a == c))
+        });
+        proptest::sample::select(stable)
+    }
+
+    fn tricky_string(max: usize) -> impl Strategy<Value = String> {
+        proptest::collection::vec(tricky_char(), 0..max).prop_map(|v| v.into_iter().collect())
+    }
+
+    /// Longest run of non-starters in the full decomposition of `s`.
+    fn longest_run(s: &str) -> usize {
+        let mut d = Vec::new();
+        for c in s.chars() {
+            decompose_into(c as u32, &mut d);
+        }
+        let (mut run, mut best) = (0, 0);
+        for x in d {
+            run = if ccc(x) == 0 { 0 } else { run + 1 };
+            best = best.max(run);
+        }
+        best
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(20_000))]
+
+        /// The segment-wise check agrees with comparing the whole NFKC form.
+        #[test]
+        fn segment_check_agrees_with_full_nfkc(s in tricky_string(24)) {
+            prop_assert_eq!(is_nfkc(&s), nfkc(&s) == s, "{}", hex(&s));
+        }
+
+        /// Stable characters really are boundaries.
+        #[test]
+        fn stable_characters_are_boundaries(
+            a in tricky_string(12),
+            first in stable_char(),
+            rest in tricky_string(12),
+        ) {
+            let b = format!("{first}{rest}");
+            let whole = format!("{a}{b}");
+            prop_assert_eq!(nfkc(&whole), format!("{}{}", nfkc(&a), nfkc(&b)), "{} | {}", hex(&a), hex(&b));
+        }
+
+        /// The stream-safe count is the longest run of non-starters after
+        /// decomposition, reported at the character that crosses 30, and
+        /// otherwise the answer is the unlimited one.
+        #[test]
+        fn stream_safe_count_is_the_longest_decomposed_run(
+            a in tricky_string(8),
+            n in 20usize..40,
+            mark in proptest::sample::select(vec!['\u{0300}', '\u{0316}', '\u{0344}', '\u{0F71}', '\u{05B0}']),
+            b in tricky_string(8),
+        ) {
+            let s = format!("{a}{}{b}", mark.to_string().repeat(n));
+            match check(&s) {
+                Check::TooManyNonStarters { at } => {
+                    let end = at + s[at..].chars().next().unwrap().len_utf8();
+                    prop_assert!(longest_run(&s[..at]) <= MAX_NON_STARTERS, "{}", hex(&s));
+                    prop_assert!(longest_run(&s[..end]) > MAX_NON_STARTERS, "{}", hex(&s));
+                }
+                other => {
+                    prop_assert_eq!(other == Check::Nfkc, is_nfkc(&s), "{}", hex(&s));
+                    if longest_run(&s) > MAX_NON_STARTERS {
+                        // Only an earlier definite No stops the scan first.
+                        prop_assert_eq!(other, Check::NotNfkc, "{}", hex(&s));
+                    }
+                }
+            }
+        }
     }
 }

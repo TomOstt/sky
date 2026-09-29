@@ -1,5 +1,5 @@
 tests/ui/lexer/err_bidi_rlo.sky:3:25: error: bidirectional control character U+202E is not allowed
   |
-3 | if access != "none":  # � check admin 
-  |                         ^ invisible bidi control here
+3 | if access != "none":  # \u{202E} check admin 
+  |                         ^^^^^^^^ invisible bidi control here
   = note: bidi controls can make source display differently from how it is parsed

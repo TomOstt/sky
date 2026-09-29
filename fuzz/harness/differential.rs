@@ -414,6 +414,13 @@ const GATE_SIR_TEXT_MATH: bool = false;
 /// Bool-returning functions in such places.
 const GATE_NON_BOOL_OPERAND: bool = false;
 
+/// `unary_plus_of_an_unknown_non_number_is_not_checked_in_sir`: `+x` is lowered
+/// as `x`, so where `x` is a value the checker cannot type (an unannotated
+/// parameter) and is not a number, `sky run` stops with "`+` needs a number,
+/// found a Bool" and SIR goes on (and fails later, or never). The generator
+/// writes no unary `+` inside a function with unannotated parameters.
+const GATE_UNARY_PLUS_UNKNOWN: bool = true;
+
 const MATH_FNS: &[&str] = &[
     "sqrt", "cbrt", "abs", "exp", "log", "log10", "log2", "sin", "cos", "tan", "asin", "acos",
     "atan", "atan2", "hypot", "min", "max", "floor", "ceil", "round",
@@ -709,7 +716,9 @@ impl Gen<'_> {
                         s: format!("-{}", at(a, 8)),
                         p: 7,
                     }
-                } else if self.c.chance(30) {
+                } else if self.c.chance(30)
+                    && !(GATE_UNARY_PLUS_UNKNOWN && self.cur.is_some_and(|i| self.fns[i].poly))
+                {
                     E {
                         s: format!("+{}", at(a, 8)),
                         p: 7,

@@ -239,10 +239,12 @@ pub enum ExprKind {
         callee: Box<Expr>,
         args: Vec<Expr>,
     },
-    /// `base[indices...]`, also used for generic arguments like `Matrix[3, 4]`.
+    /// `base[items...]`, e.g. `A[i, j]`, `A[0, :]`, `A[1:3]`. Also used for
+    /// generic arguments like `Matrix[3, 4]` (the checker rejects slices
+    /// there). Always at least one item.
     Index {
         base: Box<Expr>,
-        indices: Vec<Expr>,
+        items: Vec<IndexItem>,
     },
     /// `base.name`
     Attribute {
@@ -251,6 +253,117 @@ pub enum ExprKind {
     },
     /// `( inner )`, kept as a node so spans and a future CST stay faithful.
     Paren(Box<Expr>),
+}
+
+/// One item inside `[...]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexItem {
+    /// `i`
+    Expr(Expr),
+    /// `start:stop`, either side optional; `:` alone is the whole axis.
+    /// There is no step (`a:b:c` is a parse error in v0.1).
+    Slice {
+        start: Option<Expr>,
+        stop: Option<Expr>,
+        colon_span: Span,
+        span: Span,
+    },
+}
+
+impl IndexItem {
+    pub fn span(&self) -> Span {
+        match self {
+            IndexItem::Expr(e) => e.span,
+            IndexItem::Slice { span, .. } => *span,
+        }
+    }
+
+    /// The expression, or `None` for a slice. For readers of generic
+    /// arguments (`Matrix[3, 4]`), where a slice is an error.
+    pub fn as_expr(&self) -> Option<&Expr> {
+        match self {
+            IndexItem::Expr(e) => Some(e),
+            IndexItem::Slice { .. } => None,
+        }
+    }
+}
+
+/// The left side of `=` or of a compound assignment. Only these forms parse
+/// as targets; anything else (`f(x) = 1`, `(x) = 1`, `1 = x`) is a parse
+/// error at the target's span.
+///
+/// The parser accepts index and attribute targets with exact spans; in v0.1
+/// the checker rejects writes through them (arrays are immutable, and
+/// nothing yet has assignable attributes).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssignTarget {
+    /// `x`
+    Name(Ident),
+    /// `base[items...]`, e.g. `A[i, j]` or `A[0, :]`.
+    Index {
+        base: Box<Expr>,
+        items: Vec<IndexItem>,
+        /// `[` through `]`.
+        bracket_span: Span,
+        span: Span,
+    },
+    /// `base.name`
+    Attribute {
+        base: Box<Expr>,
+        name: Ident,
+        span: Span,
+    },
+}
+
+impl AssignTarget {
+    pub fn span(&self) -> Span {
+        match self {
+            AssignTarget::Name(id) => id.span,
+            AssignTarget::Index { span, .. } | AssignTarget::Attribute { span, .. } => *span,
+        }
+    }
+}
+
+/// The operator of a compound assignment: the [`BinaryOp`]s that have one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CompoundOp {
+    /// `+=`
+    Add,
+    /// `-=`
+    Sub,
+    /// `*=`
+    Mul,
+    /// `/=`
+    Div,
+    /// `^=`
+    Pow,
+    /// `@=`
+    MatMul,
+}
+
+impl CompoundOp {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            CompoundOp::Add => "+=",
+            CompoundOp::Sub => "-=",
+            CompoundOp::Mul => "*=",
+            CompoundOp::Div => "/=",
+            CompoundOp::Pow => "^=",
+            CompoundOp::MatMul => "@=",
+        }
+    }
+
+    /// The operator it applies, for the checker and interpreter.
+    pub fn binary(self) -> BinaryOp {
+        match self {
+            CompoundOp::Add => BinaryOp::Add,
+            CompoundOp::Sub => BinaryOp::Sub,
+            CompoundOp::Mul => BinaryOp::Mul,
+            CompoundOp::Div => BinaryOp::Div,
+            CompoundOp::Pow => BinaryOp::Pow,
+            CompoundOp::MatMul => BinaryOp::MatMul,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -265,14 +378,24 @@ pub enum StmtKind {
     Expr(Expr),
     /// `target = value`
     Assign {
-        target: Ident,
+        target: AssignTarget,
         value: Expr,
     },
-    /// `name: ty` or `name: ty = value`
+    /// `name: ty` or `name: ty = value`. Only a plain name can be annotated
+    /// (`a.b: T = e` and `A[i]: T = e` are parse errors).
     Binding {
         name: Ident,
         ty: Expr,
         value: Option<Expr>,
+    },
+    /// `target op= value`, e.g. `x += 1`. Its own node, not desugared to
+    /// `x = x + 1`: the target is evaluated once and errors point at `+=`.
+    CompoundAssign {
+        target: AssignTarget,
+        op: CompoundOp,
+        /// The whole `+=` token.
+        op_span: Span,
+        value: Expr,
     },
 }
 

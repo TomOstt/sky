@@ -1,0 +1,6 @@
+crates/sky-ast/tests/ui/err_assign_long_target.sky:2:1: error: cannot assign to a function call `ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff…`
+  |
+2 | ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff(x) = 1
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |                                                                                                                                                                                                             - because of this
+  = help: only a name (`x`), an index (`A[i]`), or an attribute (`a.b`) can be assigned to

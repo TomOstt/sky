@@ -1,0 +1,7 @@
+# Compound assignment is its own node, never desugared to `x = x + e`.
+A += B
+A[i, j] *= 2
+x ^= 2
+P @= F
+t -= 1 s
+v.x /= n

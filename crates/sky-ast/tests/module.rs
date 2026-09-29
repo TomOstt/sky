@@ -78,8 +78,10 @@ fn recovery_skips_to_the_next_line() {
 #[test]
 fn invalid_targets_and_chained_assignment() {
     for (src, needle) in [
-        ("A[0] = 1", "invalid assignment target"),
-        ("1 = x", "invalid assignment target"),
+        ("f(x) = 1", "cannot assign to a function call"),
+        ("1 = x", "cannot assign to a literal"),
+        ("A[0]: T = 1", "invalid annotation target"),
+        ("x += y += z", "chained assignment"),
         ("f(x): Real", "invalid annotation target"),
         ("a = b = c", "chained assignment"),
         ("a: T = b = c", "chained assignment"),

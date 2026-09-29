@@ -4,13 +4,17 @@
 //! `-x^2` → `(neg (^ x 2))`, `9.8 m/s^2` → `(unit 9.8 (/ m (^ s 2)))`,
 //! `m^(1/2)` → `(^ m 1/2)`, `A⁻¹ @ b` → `(@ (inverse A) b)`,
 //! `f(a)` → `(call f a)`, `M[3, 4]` → `(index M 3 4)`, `a.b` → `(attr a b)`,
+//! `A[1:3]` → `(index A (: 1 3))`, `A[0, :]` → `(index A 0 (: _ _))`,
 //! `(a)` → `(paren a)`, `x = 1` → `(= x 1)`, `A: T = v` → `(: A T v)`,
+//! `a.b = x` → `(= (attr a b) x)`, `x += e` → `(+= x e)`,
 //! `true` → `true`, `not a` → `(not a)`, `a and b and c` → `(and a b c)`,
 //! `a and b or c` → `(or (and a b) c)`.
 
 use sky_syntax::Span;
 
-use crate::ast::{span_text, Expr, ExprKind, Module, Stmt, StmtKind, UnitExpr};
+use crate::ast::{
+    span_text, AssignTarget, Expr, ExprKind, IndexItem, Module, Stmt, StmtKind, UnitExpr,
+};
 
 fn text(src: &str, span: Span) -> &str {
     span_text(src, span).unwrap_or("<?>")
@@ -38,11 +42,12 @@ impl Stmt {
         match &self.kind {
             StmtKind::Expr(e) => write_expr(&mut out, e, src),
             StmtKind::Assign { target, value } => {
-                out.push_str("(= ");
-                out.push_str(text(src, target.span));
-                out.push(' ');
-                write_expr(&mut out, value, src);
-                out.push(')');
+                write_assign(&mut out, "=", target, value, src);
+            }
+            StmtKind::CompoundAssign {
+                target, op, value, ..
+            } => {
+                write_assign(&mut out, op.symbol(), target, value, src);
             }
             StmtKind::Binding { name, ty, value } => {
                 out.push_str("(: ");
@@ -69,6 +74,51 @@ impl Module {
             .collect::<Vec<_>>()
             .join("\n")
     }
+}
+
+fn write_assign(out: &mut String, head: &str, target: &AssignTarget, value: &Expr, src: &str) {
+    out.push('(');
+    out.push_str(head);
+    out.push(' ');
+    match target {
+        AssignTarget::Name(id) => out.push_str(text(src, id.span)),
+        AssignTarget::Index { base, items, .. } => write_index(out, base, items, src),
+        AssignTarget::Attribute { base, name, .. } => write_attr(out, base, name.span, src),
+    }
+    out.push(' ');
+    write_expr(out, value, src);
+    out.push(')');
+}
+
+fn write_index(out: &mut String, base: &Expr, items: &[IndexItem], src: &str) {
+    out.push_str("(index ");
+    write_expr(out, base, src);
+    for item in items {
+        out.push(' ');
+        match item {
+            IndexItem::Expr(e) => write_expr(out, e, src),
+            IndexItem::Slice { start, stop, .. } => {
+                out.push_str("(:");
+                for bound in [start, stop] {
+                    out.push(' ');
+                    match bound {
+                        Some(e) => write_expr(out, e, src),
+                        None => out.push('_'),
+                    }
+                }
+                out.push(')');
+            }
+        }
+    }
+    out.push(')');
+}
+
+fn write_attr(out: &mut String, base: &Expr, name: Span, src: &str) {
+    out.push_str("(attr ");
+    write_expr(out, base, src);
+    out.push(' ');
+    out.push_str(text(src, name));
+    out.push(')');
 }
 
 fn node(out: &mut String, head: &str, src: &str, children: &[&Expr]) {
@@ -104,18 +154,8 @@ fn write_expr(out: &mut String, e: &Expr, src: &str) {
             children.extend(args.iter());
             node(out, "call", src, &children);
         }
-        ExprKind::Index { base, indices } => {
-            let mut children = vec![&**base];
-            children.extend(indices.iter());
-            node(out, "index", src, &children);
-        }
-        ExprKind::Attribute { base, name } => {
-            out.push_str("(attr ");
-            write_expr(out, base, src);
-            out.push(' ');
-            out.push_str(text(src, name.span));
-            out.push(')');
-        }
+        ExprKind::Index { base, items } => write_index(out, base, items, src),
+        ExprKind::Attribute { base, name } => write_attr(out, base, name.span, src),
         ExprKind::Paren(inner) => node(out, "paren", src, &[inner]),
     }
 }

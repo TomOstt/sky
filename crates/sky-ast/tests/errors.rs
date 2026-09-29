@@ -248,6 +248,7 @@ fn nested(kind: &str, n: usize) -> String {
         "paren" => format!("{}x{}", "(".repeat(n), ")".repeat(n)),
         "call" => format!("{}x{}", "f(".repeat(n), ")".repeat(n)),
         "index" => format!("{}0{}", "a[".repeat(n), "]".repeat(n)),
+        "slice" => format!("{}0{}", "a[1:".repeat(n), "]".repeat(n)),
         "power" => format!("x{}", "^x".repeat(n)),
         "prefix" => format!("{}x", "-".repeat(n)),
         "sum" => format!("x{}", " + x".repeat(n)),
@@ -258,7 +259,7 @@ fn nested(kind: &str, n: usize) -> String {
 #[test]
 fn each_nesting_level_counts_once() {
     assert_eq!(MAX_DEPTH, 256);
-    for kind in ["paren", "call", "index", "power", "prefix", "sum"] {
+    for kind in ["paren", "call", "index", "slice", "power", "prefix", "sum"] {
         let ok = nested(kind, MAX_DEPTH as usize);
         let errors = expr_errors(&ok);
         assert!(errors.is_empty(), "{kind} x{MAX_DEPTH}: {errors:#?}");
@@ -282,7 +283,7 @@ fn max_depth_fits_in_a_small_stack() {
     let handle = std::thread::Builder::new()
         .stack_size(1024 * 1024)
         .spawn(|| {
-            for kind in ["paren", "call", "index", "power", "prefix"] {
+            for kind in ["paren", "call", "index", "slice", "power", "prefix"] {
                 for n in [MAX_DEPTH as usize, MAX_DEPTH as usize + 1, 10_000] {
                     let src = nested(kind, n);
                     let (module, _) = parse_module(&lex(&src), &src);

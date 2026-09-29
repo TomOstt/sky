@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_compound_after_annotation.sky:1:6: error: `+=` cannot follow a type annotation
+  |
+1 | x: T += 1
+  |      ^^
+  = help: annotate with `x: T = ...`, then write `x += ...` on its own line

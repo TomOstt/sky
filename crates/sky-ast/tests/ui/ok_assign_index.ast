@@ -1,0 +1,3 @@
+(= (index A i j) x)
+(= (index A 0 (: _ _)) v)
+(= (index A (: 1 3)) w)

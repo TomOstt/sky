@@ -1,4 +1,0 @@
-# Assignment targets are plain names in v0.1, so `x.true = 1` is an error,
-# exactly like `x.flag = 1`: the keyword after `.` is not the problem.
-x.true = 1
-x.flag = 1

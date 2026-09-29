@@ -1,0 +1,8 @@
+# The six compound assignment operators, lexed greedily with or without
+# spaces around them: `x^=2` is `x`, `^=`, `2`.
+A += B
+t -= 1 s
+A[i, j] *= 2
+v /= n
+x^=2
+A@=B

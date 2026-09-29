@@ -1,0 +1,2 @@
+# Sky writes powers as `^`, so the compound form is `^=`.
+x **= 2

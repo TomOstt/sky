@@ -1,0 +1,6 @@
+crates/sky-ast/tests/ui/err_compound_to_expression.sky:1:1: error: cannot assign to an operator expression `a + b`
+  |
+1 | a + b += 1
+  | ^^^^^
+  |       -- because of this
+  = help: only a name (`x`), an index (`A[i]`), or an attribute (`a.b`) can be assigned to

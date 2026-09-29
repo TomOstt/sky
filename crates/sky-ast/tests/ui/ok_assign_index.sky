@@ -1,0 +1,5 @@
+# Index and slice targets parse with exact spans; v0.1 arrays are immutable,
+# so the checker (not the parser) rejects the write.
+A[i, j] = x
+A[0, :] = v
+A[1:3] = w

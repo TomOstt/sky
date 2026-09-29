@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_double_star_assign.sky:2:3: error: `**=` is not an operator
+  |
+2 | x **= 2
+  |   ^^^
+  = help: Sky writes powers as `^`; the compound assignment is `^=`

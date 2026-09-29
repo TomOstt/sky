@@ -19,12 +19,14 @@
     clippy::indexing_slicing
 )]
 
-use sky_diag::{Diagnostic, Label};
+use std::borrow::Cow;
+
+use sky_diag::{display_safe, Diagnostic, Label};
 use sky_syntax::{Kw, Span, Token, TokenKind};
 
 use crate::ast::{
-    span_text, BinaryOp, BoolOp, Expr, ExprKind, Ident, Literal, Module, Stmt, StmtKind, UnaryOp,
-    UnitExpr,
+    span_text, AssignTarget, BinaryOp, BoolOp, CompoundOp, Expr, ExprKind, Ident, IndexItem,
+    Literal, Module, Stmt, StmtKind, UnaryOp, UnitExpr,
 };
 use crate::precedence::{
     bool_binding_power, infix_binding_power, is_postfix_start, prefix_binding_power, NOT_BP,
@@ -32,7 +34,8 @@ use crate::precedence::{
 };
 
 /// Maximum nesting depth. Each level counts once: a `(`...`)` group, a prefix
-/// operator (including `not`), a call, an index, an attribute, a `⁻¹`, each
+/// operator (including `not`), a call, an index (its slices included: the
+/// bounds of `a[i:j]` sit one level below `a`), an attribute, a `⁻¹`, each
 /// infix operator folded into an operand, and each `and`/`or` run (however
 /// long: a run is one flat node). `x` uses 0, `(((x)))` 3, `f(g(x))` 2,
 /// `a^b^c` 2, `a + b + c` 2, `not not x` 2, and `a and b and c` 1. The count
@@ -42,6 +45,15 @@ pub const MAX_DEPTH: u32 = 256;
 
 /// Maximum number of unit names in one unit literal (`kg*m/s^2` has 3).
 pub const MAX_UNIT_FACTORS: usize = 64;
+
+/// Source text quoted in a diagnostic is cut to at most this many
+/// characters, or [`MAX_QUOTED_BYTES`] bytes after escaping, whichever comes
+/// first (then `…`), so a huge name or expression can't make a huge message.
+pub const MAX_QUOTED_CHARS: usize = 64;
+
+/// The byte cap on quoted source text, counted after escaping (see
+/// [`MAX_QUOTED_CHARS`]).
+pub const MAX_QUOTED_BYTES: usize = 128;
 
 /// A syntax error. Maps one-to-one onto a [`sky_diag::Diagnostic`] with
 /// severity `error` via [`ParseError::into_diagnostic`] or `From`.
@@ -107,7 +119,7 @@ pub fn parse_expr(tokens: &[Token], src: &str) -> (Option<Expr>, Vec<ParseError>
     if let Some(e) = &expr {
         p.skip_newlines();
         if p.peek() != TokenKind::Eof {
-            let err = p.unexpected_after(e, "end of input");
+            let err = p.unexpected_after(e.span, "end of input");
             p.errors.push(err);
         }
     }
@@ -220,8 +232,9 @@ impl<'t, 's> Parser<'t, 's> {
             .map(|t| t.span)
     }
 
-    fn text(&self, span: Span) -> &'s str {
-        span_text(self.src, span).unwrap_or("?")
+    /// Source text for a diagnostic: see [`cap_quoted`].
+    fn text(&self, span: Span) -> Cow<'s, str> {
+        cap_quoted(span_text(self.src, span).unwrap_or("?"))
     }
 
     fn skip_newlines(&mut self) {
@@ -259,8 +272,10 @@ impl<'t, 's> Parser<'t, 's> {
     fn parse_stmt(&mut self) -> Option<Stmt> {
         let first = self.expr_bp(0)?;
         let tok = self.current();
-        let stmt = match tok.kind {
-            TokenKind::Colon => {
+        // The statement's own `=` or compound operator, for chain errors.
+        let mut first_op = None;
+        let stmt = match (tok.kind, compound_op(tok.kind)) {
+            (TokenKind::Colon, _) => {
                 self.bump();
                 let name = self.binding_target(
                     &first,
@@ -270,6 +285,7 @@ impl<'t, 's> Parser<'t, 's> {
                 )?;
                 let ty = self.expr_bp(0)?;
                 let value = if self.peek() == TokenKind::Assign {
+                    first_op = Some(self.current());
                     self.bump();
                     Some(self.expr_bp(0)?)
                 } else {
@@ -281,18 +297,31 @@ impl<'t, 's> Parser<'t, 's> {
                     kind: StmtKind::Binding { name, ty, value },
                 }
             }
-            TokenKind::Assign => {
+            (TokenKind::Assign, _) => {
+                first_op = Some(tok);
                 self.bump();
-                let target = self.binding_target(
-                    &first,
-                    tok.span,
-                    "assign to",
-                    "invalid assignment target: only a plain name can be assigned in Sky v0.1",
-                )?;
+                let start = first.span;
+                let target = self.assign_target(first, tok.span)?;
                 let value = self.expr_bp(0)?;
                 Stmt {
-                    span: first.span.join(value.span),
+                    span: start.join(value.span),
                     kind: StmtKind::Assign { target, value },
+                }
+            }
+            (_, Some(op)) => {
+                first_op = Some(tok);
+                self.bump();
+                let start = first.span;
+                let target = self.assign_target(first, tok.span)?;
+                let value = self.expr_bp(0)?;
+                Stmt {
+                    span: start.join(value.span),
+                    kind: StmtKind::CompoundAssign {
+                        target,
+                        op,
+                        op_span: tok.span,
+                        value,
+                    },
                 }
             }
             _ => Stmt {
@@ -300,12 +329,46 @@ impl<'t, 's> Parser<'t, 's> {
                 kind: StmtKind::Expr(first),
             },
         };
-        self.expect_stmt_end(&stmt)?;
+        self.expect_stmt_end(&stmt, first_op)?;
         Some(stmt)
     }
 
-    /// `verb` names the action for a Bool literal target ("cannot assign
-    /// to `true`"); every other non-name target gets `message`.
+    /// The target of `=` or of a compound assignment (`op` is its span): a
+    /// name, an index, or an attribute. Anything else is an error on the
+    /// target's span.
+    fn assign_target(&mut self, target: Expr, op: Span) -> Option<AssignTarget> {
+        let Expr { kind, span } = target;
+        match kind {
+            ExprKind::Name(id) => Some(AssignTarget::Name(id)),
+            ExprKind::Index { base, items } => Some(AssignTarget::Index {
+                bracket_span: self.bracket_span(base.span, span),
+                base,
+                items,
+                span,
+            }),
+            ExprKind::Attribute { base, name } => {
+                Some(AssignTarget::Attribute { base, name, span })
+            }
+            other => self.fail_assign_target(&other, span, op),
+        }
+    }
+
+    /// `[` through `]` of an index expression spanning `whole`, whose base
+    /// ends at `base.end`: the `[` is the first token after the base.
+    fn bracket_span(&self, base: Span, whole: Span) -> Span {
+        let i = self.tokens.partition_point(|t| t.span.start < base.end);
+        let open = match self.tokens.get(i) {
+            Some(t) if t.kind == TokenKind::LBracket => t.span.start,
+            _ => base.end,
+        };
+        Span {
+            start: open.min(whole.end),
+            end: whole.end,
+        }
+    }
+
+    /// `verb` names the action for a Bool literal target ("cannot annotate
+    /// `true`"); every other non-name target gets `message`.
     fn binding_target(
         &mut self,
         target: &Expr,
@@ -326,7 +389,8 @@ impl<'t, 's> Parser<'t, 's> {
         None
     }
 
-    fn expect_stmt_end(&mut self, stmt: &Stmt) -> Option<()> {
+    /// `first_op` is the statement's own `=` or compound operator, if any.
+    fn expect_stmt_end(&mut self, stmt: &Stmt, first_op: Option<Token>) -> Option<()> {
         let tok = self.current();
         match tok.kind {
             TokenKind::Newline => {
@@ -334,20 +398,18 @@ impl<'t, 's> Parser<'t, 's> {
                 Some(())
             }
             TokenKind::Eof => Some(()),
-            TokenKind::Assign => {
-                self.errors.push(ParseError::new(
-                    "chained assignment (`a = b = c`) is not supported",
-                    tok.span,
-                ));
-                None
+            kind if kind == TokenKind::Assign || compound_op(kind).is_some() => {
+                self.fail_assign_after(stmt, first_op, tok)
             }
             _ => {
                 let last = match &stmt.kind {
                     StmtKind::Expr(e) => e,
-                    StmtKind::Assign { value, .. } => value,
+                    StmtKind::Assign { value, .. } | StmtKind::CompoundAssign { value, .. } => {
+                        value
+                    }
                     StmtKind::Binding { ty, value, .. } => value.as_ref().unwrap_or(ty),
                 };
-                let err = self.unexpected_after(last, "end of line");
+                let err = self.unexpected_after(last.span, "end of line");
                 self.errors.push(err);
                 None
             }
@@ -432,8 +494,8 @@ impl<'t, 's> Parser<'t, 's> {
     }
 
     fn parse_index(&mut self, base: Expr, open: Span) -> Option<Expr> {
-        let (indices, close) = self.parse_delimited(open, TokenKind::RBracket)?;
-        Some(index(base, indices, close))
+        let (items, close) = self.parse_index_items(open)?;
+        Some(index(base, items, close))
     }
 
     /// Looks at the token after a complete operand and decides what, if
@@ -488,8 +550,14 @@ impl<'t, 's> Parser<'t, 's> {
         self.bump();
         // `x**2`: two adjacent `*` tokens.
         let next = self.current();
-        if op == BinaryOp::Mul && next.kind == TokenKind::Star && tok.span.end == next.span.start {
-            return self.fail_double_star(tok.span.join(next.span));
+        if op == BinaryOp::Mul && tok.span.end == next.span.start {
+            match next.kind {
+                TokenKind::Star => return self.fail_double_star(tok.span.join(next.span)),
+                TokenKind::StarAssign => {
+                    return self.fail_double_star_assign(tok.span.join(next.span))
+                }
+                _ => {}
+            }
         }
         if op.is_comparison() {
             if let Some(prev) = *prev_comparison {
@@ -578,7 +646,7 @@ impl<'t, 's> Parser<'t, 's> {
         self.enter(open)?;
         let inner = self.expr_bp(0)?;
         if self.peek() != TokenKind::RParen {
-            return self.fail_unclosed(&inner, open, "(", "`)`");
+            return self.fail_unclosed(inner.span, open, "(", "`)`");
         }
         let close = self.bump().span;
         Some(paren(open, inner, close))
@@ -616,10 +684,93 @@ impl<'t, 's> Parser<'t, 's> {
             } else {
                 ("[", "`,` or `]`")
             };
-            return self.fail_unclosed(&item, open, open_str, expected);
+            return self.fail_unclosed(item.span, open, open_str, expected);
         }
         let c = self.bump();
         Some((items, c.span))
+    }
+
+    /// The items of `base[...]` after the `[` (already consumed), up to and
+    /// including `]`: expressions or slices, comma-separated, at least one,
+    /// trailing comma allowed. Slice bounds are parsed at the index's own
+    /// nesting level, so a slice adds no level.
+    ///
+    /// On the recursive path, so items are built and pushed by out-of-line
+    /// helpers: no `IndexItem` temporary lives in this frame.
+    fn parse_index_items(&mut self, open: Span) -> Option<(Vec<IndexItem>, Span)> {
+        let mut items = Vec::new();
+        if self.peek() == TokenKind::RBracket {
+            let c = self.bump();
+            return self.fail_empty_index(open.join(c.span));
+        }
+        loop {
+            // One item: a `start` expression, then for a slice its `:` and an
+            // optional `stop`. There is a single `expr_bp` call site, so the
+            // frame holds one expression slot however the item is spelled.
+            let mut colon: Option<Span> = None;
+            let mut has_start = false;
+            loop {
+                if !matches!(
+                    self.peek(),
+                    TokenKind::Comma | TokenKind::RBracket | TokenKind::Colon
+                ) {
+                    let bound = self.expr_bp(0)?;
+                    push_index_bound(&mut items, bound, colon.is_some());
+                    has_start = colon.is_none();
+                } else if colon.is_none() && self.peek() != TokenKind::Colon {
+                    return self.fail_expected_expression(self.current());
+                }
+                if colon.is_some() || self.peek() != TokenKind::Colon {
+                    break;
+                }
+                colon = Some(self.begin_slice(&mut items, has_start));
+            }
+            if let Some(colon) = colon {
+                if self.peek() == TokenKind::Colon {
+                    return self.fail_slice_step(colon);
+                }
+            }
+            match self.peek() {
+                TokenKind::Comma => {
+                    self.bump();
+                    if self.peek() == TokenKind::RBracket {
+                        break;
+                    }
+                }
+                TokenKind::RBracket => break,
+                _ => return self.fail_index_unclosed(&items, open),
+            }
+        }
+        let c = self.bump();
+        Some((items, c.span))
+    }
+
+    /// Consumes a slice's `:` (current) and turns the item being parsed
+    /// into a slice: the expression just pushed becomes its `start` if
+    /// `has_start`. Returns the `:` span.
+    #[inline(never)]
+    fn begin_slice(&mut self, items: &mut Vec<IndexItem>, has_start: bool) -> Span {
+        let colon = self.bump().span;
+        let start = if has_start {
+            match items.pop() {
+                Some(IndexItem::Expr(e)) => Some(e),
+                Some(other) => {
+                    items.push(other);
+                    None
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+        let span = start.as_ref().map_or(colon, |e| e.span.join(colon));
+        items.push(IndexItem::Slice {
+            start,
+            stop: None,
+            colon_span: colon,
+            span,
+        });
+        colon
     }
 
     // ----- error paths -----
@@ -645,6 +796,116 @@ impl<'t, 's> Parser<'t, 's> {
         self.errors.push(
             ParseError::new("`**` is not an operator", span).with_help("Sky writes powers as `^`"),
         );
+        None
+    }
+
+    /// `x **= 2`: `*` directly followed by `*=`.
+    #[cold]
+    #[inline(never)]
+    fn fail_double_star_assign<T>(&mut self, span: Span) -> Option<T> {
+        self.errors.push(
+            ParseError::new("`**=` is not an operator", span)
+                .with_help("Sky writes powers as `^`; the compound assignment is `^=`"),
+        );
+        None
+    }
+
+    /// The token after an index item is not `,` or `]`.
+    #[cold]
+    #[inline(never)]
+    fn fail_index_unclosed<T>(&mut self, items: &[IndexItem], open: Span) -> Option<T> {
+        let last = items.last().map_or(open, IndexItem::span);
+        self.fail_unclosed(last, open, "[", "`,` or `]`")
+    }
+
+    /// A second `:` in a slice (current), after the slice's first `:`.
+    #[cold]
+    #[inline(never)]
+    fn fail_slice_step<T>(&mut self, first_colon: Span) -> Option<T> {
+        let tok = self.current();
+        self.errors.push(
+            ParseError::new(
+                "slice steps (`start:stop:step`) are not supported in Sky v0.1",
+                tok.span,
+            )
+            .with_secondary(first_colon, "slice"),
+        );
+        None
+    }
+
+    /// An assignment target that is not a name, index, or attribute.
+    #[cold]
+    #[inline(never)]
+    fn fail_assign_target<T>(&mut self, kind: &ExprKind, span: Span, op: Span) -> Option<T> {
+        const HELP: &str =
+            "only a name (`x`), an index (`A[i]`), or an attribute (`a.b`) can be assigned to";
+        let err = match kind {
+            ExprKind::Literal(Literal::Bool { value, span }) => {
+                ParseError::new(format!("cannot assign to `{value}`"), *span)
+                    .with_secondary(op, "because of this")
+                    .with_help("`true` and `false` are Bool literals, not names")
+            }
+            _ => {
+                let what = match kind {
+                    ExprKind::Literal(_) => "a literal",
+                    ExprKind::UnitLiteral { .. } => "a unit literal",
+                    ExprKind::Call { .. } => "a function call",
+                    ExprKind::Paren(_) => "a parenthesized expression",
+                    _ => "an operator expression",
+                };
+                let help = if matches!(kind, ExprKind::Paren(_)) {
+                    format!("remove the parentheses; {HELP}")
+                } else {
+                    HELP.to_string()
+                };
+                ParseError::new(
+                    format!("cannot assign to {what} `{}`", self.text(span)),
+                    span,
+                )
+                .with_secondary(op, "because of this")
+                .with_help(help)
+            }
+        };
+        self.errors.push(err);
+        None
+    }
+
+    /// `=` or a compound assignment operator (`tok`, current) after a
+    /// complete statement whose own operator is `first_op`.
+    #[cold]
+    #[inline(never)]
+    fn fail_assign_after(
+        &mut self,
+        stmt: &Stmt,
+        first_op: Option<Token>,
+        tok: Token,
+    ) -> Option<()> {
+        let op = symbol(tok.kind);
+        let err = match (&stmt.kind, first_op) {
+            // `x: T += 1`: an annotation without a value.
+            (
+                StmtKind::Binding {
+                    name, value: None, ..
+                },
+                _,
+            ) => ParseError::new(format!("`{op}` cannot follow a type annotation"), tok.span)
+                .with_help(format!(
+                    "annotate with `{name}: T = ...`, then write `{name} {op} ...` on its own line",
+                    name = self.text(name.span)
+                )),
+            (_, Some(first)) => ParseError::new(
+                format!(
+                    "chained assignment (`{}` then `{op}`) is not supported",
+                    symbol(first.kind)
+                ),
+                tok.span,
+            )
+            .with_secondary(first.span, "first assignment"),
+            // Unreachable: only an assignment or binding can be followed
+            // by an assignment operator here.
+            (_, None) => ParseError::new(format!("unexpected `{op}`"), tok.span),
+        };
+        self.errors.push(err);
         None
     }
 
@@ -743,7 +1004,7 @@ impl<'t, 's> Parser<'t, 's> {
     #[inline(never)]
     fn fail_unclosed<T>(
         &mut self,
-        last: &Expr,
+        last: Span,
         open: Span,
         open_str: &str,
         expected: &str,
@@ -756,8 +1017,8 @@ impl<'t, 's> Parser<'t, 's> {
     }
 
     /// The error for an unexpected token right after the complete
-    /// expression `prev`, where `expected` was wanted.
-    fn unexpected_after(&self, prev: &Expr, expected: &str) -> ParseError {
+    /// expression spanning `prev`, where `expected` was wanted.
+    fn unexpected_after(&self, prev: Span, expected: &str) -> ParseError {
         let tok = self.current();
         match tok.kind {
             TokenKind::Ident => {
@@ -768,7 +1029,7 @@ impl<'t, 's> Parser<'t, 's> {
                     ),
                     tok.span,
                 )
-                .with_secondary(prev.span, "this is not a numeric literal")
+                .with_secondary(prev, "this is not a numeric literal")
                 .with_help(format!(
                     "write a unit right after a number (`10 {name}`), or multiply explicitly (`... * {name}`)"
                 ))
@@ -780,7 +1041,7 @@ impl<'t, 's> Parser<'t, 's> {
                 ),
                 tok.span,
             )
-            .with_secondary(prev.span, "previous expression")
+            .with_secondary(prev, "previous expression")
             .with_help("two expressions cannot be written side by side; is an operator missing?"),
             _ => ParseError::new(
                 format!("expected {expected}, found {}", self.describe(tok)),
@@ -831,6 +1092,9 @@ impl<'t, 's> Parser<'t, 's> {
             self.bump();
             if is_mul && next.kind == TokenKind::Star {
                 return self.fail_double_star(op.span.join(next.span));
+            }
+            if is_mul && next.kind == TokenKind::StarAssign {
+                return self.fail_double_star_assign(op.span.join(next.span));
             }
             if next.kind != TokenKind::Ident {
                 let verb = if is_mul { "multiply" } else { "divide" };
@@ -1192,14 +1456,85 @@ fn call(callee: Expr, args: Vec<Expr>, close: Span) -> Expr {
 }
 
 #[inline(never)]
-fn index(base: Expr, indices: Vec<Expr>, close: Span) -> Expr {
+fn index(base: Expr, items: Vec<IndexItem>, close: Span) -> Expr {
     Expr {
         span: base.span.join(close),
         kind: ExprKind::Index {
             base: Box::new(base),
-            indices,
+            items,
         },
     }
+}
+
+/// Pushes an index item's expression: a new `IndexItem::Expr`, or, if
+/// `is_stop`, the stop of the slice pushed last by `begin_slice`.
+#[inline(never)]
+fn push_index_bound(items: &mut Vec<IndexItem>, e: Expr, is_stop: bool) {
+    if is_stop {
+        if let Some(IndexItem::Slice { stop, span, .. }) = items.last_mut() {
+            *span = span.join(e.span);
+            *stop = Some(e);
+            return;
+        }
+    }
+    items.push(IndexItem::Expr(e));
+}
+
+/// The compound assignment a token spells, if any.
+fn compound_op(kind: TokenKind) -> Option<CompoundOp> {
+    Some(match kind {
+        TokenKind::PlusAssign => CompoundOp::Add,
+        TokenKind::MinusAssign => CompoundOp::Sub,
+        TokenKind::StarAssign => CompoundOp::Mul,
+        TokenKind::SlashAssign => CompoundOp::Div,
+        TokenKind::CaretAssign => CompoundOp::Pow,
+        TokenKind::AtAssign => CompoundOp::MatMul,
+        _ => return None,
+    })
+}
+
+/// `s` for quoting in a diagnostic: its first line, with display-unsafe
+/// characters escaped exactly as the renderer escapes them
+/// ([`sky_diag::display_safe`], e.g. U+202E becomes `\u{202E}`), cut to at
+/// most [`MAX_QUOTED_CHARS`] characters and [`MAX_QUOTED_BYTES`] bytes of
+/// escaped text, then `…` if anything was dropped. Borrowed when nothing
+/// was escaped or cut.
+///
+/// Escaping happens one character at a time, before counting: a character
+/// is added only if its whole escape fits, so the cut never splits an
+/// escape (`\u{20`) or a UTF-8 sequence. Never escape-then-truncate. The
+/// result is already display-safe, so the renderer leaves it unchanged.
+///
+/// Deliberately minimal (no grapheme awareness): the shared `display_safe`
+/// follow-up is meant to replace this and the identical helper in #19.
+fn cap_quoted(s: &str) -> Cow<'_, str> {
+    let mut out = String::new();
+    let mut buf = [0u8; 4];
+    let mut escaped = false;
+    for (kept, (i, c)) in s.char_indices().enumerate() {
+        if c == '\n' || c == '\r' {
+            break;
+        }
+        let piece = display_safe(c.encode_utf8(&mut buf));
+        if kept == MAX_QUOTED_CHARS || out.len() + piece.len() > MAX_QUOTED_BYTES {
+            break;
+        }
+        escaped |= matches!(piece, Cow::Owned(_));
+        out.push_str(&piece);
+        if i + c.len_utf8() == s.len() {
+            // Everything fit.
+            return if escaped {
+                Cow::Owned(out)
+            } else {
+                Cow::Borrowed(s)
+            };
+        }
+    }
+    if s.is_empty() {
+        return Cow::Borrowed(s);
+    }
+    out.push('…');
+    Cow::Owned(out)
 }
 
 /// Decimal digits (with optional `_` separators) to `u64`; `None` on
@@ -1242,6 +1577,12 @@ fn symbol(kind: TokenKind) -> &'static str {
         TokenKind::Le => "<=",
         TokenKind::Gt => ">",
         TokenKind::Ge => ">=",
+        TokenKind::PlusAssign => "+=",
+        TokenKind::MinusAssign => "-=",
+        TokenKind::StarAssign => "*=",
+        TokenKind::SlashAssign => "/=",
+        TokenKind::CaretAssign => "^=",
+        TokenKind::AtAssign => "@=",
         TokenKind::Dot => ".",
         TokenKind::Arrow => "->",
         TokenKind::Keyword(kw) => kw.as_str(),
@@ -1258,7 +1599,115 @@ fn symbol(kind: TokenKind) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_u64;
+    use std::borrow::Cow;
+
+    use super::{cap_quoted, parse_u64, MAX_QUOTED_BYTES, MAX_QUOTED_CHARS};
+
+    /// `q` without its trailing `…`, checked against both caps.
+    fn body(q: &str) -> &str {
+        let b = q.strip_suffix('…').unwrap_or(q);
+        assert!(b.len() <= MAX_QUOTED_BYTES, "{} bytes: {q}", b.len());
+        assert!(!b.contains('…'));
+        b
+    }
+
+    #[test]
+    fn cap_quoted_100k_math_italic_x() {
+        // U+1D465 is 4 bytes: the byte cap (32 chars) comes before the
+        // char cap (64).
+        let src = "𝑥".repeat(100_000);
+        let q = cap_quoted(&src);
+        assert_eq!(body(&q), "𝑥".repeat(32));
+        assert!(q.ends_with('…'));
+    }
+
+    #[test]
+    fn cap_quoted_100k_rtl_override() {
+        // U+202E is escaped to the 8-byte `\u{202E}`: 16 escapes are exactly
+        // 128 bytes, and no raw override survives.
+        let src = "\u{202E}".repeat(100_000);
+        let q = cap_quoted(&src);
+        assert_eq!(body(&q), "\\u{202E}".repeat(16));
+        assert!(q.ends_with('…'));
+        assert!(!q.contains('\u{202E}'));
+    }
+
+    #[test]
+    fn cap_quoted_never_ends_partway_through_an_escape() {
+        // Every ASCII prefix length 0..=8 shifts where the 128-byte cut
+        // lands inside the escape sequence; the escape must be dropped
+        // whole, never cut to `\u{20`.
+        for pad in 0..=8 {
+            for unsafe_char in ['\u{202E}', '\u{E0041}', '\t', '\u{1B}'] {
+                let src = "a".repeat(pad) + &unsafe_char.to_string().repeat(100);
+                let q = cap_quoted(&src);
+                let b = body(&q);
+                let tail = b.trim_start_matches('a');
+                let esc = sky_diag::display_safe(&unsafe_char.to_string()).into_owned();
+                assert_ne!(esc, unsafe_char.to_string());
+                // Only whole escapes after the padding.
+                assert_eq!(tail.len() % esc.len(), 0, "pad {pad}: {q}");
+                assert_eq!(tail, esc.repeat(tail.len() / esc.len()), "pad {pad}: {q}");
+                // And as many as fit.
+                assert!(b.len() + esc.len() > MAX_QUOTED_BYTES, "pad {pad}: {q}");
+                assert!(b.ends_with('}'), "pad {pad}: {q}");
+            }
+        }
+    }
+
+    #[test]
+    fn cap_quoted_cjk() {
+        // 3-byte chars: 42 fit in 128 bytes, the 43rd would need 129.
+        let src = "漢".repeat(100_000);
+        let q = cap_quoted(&src);
+        assert_eq!(body(&q), "漢".repeat(42));
+        assert!(q.ends_with('…'));
+        assert_eq!(
+            cap_quoted(&("漢".repeat(42) + "ab")),
+            "漢".repeat(42) + "ab"
+        );
+        assert_eq!(
+            cap_quoted(&("漢".repeat(42) + "abc")),
+            "漢".repeat(42) + "ab…"
+        );
+    }
+
+    #[test]
+    fn cap_quoted_boundaries() {
+        // Char cap.
+        let n = MAX_QUOTED_CHARS;
+        assert_eq!(cap_quoted(&"a".repeat(n)), "a".repeat(n));
+        assert_eq!(cap_quoted(&"a".repeat(n + 1)), "a".repeat(n) + "…");
+        // 64 two-byte chars are exactly 128 bytes: both caps met, no cut.
+        assert_eq!(cap_quoted(&"é".repeat(64)), "é".repeat(64));
+        assert_eq!(cap_quoted(&"é".repeat(65)), "é".repeat(64) + "…");
+        // Byte cap: exactly 128 bytes fits; 129 cuts on a char boundary.
+        assert_eq!(cap_quoted(&"𝑥".repeat(32)), "𝑥".repeat(32));
+        assert_eq!(
+            cap_quoted(&("a".to_owned() + &"𝑥".repeat(32))),
+            "a".to_owned() + &"𝑥".repeat(31) + "…"
+        );
+        assert_eq!(cap_quoted(&"\u{202E}".repeat(16)), "\\u{202E}".repeat(16));
+        assert_eq!(
+            cap_quoted(&"\u{202E}".repeat(17)),
+            "\\u{202E}".repeat(16) + "…"
+        );
+        // First line only.
+        assert_eq!(cap_quoted("ab\ncd"), "ab…");
+        assert_eq!(cap_quoted("ab\r\ncd"), "ab…");
+        assert_eq!(cap_quoted("\nab"), "…");
+    }
+
+    #[test]
+    fn cap_quoted_borrows_when_unchanged() {
+        for s in ["", "x", "A⁻¹ @ ∂ħ", &"a".repeat(64), &"𝑥".repeat(32)] {
+            assert!(matches!(cap_quoted(s), Cow::Borrowed(b) if b == s), "{s:?}");
+        }
+        for s in ["a\tb", "\u{202E}", &"a".repeat(65), "a\nb"] {
+            assert!(matches!(cap_quoted(s), Cow::Owned(_)), "{s:?}");
+        }
+        assert_eq!(cap_quoted("a\tb"), "a\\u{0009}b");
+    }
 
     #[test]
     fn parse_u64_is_checked() {

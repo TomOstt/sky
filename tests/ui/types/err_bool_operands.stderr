@@ -14,14 +14,14 @@ tests/ui/types/err_bool_operands.sky:5:9: error: `not` needs a Bool operand, fou
 
 tests/ui/types/err_bool_operands.sky:6:13: error: `or` needs a Bool operand, found Scalar [L²·T⁻²]
   |
-6 | c = true or (v @ v) or 1
+6 | r = true or (v @ v) or 1
   |             ^^^^^^^ not a Bool
   = note: v0.1 has no truthiness
   = help: compare it instead, e.g. `(v @ v) != 0 m^2/s^2`
 
 tests/ui/types/err_bool_operands.sky:6:24: error: `or` needs a Bool operand, found Scalar [1]
   |
-6 | c = true or (v @ v) or 1
+6 | r = true or (v @ v) or 1
   |                        ^ not a Bool
   = note: v0.1 has no truthiness
   = help: compare it instead, e.g. `1 != 0`

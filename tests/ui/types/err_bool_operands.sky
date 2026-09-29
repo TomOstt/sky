@@ -3,7 +3,7 @@ v: Vector[3] m/s
 x = 2 m
 a = x and true
 b = not x
-c = true or (v @ v) or 1
+r = true or (v @ v) or 1
 d = v and true
 e = not (3 kg*m/s)
 f = true or (3 m + 2 s)

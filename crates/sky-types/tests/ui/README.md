@@ -21,3 +21,5 @@ Names with property tags or element units are declared in the file itself, with 
 These cases need nothing but the checker (unit and shape errors, Bool rules, name resolution), and pin the checker's own output next to its `.types`. Parse errors of annotations (`x: 5 m`, `Matrix[N+1, N]`) are in `crates/sky-ast/tests/ui/`.
 
 To regenerate every `.stderr` and the existing `.types` files (here and in `tests/ui/types/`), run `SKY_BLESS=1 cargo test -p sky-types --test ui_check`, then review the diff. The `tests/ui/types/` `.stderr` and `.explain` files are blessed by `SKY_BLESS=1 cargo test -p sky-cli --test ui`.
+
+A line `# prelude` starts from `Env::with_prelude()`, so the physical constants (`c`, `h`, `ħ`, ...) are in scope, as they are under `sky check`. Without it the environment is empty.

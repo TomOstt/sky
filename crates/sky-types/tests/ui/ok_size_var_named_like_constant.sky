@@ -1,0 +1,3 @@
+# prelude
+# A size variable may share a name with an unrebound constant.
+A: Matrix[G, G]

@@ -49,7 +49,7 @@ impl Write for Stdout<'_> {
 
 fn run_source(path: &str, src: &str) -> ExitCode {
     let file = SourceFile::new(path, src);
-    let front = analyze(src, sky_types::Env::new(), false);
+    let front = analyze(src, sky_types::Env::with_prelude(), false);
     let rendered = front.render(&file);
     eprint!("{}", rendered.join("\n"));
     let module = match front.module {
@@ -61,7 +61,7 @@ fn run_source(path: &str, src: &str) -> ExitCode {
         inner: stdout.lock(),
         closed: false,
     };
-    let mut env = RuntimeEnv::new();
+    let mut env = RuntimeEnv::with_prelude();
     let result = run_module(&module, src, &mut env, &mut out);
     let _ = out.flush();
     match result {

@@ -26,8 +26,8 @@ const CONTINUATION_PROMPT: &str = "...  ";
 /// What diagnostics call the input.
 const NAME: &str = "<repl>";
 
-/// What persists between inputs.
-#[derive(Default)]
+/// What persists between inputs. No `Default`: a session always starts
+/// from the preludes (see `repl_loop`).
 struct Session {
     types: Env,
     values: RuntimeEnv,
@@ -54,7 +54,12 @@ fn repl_loop(interactive: bool) -> ExitCode {
     let mut input = stdin.lock();
     let stdout = io::stdout();
     let mut out = stdout.lock();
-    let mut session = Session::default();
+    // Start where `sky check` and `sky run` start: the physical constants
+    // are in scope for the checker and have values at run time.
+    let mut session = Session {
+        types: Env::with_prelude(),
+        values: RuntimeEnv::with_prelude(),
+    };
     let mut pending = String::new();
     loop {
         // The prompt goes to stderr and only to a terminal, so piped

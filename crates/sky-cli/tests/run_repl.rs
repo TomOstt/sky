@@ -304,3 +304,19 @@ fn repl_warnings_do_not_stop_a_line() {
     assert_eq!(out(&o), "4\n");
     assert!(err(&o).contains("warning:"));
 }
+
+#[test]
+fn physical_constants_have_values_in_run_and_repl() {
+    // The checker's prelude and the interpreter's prelude must agree: a
+    // constant that checks must also have a value at run time.
+    let o = run_script(
+        "constants.sky",
+        "m = 2 kg\nE = m * c^2\nprint(E)\nprint(hbar == ħ)\n",
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert_eq!(out(&o), "1.7975103574736352e17 J\ntrue\n");
+
+    let o = repl("k_B * 300 K\nq_e\n");
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert_eq!(out(&o), "4.141947e-21 J\n1.602176634e-19 C\n");
+}

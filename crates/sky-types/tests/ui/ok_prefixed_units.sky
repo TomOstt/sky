@@ -1,0 +1,7 @@
+# Prefixes: every sum is length or time.
+d = 1 km + 5 mm + 3 μm + 2 um + 4 nm
+t = 1 h + 30 min + 2 ms + 1 day + 1 yr + 3 Gyr
+p = 1 hPa + 2 kPa + 1 Pa
+e = 3 GeV + 2 keV + 1 J
+r = 5 pc + 2 kpc + 1 Mpc + 1 ly + 1 AU
+m = 2 kg + 3 mg + 1 t + 4 g

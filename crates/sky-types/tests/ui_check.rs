@@ -47,7 +47,13 @@ struct Outcome {
 }
 
 fn run(path: &str, src: &str) -> Outcome {
-    let env = Env::new();
+    // A `# prelude` line starts from `Env::with_prelude()` (the physical
+    // constants), as `sky check` does.
+    let env = if src.lines().any(|l| l.trim() == "# prelude") {
+        Env::with_prelude()
+    } else {
+        Env::new()
+    };
     let file = SourceFile::new(path, src);
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut checked = None;

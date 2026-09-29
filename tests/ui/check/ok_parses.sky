@@ -4,5 +4,5 @@ g = 9.81 m/s^2
 k = 10 km^-1
 a = true
 b = v > 1 m/s
-c = false
-f = not (a and b) or c
+flag = false
+f = not (a and b) or flag

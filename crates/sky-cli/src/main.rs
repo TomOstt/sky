@@ -128,7 +128,7 @@ fn check(path: &str, file: &File, src: &str, explain: bool) -> ExitCode {
 /// every diagnostic. Returns the rendered diagnostics in source order and
 /// whether none is an error. Runs inside `with_deep_stack`.
 fn check_source(path: &str, src: &str, explain: bool) -> (Vec<String>, bool) {
-    let front = frontend::analyze(src, sky_types::Env::new(), explain);
+    let front = frontend::analyze(src, sky_types::Env::with_prelude(), explain);
     // Pass the source unchanged: spans are byte offsets into it, and the
     // renderer escapes terminal-unsafe characters itself (spec/diagnostics.md).
     let file = SourceFile::new(path, src);

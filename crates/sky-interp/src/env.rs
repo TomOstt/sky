@@ -17,6 +17,20 @@ impl RuntimeEnv {
         RuntimeEnv::default()
     }
 
+    /// The environment every program starts in: each physical constant from
+    /// `sky_units::CONSTANTS`, under its Unicode and ASCII names, with its SI
+    /// value. The runtime twin of `sky_types::Env::with_prelude`, so a name
+    /// the checker accepts as a constant also has a value at run time.
+    pub fn with_prelude() -> Self {
+        let mut env = RuntimeEnv::new();
+        for c in sky_units::CONSTANTS {
+            for name in [Some(c.name), c.ascii].into_iter().flatten() {
+                env.set(name, Value::number(c.value, c.dim));
+            }
+        }
+        env
+    }
+
     pub fn get(&self, name: &str) -> Option<&Value> {
         self.vars.get(name)
     }

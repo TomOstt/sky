@@ -1,0 +1,5 @@
+# prelude
+# Rebinding a constant is allowed; the first time warns.
+c = 3 m/s
+c = 4 m/s
+hbar = 1

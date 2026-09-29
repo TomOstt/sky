@@ -426,6 +426,7 @@ dependencies = [
 name = "sky-lower"
 version = "0.0.1"
 dependencies = [
+ "sky-ad",
  "sky-ast",
  "sky-diag",
  "sky-interp",

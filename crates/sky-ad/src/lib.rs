@@ -155,7 +155,14 @@ pub fn derivative_name(f: &Function, wrt: usize) -> String {
         .get(wrt)
         .and_then(|v| f.value(*v).name.clone())
         .unwrap_or_else(|| wrt.to_string());
-    format!("d{}/d{}", f.name, param)
+    derivative_name_of(&f.name, &param)
+}
+
+/// [`derivative_name`] for a function called `func` whose parameter is
+/// called `param` (write its index if it has no name), for a caller that
+/// has to name the derivative before it is built.
+pub fn derivative_name_of(func: &str, param: &str) -> String {
+    format!("d{func}/d{param}")
 }
 
 /// The derivative of `func` with respect to parameter `wrt`, as a new

@@ -8,6 +8,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+sky-ad = { path = "../sky-ad" }
 sky-ast = { path = "../sky-ast" }
 sky-diag = { path = "../sky-diag" }
 sky-interp = { path = "../sky-interp" }

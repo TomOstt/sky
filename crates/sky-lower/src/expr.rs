@@ -268,6 +268,9 @@ impl Lower<'_> {
         while let ExprKind::Paren(inner) = &target.kind {
             target = inner;
         }
+        if let Some(sig) = self.derivative_sig(target) {
+            return self.derivative_call(e, &sig, args);
+        }
         if let ExprKind::Name(id) = &target.kind {
             match self.checked.expr_types.get(&target.span) {
                 Some(Ty::Func(sig)) => {

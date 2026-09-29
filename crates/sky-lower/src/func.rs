@@ -457,6 +457,10 @@ impl Lower<'_> {
                     if let Some(Ty::Func(sig)) = self.checked.expr_types.get(&target.span) {
                         callees.push(sig.def_span());
                     }
+                } else if let Some(def) = self.derivative_def(target) {
+                    // `derivative(f, x)(...)` calls (a derivative of) `f`;
+                    // its arguments name `f` and a parameter, not variables.
+                    callees.push(def);
                 } else {
                     self.scan_expr(callee, defined, direct, callees);
                 }

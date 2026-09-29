@@ -9,6 +9,7 @@ use sky_ir::{Function, NumberType, OpKind, Repr, Type, ValueId};
 use sky_types::{Checked, Ty};
 
 use crate::build::Builder;
+use crate::derivative::Wanted;
 use crate::LowerError;
 
 pub(crate) type R<T> = Result<T, LowerError>;
@@ -98,6 +99,9 @@ pub(crate) struct Lower<'a> {
     /// The states of the functions around the one being lowered (the
     /// module's `<main>` first).
     pub(crate) stack: Vec<FnState>,
+    /// The derivative functions `derivative(f, x)(...)` calls need, built
+    /// once the module's functions exist (see `derivative.rs`).
+    pub(crate) derivatives: Vec<Wanted>,
 }
 
 /// A checker type as a SIR type. `None` for a function value.

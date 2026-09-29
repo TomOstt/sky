@@ -168,6 +168,7 @@ mod analysis;
 mod array;
 mod build;
 mod ctx;
+mod derivative;
 mod expr;
 mod for_loop;
 mod func;
@@ -266,6 +267,7 @@ pub fn lower(module: &Ast, src: &str, checked: &Checked) -> Result<Module, Lower
         used_names: HashMap::new(),
         st: main,
         stack: Vec::new(),
+        derivatives: Vec::new(),
     };
     lw.collect_defs(&module.stmts);
     lw.collect_module_names(&module.stmts);
@@ -274,7 +276,12 @@ pub fn lower(module: &Ast, src: &str, checked: &Checked) -> Result<Module, Lower
     lw.st
         .b
         .op(sky_ir::OpKind::Return, Vec::new(), Vec::new(), module.span);
-    let Lower { st, mut out, .. } = lw;
+    let Lower {
+        st,
+        mut out,
+        derivatives,
+        ..
+    } = lw;
     out.sort_by_key(|(start, _)| *start);
     let mut functions = vec![st.b.finish()];
     functions.extend(out.into_iter().map(|(_, f)| f));
@@ -282,7 +289,13 @@ pub fn lower(module: &Ast, src: &str, checked: &Checked) -> Result<Module, Lower
         edition: Edition::default(),
         functions,
     };
-    // Effects follow from the bodies and the calls between them; one pass
+    // The derivative functions the program asked for, now that the
+    // functions they differentiate exist.
+    for want in derivatives {
+        sky_ad::differentiate_into(&mut module, &want.func, want.wrt)
+            .map_err(|e| derivative::ad_error(&e, want.span))?;
+    }
+    // Effects follow from the bodies (the derivative functions included) and the calls between them; one pass
     // owns that rule (`sky_ir::effects`), lowering does not repeat it.
     let _ = sky_ir::effects::infer_effects(&mut module);
     Ok(module)

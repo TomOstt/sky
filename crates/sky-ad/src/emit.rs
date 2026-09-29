@@ -7,7 +7,7 @@
 use sky_diag::Span;
 use sky_ir::{
     BlockId, Function, FunctionBuilder, Module, NumberType, OpData, OpId, OpKind, RegionId, Repr,
-    Type, ValueId,
+    Type, ValueDef, ValueId,
 };
 use sky_units::Dimension;
 
@@ -200,13 +200,29 @@ impl Diff<'_> {
             Type::Number(n) if n.shape.rank() == 0 => Ok(n.dim),
             Type::Number(_) => Err(AdError::NonScalar {
                 func: self.src.name.clone(),
-                what: format!("{v}"),
+                what: self.describe(v),
             }),
             Type::Unknown => Err(AdError::UnknownType {
                 func: self.src.name.clone(),
-                what: format!("{v}"),
+                what: self.describe(v),
             }),
             _ => Err(self.malformed(&format!("{v} is not a number but has a tangent"))),
+        }
+    }
+
+    /// Source value `v` for an error message: its source name, or the
+    /// operation that computes it (`the result of the call to `g``).
+    fn describe(&self, v: ValueId) -> String {
+        let data = self.src.value(v);
+        if let Some(name) = &data.name {
+            return format!("`{name}`");
+        }
+        match data.def {
+            ValueDef::OpResult { op, .. } => match &self.src.op(op).kind {
+                OpKind::Call { callee } => format!("the result of the call to `{callee}`"),
+                other => format!("the result of `{}`", other.mnemonic()),
+            },
+            ValueDef::BlockArg { .. } => format!("{v}"),
         }
     }
 

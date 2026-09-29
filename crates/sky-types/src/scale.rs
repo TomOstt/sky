@@ -2,7 +2,8 @@
 //! negation (`-A`). Like every tag rule, they are conservative: a tag is kept
 //! only if it holds for every value of `c`.
 
-use crate::tags::{Tag, TagSet};
+use crate::tag_ops::{tag_result, TagOp};
+use crate::tags::TagSet;
 
 /// The tags of `c·A` (and `A / c`, which is `(1/c)·A`) for an arbitrary
 /// real scalar `c`, given `A`'s tags:
@@ -12,11 +13,10 @@ use crate::tags::{Tag, TagSet};
 /// * PositiveDefinite is dropped: for `c ≤ 0`, `xᵀ(cA)x = c·xᵀAx ≤ 0`.
 ///   (Symmetric still holds, from the closure.)
 /// * Orthogonal is dropped: `(cQ)ᵀ(cQ) = c²·I`, which is `I` only for `c = ±1`.
+///
+/// Defined by [`tag_result`]`(`[`TagOp::Scale`]`, ..)`.
 pub fn scaled_tags(tags: TagSet) -> TagSet {
-    keep(tags, |t| match t {
-        Tag::Symmetric | Tag::Diagonal => true,
-        Tag::PositiveDefinite | Tag::Orthogonal => false,
-    })
+    tag_result(TagOp::Scale, &[tags])
 }
 
 /// The tags of `-A`, given `A`'s tags:
@@ -26,20 +26,16 @@ pub fn scaled_tags(tags: TagSet) -> TagSet {
 /// * PositiveDefinite is dropped: `xᵀ(-A)x = -xᵀAx < 0`, so `-A` is negative
 ///   definite. (Symmetric still holds, from the closure.)
 /// * Orthogonal is kept (unlike [`scaled_tags`]): `(-Q)ᵀ(-Q) = QᵀQ = I`.
+///
+/// Defined by [`tag_result`]`(`[`TagOp::Negate`]`, ..)`.
 pub fn negated_tags(tags: TagSet) -> TagSet {
-    keep(tags, |t| match t {
-        Tag::Symmetric | Tag::Diagonal | Tag::Orthogonal => true,
-        Tag::PositiveDefinite => false,
-    })
-}
-
-fn keep(tags: TagSet, rule: impl Fn(Tag) -> bool) -> TagSet {
-    TagSet::from_tags(tags.closure().iter().filter(|&t| rule(t))).closure()
+    tag_result(TagOp::Negate, &[tags])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tags::Tag;
 
     fn set(tags: &[Tag]) -> TagSet {
         TagSet::from_tags(tags.iter().copied())

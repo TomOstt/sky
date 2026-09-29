@@ -15,6 +15,9 @@
 //! * [`rewrite`]: the one v0.1 rewrite, `A⁻¹ @ b` to a Cholesky solve for a
 //!   positive-definite `A`.
 //! * [`scale`]: tag rules for scaling by a scalar and for negation.
+//! * [`tag_ops`]: the single source of truth for tag propagation
+//!   ([`TagOp`], [`tag_result`]) and for when a Symmetric result must be
+//!   mirrored ([`needs_mirroring`]).
 
 #![forbid(unsafe_code)]
 
@@ -23,6 +26,7 @@ pub mod rewrite;
 pub mod rules;
 pub mod scale;
 pub mod shape;
+pub mod tag_ops;
 pub mod tags;
 
 pub use check::{check_module, check_module_with, Checked, Env, RewriteSite, Ty, ValueTy};
@@ -32,4 +36,5 @@ pub use scale::{negated_tags, scaled_tags};
 pub use shape::{
     DimConflict, DimValue, Shape, ShapeDim, ShapeError, ShapeErrorKind, ShapeUnifier, ShapeVar,
 };
+pub use tag_ops::{needs_mirroring, tag_result, TagOp};
 pub use tags::{matmul_tags, preserved_by_inverse, preserved_by_transpose, Tag, TagSet};

@@ -7,6 +7,7 @@
 use std::fmt;
 
 use crate::shape::{Shape, ShapeError, ShapeErrorKind, ShapeUnifier};
+use crate::tag_ops::{tag_result, TagOp};
 use crate::tags::{matmul_tags, preserved_by_inverse, preserved_by_transpose, TagSet};
 
 /// The static type of an array value: a shape plus guaranteed property tags.
@@ -136,14 +137,20 @@ pub fn matmul(
 /// An elementwise operator (`+`, `-`, …): both shapes must be equal (no
 /// broadcasting in v0.1). The result has the left operand's shape and no
 /// tags. That is conservative: some tags survive some operators (a sum of
-/// symmetric matrices is symmetric), but v0.1 claims none.
+/// symmetric matrices is symmetric), but v0.1 claims none. The tags are
+/// [`tag_result`]`(`[`TagOp::Elementwise`]`, ..)`.
 pub fn elementwise(
     u: &mut ShapeUnifier,
     lhs: &TensorType,
     rhs: &TensorType,
 ) -> Result<TensorType, ShapeError> {
     u.unify(&lhs.shape, &rhs.shape)?;
-    Ok(TensorType::untagged(lhs.shape.clone()))
+    // `tag_result` never adds tags, so any tag here would come from a tagged
+    // (hence square) operand of this same shape: the invariant holds.
+    Ok(TensorType {
+        shape: lhs.shape.clone(),
+        tags: tag_result(TagOp::Elementwise, &[lhs.tags, rhs.tags]),
+    })
 }
 
 /// `Aᵀ`. A scalar is its own transpose. `Matrix[M,N]` becomes `Matrix[N,M]`

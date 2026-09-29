@@ -251,11 +251,3 @@ fn file_rule() {
     );
     assert_eq!(check_file(facts(true, 7, 0o755), 7), Err(Refusal::NotAFile));
 }
-
-#[test]
-#[should_panic(expected = "not a single path component")]
-fn openat_refuses_a_non_component() {
-    let t = TempDir::new("component");
-    let dir = crate::walk::open_root(&t.0).unwrap();
-    let _ = crate::walk::open_dir_at(&dir, "..");
-}

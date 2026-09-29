@@ -13,7 +13,7 @@ use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 
-use crate::import::Facts;
+use crate::import::{Facts, ImportError};
 
 /// Opens the project root: `O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC`.
 pub(crate) fn open_root(root: &Path) -> io::Result<File> {
@@ -25,7 +25,7 @@ pub(crate) fn open_root(root: &Path) -> io::Result<File> {
 
 /// Opens the subdirectory `name` of `dir`:
 /// `openat(dir, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)`.
-pub(crate) fn open_dir_at(dir: &File, name: &str) -> io::Result<File> {
+pub(crate) fn open_dir_at(dir: &File, name: &Component) -> io::Result<File> {
     open_at(dir, name, libc::O_RDONLY | libc::O_DIRECTORY)
 }
 
@@ -36,7 +36,7 @@ pub(crate) fn open_dir_at(dir: &File, name: &str) -> io::Result<File> {
 /// rejects it by `fstat`); it has no effect on reads from a regular file.
 /// `O_NOCTTY` keeps a terminal device from becoming the controlling
 /// terminal.
-pub(crate) fn open_file_at(dir: &File, name: &str) -> io::Result<File> {
+pub(crate) fn open_file_at(dir: &File, name: &Component) -> io::Result<File> {
     open_at(
         dir,
         name,
@@ -44,14 +44,13 @@ pub(crate) fn open_file_at(dir: &File, name: &str) -> io::Result<File> {
     )
 }
 
-fn open_at(dir: &File, name: &str, flags: libc::c_int) -> io::Result<File> {
-    let name = component(name);
+fn open_at(dir: &File, name: &Component, flags: libc::c_int) -> io::Result<File> {
     // SAFETY: `dir` is an open descriptor for the duration of the call and
     // `name` is a NUL-terminated string. No O_CREAT, so no mode argument.
     let fd = unsafe {
         libc::openat(
             dir.as_raw_fd(),
-            name.as_ptr(),
+            name.c.as_ptr(),
             flags | libc::O_NOFOLLOW | libc::O_CLOEXEC,
         )
     };
@@ -72,15 +71,14 @@ pub(crate) enum Kind {
     Other,
 }
 
-pub(crate) fn kind_at(dir: &File, name: &str) -> io::Result<Kind> {
-    let name = component(name);
+pub(crate) fn kind_at(dir: &File, name: &Component) -> io::Result<Kind> {
     let mut st = MaybeUninit::<libc::stat>::uninit();
     // SAFETY: `dir` is open, `name` is NUL-terminated, and `st` is valid
     // for writes of one `stat`.
     let rc = unsafe {
         libc::fstatat(
             dir.as_raw_fd(),
-            name.as_ptr(),
+            name.c.as_ptr(),
             st.as_mut_ptr(),
             libc::AT_SYMLINK_NOFOLLOW,
         )
@@ -99,15 +97,35 @@ pub(crate) fn kind_at(dir: &File, name: &str) -> io::Result<Kind> {
     })
 }
 
-/// A single path component. Module segments are ASCII identifiers (checked
-/// by `parse_module_path`), so this never fails; it is asserted anyway so
-/// that `openat` can never be handed a separator, `.`, `..`, or a NUL.
-fn component(name: &str) -> CString {
-    assert!(
-        !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\0']),
-        "not a single path component: {name:?}"
-    );
-    CString::new(name).expect("no NUL")
+/// A name that is a single path component: not empty, `.`, or `..`, and
+/// with no `/` or NUL. The walk functions take only this, so `openat` and
+/// `fstatat` can never be handed a separator or a parent reference.
+#[derive(Debug)]
+pub(crate) struct Component<'a> {
+    name: &'a str,
+    c: CString,
+}
+
+impl Component<'_> {
+    pub(crate) fn name(&self) -> &str {
+        self.name
+    }
+}
+
+/// Validates `name`, a component of the import `module`. Module segments are
+/// ASCII identifiers (checked by `parse_module_path`), so this does not fail
+/// for a parsed import; it is checked anyway, as an error rather than a
+/// panic, so a future caller can't get past it.
+pub(crate) fn component<'a>(module: &str, name: &'a str) -> Result<Component<'a>, ImportError> {
+    let bad = || ImportError::InvalidComponent {
+        module: module.to_string(),
+        component: name.to_string(),
+    };
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') {
+        return Err(bad());
+    }
+    let c = CString::new(name).map_err(|_| bad())?;
+    Ok(Component { name, c })
 }
 
 /// The facts the per-handle rule looks at, from `fstat` of a held handle.
@@ -117,5 +135,44 @@ pub(crate) fn facts(meta: &Metadata) -> Facts {
         is_file: meta.is_file(),
         uid: meta.uid(),
         mode: meta.mode(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_components_are_an_error() {
+        for name in ["..", ".", "", "a/b", "a\0b", "/", "a/", "\0"] {
+            match component("m", name) {
+                Err(ImportError::InvalidComponent { module, component }) => {
+                    assert_eq!(module, "m");
+                    assert_eq!(component, name);
+                }
+                other => panic!("{name:?}: expected InvalidComponent, got {other:?}"),
+            }
+        }
+        for name in ["a", "_a1", "kinematics.sky", "..a", "a.."] {
+            assert_eq!(component("m", name).unwrap().name(), name);
+        }
+    }
+
+    #[test]
+    fn invalid_component_diagnostic_is_display_safe() {
+        let err = component("m", "a\0b\u{1b}[2J").unwrap_err();
+        let msg = err.to_string();
+        assert_eq!(
+            msg,
+            "refusing to import `m`: `a\\u{0000}b\\u{001B}[2J` is not a single path component"
+        );
+        let rendered = err
+            .to_diagnostic(sky_diag::Span::new(7, 8))
+            .render_to_string(&sky_diag::SourceFile::new("main.sky", "import m\n"));
+        assert!(
+            rendered.contains("`a\\u{0000}b\\u{001B}[2J`"),
+            "{rendered:?}"
+        );
+        assert!(!rendered.contains(['\0', '\u{1b}']), "{rendered:?}");
     }
 }

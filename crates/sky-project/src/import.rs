@@ -109,6 +109,10 @@ pub enum ImportError {
         path: PathBuf,
         mode: u32,
     },
+    /// A name about to be opened is not a single path component (empty, `.`,
+    /// `..`, or containing `/` or NUL). Unreachable for a parsed module path;
+    /// a backstop in front of every `openat`.
+    InvalidComponent { module: String, component: String },
     /// Project imports need Unix handle-relative opens; elsewhere they are
     /// refused (fail closed).
     Unsupported { module: String },
@@ -279,7 +283,7 @@ mod rooted {
     use std::path::Path;
 
     use super::{check_dir, check_file, ImportError, ProjectModule};
-    use crate::walk::{self, Kind};
+    use crate::walk::{self, Component, Kind};
 
     /// Opens and checks the root; for a stdlib import checks shadowing and
     /// returns `None`, else walks to the module and returns it.
@@ -298,7 +302,8 @@ mod rooted {
         if is_stdlib {
             let top = segments[0];
             for name in [format!("{top}.sky"), top.to_string()] {
-                match walk::kind_at(&dir, &name) {
+                let c = walk::component(module, &name)?;
+                match walk::kind_at(&dir, &c) {
                     Ok(_) => {
                         return Err(ImportError::ShadowsStdlib {
                             name: top.to_string(),
@@ -320,17 +325,19 @@ mod rooted {
         let (last, dirs) = segments.split_last().expect("at least one segment");
         let mut path = root.to_path_buf();
         for name in dirs {
-            path.push(name);
-            let next = walk::open_dir_at(&dir, name)
-                .map_err(|e| open_error(module, &dir, name, &path, e, true))?;
+            let c = walk::component(module, name)?;
+            path.push(c.name());
+            let next = walk::open_dir_at(&dir, &c)
+                .map_err(|e| open_error(module, &dir, &c, &path, e, true))?;
             check_dir_handle(module, &next, &path, euid)?;
             dir = next;
             after_dir(&path);
         }
         let name = format!("{last}.sky");
-        path.push(&name);
-        let file = walk::open_file_at(&dir, &name)
-            .map_err(|e| open_error(module, &dir, &name, &path, e, false))?;
+        let c = walk::component(module, &name)?;
+        path.push(c.name());
+        let file = walk::open_file_at(&dir, &c)
+            .map_err(|e| open_error(module, &dir, &c, &path, e, false))?;
         let facts = walk::facts(&file.metadata().map_err(|error| ImportError::Io {
             path: path.clone(),
             error,
@@ -374,7 +381,7 @@ mod rooted {
     fn open_error(
         module: &str,
         dir: &File,
-        name: &str,
+        name: &Component,
         path: &Path,
         error: io::Error,
         want_dir: bool,
@@ -520,6 +527,10 @@ impl ImportError {
             ))
             .with_note("any user can change a world-writable module file to code you did not write")
             .with_help(format!("remove write permission for others: chmod o-w {}", path.display())),
+            ImportError::InvalidComponent { module, component } => d(format!(
+                "refusing to import `{module}`: `{component}` is not a single path component"
+            ))
+            .with_note("a path component is never empty, `.`, or `..`, and never contains `/` or a NUL byte"),
             ImportError::Unsupported { module } => d(format!(
                 "cannot import project module `{module}`: project imports are only supported on Unix"
             )),

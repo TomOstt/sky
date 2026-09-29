@@ -35,6 +35,7 @@ pub mod arith;
 mod env;
 mod error;
 mod eval;
+mod literal;
 pub mod math;
 mod value;
 
@@ -45,5 +46,6 @@ pub use arith::MAX_CALL_DEPTH;
 pub use env::RuntimeEnv;
 pub use error::{ErrorDetails, RuntimeError};
 pub use eval::run_module;
+pub use literal::{number_literal, unit_literal_si};
 pub use sky_units::Dimension;
 pub use value::{format_number, si_unit, Value};

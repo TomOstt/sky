@@ -215,6 +215,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sky-lower"
+version = "0.0.1"
+dependencies = [
+ "sky-ast",
+ "sky-diag",
+ "sky-interp",
+ "sky-ir",
+ "sky-syntax",
+ "sky-types",
+ "sky-units",
+]
+
+[[package]]
 name = "sky-opt"
 version = "0.0.1"
 dependencies = [

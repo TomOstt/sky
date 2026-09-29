@@ -49,7 +49,7 @@
 //! the parser (see the crate's `deep_nesting` test).
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::sync::Arc;
 
@@ -270,7 +270,7 @@ impl Env {
         &self.shapes
     }
 
-    fn resolve(&self, t: &Ty) -> Ty {
+    pub(crate) fn resolve(&self, t: &Ty) -> Ty {
         match t {
             Ty::Value(v) => Ty::value(v.dim, self.shapes.apply_type(&v.ty)),
             other => other.clone(),
@@ -323,9 +323,45 @@ pub struct Checked {
     pub rewrites_omitted: usize,
     /// The environment after the last statement.
     pub env: Env,
+    /// The type of every expression the walk typed, keyed by the
+    /// expression's span, for later stages that must not re-derive types
+    /// (lowering to SIR). Nodes have no ids, but spans are unique per
+    /// expression node, with these exceptions:
+    ///
+    /// * the `x op value` node the checker synthesizes for `x op= value`
+    ///   has the span `x`..`value` (no source expression has it), and its
+    ///   name node `x` is keyed by the target's span;
+    /// * the callee of a builtin call (`print`, `inv`) is never typed, so
+    ///   it has no entry;
+    /// * in `A⁻¹ @ b` the inverse node and any parentheses around it get the
+    ///   type of the inverse (the rewrite types `A` and `b` itself).
+    ///
+    /// Types hold the shape variables as they were when the expression was
+    /// typed: resolve them with [`Checked::resolve_ty`].
+    pub expr_types: HashMap<Span, Ty>,
+    /// The type given to each name a statement binds (`x = ...`, `x: T`,
+    /// `x: T = ...`), keyed by the span of the name in the statement. For
+    /// `x: T` without a value this is the declared type, which nothing else
+    /// records.
+    pub binding_types: HashMap<Span, Ty>,
+    /// The final signature of every `def`, keyed by the span of its name.
+    /// A call's callee has type [`Ty::Func`] with this signature (the
+    /// signature's [`FuncSig::def_span`] is the key).
+    pub funcs: HashMap<Span, Arc<FuncSig>>,
 }
 
 impl Checked {
+    /// The type of the expression at `span`, with solved shape variables
+    /// substituted. See [`Checked::expr_types`].
+    pub fn expr_ty(&self, span: Span) -> Option<Ty> {
+        self.expr_types.get(&span).map(|t| self.resolve_ty(t))
+    }
+
+    /// `t` with the shape variables the walk solved substituted.
+    pub fn resolve_ty(&self, t: &Ty) -> Ty {
+        self.env.resolve(t)
+    }
+
     /// Whether any diagnostic is an error.
     pub fn has_errors(&self) -> bool {
         self.diagnostics
@@ -354,6 +390,9 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         loops: Vec::new(),
         diverged: false,
         prov: Provenance::new(source),
+        expr_types: HashMap::new(),
+        binding_types: HashMap::new(),
+        funcs: HashMap::new(),
     };
     for stmt in &module.stmts {
         c.stmt(stmt);
@@ -363,6 +402,9 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         rewrites: c.rewrites,
         rewrites_omitted: c.rewrites_omitted,
         env: c.env,
+        expr_types: c.expr_types,
+        binding_types: c.binding_types,
+        funcs: c.funcs,
     }
 }
 
@@ -397,6 +439,13 @@ pub(crate) struct Checker<'s> {
     pub(crate) diverged: bool,
     /// Why each binding has its dimension (see [`crate::provenance`]).
     pub(crate) prov: Provenance,
+    /// See [`Checked::expr_types`]. Recording is write-only: nothing in the
+    /// walk reads these tables, so they cannot change a diagnostic.
+    expr_types: HashMap<Span, Ty>,
+    /// See [`Checked::binding_types`].
+    binding_types: HashMap<Span, Ty>,
+    /// See [`Checked::funcs`].
+    pub(crate) funcs: HashMap<Span, Arc<FuncSig>>,
 }
 
 /// Human wording for a dimension in error text: its name if it has one
@@ -613,6 +662,7 @@ impl<'s> Checker<'s> {
     fn bind_name(&mut self, id: &Ident, ty: Ty) {
         self.warn_if_shadowing(id);
         let name = self.ident(id);
+        self.binding_types.insert(id.span, ty.clone());
         self.bind_at(name, ty, id.span);
     }
 
@@ -1151,7 +1201,16 @@ impl<'s> Checker<'s> {
         }
     }
 
+    /// Types `e` and records the type in [`Checked::expr_types`]. Every
+    /// expression goes through here, so the table is complete by
+    /// construction (see the exceptions on the field).
     pub(crate) fn expr(&mut self, e: &Expr) -> Ty {
+        let t = self.expr_untabled(e);
+        self.expr_types.insert(e.span, t.clone());
+        t
+    }
+
+    fn expr_untabled(&mut self, e: &Expr) -> Ty {
         match &e.kind {
             ExprKind::Literal(lit) => match lit {
                 Literal::Int(_) | Literal::Float(_) => Ty::scalar(Dimension::DIMENSIONLESS),
@@ -1380,6 +1439,18 @@ impl<'s> Checker<'s> {
             }
             None => (None, self.expr(lhs)),
         };
+        if inverted.is_some() {
+            // The inverse node was typed by `invert`, not by `expr`: give it
+            // (and any parentheses around it) its type in the table.
+            let mut node = lhs;
+            loop {
+                self.expr_types.insert(node.span, l.clone());
+                match &node.kind {
+                    ExprKind::Paren(inner) => node = inner,
+                    _ => break,
+                }
+            }
+        }
         let r = self.expr(rhs);
         let lb = self.reject_bool("@", lhs, &l);
         if self.reject_bool("@", rhs, &r) || lb {

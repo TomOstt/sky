@@ -11,17 +11,17 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use sky_ast::{
-    AssignTarget, BinaryOp, Block, BoolOp, Expr, ExprKind, Literal, Module, Stmt, StmtKind,
-    UnaryOp, UnitExpr,
+    AssignTarget, BinaryOp, Block, BoolOp, Expr, ExprKind, Literal, Module, Stmt, StmtKind, UnaryOp,
 };
 use sky_diag::Span;
 use sky_syntax::lexer::unescape_str;
-use sky_units::{lookup, Dimension, MathFn, Rational};
+use sky_units::MathFn;
 
 use crate::arith::{
-    arith, arity_mismatch, arrays_unsupported, equal, expect_bool, order, overflow, pow,
-    reciprocal, recursion_too_deep, sign, ArithOp, StackMeter, MAX_CALL_DEPTH, R,
+    arith, arity_mismatch, arrays_unsupported, equal, expect_bool, order, pow, reciprocal,
+    recursion_too_deep, sign, ArithOp, StackMeter, MAX_CALL_DEPTH, R,
 };
+use crate::literal::{number_literal, unit_literal_si};
 use crate::value::Function;
 use crate::{RuntimeEnv, RuntimeError, Value};
 
@@ -251,12 +251,8 @@ impl<'a> Interp<'a> {
                         return Err(RuntimeError::new("a unit needs a number", *s));
                     }
                 };
-                let x = self.number(span)?;
                 // Converted to SI once, here (spec "Unit values").
-                let (si, dim) = self.apply_unit(unit, x)?;
-                if !si.is_finite() {
-                    return Err(overflow(e.span));
-                }
+                let (si, dim) = unit_literal_si(self.src, span, unit, e.span)?;
                 Ok(Value::number(si, dim))
             }
             ExprKind::Unary {
@@ -345,63 +341,9 @@ impl<'a> Interp<'a> {
         expect_bool(kw, &v, operand.span)
     }
 
-    /// Reads a numeric literal's text (`1_000`, `2.5e-3`) as an `f64`.
+    /// Reads a numeric literal's text as an `f64` (see [`crate::literal`]).
     fn number(&self, span: Span) -> R<f64> {
-        let text = self.text(span).replace('_', "");
-        match text.parse::<f64>() {
-            Ok(x) if x.is_finite() => Ok(x),
-            Ok(_) => Err(RuntimeError::new("number too large", span)
-                .with_label("does not fit in a 64-bit float")
-                .with_note("the largest Sky number is about 1.8e308")),
-            Err(_) => Err(RuntimeError::new("invalid number", span)),
-        }
-    }
-
-    /// Applies unit `u` to the value `v`, factor by factor: `36 km/h` is
-    /// `36 * 1000 / 3600`, which is exactly 10, where multiplying by a
-    /// precomputed `1000/3600` would not be. A single unit is `v * scale`,
-    /// as the spec says. Returns the SI value and the dimension.
-    fn apply_unit(&self, u: &UnitExpr, v: f64) -> R<(f64, Dimension)> {
-        let overflow_dim = || RuntimeError::new("dimension exponent too large", u.span());
-        match u {
-            UnitExpr::Name(id) => {
-                let name = self.text(id.span);
-                match lookup(name) {
-                    Some(unit) => Ok((v * unit.scale, unit.dim)),
-                    None => Err(RuntimeError::new(format!("unknown unit `{name}`"), id.span)),
-                }
-            }
-            UnitExpr::Mul { lhs, rhs, .. } => {
-                let (v, d1) = self.apply_unit(lhs, v)?;
-                let (v, d2) = self.apply_unit(rhs, v)?;
-                Ok((v, d1.checked_mul(d2).map_err(|_| overflow_dim())?))
-            }
-            UnitExpr::Div { lhs, rhs, .. } => {
-                let (v, d1) = self.apply_unit(lhs, v)?;
-                let (scale, d2) = self.apply_unit(rhs, 1.0)?;
-                Ok((v / scale, d1.checked_div(d2).map_err(|_| overflow_dim())?))
-            }
-            UnitExpr::Pow { base, num, den, .. } => {
-                let (scale, d) = self.apply_unit(base, 1.0)?;
-                let exp = i64::try_from(*den)
-                    .ok()
-                    .and_then(|den| Rational::checked_new(*num, den).ok())
-                    .ok_or_else(overflow_dim)?;
-                let dim = d.pow_rat(exp).map_err(|_| overflow_dim())?;
-                let factor = if *den == 1 {
-                    // Integer exponent: multiply or divide, `s^-2` is `/ s^2`.
-                    let k = i32::try_from(num.unsigned_abs()).map_err(|_| overflow_dim())?;
-                    let p = scale.powi(k);
-                    if *num < 0 {
-                        return Ok((v / p, dim));
-                    }
-                    p
-                } else {
-                    scale.powf(*num as f64 / *den as f64)
-                };
-                Ok((v * factor, dim))
-            }
-        }
+        number_literal(self.src, span)
     }
 
     fn call(&mut self, call: &Expr, callee: &Expr, args: &[Expr]) -> R<Value> {

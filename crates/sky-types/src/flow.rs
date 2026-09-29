@@ -84,6 +84,25 @@ impl FuncSig {
     pub fn ret(&self) -> &Ty {
         &self.ret
     }
+
+    /// The span of the function's name in its `def`: the key of
+    /// [`crate::Checked::funcs`], and what tells two functions with the same
+    /// name apart.
+    pub fn def_span(&self) -> Span {
+        self.def_span
+    }
+
+    /// The name of parameter `i`.
+    pub fn param_name(&self, i: usize) -> Option<&str> {
+        self.params.get(i).map(|p| p.name.as_str())
+    }
+
+    /// The annotated type of parameter `i` (with the signature's own size
+    /// variables), or `None` for an unannotated parameter, which accepts
+    /// anything and is unknown inside the body.
+    pub fn param_ty(&self, i: usize) -> Option<&ValueTy> {
+        self.params.get(i).and_then(|p| p.ty.as_ref())
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -608,7 +627,9 @@ impl Checker<'_> {
             ret: ret_ty,
             generic,
         };
-        self.bind_at(&fname, Ty::Func(Arc::new(sig)), name.span);
+        let sig = Arc::new(sig);
+        self.funcs.insert(name.span, sig.clone());
+        self.bind_at(&fname, Ty::Func(sig), name.span);
     }
 
     /// The unsolved size variables in the parameters' types and `ret`.

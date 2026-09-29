@@ -178,6 +178,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sky-ir"
+version = "0.0.1"
+dependencies = [
+ "sky-diag",
+ "sky-types",
+ "sky-units",
+]
+
+[[package]]
 name = "sky-project"
 version = "0.0.1"
 dependencies = [

@@ -1,0 +1,13 @@
+[package]
+name = "sky-ir"
+description = "SIR: Sky's semantic intermediate representation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+sky-diag = { path = "../sky-diag" }
+sky-types = { path = "../sky-types" }
+sky-units = { path = "../sky-units" }

@@ -118,6 +118,24 @@ pub enum OpKind {
         method: SolveMethod,
     },
 
+    // ----- display -----
+    /// `v as unit`: one operand (a number, in SI), one result of type
+    /// `Str`: the text of the operand written in `unit`, formatted as
+    /// `print` would format `v as unit` (`90 km/h`). `unit` is the unit's
+    /// source text, in the grammar a number takes (`km/h`, `kg*m^2/s^2`).
+    /// The result is only ever an operand of `print`.
+    ///
+    /// This is an operation of its own, and not a `div` by a factor
+    /// followed by a `print` of the number, because a unit conversion is
+    /// not one division (`km/h` applies its factors one at a time, and the
+    /// shown number is the shortest one that reads back as the stored
+    /// value) and the unit belongs in the output. All of that is
+    /// `sky_interp::show_unit_text`, the function `sky run` calls too. It
+    /// fails on overflow, so it is not pure.
+    Show {
+        unit: String,
+    },
+
     // ----- comparison and logic -----
     /// Two operands (scalars of equal dimension, two Bools, or two
     /// strings for `eq`/`ne`), one Bool result.
@@ -210,6 +228,7 @@ impl OpKind {
             OpKind::MatMul => "matmul",
             OpKind::Transpose => "transpose",
             OpKind::Solve { .. } => "solve",
+            OpKind::Show { .. } => "show",
             OpKind::Cmp(c) => match c {
                 CmpOp::Eq => "cmp.eq",
                 CmpOp::Ne => "cmp.ne",
@@ -250,6 +269,8 @@ impl OpKind {
                 let e = if f.can_fail() { fail } else { EffectSet::PURE };
                 (e, false, f.commutative(), false)
             }
+            // Converting to a tiny unit can overflow.
+            OpKind::Show { .. } => (fail, false, false, false),
             // A singular matrix or a zero scalar fails.
             OpKind::Inverse | OpKind::Solve { .. } => (fail, false, false, false),
             OpKind::MatMul => (fail, false, false, true),

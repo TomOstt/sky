@@ -687,3 +687,69 @@ fn only_an_explicit_inverse_on_the_left_is_rewritten() {
     let mut m = module_of(bd.finish());
     assert!(cholesky(&mut m).is_empty());
 }
+
+// ---------------------------------------------------------------- show
+
+#[test]
+fn show_survives_fold_and_dce_and_keeps_its_failure() {
+    let mut b = main_builder();
+    let x = b.op1(
+        OpKind::ConstFloat {
+            bits: 25f64.to_bits(),
+        },
+        vec![],
+        Type::scalar(Dimension::VELOCITY),
+        sp(),
+    );
+    let shown = b.op1(
+        OpKind::Show {
+            unit: "km/h".into(),
+        },
+        vec![x],
+        Type::Str,
+        sp(),
+    );
+    print(&mut b, shown);
+    // An unused conversion that overflows (1e300 m is 1e309 nm) is an error
+    // the program has: neither pass may drop it as dead code.
+    let big = b.op1(
+        OpKind::ConstFloat {
+            bits: 1e300f64.to_bits(),
+        },
+        vec![],
+        Type::scalar(Dimension::LENGTH),
+        sp(),
+    );
+    b.op1(
+        OpKind::Show { unit: "nm".into() },
+        vec![big],
+        Type::Str,
+        sp(),
+    );
+    let mut m = finish_main(b);
+
+    let run = |m: &Module| {
+        sky_ast::with_deep_stack(|| {
+            let mut out = Vec::new();
+            let r = sky_ir_interp::run(m, &mut out).map_err(|e| e.message.clone());
+            (String::from_utf8(out).expect("utf-8"), r)
+        })
+    };
+    let before = run(&m);
+    assert_eq!(
+        before,
+        (
+            "90 km/h\n".to_string(),
+            Err("arithmetic overflow".to_string())
+        )
+    );
+    fold(&mut m);
+    dce(&mut m);
+    verify(&m).unwrap();
+    assert_eq!(run(&m), before);
+    let shows = entry_mnemonics(&m.functions[0])
+        .into_iter()
+        .filter(|n| *n == "show")
+        .count();
+    assert_eq!(shows, 2);
+}

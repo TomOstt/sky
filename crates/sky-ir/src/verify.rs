@@ -567,6 +567,7 @@ impl<'a> FnVerifier<'a> {
             | OpKind::PowConst { .. }
             | OpKind::Inverse
             | OpKind::Transpose
+            | OpKind::Show { .. }
             | OpKind::Not => (Some(1), Some(1)),
             OpKind::If => (Some(1), None),
             OpKind::While => (None, Some(op.operands.len())),
@@ -627,6 +628,7 @@ impl<'a> FnVerifier<'a> {
                 }
             }
             OpKind::Math(f) => self.check_math(o, op, *f),
+            OpKind::Show { unit } => self.check_show(o, op, unit),
             OpKind::Pow => self.check_pow(o, op),
             OpKind::Inverse => self.check_inverse(o, op),
             OpKind::MatMul => self.check_matmul(o, op),
@@ -687,6 +689,30 @@ impl<'a> FnVerifier<'a> {
     }
 
     /// Result 0 must be a number or Unknown.
+    /// `show "unit"`: a number operand whose dimension is the unit's (the
+    /// unit text is read by the parser's own unit grammar and priced by the
+    /// unit table, as `sky_interp::show_unit_text` does), and a `Str` result.
+    fn check_show(&mut self, o: OpId, op: &OpData, unit: &str) {
+        let Some(u) = sky_ast::parse_unit_text(unit) else {
+            self.err_op(o, format!("`show` needs a unit, found `{unit}`"));
+            return;
+        };
+        if let Some(Slot::Num(n)) = self.operand_num(o, op, 0) {
+            match sky_types::apply_unit(&u.src, &u.unit, 1.0) {
+                Ok((_, dim)) if dim == n.dim => {}
+                Ok((_, dim)) => self.err_op(
+                    o,
+                    format!(
+                        "`show` of `{unit}` ({dim}) needs an operand of that dimension, found {}",
+                        n.dim
+                    ),
+                ),
+                Err(_) => self.err_op(o, format!("`show` needs a unit, found `{unit}`")),
+            }
+        }
+        self.expect_exact(o, op, &Type::Str);
+    }
+
     /// `math.*`: scalar operands (the checker rejects arrays), and the result
     /// dimension from the one rule table, `MathFn::result_dim`.
     fn check_math(&mut self, o: OpId, op: &OpData, f: crate::op::MathFn) {

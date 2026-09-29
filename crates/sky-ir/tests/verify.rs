@@ -1445,3 +1445,74 @@ fn a_size_variable_must_be_consistent_within_one_call() {
     rejects(&generic_call(3, 4, 3), "argument 1 of the call to `apply`");
     rejects(&generic_call(3, 3, 4), "result 0 of the call to `apply`");
 }
+
+// ----- show -----
+
+/// `fn f(x: T) -> (str)` returning `show "unit" x`.
+fn show_fn(param: Type, unit: &str, result: Type) -> Module {
+    let mut b = start(vec![param], vec![Type::Str]);
+    let x = b.params()[0];
+    let s = b.op1(
+        OpKind::Show { unit: unit.into() },
+        vec![x],
+        result,
+        sp(1, 2),
+    );
+    ret(&mut b, vec![s]);
+    one_fn(b.finish())
+}
+
+fn velocity() -> Type {
+    num(
+        Dimension::LENGTH.checked_div(Dimension::TIME).unwrap(),
+        Shape::scalar(),
+        TagSet::EMPTY,
+        Repr::Unchosen,
+    )
+}
+
+#[test]
+fn show_needs_a_unit_of_the_operands_dimension_and_a_str_result() {
+    accepts(&show_fn(len(), "mm", Type::Str));
+    accepts(&show_fn(len(), "AU", Type::Str));
+    accepts(&show_fn(velocity(), "km/h", Type::Str));
+    accepts(&show_fn(velocity(), "m*s^-1", Type::Str));
+    accepts(&show_fn(one(), "rad", Type::Str));
+    // An unknown-typed operand is checked at run time.
+    accepts(&show_fn(Type::Unknown, "km/h", Type::Str));
+
+    rejects(
+        &show_fn(len(), "s", Type::Str),
+        "needs an operand of that dimension",
+    );
+    rejects(&show_fn(velocity(), "kg", Type::Str), "`show` of `kg`");
+    rejects(
+        &show_fn(len(), "mm", len()),
+        "the result of `show` must be str",
+    );
+    rejects(&show_fn(Type::Bool, "mm", Type::Str), "must be a number");
+    rejects(
+        &show_fn(len(), "parsecs", Type::Str),
+        "`show` needs a unit, found `parsecs`",
+    );
+    rejects(&show_fn(len(), "km h", Type::Str), "`show` needs a unit");
+    rejects(&show_fn(len(), "", Type::Str), "`show` needs a unit");
+    rejects(&show_fn(len(), "km + 1", Type::Str), "`show` needs a unit");
+}
+
+#[test]
+fn show_takes_one_operand_and_gives_one_result() {
+    let mut b = start(vec![len(), len()], vec![]);
+    let [x, y] = b.params()[..] else {
+        unreachable!()
+    };
+    let s = b.op1(
+        OpKind::Show { unit: "mm".into() },
+        vec![x, y],
+        Type::Str,
+        sp(1, 2),
+    );
+    b.op(OpKind::Print, vec![s], vec![], sp(3, 4));
+    ret(&mut b, vec![]);
+    rejects(&one_fn(b.finish()), "`show` takes 1 operand(s), found 2");
+}

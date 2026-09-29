@@ -78,6 +78,7 @@ Planned extension points, which v1 leaves out: an error bound per value (interva
 | Linear algebra | `matmul`, `transpose`, `solve` (produced by rewrites, never written by users in v1) |
 | Comparison and logic | `cmp.{eq,ne,lt,le,gt,ge}` (on Bools and strings only `eq`/`ne`), `not`; `and`/`or` short-circuit, so they lower to `if` |
 | Control | `if` (regions), `while` (regions), `yield`, `call`, `return` |
+| Display | `show "unit"` (`v as km/h`: the operand written in a unit, a `str`, only ever printed) |
 | Environment | `param`, `print` (effectful) |
 
 Every operation kind is declared once, in a table with:
@@ -165,7 +166,7 @@ It is parsed by a small hand-written parser that never panics, limits nesting to
 
 | Crate | Contents | Depends on |
 |---|---|---|
-| `sky-ir` | data model, operation table, verifier, text printer and parser, pass manager | sky-units, sky-types (types only), sky-diag |
+| `sky-ir` | data model, operation table, verifier, text printer and parser, pass manager | sky-units, sky-types (types only), sky-ast (reads the unit text of `show`), sky-diag |
 | `sky-lower` | checked AST to L1 | sky-ast, sky-types, sky-ir |
 | `sky-opt` | passes: cholesky, dce, and later the e-graph and autodiff | sky-ir (and `egg`, from Phase 2) |
 | `sky-ir-interp` | reference interpreter | sky-ir, sky-units |

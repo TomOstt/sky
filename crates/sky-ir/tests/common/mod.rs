@@ -168,6 +168,12 @@ pub fn all_ops() -> Module {
         ),
         sp(0, 0),
     );
+    let shown = b.op1(
+        OpKind::Show { unit: "mm".into() },
+        vec![x],
+        Type::Str,
+        sp(5, 9),
+    );
     let a_inv = b.op1(OpKind::Inverse, vec![a], pd_matrix(n.clone()), sp(0, 0));
     let prod = b.op1(OpKind::MatMul, vec![a, bv], vector(n.clone()), sp(0, 0));
     let at = b.op1(OpKind::Transpose, vec![a], pd_matrix(n.clone()), sp(0, 0));
@@ -254,7 +260,7 @@ pub fn all_ops() -> Module {
     b.op(
         OpKind::Print,
         vec![
-            called[0], c4, c5, a_inv, prod, at, solved, neg, root, p, recip, c2, c3,
+            called[0], c4, c5, a_inv, prod, at, solved, neg, root, p, recip, c2, c3, shown,
         ],
         vec![],
         sp(1, 9),

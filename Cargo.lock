@@ -397,6 +397,7 @@ dependencies = [
 name = "sky-ir"
 version = "0.0.1"
 dependencies = [
+ "sky-ast",
  "sky-diag",
  "sky-syntax",
  "sky-types",

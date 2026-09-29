@@ -298,6 +298,57 @@ fn print_writes_a_line_per_op_and_units_print_in_si() {
     assert_eq!(output(&finish_main(b)), "5 m/s\n\n");
 }
 
+/// `print(show "unit" x)` for a constant `x` (SI) of dimension `dim`.
+fn show_module(x: f64, dim: Dimension, unit: &str) -> Module {
+    let mut b = main_builder();
+    let v = b.op1(
+        OpKind::ConstFloat { bits: x.to_bits() },
+        vec![],
+        Type::scalar(dim),
+        sp(),
+    );
+    let s = b.op1(OpKind::Show { unit: unit.into() }, vec![v], Type::Str, sp());
+    b.op(OpKind::Print, vec![s], vec![], sp());
+    finish_main(b)
+}
+
+#[test]
+fn show_writes_the_operand_in_the_unit() {
+    // 90 km/h is stored as 25 m/s.
+    let v = Dimension::VELOCITY;
+    assert_eq!(output(&show_module(25.0, v, "km/h")), "90 km/h\n");
+    assert_eq!(output(&show_module(25.0, v, "m/s")), "25 m/s\n");
+    // The shortest digits that read back as the stored value.
+    let stored = 100.0 * 1000.0 / 3600.0;
+    assert_eq!(output(&show_module(stored, v, "km/h")), "100 km/h\n");
+    let l = Dimension::LENGTH;
+    assert_eq!(output(&show_module(1.495978707e11, l, "AU")), "1 AU\n");
+    assert_eq!(
+        output(&show_module(1.495978707e11, l, "km")),
+        "149597870.7 km\n"
+    );
+    assert_eq!(
+        output(&show_module(1.602176634e-19, Dimension::ENERGY, "eV")),
+        "1 eV\n"
+    );
+}
+
+#[test]
+fn show_fails_like_sky_run_does() {
+    let v = Dimension::VELOCITY;
+    let e = error(&show_module(25.0, v, "kg"));
+    assert_eq!(msg(&e), "cannot show a velocity in `kg`");
+    let e = error(&show_module(1e300, Dimension::LENGTH, "nm"));
+    assert_eq!(msg(&e), "arithmetic overflow");
+    // No partial line.
+    assert_eq!(run_main(&show_module(1e300, Dimension::LENGTH, "nm")).1, "");
+    // IR the verifier would reject is malformed IR at run time, never a panic.
+    let e = error(&show_module(1.0, Dimension::LENGTH, "not a unit"));
+    assert_eq!(msg(&e), "`not a unit` is not a unit");
+    let e = apply(OpKind::Show { unit: "m".into() }, vec![Value::Bool(true)]).unwrap_err();
+    assert_eq!(msg(&e), "cannot show a Bool in `m`");
+}
+
 #[test]
 fn print_failure_leaves_no_partial_line() {
     let mut b = main_builder();
@@ -908,6 +959,9 @@ mod fuzz {
             23 => OpKind::Condition,
             24 => OpKind::Return,
             25 => OpKind::Print,
+            27 => OpKind::Show {
+                unit: ["m", "km/h", "", "kg*m^2/s^2", "not a unit"][x as usize % 5].into(),
+            },
             26 => OpKind::Call {
                 callee: ["g", Module::MAIN, "missing"][x as usize % 3].into(),
             },

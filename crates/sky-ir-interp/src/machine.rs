@@ -503,6 +503,13 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             let v = crate::math::eval(*f, &refs, s)?;
             act.define(op, vec![v])
         }
+        // The same function `sky run` calls for `v as unit`, so both print
+        // the same digits and fail the same way.
+        OpKind::Show { unit } => {
+            let [a] = fixed(op)?;
+            let v = sky_interp::show_unit_text(unit, act.get(a, s)?, s)?;
+            act.define(op, vec![v])
+        }
         OpKind::PowConst { exponent } => {
             let [a] = fixed(op)?;
             no_arrays(act, op)?;

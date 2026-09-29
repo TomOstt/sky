@@ -222,6 +222,10 @@ impl Printer<'_> {
                 self.out.push(' ');
                 write_string(&mut self.out, s);
             }
+            OpKind::Show { unit } => {
+                self.out.push(' ');
+                write_string(&mut self.out, unit);
+            }
             OpKind::PowConst { exponent } => {
                 let _ = write!(self.out, "[{exponent}]");
             }

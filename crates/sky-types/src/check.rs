@@ -1196,6 +1196,12 @@ impl<'s> Checker<'s> {
                 }
                 self.invert(t, *op_span, operand.span)
             }
+            ExprKind::Array(elems) => {
+                for elem in elems {
+                    self.expr(elem);
+                }
+                Ty::Unknown
+            }
             ExprKind::Call { callee, args } => {
                 if let Some(arg) = self.inv_call(callee, args) {
                     let t = self.expr(arg);

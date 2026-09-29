@@ -326,6 +326,11 @@ pub enum ExprKind {
         operand: Box<Expr>,
         op_span: Span,
     },
+    /// `[a, b, c]` or `[[a, b], [c, d]]`: an array literal, always at least
+    /// one element. The parser does not decide the shape: a matrix is an
+    /// `Array` whose elements are all `Array`s (its rows), and the checker
+    /// reports mixed or deeper nesting. The span includes both brackets.
+    Array(Vec<Expr>),
     /// `callee(args...)`
     Call {
         callee: Box<Expr>,

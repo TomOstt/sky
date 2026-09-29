@@ -1071,6 +1071,9 @@ impl<'t, 's> Parser<'t, 's> {
         if tok.kind == TokenKind::LParen {
             return self.parse_paren();
         }
+        if tok.kind == TokenKind::LBracket {
+            return self.parse_array();
+        }
         let Some((op, r_bp)) = prefix_binding_power(tok.kind) else {
             return self.parse_atom();
         };
@@ -1139,6 +1142,39 @@ impl<'t, 's> Parser<'t, 's> {
         }
         let close = self.bump().span;
         Some(paren(open, inner, close))
+    }
+
+    /// `[ expr, ... ]` with the `[` current: an array literal (a vector, or
+    /// a matrix when every element is itself a literal row). At least one
+    /// element: `[]` has no element to give it a dimension. A trailing comma
+    /// is allowed. Rows nest like any expression, so `[[1, 2], [3, 4]]` is an
+    /// array of two arrays; the checker decides what shape that makes.
+    fn parse_array(&mut self) -> Option<Expr> {
+        let open = self.bump().span;
+        self.enter(open)?;
+        if self.peek() == TokenKind::RBracket {
+            let close = self.bump().span;
+            return self.fail_empty_array(open.join(close));
+        }
+        let mut elems = Vec::new();
+        loop {
+            elems.push(self.expr_bp(0)?);
+            match self.peek() {
+                TokenKind::Comma => {
+                    self.bump();
+                    if self.peek() == TokenKind::RBracket {
+                        break;
+                    }
+                }
+                TokenKind::RBracket => break,
+                _ => {
+                    let last = elems.last().map_or(open, |e| e.span);
+                    return self.fail_unclosed(last, open, "[", "`,` or `]`");
+                }
+            }
+        }
+        let close = self.bump().span;
+        Some(array(open, elems, close))
     }
 
     /// Comma-separated expressions after an opening delimiter (already
@@ -1584,6 +1620,18 @@ impl<'t, 's> Parser<'t, 's> {
                 name.span,
             )
             .with_secondary(dot, "attribute access"),
+        );
+        None
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn fail_empty_array<T>(&mut self, span: Span) -> Option<T> {
+        self.errors.push(
+            ParseError::new("an array literal needs at least one element", span).with_help(
+                "the elements fix an array's dimension and `[]` has none; \
+                     for zeros write `zeros(n)`",
+            ),
         );
         None
     }
@@ -2536,6 +2584,13 @@ fn call(callee: Expr, args: Vec<Expr>, close: Span) -> Expr {
 }
 
 #[inline(never)]
+fn array(open: Span, elems: Vec<Expr>, close: Span) -> Expr {
+    Expr {
+        span: open.join(close),
+        kind: ExprKind::Array(elems),
+    }
+}
+
 fn index(base: Expr, items: Vec<IndexItem>, close: Span) -> Expr {
     Expr {
         span: base.span.join(close),

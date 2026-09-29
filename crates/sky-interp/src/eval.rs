@@ -320,7 +320,7 @@ impl<'a> Interp<'a> {
                 self.reciprocal("⁻¹", v, e.span, operand.span)
             }
             ExprKind::Call { callee, args } => self.call(e, callee, args),
-            ExprKind::Index { .. } => Err(arrays_unsupported(e.span)),
+            ExprKind::Array(_) | ExprKind::Index { .. } => Err(arrays_unsupported(e.span)),
             ExprKind::Attribute { base: _, name } => Err(RuntimeError::new(
                 format!(
                     "attribute `{}` is not supported by the interpreter yet",

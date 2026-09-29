@@ -934,7 +934,7 @@ fn matmul_uses_the_checker_rules() {
             mat(Dimension::TIME, 5, 5),
             prod.clone(),
         ),
-        "`@` inner dimensions differ: 4 vs 5",
+        "cannot multiply Matrix[3,4] by Matrix[5,5]",
     );
     rejects(
         &binary(
@@ -951,7 +951,7 @@ fn matmul_uses_the_checker_rules() {
     );
     rejects(
         &binary(OpKind::MatMul, len(), vec3(), vec3()),
-        "`@` needs vector or matrix operands",
+        "cannot multiply Scalar by Vector[3]",
     );
     // matrix @ vector, vector @ vector
     accepts(&binary(

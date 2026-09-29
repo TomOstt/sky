@@ -14,23 +14,12 @@ use crate::check::Checker;
 use crate::shape::{Origin, ShapeError, ShapeUnifier};
 
 impl Checker<'_> {
-    /// The 1-based line `span` starts on. Spans are byte offsets into `src`;
-    /// an out-of-range start counts as the last line rather than panicking.
-    fn line_of(&self, span: Span) -> u32 {
-        let start = (span.start as usize).min(self.src.len());
-        let newlines = self.src.as_bytes()[..start]
-            .iter()
-            .filter(|b| **b == b'\n')
-            .count();
-        u32::try_from(newlines).map_or(u32::MAX, |n| n.saturating_add(1))
-    }
-
     /// Installs the [`Origin`] for the constraints that follow; the caller
     /// clears it with `self.env.shapes.set_origin(None)`. Prefer
     /// [`Self::with_origin`] unless the unifier must be cloned in between.
     pub(crate) fn set_origin(&mut self, span: Span, what: String) {
         let origin = Origin {
-            line: Some(self.line_of(span)),
+            line: Some(u32::try_from(self.line_of(span)).unwrap_or(u32::MAX)),
             what: Arc::from(what),
         };
         self.env.shapes.set_origin(Some(origin));

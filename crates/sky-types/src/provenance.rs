@@ -296,7 +296,9 @@ impl Checker<'_> {
         );
     }
 
-    fn line_of(&self, at: Span) -> usize {
+    /// The 1-based line of `at`, from the precomputed line index (shared
+    /// by the dimension and shape debuggers).
+    pub(crate) fn line_of(&self, at: Span) -> usize {
         self.prov.line(at)
     }
 

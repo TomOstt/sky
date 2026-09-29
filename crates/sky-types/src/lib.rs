@@ -38,6 +38,7 @@ mod builtins;
 mod cancellation;
 pub mod check;
 pub mod constant;
+mod derivative;
 mod display;
 mod flow;
 mod for_loop;
@@ -61,6 +62,7 @@ pub use constant::{
     MAX_ARRAY_ELEMENTS, MAX_RANGE_BOUND,
 };
 pub use display::a_dimension;
+pub use derivative::DerivativeOf;
 pub use flow::FuncSig;
 pub use for_loop::{range_constants, range_runs_at_least_once};
 pub use rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};

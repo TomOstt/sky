@@ -5,7 +5,7 @@
 //! comparison operators, `@`, postfix `⁻¹` (and `inv(x)`), `^`, the Bool
 //! literals `true`/`false`, and `and`/`or`/`not` (strict Bool operands, no
 //! truthiness, per the spec's "Booleans and conditions"), the builtin
-//! `print(...)` call, and calls to user functions. Array literals, indexing
+//! `print(...)` call, calls to user functions, and `derivative(f, x)(...)` (in [`crate::derivative`]). Array literals, indexing
 //! and the builtins `zeros`, `identity` and `len` are in [`crate::array`].
 //! Anything else (strings, attributes, `∂`, `∇`, calls to names that are not
 //! functions) is typed as [`Ty::Unknown`] without a diagnostic, and an
@@ -1336,6 +1336,9 @@ impl<'s> Checker<'s> {
             }
             ExprKind::Array(elems) => self.array_literal(elems),
             ExprKind::Call { callee, args } => {
+                if let Some(t) = self.derivative_call(callee, args, e.span) {
+                    return t;
+                }
                 if let Some(arg) = self.inv_call(callee, args) {
                     let t = self.expr(arg);
                     return self.invert(t, callee.span, arg);

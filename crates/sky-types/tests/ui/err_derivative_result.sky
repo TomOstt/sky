@@ -1,0 +1,13 @@
+# The result of the function needs a unit and must be a number.
+def label(t: s):
+    return "a string"
+
+def is_positive(t: s):
+    return t > 0 s
+
+def nothing(t: s):
+    print(t)
+
+a = derivative(label, t)(1 s)
+b = derivative(is_positive, t)(1 s)
+c = derivative(nothing, t)(1 s)

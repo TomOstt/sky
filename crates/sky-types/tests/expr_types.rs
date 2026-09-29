@@ -31,7 +31,7 @@ impl Walk<'_> {
     fn expr(&mut self, e: &Expr, builtin_callee: bool) {
         self.count += 1;
         let has = self.checked.expr_types.contains_key(&e.span);
-        // The callee of a builtin call (`print(...)`, `inv(x)`, `sqrt(x)`)
+        // The callee of a builtin call (`print(...)`, `inv(x)`, `sqrt(x)`, `derivative(f, x)`)
         // is the one documented expression that is never typed.
         if !has && !builtin_callee {
             self.missing.push(self.src[e.span.range()].to_string());
@@ -59,7 +59,7 @@ impl Walk<'_> {
                 // Builtins (`print`, `inv`, `range`, the array and math functions) are
                 // recognised by name, so their callee is never typed.
                 let builtin = matches!(&callee.kind, ExprKind::Name(id)
-                    if matches!(&self.src[id.span.range()], "print" | "inv" | "zeros" | "identity" | "len" | "range")
+                    if matches!(&self.src[id.span.range()], "print" | "inv" | "zeros" | "identity" | "len" | "range" | "derivative")
                         || sky_units::MathFn::from_name(&self.src[id.span.range()]).is_some())
                     && !self.checked.expr_types.contains_key(&callee.span);
                 self.expr(callee, builtin);
@@ -359,5 +359,38 @@ fn functions_are_recorded_by_def_name_span() {
             panic!("def")
         };
         assert_eq!(c.funcs.get(&g.span).expect("g").ret(), &Ty::Unknown);
+    });
+}
+
+#[test]
+fn a_derivative_call_records_the_derived_function() {
+    let src =
+        "def position(t: s) -> m:\n    return 5 m/s^2 * t^2\nv = derivative(position, t)(2 s)\n";
+    with_deep_stack(|| {
+        let (module, c) = check(src);
+        assert!(!c.has_errors(), "{:#?}", c.diagnostics);
+        assert_eq!(assert_complete("derivative", src), 11);
+        let StmtKind::Assign { value, .. } = &module.stmts[1].kind else {
+            panic!("assign")
+        };
+        // The call is a velocity ...
+        match c.expr_ty(value.span) {
+            Some(Ty::Value(v)) => assert_eq!(v.dim, Dimension::VELOCITY),
+            other => panic!("{other:?}"),
+        }
+        // ... and its callee `derivative(position, t)` is a function that
+        // says what it differentiates.
+        let ExprKind::Call { callee, args } = &value.kind else {
+            panic!("call")
+        };
+        assert_eq!(args.len(), 1);
+        let Some(Ty::Func(sig)) = c.expr_types.get(&callee.span) else {
+            panic!("the callee is a function")
+        };
+        let d = sig.derivative_of().expect("a derivative");
+        assert_eq!((d.func().name(), d.wrt()), ("position", 0));
+        assert_eq!(sig.name(), "derivative(position, t)");
+        assert_eq!(sig.arity(), 1);
+        assert!(c.funcs.values().all(|f| f.derivative_of().is_none()));
     });
 }

@@ -1,0 +1,12 @@
+# The derivative of a position is a velocity, and the checker shows it.
+def position(t: s) -> m:
+    return 5 m/s^2 * t^2
+
+def spring(x: m, k: N/m) -> J:
+    return 0.5 * k * x^2
+
+a = position(2 s) + derivative(position, t)(2 s)
+b: m = derivative(position, t)(2 s)
+c: N = derivative(spring, k)(0.1 m, 200 N/m)
+d = derivative(position, t)(2 m)
+e = derivative(spring, x)(0.1 m)

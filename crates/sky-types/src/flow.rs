@@ -42,6 +42,7 @@ use sky_diag::{Diagnostic, Span};
 use sky_units::Dimension;
 
 use crate::check::{describe, strip_parens, Checker, Scope, Ty, ValueTy};
+use crate::derivative::DerivativeOf;
 use crate::provenance::label_dim;
 use crate::rules::TensorType;
 use crate::shape::{Shape, ShapeContext, ShapeDim, ShapeVar};
@@ -67,9 +68,19 @@ pub struct FuncSig {
     /// The size variables the signature leaves open; each call replaces
     /// them with fresh ones.
     pub(crate) generic: Vec<ShapeVar>,
+    /// Set for the signature of `derivative(f, x)`: which function and
+    /// parameter it is the derivative of (see [`crate::derivative`]). `None`
+    /// for a `def`.
+    pub(crate) derivative: Option<Arc<DerivativeOf>>,
 }
 
 impl FuncSig {
+    /// For the function `derivative(f, x)` gives, what it differentiates;
+    /// `None` for a function defined with `def`.
+    pub fn derivative_of(&self) -> Option<&DerivativeOf> {
+        self.derivative.as_deref()
+    }
+
     /// The function's name.
     pub fn name(&self) -> &str {
         &self.name
@@ -599,6 +610,7 @@ impl Checker<'_> {
             params: psigs.clone(),
             ret: Ty::Unknown,
             generic: self.open_vars(&psigs, &Ty::Unknown),
+            derivative: None,
         });
         self.bind_at(&fname, Ty::Func(provisional), name.span);
 
@@ -657,6 +669,7 @@ impl Checker<'_> {
             params,
             ret: ret_ty,
             generic,
+            derivative: None,
         };
         let sig = Arc::new(sig);
         self.funcs.insert(name.span, sig.clone());
@@ -1009,7 +1022,14 @@ impl Checker<'_> {
                 primary,
             )
             .with_label(label)
-            .with_secondary(sig.def_span, format!("`{fname}` is defined here")),
+            .with_secondary(
+                sig.def_span,
+                // `derivative(f, x)` takes what `f` takes: point at `f`.
+                format!(
+                    "`{}` is defined here",
+                    quote(sig.derivative_of().map_or(sig.name(), |d| d.func().name()))
+                ),
+            ),
         );
     }
 
@@ -1045,22 +1065,28 @@ impl Checker<'_> {
                     return;
                 }
                 if av.dim != pt.dim {
-                    self.error(
-                        Diagnostic::error(
-                            format!(
-                                "`{pname}` of `{fname}` expects {}, found {}",
-                                self.ty_noun(&Ty::Value(pt.clone())),
-                                self.ty_noun(t)
-                            ),
-                            arg.span,
-                        )
-                        .with_label(format!("this is {}", self.ty_label(t)))
-                        .with_secondary(ann, "expected because of this annotation")
-                        .with_note(
-                            "annotations cannot state units yet, so an annotated parameter is dimensionless",
-                        )
-                        .with_help("leave the parameter unannotated to accept any unit"),
-                    );
+                    let d = Diagnostic::error(
+                        format!(
+                            "`{pname}` of `{fname}` expects {}, found {}",
+                            self.ty_noun(&Ty::Value(pt.clone())),
+                            self.ty_noun(t)
+                        ),
+                        arg.span,
+                    )
+                    .with_label(format!("this is {}", self.ty_label(t)))
+                    .with_secondary(ann, "expected because of this annotation");
+                    // An annotation without a unit is dimensionless: say so,
+                    // and how to accept any unit. With a unit, the argument
+                    // is what to fix.
+                    let d = if pt.dim.is_dimensionless() {
+                        d.with_note("an annotation without a unit is dimensionless")
+                            .with_help(
+                                "write the unit in the annotation (`x: m`), or leave the parameter unannotated to accept any unit",
+                            )
+                    } else {
+                        d.with_help("convert the argument, or fix the unit in the call")
+                    };
+                    self.error(d);
                 }
             }
             Ty::Bool | Ty::Func(_) => {

@@ -10,10 +10,15 @@ pub struct BidiControl {
     pub ch: char,
 }
 
+/// True for the bidi controls [`find_bidi_control`] looks for.
+pub(crate) fn is_bidi_control(c: char) -> bool {
+    BIDI_CONTROLS.contains(&c)
+}
+
 /// Returns the first bidi control character in `src`, if any.
 pub fn find_bidi_control(src: &str) -> Option<BidiControl> {
     src.char_indices()
-        .find(|(_, c)| BIDI_CONTROLS.contains(c))
+        .find(|&(_, c)| is_bidi_control(c))
         .map(|(byte_offset, ch)| BidiControl { byte_offset, ch })
 }
 

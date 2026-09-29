@@ -43,7 +43,7 @@ use sky_diag::Diagnostic;
 use crate::confusable::check_identifier;
 use crate::source::find_bidi_control;
 use crate::token::{Kw, Token, TokenKind};
-use crate::Span;
+use crate::{Span, MAX_SOURCE_BYTES};
 
 /// A successfully lexed file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,7 +95,7 @@ pub enum LexErrorKind {
 
 /// Lexes a whole source file. See the [module docs](self) for the rules.
 pub fn lex(src: &str) -> Result<Lexed, LexError> {
-    check_whole_file(src, u32::MAX as usize)?;
+    check_whole_file(src, MAX_SOURCE_BYTES)?;
     let mut lexer = Lexer::new(src);
     match lexer.run() {
         Ok(()) => Ok(Lexed {
@@ -111,18 +111,26 @@ pub fn lex(src: &str) -> Result<Lexed, LexError> {
 }
 
 /// Checks that apply to the whole file before tokenizing: first that it is
-/// at most `max_len` bytes (`u32::MAX` in [`lex`]), then that it contains no
-/// bidi control. The size check must come first: spans are `u32`, so a bidi
-/// control found past 4 GiB would get a truncated span. `max_len` is a
-/// parameter only so tests can check this order without a 4 GiB input.
+/// at most `max_len` bytes ([`MAX_SOURCE_BYTES`] in [`lex`]), then that it
+/// contains no bidi control. The size check must come first: spans are
+/// `u32`, so the bidi scan (and every later span) relies on the size check
+/// having kept offsets in range, and an oversized file should be refused
+/// without scanning it. `max_len` is a parameter only so tests can check
+/// this order without a 16 MiB input.
 fn check_whole_file(src: &str, max_len: usize) -> Result<(), LexError> {
     if src.len() > max_len {
+        let diag = Diagnostic::error(
+            format!("source file is larger than {}", human_size(max_len)),
+            Span::point(0),
+        )
+        .with_note(format!(
+            "the file is {} bytes; the limit is {} bytes",
+            src.len(),
+            max_len
+        ));
         return Err(LexError {
             kind: LexErrorKind::SourceTooLarge,
-            diagnostic: Box::new(Diagnostic::error(
-                "source file is larger than 4 GiB",
-                Span::point(0),
-            )),
+            diagnostic: Box::new(diag),
             warnings: Vec::new(),
         });
     }
@@ -145,6 +153,18 @@ fn check_whole_file(src: &str, max_len: usize) -> Result<(), LexError> {
         });
     }
     Ok(())
+}
+
+/// `n` bytes in human form: `16 MiB`, `4 KiB`, or `8 bytes` (the largest unit
+/// that divides `n` exactly, so the limit is never rounded).
+fn human_size(n: usize) -> String {
+    const UNITS: [(usize, &str); 3] = [(1 << 30, "GiB"), (1 << 20, "MiB"), (1 << 10, "KiB")];
+    for (size, unit) in UNITS {
+        if n >= size && n % size == 0 {
+            return format!("{} {unit}", n / size);
+        }
+    }
+    format!("{n} bytes")
 }
 
 /// Decodes the escapes in a [`TokenKind::Str`] token's text (quotes
@@ -178,6 +198,13 @@ const ESCAPES: &[char] = &['\\', '"', 'n', 't', 'r', '0'];
 
 /// Characters that render as nothing (or as ordinary space) and must never
 /// appear in source outside strings and comments.
+///
+/// Every one of these, and every bidi control, must also be escaped by the
+/// diagnostic renderer (`sky_diag::is_display_unsafe`); the test
+/// `lexer_rejected_invisible_and_bidi_chars_are_display_unsafe` checks that
+/// for every code point. The lexer must not use `is_display_unsafe` itself:
+/// that set includes tab and the other C0 controls, which are legal in
+/// source (tab as whitespace, the rest inside strings and comments).
 fn is_invisible(c: char) -> bool {
     matches!(
         c,

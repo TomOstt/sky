@@ -830,17 +830,86 @@ fn bidi_controls_are_rejected_everywhere() {
 
 #[test]
 fn size_limit_is_checked_before_bidi_scan() {
-    // `lex` uses `u32::MAX`; a tiny limit exercises the same order without a
-    // 4 GiB input. The bidi control lies past the limit, where a `u32` span
-    // would be truncated, so the file must be rejected for its size.
+    // `lex` uses `MAX_SOURCE_BYTES` (16 MiB); a tiny limit exercises the same
+    // order without a 16 MiB input. The bidi control lies past the limit, so
+    // the file must be rejected for its size before the bidi scan runs.
     let src = "x = 1 # \u{202E}\n";
     let e = check_whole_file(src, 8).unwrap_err();
     assert_eq!(e.kind, LexErrorKind::SourceTooLarge);
     assert_eq!(e.diagnostic.primary.span, Span::point(0));
+    assert_eq!(e.diagnostic.message, "source file is larger than 8 bytes");
     // At or under the limit, the bidi check still runs.
     let e = check_whole_file(src, src.len()).unwrap_err();
     assert_eq!(e.kind, LexErrorKind::BidiControl);
     assert!(check_whole_file("x = 1\n", 6).is_ok());
+}
+
+#[test]
+fn size_limit_is_human_readable() {
+    assert_eq!(human_size(MAX_SOURCE_BYTES), "16 MiB");
+    assert_eq!(human_size(4 << 30), "4 GiB");
+    assert_eq!(human_size(3 << 10), "3 KiB");
+    assert_eq!(human_size((1 << 20) + 1), "1048577 bytes");
+    assert_eq!(human_size(0), "0 bytes");
+}
+
+/// `x = 1`, then a comment that pads the file to exactly `len` bytes.
+fn source_of_len(len: usize) -> String {
+    let mut s = String::with_capacity(len);
+    s.push_str("x = 1\n#");
+    s.extend(std::iter::repeat_n('a', len - s.len() - 1));
+    s.push('\n');
+    assert_eq!(s.len(), len);
+    s
+}
+
+#[test]
+fn source_of_exactly_max_source_bytes_lexes() {
+    assert_eq!(MAX_SOURCE_BYTES, 16 * 1024 * 1024);
+    let src = source_of_len(MAX_SOURCE_BYTES);
+    assert_eq!(kinds(&src), [Ident, Assign, Int, Newline, Eof]);
+}
+
+#[test]
+fn source_one_byte_over_max_source_bytes_is_rejected() {
+    // The bidi control would be an error too; the size check must win.
+    let mut src = source_of_len(MAX_SOURCE_BYTES + 1);
+    src.replace_range(8..11, "\u{202E}");
+    assert_eq!(src.len(), MAX_SOURCE_BYTES + 1);
+    let e = lex(&src).unwrap_err();
+    assert_eq!(e.kind, LexErrorKind::SourceTooLarge);
+    assert_eq!(e.diagnostic.primary.span, Span::point(0));
+    assert_eq!(e.diagnostic.message, "source file is larger than 16 MiB");
+    assert_eq!(
+        e.diagnostic.notes,
+        ["the file is 16777217 bytes; the limit is 16777216 bytes"]
+    );
+}
+
+/// One-way drift check between the lexer and the diagnostic renderer: every
+/// character the lexer rejects because it is invisible or a bidi control
+/// must be escaped by the renderer, or a diagnostic about it would print the
+/// very character it complains about. The renderer may escape more (tab and
+/// C0 controls, which are legal in source), so the reverse is not checked.
+#[test]
+fn lexer_rejected_invisible_and_bidi_chars_are_display_unsafe() {
+    let mut rejected = 0;
+    let mut not_escaped = Vec::new();
+    for c in (0..=0x10FFFFu32).filter_map(char::from_u32) {
+        if is_invisible(c) || crate::source::is_bidi_control(c) {
+            rejected += 1;
+            if !sky_diag::is_display_unsafe(c) {
+                not_escaped.push(format!("U+{:04X}", c as u32));
+            }
+        }
+    }
+    assert!(
+        not_escaped.is_empty(),
+        "rejected by the lexer but not escaped by sky_diag::is_display_unsafe: {not_escaped:?}"
+    );
+    // 38 invisible characters plus 12 bidi controls. Update this when either
+    // set changes; it keeps the loop above from silently checking nothing.
+    assert_eq!(rejected, 50);
 }
 
 #[test]

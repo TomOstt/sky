@@ -637,6 +637,16 @@ fn plus_minus_glyph_and_ascii_spelling() {
     assert_eq!(lexed("±\n").tokens[0].span.range(), 0..2);
 }
 
+/// `∓` is not an operator, and the help says what is.
+#[test]
+fn minus_plus_glyph_is_rejected_with_help() {
+    let e = assert_err("a ∓ b\n", LexErrorKind::UnexpectedChar, "∓");
+    assert_eq!(
+        e.diagnostic.help,
+        ["there is no `∓`; the uncertainty operator is `±` (ASCII `+/-`)"]
+    );
+}
+
 #[test]
 fn spec_examples() {
     assert_eq!(line("d = 3\n"), [Ident, Assign, Int]);

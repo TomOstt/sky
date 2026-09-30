@@ -338,6 +338,7 @@ fn unexpected_char_help(c: char) -> Option<&'static str> {
             "its NFKC form is not a valid identifier (`ŀ` is `l·`, and `·` reads as multiplication)"
         }
         '÷' => "for division, use `/`",
+        '∓' => "there is no `∓`; the uncertainty operator is `±` (ASCII `+/-`)",
         '⁻' => "the inverse operator is the glyph `⁻¹` (or the function `inv`)",
         '⊤' | '⊺' => {
             "the transpose operator is the glyph `ᵀ` (U+1D40, MODIFIER LETTER CAPITAL T), or the function `transpose`"

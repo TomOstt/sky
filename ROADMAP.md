@@ -43,7 +43,7 @@ These come cheaply once the IR exists:
 
 ### Phase 3: numerics as semantics
 - Error budgets: `error <= 1e-12` leads to precision chosen per region [7, 8, 31], using interval and affine analysis on the IR.
-- Uncertainty-carrying values [10], starting with linear propagation.
+- Uncertainty-carrying values [10], starting with linear propagation. Done: `5.31 ± 0.02 kg` with correlations tracked, on the tree-walker (`spec/v0.1.md`, "Uncertainty"); arrays, SIR and non-linear propagation are next.
 - `equation` / `solve` for ordinary differential equations (ODEs), with a transparent solver-selection table [11, 12]: stiffness, symplectic structure, tolerances.
 - Condition-number warnings [42] and numerical-instability hints with rewrites [92].
 - Contracts such as `ensures` and `conserve energy`, monitored at run time [3, 29, 81].

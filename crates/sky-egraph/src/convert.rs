@@ -48,10 +48,15 @@ use sky_ir::{
 };
 use sky_units::Rational;
 
-use crate::analysis::{add_node_with_facts, CostModel, Graph, LeafInfo, NodeFacts, SkyAnalysis};
+use crate::analysis::{add_node_with_facts, render_with, Graph, LeafInfo, NodeFacts, SkyAnalysis};
+use crate::cost::{explain_choice, program_cost, term_cost, CostModel};
 use crate::lang::{Lit, LitVal, Op, SkyNode};
-use crate::rules;
+use crate::rules::{self, RuleClass};
 use crate::{Rewrite, RewriteConfig, RewriteContract, SegmentReport, Stop};
+
+/// The most e-classes (or expression nodes) of a root that an `EG-COST-001`
+/// explanation prices; a larger term is left unexplained.
+const EXPLAIN_LIMIT: usize = 4096;
 
 /// Rewrites every block of `func`. Returns the explanations of the rewrites
 /// that were applied, and one report per segment that was tried.
@@ -460,7 +465,7 @@ fn rewrite_segment(
         .collect();
     push(
         &mut expr,
-        SkyNode::new(Op::Roots, root_recs),
+        SkyNode::new(Op::Roots, root_recs.clone()),
         None,
         None,
         None,
@@ -470,14 +475,14 @@ fn rewrite_segment(
     // ---- saturate ----
     let mut eg: Graph = EGraph::new(SkyAnalysis::new(cfg.contract, leaves));
     let mut eg_of: Vec<Id> = Vec::with_capacity(expr.as_ref().len());
-    let mut fallible_classes: HashMap<usize, Id> = HashMap::new();
+    let mut fallible_classes: HashMap<usize, (Id, Option<Span>)> = HashMap::new();
     for (i, node) in expr.as_ref().iter().enumerate() {
         let mapped = node.clone().map_children(|c| eg_of[usize::from(c)]);
         let (ty, span, node_facts) = meta[i].clone();
         let id = add_node_with_facts(&mut eg, mapped, ty, span, node_facts);
         eg_of.push(id);
         if let Some(k) = fallible_of[i] {
-            fallible_classes.insert(k, id);
+            fallible_classes.insert(k, (id, meta[i].1));
         }
     }
     let roots_id = *eg_of.last().expect("the roots node was added");
@@ -505,12 +510,40 @@ fn rewrite_segment(
     let root_class = eg.find(roots_id);
     let root_children: Vec<Id> = extractor.find_best_node(root_class).args.clone();
 
-    // Original positions of the fallible ops, by class.
+    // Original positions of the fallible ops, by class, and the span of the
+    // first of them: the operation that fails first when the class fails.
     let mut original_order: HashMap<Id, usize> = HashMap::new();
-    for (k, id) in &fallible_classes {
+    let mut first_fail: HashMap<Id, (usize, Span)> = HashMap::new();
+    for (k, (id, span)) in &fallible_classes {
         let c = eg.find(*id);
         let e = original_order.entry(c).or_insert(*k);
         *e = (*e).min(*k);
+        if let Some(span) = span {
+            let f = first_fail.entry(c).or_insert((*k, *span));
+            if *k < f.0 {
+                *f = (*k, *span);
+            }
+        }
+    }
+    // Operations a rule made that fail exactly where an original one did.
+    let alias: HashMap<Id, Id> = eg
+        .analysis
+        .fail_alias
+        .iter()
+        .map(|(new, root)| (eg.find(*new), eg.find(*root)))
+        .collect();
+    // A failing operation a rule made (it has no span of its own) is where
+    // the original failed: at the first original failing operation of its
+    // class, not at the class's joined span, which can be wider (a class also
+    // holds the `^1` of a product, say).
+    let mut fail_spans: HashMap<Id, Span> = first_fail
+        .into_iter()
+        .map(|(c, (_, span))| (c, span))
+        .collect();
+    for (new, root) in &alias {
+        if let Some(span) = fail_spans.get(root).copied() {
+            fail_spans.entry(*new).or_insert(span);
+        }
     }
     // Spans of the nodes that came from the program, by canonical node.
     let mut node_spans: HashMap<SkyNode, (u64, Span)> = HashMap::new();
@@ -546,6 +579,7 @@ fn rewrite_segment(
             eg,
             &extractor,
             &node_spans,
+            &fail_spans,
             &node_operand_spans,
             &leaf_values,
             &mut staged,
@@ -610,12 +644,62 @@ fn rewrite_segment(
         return (Vec::new(), Some(report));
     }
 
+    // ---- why the extracted form of an array root is the cheaper one ----
+    let mut cost_notes: Vec<Rewrite> = Vec::new();
+    for (k, ((_, root_op), class)) in roots.iter().zip(&root_children).enumerate() {
+        let class = eg.find(*class);
+        let is_array = eg[class]
+            .data
+            .ty
+            .as_ref()
+            .is_some_and(|t| t.shape.rank() > 0);
+        if !is_array {
+            continue;
+        }
+        let rec = root_recs[k];
+        let best = |c: Id| extractor.find_best_node(eg.find(c)).clone();
+        let program = |i: Id| expr[i].clone();
+        let (before, after) = (
+            render_with(eg, rec, &program),
+            render_with(eg, class, &best),
+        );
+        if before == after {
+            continue;
+        }
+        let (Some(old), Some(new)) = (
+            program_cost(eg, &expr, &eg_of, usize::from(rec), EXPLAIN_LIMIT),
+            term_cost(eg, class, &best, EXPLAIN_LIMIT),
+        ) else {
+            continue;
+        };
+        if new.weighted() >= old.weighted() {
+            continue;
+        }
+        let because = explain_choice(&after, &before, &new, &old);
+        cost_notes.push(Rewrite {
+            pass: "egraph",
+            rule: crate::COST_RULE,
+            span: func.op(*root_op).span,
+            before,
+            after,
+            because,
+        });
+    }
+
     // ---- checks that keep behaviour ----
     let position_of: HashMap<ValueId, usize> = seg
         .ops
         .iter()
         .flat_map(|(p, o, _)| func.op(*o).results.iter().map(move |v| (*v, *p)))
         .collect();
+    // The order of failing operations is kept under `Reproducible`, and under
+    // `Relaxed` unless a relaxed rule (which re-associates or distributes
+    // operations that can overflow) is in the output.
+    let relaxed_used = applied
+        .iter()
+        .any(|f| rules::class_of(f.rule) == Some(RuleClass::Relaxed));
+    let check_order = cfg.contract == RewriteContract::Reproducible
+        || (cfg.contract == RewriteContract::Relaxed && !relaxed_used);
     let mut last_order: Option<usize> = None;
     for s in &staged {
         for src in &s.operands {
@@ -626,10 +710,11 @@ fn rewrite_segment(
                 }
             }
         }
-        if cfg.contract == RewriteContract::Reproducible
-            && s.kind.properties().effects.contains(Effect::Fail)
-        {
-            match original_order.get(&s.class) {
+        if check_order && s.kind.properties().effects.contains(Effect::Fail) {
+            let key = original_order
+                .get(&s.class)
+                .or_else(|| alias.get(&s.class).and_then(|r| original_order.get(r)));
+            match key {
                 Some(k) if last_order.is_none_or(|l| *k > l) => last_order = Some(*k),
                 _ => {
                     report.skipped = Some("the order of operations that can fail would change");
@@ -721,6 +806,7 @@ fn rewrite_segment(
 
     let note = match cfg.contract {
         RewriteContract::Reproducible => "",
+        RewriteContract::Relaxed => " (contract: relaxed)",
         RewriteContract::Fast => " (contract: fast)",
     };
     let mut rewrites = Vec::new();
@@ -734,6 +820,7 @@ fn rewrite_segment(
             because: format!("{}{note}", f.because),
         });
     }
+    rewrites.extend(cost_notes);
     report.applied = rewrites.len();
     (rewrites, Some(report))
 }
@@ -744,8 +831,9 @@ fn rewrite_segment(
 #[allow(clippy::too_many_arguments)]
 fn resolve(
     eg: &Graph,
-    extractor: &Extractor<'_, CostModel, SkyNode, SkyAnalysis>,
+    extractor: &Extractor<'_, CostModel<'_>, SkyNode, SkyAnalysis>,
     node_spans: &HashMap<SkyNode, (u64, Span)>,
+    fail_spans: &HashMap<Id, Span>,
     node_operand_spans: &HashMap<SkyNode, Vec<Span>>,
     leaf_values: &[ValueId],
     staged: &mut Vec<Staged>,
@@ -776,11 +864,6 @@ fn resolve(
             continue;
         }
         let ty = eg[c].data.ty.clone()?;
-        let span = node_spans
-            .get(&node)
-            .map(|(_, s)| *s)
-            .or(eg[c].data.span)
-            .unwrap_or(fallback_span);
         let kind = match node.op {
             Op::Leaf(i) => {
                 memo.insert(c, Src::Value(*leaf_values.get(i as usize)?));
@@ -806,6 +889,19 @@ fn resolve(
             }
             Op::Roots => return None,
         };
+        let own = node_spans.get(&node).map(|(_, s)| *s);
+        // A failing operation reports where the program's failed: the first
+        // original failing operation of its class (see `fail_spans`). That is
+        // the node's own span when the program wrote it, and the span of an
+        // earlier operation of the same class otherwise (`(-y) * (-y)` and
+        // `y * y` share a class once ALG-013 fires, and the first is the one
+        // that overflowed).
+        let failing = kind.properties().effects.contains(Effect::Fail);
+        let first_fail = failing.then(|| fail_spans.get(&c).copied()).flatten();
+        let span = first_fail
+            .or(own)
+            .or(eg[c].data.span)
+            .unwrap_or(fallback_span);
         let operands: Vec<Src> = value_children
             .iter()
             .map(|k| memo.get(&eg.find(*k)).copied())

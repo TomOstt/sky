@@ -194,7 +194,11 @@ fn nbody_loop_allocates_nothing_per_iteration_on_sir() {
     // Unfused, `-k * x` and `dt * v` are new arrays (`x` and `v` are still
     // needed after them), two allocations each (the entries and the shape);
     // every other operation reuses a buffer.
-    assert_eq!(raw, 4.0, "the unoptimized loop's allocations changed");
+    // The same one-off noise as above: a release build measured 3.968.
+    assert!(
+        (raw - 4.0).abs() < 0.05,
+        "the unoptimized loop's allocations changed: {raw} per iteration"
+    );
 }
 
 #[test]

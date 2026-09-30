@@ -29,6 +29,7 @@ pub mod cost;
 mod display;
 pub mod effects;
 pub mod exact;
+pub mod infer;
 pub mod ir;
 pub mod lifetime;
 pub mod op;
@@ -56,4 +57,4 @@ pub use pass::{
     Changed, Explanation, Pass, PassCx, PassError, PassManager, PipelineReport, RuleId,
 };
 pub use print::{print, print_function};
-pub use verify::{assignable, verify, VerifyError, MAX_REGION_DEPTH};
+pub use verify::{assignable, verify, verify_function, VerifyError, MAX_REGION_DEPTH};

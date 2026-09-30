@@ -3310,7 +3310,26 @@ fn check_native(
     want_out: &str,
     want: &Result<(), Failure>,
 ) -> Result<Native, String> {
-    let compiled = match sky_jit::compile(m) {
+    // Native code without vectorizing, with it where it pays, and with it
+    // everywhere (pairs of entries and of scalar operations as two lanes):
+    // all three must do what the tree-walker did.
+    let mut first = None;
+    for slp in [sky_jit::Slp::Off, sky_jit::Slp::Auto, sky_jit::Slp::Always] {
+        let r = check_native_with(m, which, src, want_out, want, slp)?;
+        first.get_or_insert(r);
+    }
+    Ok(first.unwrap_or(Native::Same))
+}
+
+fn check_native_with(
+    m: &sky_ir::Module,
+    which: &str,
+    src: &str,
+    want_out: &str,
+    want: &Result<(), Failure>,
+    slp: sky_jit::Slp,
+) -> Result<Native, String> {
+    let compiled = match sky_jit::compile_with_slp(m, sky_jit::Numerics::Reproducible, slp) {
         Ok(c) => c,
         Err(e) => return Ok(Native::Refused(e.message)),
     };
@@ -3320,7 +3339,7 @@ fn check_native(
     let got = r.map_err(|e| Failure::new(&e.to_diagnostic(), &e.message, src));
     if got_out != want_out {
         return Err(format!(
-            "native code ({which} SIR) prints differently\n--- sky run ---\n{want_out}(error: {})\n--- native ---\n{got_out}(error: {})\n--- SIR text ---\n{}",
+            "native code ({which} SIR, {slp:?}) prints differently\n--- sky run ---\n{want_out}(error: {})\n--- native ---\n{got_out}(error: {})\n--- SIR text ---\n{}",
             shown(want),
             shown(&got),
             sky_ir::print(m)
@@ -3328,7 +3347,7 @@ fn check_native(
     }
     if normalized(&got) != normalized(want) {
         return Err(format!(
-            "native code ({which} SIR) fails differently\n--- sky run ---\n{}--- native ---\n{}--- stdout (both) ---\n{want_out}\n--- SIR text ---\n{}",
+            "native code ({which} SIR, {slp:?}) fails differently\n--- sky run ---\n{}--- native ---\n{}--- stdout (both) ---\n{want_out}\n--- SIR text ---\n{}",
             shown(want),
             shown(&got),
             sky_ir::print(m)

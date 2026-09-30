@@ -27,19 +27,23 @@ const NB: usize = 64;
 /// Up to this order the plain algorithm beats the blocked one.
 const SMALL: usize = 40;
 
-/// Columns per block: small matrices gain from the cheaper scalar parts,
-/// large ones from the longer `k` of each trailing update.
-fn block_size(n: usize) -> usize {
-    if n <= 128 {
-        32
-    } else {
-        NB
-    }
-}
-
 /// Whether the `n` by `n` matrix `a` equals its transpose entry for entry.
 pub fn is_symmetric(a: &[f64], n: usize) -> bool {
-    (0..n).all(|i| (i + 1..n).all(|j| a[i * n + j] == a[j * n + i]))
+    // In tiles, so that the column reads of `a[j * n + i]` stay in cache: the
+    // same pairs are compared as in the plain double loop.
+    const T: usize = 32;
+    for ib in (0..n).step_by(T) {
+        for jb in (ib..n).step_by(T) {
+            for i in ib..(ib + T).min(n) {
+                for j in jb.max(i + 1)..(jb + T).min(n) {
+                    if a[i * n + j] != a[j * n + i] {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
 }
 
 /// Factors the diagonal block `j0..j1` of `w` in place. The block is held
@@ -111,7 +115,7 @@ fn factor_panel(w: &mut [f64], n: usize, j0: usize, j1: usize, threads: usize) {
         &mut pt,
         rest,
         threads,
-        threads::PARALLEL_MIN_MADDS / 8,
+        threads::par_min_madds() / 8,
     );
     for i in 0..rest {
         for (k, v) in w[(j1 + i) * n + j0..][..nb].iter_mut().enumerate() {
@@ -126,6 +130,19 @@ fn factor_panel(w: &mut [f64], n: usize, j0: usize, j1: usize, threads: usize) {
 /// `a[i,j] == a[j,i]` exactly, and [`LinalgError::NotPositiveDefinite`] at
 /// the first row whose pivot is not a positive finite number.
 pub fn cholesky_with(a: &[f64], n: usize, threads: usize) -> Result<Vec<f64>, LinalgError> {
+    cholesky_impl(a, n, threads, false)
+}
+
+/// [`cholesky_with`] with the trailing updates (nearly all the work) on the
+/// fused kernel: relaxed numerics without a vendor library. The errors are
+/// the same kinds, decided on the same tests (the pivots are rounded
+/// differently, so a matrix within rounding error of not being positive
+/// definite may go either way).
+pub fn cholesky_fused_with(a: &[f64], n: usize, threads: usize) -> Result<Vec<f64>, LinalgError> {
+    cholesky_impl(a, n, threads, crate::fma_available())
+}
+
+fn cholesky_impl(a: &[f64], n: usize, threads: usize, fma: bool) -> Result<Vec<f64>, LinalgError> {
     assert_eq!(a.len(), n * n, "cholesky: shape mismatch");
     if n <= SMALL {
         // The plain loops are the definition, and at this size the fastest.
@@ -135,7 +152,7 @@ pub fn cholesky_with(a: &[f64], n: usize, threads: usize) -> Result<Vec<f64>, Li
         return Err(LinalgError::NotSymmetric);
     }
     let mut w = a.to_vec();
-    let bs = block_size(n);
+    let bs = crate::tuning::cholesky_nb(n).clamp(1, NB);
     let mut j0 = 0;
     while j0 < n {
         let j1 = (j0 + bs).min(n);
@@ -158,7 +175,7 @@ pub fn cholesky_with(a: &[f64], n: usize, threads: usize) -> Result<Vec<f64>, Li
                 rest,
                 rest,
                 nb,
-                Op::subtract(0),
+                Op::subtract(0).fused(fma),
                 threads,
             );
         }
@@ -193,7 +210,7 @@ pub fn cholesky_solve_with(l: &[f64], n: usize, b: &[f64], k: usize, threads: us
         &mut x,
         k,
         threads,
-        threads::PARALLEL_MIN_MADDS,
+        threads::par_min_madds(),
     );
     // Lᵀ is read through a physical transpose, so its rows are contiguous.
     let lt = transpose(l, n);
@@ -205,7 +222,7 @@ pub fn cholesky_solve_with(l: &[f64], n: usize, b: &[f64], k: usize, threads: us
         &mut x,
         k,
         threads,
-        threads::PARALLEL_MIN_MADDS,
+        threads::par_min_madds(),
     );
     for v in &mut x {
         *v += 0.0;

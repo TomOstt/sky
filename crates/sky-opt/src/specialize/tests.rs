@@ -554,13 +554,14 @@ fn the_second_run_of_the_pass_finds_nothing_new() {
 }
 
 #[test]
-fn an_unknown_typed_parameter_gets_no_constant() {
+fn an_unknown_typed_parameter_gets_a_type_and_no_constant() {
     // `x` has no annotation: its operations check their operands at run
-    // time, so a typed constant must not replace it.
+    // time, so a constant must not replace it. The call gets a clone that
+    // knows x's *type*, which answers the checks and is not a value.
     let src = "def f(x):\n    return x + 1\n\nprint(f(2))\n";
     let (m, ex) = specialized(src);
-    assert!(clones_of(&m, "f").is_empty());
-    assert!(ex.is_empty());
+    assert_eq!(clones_of(&m, "f"), ["f[x:Scalar]"]);
+    assert_eq!(rules(&ex), [RULE_RETYPED]);
 }
 
 #[test]
@@ -733,4 +734,415 @@ print(pick([1, 2, 3], 5))
     };
     assert_eq!(proof("pick[N=3,i=1]"), Some(Some(exact::Proof::InBounds)));
     assert_eq!(proof("pick[N=3,i=5]"), Some(None));
+}
+
+// ----- types -----
+
+const FIB: &str = "\
+def fib(n):
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+print(fib(10))
+";
+
+fn scalar() -> Type {
+    Type::scalar(Dimension::DIMENSIONLESS)
+}
+
+/// The types of every value the reachable operations of `f` define.
+fn result_types(f: &Function) -> Vec<Type> {
+    reachable_ops(f)
+        .into_iter()
+        .flat_map(|o| f.op(o).results.clone())
+        .map(|v| f.ty(v).clone())
+        .collect()
+}
+
+fn unknowns(f: &Function) -> usize {
+    result_types(f)
+        .into_iter()
+        .filter(|t| matches!(t, Type::Unknown))
+        .count()
+}
+
+fn callees(f: &Function) -> Vec<String> {
+    reachable_ops(f)
+        .into_iter()
+        .filter_map(|o| match &f.op(o).kind {
+            OpKind::Call { callee } => Some(callee.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_recursive_function_gets_one_typed_clone_that_calls_itself() {
+    let (m, ex) = specialized(FIB);
+    assert_eq!(clones_of(&m, "fib"), ["fib[n:Scalar]"]);
+    // Every call goes to the clone, so the generic function is gone.
+    assert!(m.function("fib").is_none());
+    let c = m.function("fib[n:Scalar]").unwrap();
+    assert_eq!(c.params, [scalar()]);
+    // The result is a number: `return n` or a sum of two of them.
+    assert_eq!(c.results, [scalar()]);
+    assert_eq!(callees(c), ["fib[n:Scalar]", "fib[n:Scalar]"]);
+    // Nothing is unknown any more: the comparison, the subtractions, the
+    // merged flag and value of the early `return`, the sum.
+    assert_eq!(unknowns(c), 0, "{}", sky_ir::print_function(c));
+    // The call from `<main>` passes a known type; the two recursive calls
+    // find the clone by name.
+    assert_eq!(rules(&ex), [RULE_RETYPED, RULE_REUSED, RULE_REUSED]);
+    assert_eq!(
+        specialize_headline(&ex[0]).unwrap(),
+        "[SPEC-005] specialized `fib` for n: Scalar (dimensionless): 4 run-time type checks \
+         removed"
+    );
+    assert!(ex[0]
+        .because
+        .iter()
+        .any(|b| b == "the argument for `n` is a Scalar (dimensionless)"));
+}
+
+#[test]
+fn the_clone_is_per_dimension() {
+    let src = "\
+def sq(x):
+    return x * x
+
+print(sq(3))
+print(sq(3 m))
+print(sq(2 s))
+print(sq(4 m))
+";
+    let (m, ex) = specialized(src);
+    assert_eq!(
+        clones_of(&m, "sq"),
+        ["sq[x:Scalar]", "sq[x:Scalar(length)]", "sq[x:Scalar(time)]"]
+    );
+    let area = Dimension::LENGTH.checked_mul(Dimension::LENGTH).unwrap();
+    assert_eq!(
+        m.function("sq[x:Scalar(length)]").unwrap().results,
+        [Type::scalar(area)]
+    );
+    // The fourth call reuses the clone of the second.
+    assert_eq!(
+        rules(&ex),
+        [RULE_RETYPED, RULE_RETYPED, RULE_RETYPED, RULE_REUSED]
+    );
+    assert_eq!(
+        specialize_headline(&ex[1]).unwrap(),
+        "[SPEC-005] specialized `sq` for x: Scalar (length): 1 run-time type check removed"
+    );
+}
+
+#[test]
+fn a_function_called_with_a_number_and_a_bool_keeps_the_generic_one_for_the_bool() {
+    // `x + x` is fine for a number and an error for a Bool: only the number
+    // gets a clone (the Bool clone would not verify), and the Bool call
+    // reaches the generic function, whose error is the same as before.
+    let src = "\
+def twice(x):
+    return x + x
+
+print(twice(2))
+print(twice(true))
+";
+    let (m, _) = specialized(src);
+    assert_eq!(clones_of(&m, "twice"), ["twice[x:Scalar]"]);
+    let generic = m.function("twice").expect("the Bool call still needs it");
+    assert_eq!(generic.params, [Type::Unknown]);
+    let (out, err) = run(&m, src);
+    assert_eq!(out, "4\n");
+    assert!(err.is_some(), "the Bool call fails at run time");
+}
+
+#[test]
+fn a_function_that_works_for_numbers_bools_and_strings_gets_a_clone_of_each() {
+    let src = "\
+def same(x):
+    return x == x
+
+print(same(1))
+print(same(true))
+print(same(\"a\"))
+";
+    let (m, _) = specialized(src);
+    assert_eq!(
+        clones_of(&m, "same"),
+        ["same[x:Scalar]", "same[x:Bool]", "same[x:Str]"]
+    );
+    assert!(m.function("same").is_none());
+}
+
+#[test]
+fn errors_inside_a_typed_clone_are_the_generic_functions() {
+    // `specialized` compares the whole rendered diagnostic: the message, the
+    // spans and the labels of the division by zero.
+    let src = "\
+def inv(x):
+    return 1 / x
+
+print(inv(4))
+print(inv(0))
+";
+    let (m, _) = specialized(src);
+    assert_eq!(clones_of(&m, "inv"), ["inv[x:Scalar]"]);
+    let (out, err) = run(&m, src);
+    assert_eq!(out, "0.25\n");
+    assert!(err.unwrap().contains("division by zero"));
+}
+
+#[test]
+fn an_operation_the_dimensions_reject_keeps_its_call_generic() {
+    let src = "\
+def f(x):
+    return x + 1 m
+
+print(f(2 m))
+print(f(2))
+";
+    let (m, _) = specialized(src);
+    assert_eq!(clones_of(&m, "f"), ["f[x:Scalar(length)]"]);
+    assert!(m.function("f").is_some());
+    let (out, err) = run(&m, src);
+    assert_eq!(out, "3 m\n");
+    assert!(err.is_some());
+}
+
+/// Two functions that call each other. Sky source cannot write this (a
+/// function sees only the names above its `def`), so it is SIR text.
+const EVEN_ODD: &str = "sir edition 2026
+
+fn @<main>() -> () effects(io, fail, call) {
+  %a = const.float 10 : num[1; ()]
+  %r = call @is_even(%a) : unknown
+  print %r
+  %b = const.float 7 : num[1; ()]
+  %s = call @is_odd(%b) : unknown
+  print %s
+  return
+}
+
+fn @is_even(%n: unknown) -> (unknown) effects(fail, call) {
+  %z = const.float 0 : num[1; ()]
+  %c = cmp.eq %n, %z : bool
+  %r = if %c : unknown {
+    ^1:
+      %t = const.bool true : bool
+      yield %t
+  } {
+    ^2:
+      %one = const.float 1 : num[1; ()]
+      %m = sub %n, %one : unknown
+      %v = call @is_odd(%m) : unknown
+      yield %v
+  }
+  return %r
+}
+
+fn @is_odd(%n: unknown) -> (unknown) effects(fail, call) {
+  %z = const.float 0 : num[1; ()]
+  %c = cmp.eq %n, %z : bool
+  %r = if %c : unknown {
+    ^1:
+      %t = const.bool false : bool
+      yield %t
+  } {
+    ^2:
+      %one = const.float 1 : num[1; ()]
+      %m = sub %n, %one : unknown
+      %v = call @is_even(%m) : unknown
+      yield %v
+  }
+  return %r
+}
+";
+
+#[test]
+fn mutual_recursion_is_typed_together() {
+    let mut m = sky_ir::parse(EVEN_ODD).expect("parses");
+    let before = run(&m, "");
+    PassManager::for_tests()
+        .with(SpecializePass)
+        .run(&mut m)
+        .expect("valid IR");
+    assert_eq!(run(&m, ""), before);
+    assert_eq!(before.0, "true\ntrue\n");
+    assert_eq!(clones_of(&m, "is_even"), ["is_even[n:Scalar]"]);
+    assert_eq!(clones_of(&m, "is_odd"), ["is_odd[n:Scalar]"]);
+    // Each calls the other's clone, and both return a Bool: the result of
+    // one depends on the other's, so they are typed together.
+    for (name, other) in [
+        ("is_even[n:Scalar]", "is_odd[n:Scalar]"),
+        ("is_odd[n:Scalar]", "is_even[n:Scalar]"),
+    ] {
+        let c = m.function(name).unwrap();
+        assert_eq!(c.results, [Type::Bool], "{name}");
+        assert_eq!(callees(c), [other]);
+        assert_eq!(unknowns(c), 0, "{}", sky_ir::print_function(c));
+    }
+}
+
+#[test]
+fn several_early_returns_keep_the_result_typed() {
+    let src = "\
+def sign(x):
+    if x < 0:
+        return -1
+    if x > 0:
+        return 1
+    return 0
+
+print(sign(-5), sign(0), sign(7))
+";
+    let (m, _) = specialized(src);
+    let c = m.function("sign[x:Scalar]").unwrap();
+    assert_eq!(c.results, [scalar()]);
+    assert_eq!(unknowns(c), 0, "{}", sky_ir::print_function(c));
+}
+
+#[test]
+fn a_loop_over_a_vector_is_typed_to_a_fixed_point() {
+    // Ten entries: more than the unroller takes, so the loop stays and its
+    // carried values (`s`, `i`) are typed by iteration.
+    let src = "\
+def total(v):
+    s = 0
+    i = 0
+    while i < len(v):
+        s += v[i]
+        i += 1
+    return s
+
+print(total([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))
+";
+    let (m, _) = specialized(src);
+    let name = clones_of(&m, "total")[0].to_string();
+    assert_eq!(name, "total[v:Vector[10]]");
+    let c = m.function(&name).unwrap();
+    assert_eq!(count_kind(c, |k| matches!(k, OpKind::While)), 1);
+    assert_eq!(c.results, [scalar()]);
+    assert_eq!(unknowns(c), 0, "{}", sky_ir::print_function(c));
+}
+
+#[test]
+fn a_type_is_passed_down_through_a_function_that_only_forwards() {
+    // `outer` has no run-time check of its own, but its clone is what gives
+    // `inner` a known type.
+    let src = "\
+def inner(x):
+    return x + 1
+
+def outer(x):
+    return inner(x)
+
+print(outer(1))
+";
+    let (m, _) = specialized(src);
+    assert_eq!(clones_of(&m, "outer"), ["outer[x:Scalar]"]);
+    assert_eq!(clones_of(&m, "inner"), ["inner[x:Scalar]"]);
+    assert_eq!(
+        callees(m.function("outer[x:Scalar]").unwrap()),
+        ["inner[x:Scalar]"]
+    );
+}
+
+#[test]
+fn a_function_that_learns_nothing_from_a_type_gets_no_clone() {
+    let src = "def id(x):\n    return x\n\nprint(id(1))\n";
+    let (m, ex) = specialized(src);
+    assert!(clones_of(&m, "id").is_empty());
+    assert!(ex.is_empty());
+}
+
+#[test]
+fn a_type_and_a_constant_for_different_parameters_share_a_clone() {
+    let src = "\
+def scale(k: Scalar, x):
+    return x * k
+
+print(scale(2, 3))
+";
+    let (m, ex) = specialized(src);
+    assert_eq!(clones_of(&m, "scale"), ["scale[k=2,x:Scalar]"]);
+    assert_eq!(
+        specialize_headline(&ex[0]).unwrap(),
+        "[SPEC-005] specialized `scale` for k = 2, x: Scalar (dimensionless): 1 run-time type \
+         check removed"
+    );
+}
+
+#[test]
+fn an_argument_of_unknown_type_gives_no_type() {
+    // The result of a call to an unannotated function is `unknown` at the
+    // call (callers are not retyped), so `h`'s argument has no known type and
+    // `h` keeps its generic body; `fib` itself still gets its clone.
+    let src = "\
+def fib(n):
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+def h(y):
+    return y + 1
+
+print(h(fib(5)))
+";
+    let (m, _) = specialized(src);
+    assert!(clones_of(&m, "h").is_empty());
+    assert_eq!(clones_of(&m, "fib"), ["fib[n:Scalar]"]);
+}
+
+#[test]
+fn the_per_function_limit_applies_to_types() {
+    // Nine dimensions for one function: eight clones, and the ninth call
+    // keeps the generic function (and says why).
+    let src = "\
+def id2(x):
+    return x + x
+
+print(id2(1), id2(1 m), id2(1 s), id2(1 kg), id2(1 A), id2(1 K), id2(1 mol), id2(1 cd))
+print(id2(1 m^2))
+";
+    let (m, ex) = specialized(src);
+    assert_eq!(clones_of(&m, "id2").len(), MAX_CLONES_PER_FUNCTION);
+    assert!(m.function("id2").is_some());
+    assert!(rules(&ex).contains(&RULE_LIMIT));
+}
+
+#[test]
+fn a_dead_operation_the_types_reject_still_fails_in_the_generic_function() {
+    // `t` is never used, and `max` of two dimensions cannot fail *when it is
+    // well typed*, so `dce` would drop it from a clone typed for a mass. The
+    // generic function fails there, so the clone must not exist: the types
+    // are checked before anything is simplified.
+    let src = "\
+def f(a):
+    t = max(10, abs(a))
+    return 3
+
+print(f(2))
+print(f(2 kg))
+";
+    let (m, _) = specialized(src);
+    assert_eq!(clones_of(&m, "f"), ["f[a:Scalar]"]);
+    let (out, err) = run(&m, src);
+    assert_eq!(out, "3\n");
+    assert!(err.unwrap().contains("must have the same dimension"));
+    // The same for an operation that needs a number, given a Bool.
+    let src = "\
+def g(b):
+    t = abs(b)
+    return 1
+
+print(g(2))
+print(g(true))
+";
+    let (m, _) = specialized(src);
+    assert_eq!(clones_of(&m, "g"), ["g[b:Scalar]"]);
+    let (out, err) = run(&m, src);
+    assert_eq!(out, "1\n");
+    assert!(err.unwrap().contains("needs a number"));
 }

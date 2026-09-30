@@ -20,10 +20,21 @@
 //! and they may remove an operation that could have failed (`log(exp(x))`
 //! never overflows once it is `x`).
 //!
+//! **`Relaxed`** sits between them: everything `Reproducible` does, plus the
+//! rules that are valid over the reals and *only* change how floating point
+//! rounds: re-associating scalings (`s * (t * A)`), distributing them
+//! (`a*x + a*y`), re-associating matrix products (only when the flop count
+//! provably drops). A result may differ in its last bits, and an
+//! intermediate that overflowed may not (or the other way round), but a rule
+//! never removes a failure of a subterm the way the `Fast` rules do
+//! (`log(exp(x))`), and the domain of every function is respected. It is
+//! **not** enabled by default and no pass turns it on yet.
+//!
 //! Rules are classified ([`RuleClass`]): *exact* rules are bit-identical
 //! for all inputs, *conditional* rules are bit-identical given a fact the
-//! analysis proved, and *real-only* rules are enabled only under `Fast`.
-//! Under both contracts:
+//! analysis proved, *relaxed* rules are enabled under `Relaxed` and `Fast`,
+//! and *real-only* rules only under `Fast`. Under both `Reproducible` and
+//! `Relaxed`:
 //!
 //! * effectful ops (`print`, `call`, `if`, `while`) and ops that can fail
 //!   for a reason the e-graph does not model are never moved, duplicated or
@@ -51,6 +62,16 @@
 //!   failure is the same one; if the extracted form would reorder them the
 //!   block is left alone.
 //!
+//! # Extraction and the static cost model
+//!
+//! The cheapest form is chosen with the prices of `sky_ir::cost`: flops,
+//! bytes moved and allocations, with array shapes taken from the node types
+//! and weighed into one scalar (see the `cost` module: matmul costs `2·n·k·m`,
+//! a big array operation dominates a scalar one, symbolic sizes default
+//! to 64). When the extracted form of an array-valued root is cheaper than
+//! the program's own, the pass says why, with the numbers, as
+//! `EG-COST-001`.
+//!
 //! # As a pass
 //!
 //! [`EgraphPass`] is the crate as a [`sky_ir::Pass`] named `"egraph"`. Each
@@ -63,6 +84,7 @@
 
 mod analysis;
 mod convert;
+mod cost;
 mod lang;
 mod rules;
 
@@ -71,7 +93,9 @@ use std::time::Duration;
 use sky_diag::Span;
 use sky_ir::{Changed, Function, Module, Pass, PassCx};
 
-pub use analysis::CostModel;
+pub use cost::{
+    matmul_cost, op_cost, show_poly, Cost, CostModel, OpCost, ALLOC_FLOPS, DEFAULT_SIZE,
+};
 pub use rules::{rule_table, RuleClass, RuleInfo};
 
 /// What a rewrite is allowed to change. See the crate documentation.
@@ -82,7 +106,17 @@ pub enum RewriteContract {
     Reproducible,
     /// Rules valid over the reals are allowed (`@fast`).
     Fast,
+    /// Exact and conditional rules, plus the ones that only change rounding
+    /// (re-association and distribution of scalings, re-association of
+    /// matrix products). Not the default; no failure is removed.
+    Relaxed,
 }
+
+/// The id of the explanation that says an extracted form was chosen for its
+/// cost. It is not a rewrite rule (it is not in [`rule_table`]): it is added
+/// for an array-valued result whose extracted form the static cost model
+/// prices below the program's own, with both prices.
+pub const COST_RULE: &str = "EG-COST-001";
 
 /// Settings for one run.
 #[derive(Clone, Debug)]

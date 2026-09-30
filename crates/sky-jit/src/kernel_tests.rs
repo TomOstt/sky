@@ -578,3 +578,127 @@ fn a_kernel_run_on_the_wrong_operands_is_an_error_not_a_crash() {
         assert!(e.to_diagnostic().message.starts_with("malformed IR"));
     }
 }
+
+// ----- relaxed numerics: contraction -----
+
+fn contracting() -> Options {
+    Options {
+        contract: true,
+        ..Options::default()
+    }
+}
+
+fn host_fuses() -> bool {
+    has_fma(&isa().expect("a code generator"))
+}
+
+const MUL_ADD: &str =
+    "      %t = mul %x, %s : num[1; ()]\n      %u = add %t, %y : num[1; ()]\n      yield %u";
+
+/// A body `a*x + y` (in the shapes a sum with a product takes) becomes one
+/// fused multiply-add per element, on every length (vector body and tail):
+/// the bits are `mul_add`'s.
+#[test]
+fn contracted_kernels_are_fused_multiply_adds() {
+    if !host_fuses() {
+        return;
+    }
+    type Want = fn(f64, f64, f64) -> f64;
+    let bodies: [(&str, Want); 4] = [
+        (MUL_ADD, |x, y, s| x.mul_add(s, y)),
+        (
+            "      %t = mul %x, %s : num[1; ()]\n      %u = add %y, %t : num[1; ()]\n      yield %u",
+            |x, y, s| x.mul_add(s, y),
+        ),
+        (
+            "      %t = mul %x, %s : num[1; ()]\n      %u = sub %t, %y : num[1; ()]\n      yield %u",
+            |x, y, s| x.mul_add(s, -y),
+        ),
+        (
+            "      %t = mul %x, %s : num[1; ()]\n      %u = sub %y, %t : num[1; ()]\n      yield %u",
+            |x, y, s| (-x).mul_add(s, y),
+        ),
+    ];
+    let mut rng = Rng(7);
+    for (body, want) in bodies {
+        let kernel = compile(body, contracting());
+        let plain = compile(body, Options::default());
+        let mut differed = false;
+        for n in [1, 2, 3, 7, 8, 9, 16, 33, 100, 1001] {
+            let xs: Vec<f64> = (0..n).map(|_| rng.number().clamp(-1e100, 1e100)).collect();
+            let ys: Vec<f64> = (0..n).map(|_| rng.number().clamp(-1e100, 1e100)).collect();
+            let s = 0.1 + (rng.below(1000) as f64) / 7.0;
+            let inputs = [Input::Array(&xs), Input::Array(&ys), Input::Scalar(s)];
+            let got = kernel.run_alloc(&inputs, n).expect("finite data");
+            let unfused = plain.run_alloc(&inputs, n).expect("finite data");
+            for i in 0..n {
+                let w = want(xs[i], ys[i], s);
+                assert_eq!(got[i].to_bits(), w.to_bits(), "n={n} i={i}: {body}");
+                differed |= got[i].to_bits() != unfused[i].to_bits();
+            }
+        }
+        assert!(differed, "fusing changed nothing (is it fusing?): {body}");
+    }
+}
+
+/// A product used twice, and a product that does not depend on the element,
+/// are not contracted: the bits are the interpreter's.
+#[test]
+fn a_product_with_other_uses_or_no_element_is_left_alone() {
+    let twice = "      %t = mul %x, %s : num[1; ()]\n      %u = add %t, %y : num[1; ()]\n      %v = add %u, %t : num[1; ()]\n      yield %v";
+    let uniform =
+        "      %t = mul %s, %s : num[1; ()]\n      %u = add %t, %y : num[1; ()]\n      yield %u";
+    let mut rng = Rng(8);
+    for body in [twice, uniform] {
+        let kernel = compile(body, contracting());
+        for n in [3, 9, 200] {
+            let (xs, ys, s) = data(&mut rng, n);
+            agree(&kernel, &xs, &ys, s, body);
+        }
+    }
+}
+
+/// Contracted kernels still fail exactly where the interpreter does, with
+/// its error: an overflowing product, an overflowing sum.
+#[test]
+fn contracted_kernels_report_the_interpreters_errors() {
+    let kernel = compile(MUL_ADD, contracting());
+    let plain = compile(MUL_ADD, Options::default());
+    let cases: [(Vec<f64>, Vec<f64>, f64); 2] = [
+        // The product overflows; the addend is finite.
+        (vec![1.0, 1e200, 2.0], vec![0.0, 5.0, 1.0], 1e200),
+        // The sum overflows; the product does not.
+        (vec![1.0, 1e308, 2.0], vec![0.0, 1e308, 1.0], 1.0),
+    ];
+    for (xs, ys, s) in cases {
+        let inputs = [Input::Array(&xs), Input::Array(&ys), Input::Scalar(s)];
+        let want = plain.run_alloc(&inputs, xs.len()).map(|_| ());
+        assert!(want.is_err());
+        let got = kernel.run_alloc(&inputs, xs.len()).map(|_| ());
+        assert_eq!(got, want, "the same error, at the same operation");
+    }
+}
+
+/// The documented relaxation: a product that overflows while the fused sum
+/// is finite is accepted (the value is the fused one).
+#[test]
+fn a_product_rescued_by_its_addend_is_accepted_when_contracting() {
+    if !host_fuses() {
+        return;
+    }
+    let body =
+        "      %t = mul %x, %s : num[1; ()]\n      %u = sub %t, %y : num[1; ()]\n      yield %u";
+    let (xs, ys, s) = ([2e154], [1.7e308], 1e154);
+    let inputs = [Input::Array(&xs), Input::Array(&ys), Input::Scalar(s)];
+    let plain = compile(body, Options::default());
+    assert!(
+        plain.run_alloc(&inputs, 1).is_err(),
+        "2e154 * 1e154 overflows"
+    );
+    let kernel = compile(body, contracting());
+    let got = kernel
+        .run_alloc(&inputs, 1)
+        .expect("the fused sum is finite");
+    assert_eq!(got[0], 2e154_f64.mul_add(1e154, -1.7e308));
+    assert!(got[0] > 2.9e307 && got[0] < 3.1e307, "{}", got[0]);
+}

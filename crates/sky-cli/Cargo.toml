@@ -20,9 +20,11 @@ sky-interp = { path = "../sky-interp" }
 sky-ir = { path = "../sky-ir" }
 sky-ir-interp = { path = "../sky-ir-interp" }
 sky-jit = { path = "../sky-jit" }
+sky-linalg = { path = "../sky-linalg" }
 sky-lower = { path = "../sky-lower" }
 sky-opt = { path = "../sky-opt" }
 sky-project = { path = "../sky-project" }
+sky-rt = { path = "../sky-rt" }
 sky-syntax = { path = "../sky-syntax" }
 sky-tune = { path = "../sky-tune" }
 sky-types = { path = "../sky-types" }

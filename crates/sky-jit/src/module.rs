@@ -39,11 +39,21 @@
 //! check that its shape and dimension are what the type says; if they are
 //! not, the run deoptimizes, as for a scalar.
 //!
+//! # Vectorizing
+//!
+//! The entries of a small array, and pairs of scalar operations that follow
+//! one another, are computed two at a time as `F64X2` vector operations
+//! when that pays ([`slp`]: lane-wise IEEE, so the same bits; one check for
+//! the pair, whose failure re-runs the scalar operations in program order).
+//! `SKY_SLP=off|auto|always` picks the mode for [`compile`]; the default,
+//! `auto`, packs only in loops and functions that are not latency bound.
+//!
 //! # Exactness
 //!
 //! * `fadd`, `fsub`, `fmul`, `fdiv`, `fneg`, `fabs` and `sqrt` are IEEE
 //!   operations that give the interpreter's bits. Nothing is contracted into
-//!   a fused multiply-add: Cranelift never does it unless asked.
+//!   a fused multiply-add: Cranelift never does it unless asked. (Asked:
+//!   see "Relaxed numerics" below; [`compile`] never asks.)
 //! * The checks `sky_interp::arith` makes come in the same order: the
 //!   dimension rules (static here: a dimension is part of the type), then a
 //!   zero divisor, then the result's finiteness. A failing check calls a
@@ -57,6 +67,29 @@
 //! * A run-time failure returns a status up the native stack: every function
 //!   returns `(status, results...)`, and a caller that sees a nonzero status
 //!   returns at once. Effects (printing) happen in program order.
+//!
+//! # Relaxed numerics
+//!
+//! [`compile_with`] with [`Numerics::Relaxed`] is the one place native code
+//! may leave the interpreter's bits (spec "Relaxed numerics"). On a host
+//! with a fused multiply-add instruction it contracts `a*b + c`, `a*b - c`
+//! and `c - a*b` into one `fma` (one rounding), when the product is used by
+//! nothing else and the sum is the next operation (only constants may sit
+//! between them, so no operation that could fail or print is reordered),
+//! and it compiles `fused` kernels with the same contraction
+//! ([`crate::kernel::Options::contract`]). Everything else is as above.
+//!
+//! What still holds: dimensions are checked (statically, as before);
+//! results must be finite; and a failure is the same error at the same
+//! place. The fused value's finiteness is checked, and if it is not finite
+//! the cold path replays the two operations unfused: a product that overflows
+//! fails at the product, exactly as in reproducible numerics; a sum that
+//! overflows fails at the sum; and if the unfused sum turns out finite (the
+//! fused one rounded past the largest double, the unfused did not) the
+//! unfused value is used and the run goes on. What relaxes: a product that
+//! overflows while the fused sum is finite (`x*y - z` with `z` almost as big
+//! as `x*y`, which is past the largest double) no longer fails, and a fused
+//! result differs from the unfused one in the last bit.
 //!
 //! # Values whose type is unknown
 //!
@@ -120,6 +153,7 @@ use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Linkage, Module as ClModule};
 use sky_diag::Span;
 use sky_interp::arith::{ArithOp, MAX_CALL_DEPTH, STACK_BUDGET};
+use sky_interp::linalg::Numerics;
 use sky_interp::RuntimeError;
 use sky_ir::exact::{self, Analysis};
 use sky_ir::{
@@ -129,7 +163,9 @@ use sky_units::Dimension;
 
 use crate::runtime::{self, Program, Rt, Site, Ty, FUNC_SITE};
 
+mod slp;
 mod small;
+pub use slp::Slp;
 use small::{small_shape, Sh};
 
 /// A program native code cannot run (yet): what `sky run --engine=native`
@@ -238,36 +274,9 @@ impl Compiled {
     /// Run this under `sky_ast::with_deep_stack`: the stack budget assumes its
     /// stack.
     pub fn run(&self, out: &mut dyn Write) -> Result<(), RunFailure> {
-        let guard = runtime::begin(self.program.clone(), out);
-        let limit = sky_interp::arith::stack_address().saturating_sub(STACK_BUDGET) as i64;
-        // SAFETY: `main` is the address of `<main>` compiled with the
-        // signature `(i32 depth, i64 stack limit, i32 call site) -> i32
-        // status` (checked when it was built: `<main>` has no parameters and
-        // no results), in the platform's default calling convention, and
-        // `self.jit`, which owns the code, is alive for the whole call.
-        let entry: extern "C" fn(i32, i64, i32) -> i32 =
-            unsafe { std::mem::transmute(self.main as *const u8) };
-        let status = entry(0, limit, -1);
-        let done = runtime::finish();
-        drop(guard);
-        // A finished run has released everything it made: a check of the
-        // ownership rules, on in the tests.
-        debug_assert!(
-            status != 0 || done.live == 0,
-            "native code leaked {} handles",
-            done.live
-        );
-        match (status, done.error) {
-            (0, _) => Ok(()),
-            (_, _) if done.deopt => Err(RunFailure::Deopt {
-                written: done.written,
-            }),
-            (_, Some(e)) => Err(RunFailure::Error(e)),
-            (_, None) => Err(RunFailure::Error(RuntimeError::new(
-                "internal error in the native engine: a failure without a diagnostic",
-                Span::point(0),
-            ))),
-        }
+        // SAFETY: `self.main` is `<main>`'s address (see `Compiled::main`),
+        // and `self.jit`, which owns the code, is alive for the whole call.
+        unsafe { run_entry(self.program.clone(), self.main, out) }
     }
 
     /// [`Compiled::run`], and on a deoptimization `rerun` (the SIR
@@ -286,6 +295,49 @@ impl Compiled {
     }
 }
 
+/// Runs the compiled `<main>` at `main` with the runtime state of `program`
+/// installed, writing `print` output to `out`: [`Compiled::run`] for code in
+/// memory, and the entry point of an executable built ahead of time.
+///
+/// # Safety
+///
+/// `main` must be the address of `<main>` compiled by [`translate_module`]
+/// from `program.module`, with the signature `(i32 depth, i64 stack limit,
+/// i32 call site) -> i32 status` in the platform's default calling
+/// convention, and its code must stay valid for the whole call.
+pub(crate) unsafe fn run_entry(
+    program: Arc<Program>,
+    main: usize,
+    out: &mut dyn Write,
+) -> Result<(), RunFailure> {
+    let guard = runtime::begin(program, out);
+    let limit = sky_interp::arith::stack_address().saturating_sub(STACK_BUDGET) as i64;
+    // SAFETY: the caller promises that `main` has this signature and is live.
+    let entry: extern "C" fn(i32, i64, i32) -> i32 =
+        unsafe { std::mem::transmute(main as *const u8) };
+    let status = entry(0, limit, -1);
+    let done = runtime::finish();
+    drop(guard);
+    // A finished run has released everything it made: a check of the
+    // ownership rules, on in the tests.
+    debug_assert!(
+        status != 0 || done.live == 0,
+        "native code leaked {} handles",
+        done.live
+    );
+    match (status, done.error) {
+        (0, _) => Ok(()),
+        (_, _) if done.deopt => Err(RunFailure::Deopt {
+            written: done.written,
+        }),
+        (_, Some(e)) => Err(RunFailure::Error(e)),
+        (_, None) => Err(RunFailure::Error(RuntimeError::new(
+            "internal error in the native engine: a failure without a diagnostic",
+            Span::point(0),
+        ))),
+    }
+}
+
 impl Drop for Compiled {
     fn drop(&mut self) {
         if let Some(jit) = self.jit.take() {
@@ -297,9 +349,26 @@ impl Drop for Compiled {
     }
 }
 
-/// Compiles every function of `module` (which must verify) to machine code.
+/// Compiles every function of `module` (which must verify) to machine code
+/// with reproducible numerics: the interpreter's bits.
 pub fn compile(module: &SirModule) -> Result<Compiled, CompileError> {
-    let built = build(module, false)?;
+    compile_with(module, Numerics::Reproducible)
+}
+
+/// [`compile`] with the numerics chosen: [`Numerics::Relaxed`] lets native
+/// code contract `a*b + c` into a fused multiply-add (see the module docs).
+/// Vectorization follows `SKY_SLP` (see [`Slp`]).
+pub fn compile_with(module: &SirModule, numerics: Numerics) -> Result<Compiled, CompileError> {
+    compile_with_slp(module, numerics, Slp::from_env())
+}
+
+/// [`compile_with`] with an explicit vectorization mode (see [`Slp`]).
+pub fn compile_with_slp(
+    module: &SirModule,
+    numerics: Numerics,
+    slp: Slp,
+) -> Result<Compiled, CompileError> {
+    let built = build(module, false, numerics == Numerics::Relaxed, slp)?;
     let jit = built.jit;
     match (jit, built.main) {
         (Some(jit), Some(main)) => Ok(Compiled {
@@ -314,7 +383,21 @@ pub fn compile(module: &SirModule) -> Result<Compiled, CompileError> {
 /// The Cranelift IR of every function of `module`, as text
 /// (`sky check --emit=clif`), before Cranelift optimizes it.
 pub fn emit_clif(module: &SirModule) -> Result<String, CompileError> {
-    Ok(build(module, true)?.clif)
+    emit_clif_with(module, Numerics::Reproducible)
+}
+
+/// [`emit_clif`] with the numerics chosen (relaxed shows the `fma`s).
+pub fn emit_clif_with(module: &SirModule, numerics: Numerics) -> Result<String, CompileError> {
+    emit_clif_with_slp(module, numerics, Slp::from_env())
+}
+
+/// [`emit_clif_with`] with an explicit vectorization mode (see [`Slp`]).
+pub fn emit_clif_with_slp(
+    module: &SirModule,
+    numerics: Numerics,
+    slp: Slp,
+) -> Result<String, CompileError> {
+    Ok(build(module, true, numerics == Numerics::Relaxed, slp)?.clif)
 }
 
 /// What [`build`] made.
@@ -403,16 +486,79 @@ struct Slot {
 }
 
 /// State shared by the functions of a module while they are translated.
-struct Shared<'m> {
+pub(crate) struct Shared<'m> {
     m: &'m SirModule,
-    fn_ids: Vec<FuncId>,
+    pub fn_ids: Vec<FuncId>,
     rt_ids: HashMap<Rt, FuncId>,
-    dims: Vec<Dimension>,
+    pub dims: Vec<Dimension>,
     dim_ids: HashMap<Dimension, i32>,
-    sites: Vec<Site>,
+    pub sites: Vec<Site>,
+    /// Contract `a*b + c` into a fused multiply-add (relaxed numerics on a
+    /// host that has the instruction).
+    contract: bool,
+    /// Pack pairs of `f64` operations into vector lanes (see [`Slp`]).
+    slp: Slp,
 }
 
-fn build(module: &SirModule, emit: bool) -> Res<Built> {
+fn build(module: &SirModule, emit: bool, relaxed: bool, slp: Slp) -> Res<Built> {
+    precheck(module)?;
+    let isa = crate::host_isa().map_err(|e| CompileError {
+        message: format!("no code generator for this machine ({e})"),
+        span: None,
+    })?;
+    let call_conv = isa.default_call_conv();
+    let contract = relaxed && crate::kernel::has_fma(&isa);
+    let mut builder =
+        crate::jit_builder(isa, crate::MODULE_ARENA_BYTES).map_err(|e| CompileError {
+            message: format!("no memory for native code ({e})"),
+            span: None,
+        })?;
+    for rt in Rt::ALL {
+        builder.symbol(rt.name(), rt.address());
+    }
+    let mut jit = JITModule::new(builder);
+
+    let done = translate_module(module, &mut jit, call_conv, emit, contract, slp)?;
+    let (sh, code_sizes, clif) = (done.sh, done.code_sizes, done.clif);
+    if emit {
+        return Ok(Built {
+            jit: None,
+            program: Program {
+                module: SirModule::default(),
+                dims: Vec::new(),
+                sites: Vec::new(),
+                relaxed: false,
+            },
+            main: None,
+            clif,
+        });
+    }
+    jit.finalize_definitions()
+        .map_err(|e| internal("the module", &e))?;
+    for (id, size) in sh.fn_ids.iter().zip(&code_sizes) {
+        crate::icache::flush(jit.get_finalized_function(*id), *size);
+    }
+    let main_index = module
+        .functions
+        .iter()
+        .position(|f| f.name == SirModule::MAIN)
+        .unwrap_or(0);
+    let main = jit.get_finalized_function(sh.fn_ids[main_index]) as usize;
+    Ok(Built {
+        jit: Some(jit),
+        program: Program {
+            module: module.clone(),
+            dims: sh.dims,
+            sites: sh.sites,
+            relaxed,
+        },
+        main: Some(main),
+        clif,
+    })
+}
+
+/// The module must verify and have a `<main>` without parameters or results.
+pub(crate) fn precheck(module: &SirModule) -> Res<()> {
     if let Err(errors) = sky_ir::verify(module) {
         let first = errors.first();
         return refuse(
@@ -429,26 +575,39 @@ fn build(module: &SirModule, emit: bool) -> Res<Built> {
         Some(f) => return refuse("`<main>` takes parameters or returns values", Some(f.span)),
         None => return refuse("the module has no `<main>`", None),
     }
+    Ok(())
+}
 
-    let isa = crate::host_isa().map_err(|e| CompileError {
-        message: format!("no code generator for this machine ({e})"),
-        span: None,
-    })?;
-    let call_conv = isa.default_call_conv();
-    let mut builder =
-        crate::jit_builder(isa, crate::MODULE_ARENA_BYTES).map_err(|e| CompileError {
-            message: format!("no memory for native code ({e})"),
-            span: None,
-        })?;
-    for rt in Rt::ALL {
-        builder.symbol(rt.name(), rt.address());
-    }
-    let mut jit = JITModule::new(builder);
-
-    let internal = |what: &str, e: &dyn fmt::Display| CompileError {
+pub(crate) fn internal(what: &str, e: &dyn fmt::Display) -> CompileError {
+    CompileError {
         message: format!("the code generator failed on {what}: {e}"),
         span: None,
-    };
+    }
+}
+
+/// What [`translate_module`] left: the shared tables and, per function, the
+/// size of its machine code and (when only the IR was asked for) its text.
+pub(crate) struct Translated<'m> {
+    /// The ids of the functions, and the tables native code names by index.
+    pub sh: Shared<'m>,
+    /// The size of each function's machine code, to flush the instruction
+    /// cache.
+    pub code_sizes: Vec<usize>,
+    pub clif: String,
+}
+
+/// Declares the runtime functions and every function of `module` in `jit`
+/// (a JIT or an object file: the translation is the same), and translates
+/// and defines each. `emit` only produces the Cranelift IR text; `contract`
+/// fuses `a*b + c` (relaxed numerics); `slp` packs vector lanes.
+pub(crate) fn translate_module<'m, M: ClModule>(
+    module: &'m SirModule,
+    jit: &mut M,
+    call_conv: cranelift_codegen::isa::CallConv,
+    emit: bool,
+    contract: bool,
+    slp: Slp,
+) -> Res<Translated<'m>> {
     let mut sh = Shared {
         m: module,
         fn_ids: Vec::new(),
@@ -456,6 +615,8 @@ fn build(module: &SirModule, emit: bool) -> Res<Built> {
         dims: Vec::new(),
         dim_ids: HashMap::new(),
         sites: Vec::new(),
+        contract,
+        slp,
     };
     for rt in Rt::ALL {
         let (params, ret) = rt.signature();
@@ -479,14 +640,13 @@ fn build(module: &SirModule, emit: bool) -> Res<Built> {
     }
 
     let mut clif = String::new();
-    // The size of each function's machine code, to flush the instruction cache.
     let mut code_sizes = Vec::new();
     let mut fctx = FunctionBuilderContext::new();
     let mut ctx = jit.make_context();
     for (i, f) in module.functions.iter().enumerate() {
         ctx.func.signature = function_signature(f, call_conv);
         ctx.func.name = UserFuncName::testcase(symbol_name(i, &f.name));
-        FnTx::translate(&mut ctx.func, &mut fctx, &mut jit, &mut sh, f, i as u32)?;
+        FnTx::translate(&mut ctx.func, &mut fctx, jit, &mut sh, f, i as u32)?;
         if emit {
             clif.push_str(&format!("; {}\n{}\n", describe(f), ctx.func));
         } else {
@@ -496,37 +656,9 @@ fn build(module: &SirModule, emit: bool) -> Res<Built> {
         }
         jit.clear_context(&mut ctx);
     }
-    if emit {
-        return Ok(Built {
-            jit: None,
-            program: Program {
-                module: SirModule::default(),
-                dims: Vec::new(),
-                sites: Vec::new(),
-            },
-            main: None,
-            clif,
-        });
-    }
-    jit.finalize_definitions()
-        .map_err(|e| internal("the module", &e))?;
-    for (id, size) in sh.fn_ids.iter().zip(&code_sizes) {
-        crate::icache::flush(jit.get_finalized_function(*id), *size);
-    }
-    let main_index = module
-        .functions
-        .iter()
-        .position(|f| f.name == SirModule::MAIN)
-        .unwrap_or(0);
-    let main = jit.get_finalized_function(sh.fn_ids[main_index]) as usize;
-    Ok(Built {
-        jit: Some(jit),
-        program: Program {
-            module: module.clone(),
-            dims: sh.dims,
-            sites: sh.sites,
-        },
-        main: Some(main),
+    Ok(Translated {
+        sh,
+        code_sizes,
         clif,
     })
 }
@@ -587,14 +719,91 @@ fn function_signature(f: &Function, call_conv: cranelift_codegen::isa::CallConv)
     sig
 }
 
+/// The sum that can fuse the product `body[i]`, if it is one: a scalar `mul`
+/// whose result has no other use, feeding the next operation that is not a
+/// constant, which must be an `add` or `sub` whose other operand and result
+/// have the product's dimension. Only constants may sit between them, so no
+/// operation that could fail, print or call is reordered. Everything is
+/// decided from types, so a product that passes is always fused by
+/// [`FnTx::fused_sum`].
+fn fusable_product(f: &Function, uses: &[u32], body: &[OpId], i: usize) -> Option<OpId> {
+    let mul = f.op(body[i]);
+    let ([x, y], [m]) = (&mul.operands[..], &mul.results[..]) else {
+        return None;
+    };
+    if !matches!(mul.kind, OpKind::Mul) || uses.get(m.index()) != Some(&1) {
+        return None;
+    }
+    let (Some(dx), Some(dy), Some(dm)) = (
+        dim_of_type(f.ty(*x)),
+        dim_of_type(f.ty(*y)),
+        dim_of_type(f.ty(*m)),
+    ) else {
+        return None;
+    };
+    if dx.checked_mul(dy).ok() != Some(dm) {
+        return None;
+    }
+    let next = *body[i + 1..].iter().find(|id| {
+        !matches!(
+            f.op(**id).kind,
+            OpKind::ConstFloat { .. } | OpKind::ConstRational(_) | OpKind::ConstBool(_)
+        )
+    })?;
+    let sum = f.op(next);
+    let ([l, r], [s]) = (&sum.operands[..], &sum.results[..]) else {
+        return None;
+    };
+    if !matches!(sum.kind, OpKind::Add | OpKind::Sub) || l == r || (l != m && r != m) {
+        return None;
+    }
+    let other = if l == m { r } else { l };
+    (dim_of_type(f.ty(*other)) == Some(dm) && dim_of_type(f.ty(*s)) == Some(dm)).then_some(next)
+}
+
+/// The `a*b + c` patterns [`compile_with`] fuses under [`Numerics::Relaxed`]
+/// (on a host with a fused multiply-add): for each, the source span of the
+/// product and of the sum. For `sky check --explain`.
+pub fn fused_sums(module: &SirModule) -> Vec<(Span, Span)> {
+    let mut found = Vec::new();
+    for f in &module.functions {
+        let uses = use_counts(f);
+        for block in &f.blocks {
+            let Some((_, body)) = block.ops.split_last() else {
+                continue;
+            };
+            for i in 0..body.len() {
+                if let Some(sum) = fusable_product(f, &uses, body, i) {
+                    found.push((f.op(body[i]).span, f.op(sum).span));
+                }
+            }
+        }
+    }
+    found
+}
+
+/// How many operands refer to each value of `f`, in every operation of its
+/// arena (a value used in a nested region counts too).
+fn use_counts(f: &Function) -> Vec<u32> {
+    let mut uses = vec![0u32; f.values.len()];
+    for op in &f.ops {
+        for v in &op.operands {
+            if let Some(n) = uses.get_mut(v.index()) {
+                *n += 1;
+            }
+        }
+    }
+    uses
+}
+
 fn args_of(vs: &[Cv]) -> Vec<BlockArg> {
     vs.iter().map(|v| BlockArg::Value(*v)).collect()
 }
 
 /// The translation of one function.
-struct FnTx<'a, 'm> {
+struct FnTx<'a, 'm, M: ClModule> {
     b: FunctionBuilder<'a>,
-    jit: &'a mut JITModule,
+    jit: &'a mut M,
     sh: &'a mut Shared<'m>,
     f: &'m Function,
     fidx: u32,
@@ -615,20 +824,40 @@ struct FnTx<'a, 'm> {
     rt_refs: HashMap<Rt, FuncRef>,
     fn_refs: HashMap<usize, FuncRef>,
     site_ids: HashMap<u32, i32>,
+    /// Where each scalar that is a lane of a packed vector came from
+    /// (see [`slp`]).
+    lanes: HashMap<Cv, (Cv, u8)>,
+    /// Whether array operations are vectorized in the loop or function body
+    /// being translated, innermost last (see [`slp`]).
+    slp_regions: Vec<bool>,
     /// What the exactness analysis proves about the function: an operation
     /// that can fail by kind and provably cannot needs no check.
     facts: Analysis,
+    /// How many operands refer to each value (only when contracting).
+    uses: Vec<u32>,
+    /// Products whose emission waits for the sum that fuses them.
+    pending: HashMap<ValueId, Pending>,
 }
 
-impl<'a, 'm> FnTx<'a, 'm> {
+/// A product `x * y` (the operation `site`) not yet emitted: the sum that
+/// uses it will fuse it (relaxed numerics, see the module docs).
+#[derive(Clone, Copy)]
+struct Pending {
+    x: Cv,
+    y: Cv,
+    site: OpId,
+}
+
+impl<'a, 'm, M: ClModule> FnTx<'a, 'm, M> {
     fn translate(
         func: &'a mut ir::Function,
         fctx: &'a mut FunctionBuilderContext,
-        jit: &'a mut JITModule,
+        jit: &'a mut M,
         sh: &'a mut Shared<'m>,
         f: &'m Function,
         fidx: u32,
     ) -> Res<()> {
+        let tx_contract = sh.contract;
         let mut b = FunctionBuilder::new(func, fctx);
         let entry = b.create_block();
         b.append_block_params_for_function_params(entry);
@@ -652,9 +881,19 @@ impl<'a, 'm> FnTx<'a, 'm> {
             rt_refs: HashMap::new(),
             fn_refs: HashMap::new(),
             site_ids: HashMap::new(),
+            lanes: HashMap::new(),
+            slp_regions: Vec::new(),
             facts: exact::analyze(f),
+            uses: if tx_contract {
+                use_counts(f)
+            } else {
+                Vec::new()
+            },
+            pending: HashMap::new(),
         };
         let limit = params[1];
+        let pack = tx.sh.slp == Slp::Auto && !slp::body_latency_bound(f);
+        tx.slp_regions.push(pack);
         tx.owned.push(Vec::new());
         let entry_block = f.entry();
         tx.bind_all(f.param_values(), &params[3..]);
@@ -1164,10 +1403,141 @@ impl<'a, 'm> FnTx<'a, 'm> {
         let Some((term, body)) = block.ops.split_last() else {
             return refuse("a block has no terminator", Some(f.span));
         };
-        for id in body {
-            self.op(*id)?;
+        let mut i = 0;
+        while i < body.len() {
+            // Relaxed numerics: a product that fuses into its sum is left for
+            // the sum. Otherwise pairs of independent operations may share
+            // vector lanes (SLP), and the rest are translated one by one.
+            if self.sh.contract && fusable_product(f, &self.uses, body, i).is_some() {
+                self.defer_product(body[i])?;
+                i += 1;
+                continue;
+            }
+            // A sum that reads a deferred product must be the fused one, so
+            // it is never offered to SLP (which would read the product as a
+            // value that was never emitted).
+            let reads_pending = |id: OpId| {
+                f.op(id)
+                    .operands
+                    .iter()
+                    .any(|v| self.pending.contains_key(v))
+            };
+            let pairable =
+                i + 1 < body.len() && !reads_pending(body[i]) && !reads_pending(body[i + 1]);
+            if pairable && self.scalar_pair(body[i], body[i + 1])? {
+                i += 2;
+            } else {
+                self.op(body[i])?;
+                i += 1;
+            }
         }
         Ok(f.op(*term))
+    }
+
+    // ----- relaxed numerics: contraction -----
+
+    /// Holds the product `id` back for the sum that will fuse it.
+    fn defer_product(&mut self, id: OpId) -> Res<()> {
+        let op = self.f.op(id);
+        let (x, y) = (self.operand(op, 0)?, self.operand(op, 1)?);
+        self.pending.insert(
+            op.results[0],
+            Pending {
+                x: x.v,
+                y: y.v,
+                site: id,
+            },
+        );
+        Ok(())
+    }
+
+    /// `x*y + c`, `x*y - c` or `c - x*y` as one fused multiply-add, where
+    /// `product` is which operand of the sum was the deferred product.
+    fn fused_sum(&mut self, id: OpId, op: &OpData, kind: ArithOp) -> Res<()> {
+        let product_is_lhs = self.pending.contains_key(&op.operands[0]);
+        let (pv, ci) = if product_is_lhs {
+            (op.operands[0], 1)
+        } else {
+            (op.operands[1], 0)
+        };
+        let Some(p) = self.pending.remove(&pv) else {
+            return refuse("a fused product is missing", Some(op.span));
+        };
+        let c = self.operand(op, ci)?.v;
+        let r = match (kind, product_is_lhs) {
+            (ArithOp::Sub, true) => {
+                let nc = self.b.ins().fneg(c);
+                self.b.ins().fma(p.x, p.y, nc)
+            }
+            (ArithOp::Sub, false) => {
+                let nx = self.b.ins().fneg(p.x);
+                self.b.ins().fma(nx, p.y, c)
+            }
+            _ => self.b.ins().fma(p.x, p.y, c),
+        };
+        let r = if self.proven(p.site) && self.proven(id) {
+            r
+        } else {
+            self.finite_or_unfused(r, p, c, kind, product_is_lhs, id)
+        };
+        let dim = dim_of_type(self.f.ty(op.results[0])).unwrap_or(Dimension::DIMENSIONLESS);
+        self.define(op, 0, Comp::F64(r, dim))
+    }
+
+    /// The fused value `r` if it is finite. Otherwise the two operations are
+    /// replayed unfused, as reproducible numerics would run them: a product
+    /// that is not finite fails as the product, a sum that is not finite
+    /// fails as the sum (both with the interpreter's error), and a finite
+    /// unfused sum (the fused one rounded past the largest double, the
+    /// unfused one did not) is the value.
+    fn finite_or_unfused(
+        &mut self,
+        r: Cv,
+        p: Pending,
+        c: Cv,
+        kind: ArithOp,
+        product_is_lhs: bool,
+        id: OpId,
+    ) -> Cv {
+        let ok = self.is_finite(r);
+        let (cold, cont) = (self.b.create_block(), self.b.create_block());
+        self.b.append_block_param(cont, types::F64);
+        self.b
+            .ins()
+            .brif(ok, cont, &[BlockArg::Value(r)], cold, &[]);
+        self.b.set_cold_block(cold);
+        self.b.switch_to_block(cold);
+        let prod = self.b.ins().fmul(p.x, p.y);
+        let prod_ok = self.is_finite(prod);
+        let (mul_bad, sum_check) = (self.b.create_block(), self.b.create_block());
+        self.b.ins().brif(prod_ok, sum_check, &[], mul_bad, &[]);
+        self.b.set_cold_block(mul_bad);
+        self.b.switch_to_block(mul_bad);
+        let site = self.site(p.site);
+        let site = self.c32(site);
+        self.call(Rt::Fail2, &[site, p.x, p.y]);
+        let err = self.err;
+        self.b.ins().jump(err, &[]);
+        self.b.set_cold_block(sum_check);
+        self.b.switch_to_block(sum_check);
+        let (l, rr) = if product_is_lhs { (prod, c) } else { (c, prod) };
+        let sum = match kind {
+            ArithOp::Sub => self.b.ins().fsub(l, rr),
+            _ => self.b.ins().fadd(l, rr),
+        };
+        let sum_ok = self.is_finite(sum);
+        let sum_bad = self.b.create_block();
+        self.b
+            .ins()
+            .brif(sum_ok, cont, &[BlockArg::Value(sum)], sum_bad, &[]);
+        self.b.set_cold_block(sum_bad);
+        self.b.switch_to_block(sum_bad);
+        let site = self.site(id);
+        let site = self.c32(site);
+        self.call(Rt::Fail2, &[site, l, rr]);
+        self.b.ins().jump(err, &[]);
+        self.b.switch_to_block(cont);
+        self.b.block_params(cont)[0]
     }
 
     fn call1(&mut self, rt: Rt, args: &[Cv]) -> Cv {
@@ -1399,6 +1769,12 @@ impl<'a, 'm> FnTx<'a, 'm> {
     /// that fails goes to the runtime, which fails it), a zero divisor, then
     /// the finiteness of the result.
     fn arith(&mut self, id: OpId, op: &OpData, kind: ArithOp) -> Res<()> {
+        if !self.pending.is_empty()
+            && matches!(kind, ArithOp::Add | ArithOp::Sub)
+            && op.operands.iter().any(|v| self.pending.contains_key(v))
+        {
+            return self.fused_sum(id, op, kind);
+        }
         let (a, b) = (self.operand(op, 0)?, self.operand(op, 1)?);
         if let (Rep::F64, Rep::F64, Some(da), Some(db)) = (
             a.rep,
@@ -1891,6 +2267,14 @@ impl<'a, 'm> FnTx<'a, 'm> {
     /// transferred in a block of its own, so the `before` block's handles are
     /// released on both paths.
     fn while_op(&mut self, id: OpId, op: &'m OpData) -> Res<()> {
+        let f = self.f;
+        self.slp_region(
+            || !slp::loop_latency_bound(f, op),
+            |tx| tx.while_loop(id, op),
+        )
+    }
+
+    fn while_loop(&mut self, id: OpId, op: &'m OpData) -> Res<()> {
         let f = self.f;
         let [before_r, after_r] = op.regions[..] else {
             return refuse("a `while` needs two regions", Some(op.span));

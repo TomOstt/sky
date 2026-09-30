@@ -22,16 +22,89 @@
 //! all-zero sum.
 
 pub use sky_linalg::{
-    cholesky, cholesky_solve, dot, is_symmetric, lu, set_threads, sum_squares, sum_squares_scaled,
-    syrk, LinalgError, Lu,
+    is_symmetric, lu, numerics, set_numerics, set_threads, sum_squares_scaled, LinalgError, Lu,
+    Numerics,
 };
 
-/// `a * b` for `a` (m by k) and `b` (k by n): an m by n matrix. Each entry
-/// is accumulated in the naive order (`c = 0; c = c + a*b`, `k` ascending)
-/// with no fused multiply-add.
+/// Whether this run uses relaxed numerics (see [`Numerics`]): set once by
+/// `sky run --numerics=relaxed` before anything executes.
+#[inline]
+fn relaxed() -> bool {
+    numerics() == Numerics::Relaxed
+}
+
+/// `a * b` for `a` (m by k) and `b` (k by n): an m by n matrix. In the
+/// default (reproducible) numerics each entry is accumulated in the naive
+/// order (`c = 0; c = c + a*b`, `k` ascending) with no fused multiply-add;
+/// in relaxed numerics it may be fused, and computed by the platform's BLAS.
 pub fn matmul(a: &[f64], m: usize, k: usize, b: &[f64], n: usize) -> Vec<f64> {
     debug_assert_eq!((a.len(), b.len()), (m * k, k * n));
+    if relaxed() {
+        return sky_linalg::gemm_relaxed(a, m, k, b, n);
+    }
     sky_linalg::gemm(a, m, k, b, n)
+}
+
+/// `Σ a[i]·b[i]`: in the fixed order of the spec, or (relaxed) fused and
+/// reassociated.
+pub fn dot(a: &[f64], b: &[f64]) -> f64 {
+    if relaxed() {
+        return sky_linalg::dot_relaxed(a, b);
+    }
+    sky_linalg::dot(a, b)
+}
+
+/// `Σ x[i]²`, the sum behind `norm` (see [`dot`]).
+pub fn sum_squares(x: &[f64]) -> f64 {
+    if relaxed() {
+        return sky_linalg::sum_squares_relaxed(x);
+    }
+    sky_linalg::sum_squares(x)
+}
+
+/// The Gram matrix `b · bᵀ` of `b` (m by k), exactly symmetric.
+pub fn syrk(b: &[f64], m: usize, k: usize) -> Vec<f64> {
+    if relaxed() {
+        return sky_linalg::syrk_relaxed(b, m, k);
+    }
+    sky_linalg::syrk(b, m, k)
+}
+
+/// The Cholesky factor of a symmetric positive-definite matrix. The errors
+/// are the same in both numerics (see `sky_linalg::cholesky_relaxed_with`).
+pub fn cholesky(a: &[f64], n: usize) -> Result<Vec<f64>, LinalgError> {
+    if relaxed() {
+        return sky_linalg::cholesky_relaxed(a, n);
+    }
+    sky_linalg::cholesky(a, n)
+}
+
+/// Solves `A·X = B` given the Cholesky factor of `A`.
+pub fn cholesky_solve(l: &[f64], n: usize, b: &[f64], k: usize) -> Vec<f64> {
+    if relaxed() {
+        return sky_linalg::cholesky_solve_relaxed(l, n, b, k);
+    }
+    sky_linalg::cholesky_solve(l, n, b, k)
+}
+
+/// Solves `A·X = B` by LU with partial pivoting (`A` is `n` by `n`, `B` is
+/// `n` by `k`): [`LinalgError::Singular`] under the same test as
+/// [`inverse`] in both numerics. Reproducibly this is `lu` then
+/// `Lu::solve`; relaxed it is LAPACK's `dgesv` where there is one.
+pub fn lu_solve(a: &[f64], n: usize, b: &[f64], k: usize) -> Result<Vec<f64>, LinalgError> {
+    if relaxed() {
+        return sky_linalg::solve_relaxed(a, n, b, k);
+    }
+    Ok(sky_linalg::lu(a, n)?.solve(b, k))
+}
+
+/// Solves `Z·A = X` (`Z = X·A⁻¹`) for `X` (`m` by `n`) without forming the
+/// inverse: see [`lu_solve`].
+pub fn lu_solve_right(a: &[f64], n: usize, x: &[f64], m: usize) -> Result<Vec<f64>, LinalgError> {
+    if relaxed() {
+        return sky_linalg::solve_right_relaxed(a, n, x, m);
+    }
+    Ok(sky_linalg::lu(a, n)?.solve_right(x, m))
 }
 
 /// The inverse of an `n` by `n` matrix by Gauss-Jordan elimination with

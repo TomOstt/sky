@@ -120,6 +120,32 @@ const UNKNOWN_ELEMENTS: u64 = 256;
 /// The most threads `--threads` accepts.
 pub const MAX_THREADS: usize = 1024;
 
+/// The kernel name `sky tune` stores the `fused_work` threshold under (size
+/// class `all`, parameter `work`).
+pub const FUSED_WORK_KERNEL: &str = "par_fused_work";
+/// The kernel name for the `array_elements` threshold (size class `all`,
+/// parameter `elements`).
+pub const ARRAY_ELEMENTS_KERNEL: &str = "par_array_elements";
+
+/// The `fused_work` and `array_elements` thresholds tuned on this machine,
+/// else the defaults of [`Config::with_threads`]: read once per process and
+/// clamped, so a stale or edited database cannot switch parallelism off for
+/// good or on for a one-element array.
+pub fn tuned() -> (usize, usize) {
+    static TUNED: std::sync::OnceLock<(usize, usize)> = std::sync::OnceLock::new();
+    *TUNED.get_or_init(|| {
+        let d = Config::with_threads(1);
+        let fused = sky_tune::lookup(FUSED_WORK_KERNEL, "all").map_or(d.fused_work as i64, |p| {
+            p.get_clamped("work", d.fused_work as i64, 0, 1 << 30)
+        });
+        let array = sky_tune::lookup(ARRAY_ELEMENTS_KERNEL, "all")
+            .map_or(d.array_elements as i64, |p| {
+                p.get_clamped("elements", d.array_elements as i64, 2, 1 << 30)
+            });
+        (fused as usize, array as usize)
+    })
+}
+
 /// How to run: the number of threads and the thresholds under which
 /// running elsewhere costs more than it saves.
 ///
@@ -174,6 +200,18 @@ impl Config {
         }
     }
 
+    /// [`Config::with_threads`], with the two size thresholds `sky tune` found
+    /// best on this machine where it has measured them (see [`tuned`]).
+    /// Tuning changes when work is split, never the output.
+    pub fn tuned(threads: usize) -> Config {
+        let (fused_work, array_elements) = tuned();
+        Config {
+            fused_work,
+            array_elements,
+            ..Config::with_threads(threads)
+        }
+    }
+
     /// The default number of threads: `SKY_THREADS` if it is a valid
     /// number, else the machine's parallelism.
     pub fn default_threads() -> usize {
@@ -187,9 +225,9 @@ impl Config {
     }
 
     /// The configuration `sky` uses without `--threads`: [`Config::default_threads`]
-    /// and the measured thresholds.
+    /// and the thresholds tuned on this machine (else the measured defaults).
     pub fn from_env() -> Config {
-        Config::with_threads(Config::default_threads())
+        Config::tuned(Config::default_threads())
     }
 
     /// Whether anything can run in parallel at all.
@@ -1023,7 +1061,7 @@ fn kernel_notes(f: &Function, cfg: &Config, notes: &mut Vec<Note>) {
         let span = op.span;
         let t = cfg.threads;
         let small = |n: u64| n < threshold as u64;
-        let note = if !cfg.is_parallel() {
+        let mut note = if !cfg.is_parallel() {
             Note {
                 rule: NOT_PARALLEL_RULE,
                 span,
@@ -1069,8 +1107,27 @@ fn kernel_notes(f: &Function, cfg: &Config, notes: &mut Vec<Note>) {
                 ],
             }
         };
+        // Where the threshold came from tuning, say so.
+        if cfg.is_parallel() {
+            let cited = match &op.kind {
+                OpKind::Fused => tuned_citation(FUSED_WORK_KERNEL, cfg.fused_work, tuned().0),
+                _ => tuned_citation(ARRAY_ELEMENTS_KERNEL, cfg.array_elements, tuned().1),
+            };
+            note.because.extend(cited);
+        }
         notes.push(note);
     }
+}
+
+/// `sky tune`'s note for a threshold, when `value` is the tuned one (a
+/// [`Config`] made by [`Config::with_threads`] has the measured defaults and
+/// cites nothing).
+fn tuned_citation(kernel: &str, value: usize, tuned_value: usize) -> Option<String> {
+    if value != tuned_value {
+        return None;
+    }
+    let note = sky_tune::tuned_note(kernel, "all")?;
+    Some(format!("the threshold is {value}, {note}"))
 }
 
 /// How many operations the body of a `fused` has, without its `yield`.

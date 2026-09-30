@@ -1,7 +1,7 @@
 //! What a call site knows that the callee's signature does not.
 //!
 //! A [`Fact`] is one such piece of knowledge about the arguments of one
-//! call. Three kinds:
+//! call. Four kinds:
 //!
 //! * **Size**: the callee has a symbolic size (`Vector[N]`) and the argument
 //!   has a concrete one (`Vector[3]`): `N = 3`;
@@ -12,7 +12,14 @@
 //!   source; the case is here for IR that types one.)
 //! * **Sign**: a scalar parameter whose argument the analysis proves strictly
 //!   positive or strictly negative (a range that excludes zero and does not
-//!   cross it).
+//!   cross it);
+//! * **Type**: an `unknown` parameter (unannotated) and an argument whose
+//!   type is known exactly: a number of a dimension and a concrete shape, a
+//!   Bool, a string. The clone's parameter has that type, and the body is
+//!   typed again from it ([`super::retype`]). The clone is for arguments of
+//!   exactly that type: a different dimension (`3` and `3 m`), shape or kind
+//!   is another clone, and the generic function stays for every call that
+//!   gives no type.
 //!
 //! Only parameters the callee's body reads matter, so a fact about an unused
 //! parameter is never recorded (two calls that differ only there share one
@@ -23,16 +30,19 @@
 //! writes a constant for `len`. A parameter that the callee declares with an
 //! `unknown` type gets no fact (its operations check their operands at run
 //! time, and a constant of a more precise type could change which check
-//! fails).
+//! fails). Such a parameter gets a **type fact** instead, and only that: once
+//! the clone knows the type, its checks are the typed ones.
 //!
 //! The name of a specialization is `f[` + its facts, sorted (sizes by
 //! variable, then parameters in order) and separated by commas + `]`:
-//! `f[N=3]`, `f[x=2]`, `f[N=3,x>0]`. The same facts always give the same
-//! name, which is how duplicates are found.
+//! `f[N=3]`, `f[x=2]`, `f[N=3,x>0]`, and for a type `f[n:Scalar]`
+//! (dimensionless), `f[n:Scalar(length)]`, `f[v:Vector[3](time)]`, `f[b:Bool]`.
+//! The same facts always give the same name, which is how duplicates are
+//! found.
 
 use sky_ir::exact::{self, Analysis, Range};
-use sky_ir::{Function, OpData, OpKind, Repr, Type, ValueDef, ValueId};
-use sky_types::{ShapeDim, ShapeVar};
+use sky_ir::{Function, NumberType, OpData, OpKind, Repr, Type, ValueDef, ValueId};
+use sky_types::{ShapeDim, ShapeVar, TagSet};
 use sky_units::Rational;
 
 use crate::util::reachable_ops;
@@ -64,9 +74,24 @@ impl Const {
 /// What is known about one parameter (or size variable).
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) enum Kind {
-    Size { var: ShapeVar, n: u64 },
-    Const { param: usize, value: Const },
-    Sign { param: usize, positive: bool },
+    Size {
+        var: ShapeVar,
+        n: u64,
+    },
+    Const {
+        param: usize,
+        value: Const,
+    },
+    Sign {
+        param: usize,
+        positive: bool,
+    },
+    /// The parameter, which the callee declares `unknown`, has this type
+    /// (no tags, representation unchosen, every size a number).
+    Type {
+        param: usize,
+        ty: Type,
+    },
 }
 
 /// One fact, and the reason to show for it.
@@ -88,18 +113,25 @@ impl Fact {
             Kind::Sign { positive, .. } => {
                 format!("{}{}0", self.name, if *positive { '>' } else { '<' })
             }
+            Kind::Type { ty, .. } => format!("{}:{}", self.name, type_key(ty)),
         }
     }
 
     fn order(&self) -> (u8, u64) {
         match &self.kind {
             Kind::Size { var, .. } => (0, var.id()),
-            Kind::Const { param, .. } | Kind::Sign { param, .. } => (1, *param as u64),
+            Kind::Const { param, .. } | Kind::Sign { param, .. } | Kind::Type { param, .. } => {
+                (1, *param as u64)
+            }
         }
     }
 
     pub(crate) fn is_sign(&self) -> bool {
         matches!(self.kind, Kind::Sign { .. })
+    }
+
+    pub(crate) fn is_type(&self) -> bool {
+        matches!(self.kind, Kind::Type { .. })
     }
 
     /// The range a sign fact gives its parameter.
@@ -113,6 +145,78 @@ impl Fact {
             } => Some(Range::new(-f64::MAX, exact::range::next_down(0.0))),
             _ => None,
         }
+    }
+}
+
+/// The type as the name of a specialization writes it: `Scalar`,
+/// `Vector[3]`, `Matrix[2,3]`, `Bool`, `Str`, and after a number's shape its
+/// dimension in parentheses unless it is dimensionless (`Scalar(length)`).
+pub(crate) fn type_key(t: &Type) -> String {
+    match t {
+        Type::Number(n) => {
+            let dims: Vec<String> = n.shape.dims().iter().map(|d| d.to_string()).collect();
+            let shape = match dims.len() {
+                0 => "Scalar".to_string(),
+                1 => format!("Vector[{}]", dims[0]),
+                _ => format!("Matrix[{}]", dims.join(",")),
+            };
+            if n.dim.is_dimensionless() {
+                shape
+            } else {
+                let dim = n
+                    .dim
+                    .name()
+                    .map_or_else(|| n.dim.to_string(), str::to_string);
+                format!("{shape}({dim})")
+            }
+        }
+        Type::Bool => "Bool".to_string(),
+        Type::Str => "Str".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// [`type_key`] as words: `Scalar (dimensionless)`, `Vector[3] (length)`,
+/// `Bool`.
+pub(crate) fn type_words(t: &Type) -> String {
+    words_of_type_key(&type_key(t))
+}
+
+/// The words for a type as [`type_key`] writes it.
+pub(crate) fn words_of_type_key(key: &str) -> String {
+    match key.find('(') {
+        Some(i) => format!("{} {}", &key[..i], &key[i..]),
+        None if key.starts_with("Scalar")
+            || key.starts_with("Vector")
+            || key.starts_with("Matrix") =>
+        {
+            format!("{key} (dimensionless)")
+        }
+        None => key.to_string(),
+    }
+}
+
+/// The type a type fact gives a parameter for an argument of type `t`: a
+/// number of unchosen representation with a concrete shape of at most two
+/// axes (tags dropped: a clone promises nothing about them), a Bool or a
+/// string. `None` for anything else.
+fn fact_type(t: &Type) -> Option<Type> {
+    match t {
+        Type::Number(n)
+            if n.repr == Repr::Unchosen
+                && n.shape.rank() <= 2
+                && n.shape
+                    .dims()
+                    .iter()
+                    .all(|d| matches!(d, ShapeDim::Known(_))) =>
+        {
+            Some(Type::Number(NumberType {
+                tags: TagSet::EMPTY,
+                ..n.clone()
+            }))
+        }
+        Type::Bool | Type::Str => Some(t.clone()),
+        _ => None,
     }
 }
 
@@ -206,6 +310,19 @@ pub(crate) fn derive(
             continue;
         }
         let name = param_name(callee, i);
+        if matches!(param, Type::Unknown) {
+            if let Some(ty) = fact_type(caller.ty(arg)) {
+                facts.push(Fact {
+                    kind: Kind::Type {
+                        param: i,
+                        ty: ty.clone(),
+                    },
+                    why: format!("the argument for `{name}` is a {}", type_words(&ty)),
+                    name,
+                });
+            }
+            continue;
+        }
         let (Type::Number(_) | Type::Bool, arg_ty) = (param, caller.ty(arg)) else {
             continue;
         };

@@ -1,4 +1,5 @@
-//! Fast, reproducible dense linear algebra for Sky.
+//! Fast, reproducible dense linear algebra for Sky (and, opt-in, fast
+//! relaxed variants: see "Relaxed numerics" below).
 //!
 //! Every engine that runs a Sky program (the tree-walking interpreter, the
 //! SIR interpreter, and any native one) calls these kernels, and they give
@@ -41,7 +42,9 @@
 //! # The kernels
 //!
 //! * **GEMM** ([`gemm`]): the Goto/BLIS structure. Cache blocks over `j`
-//!   (1024 columns), `k` (256) and `i` (128 rows); the block of `B` is packed
+//!   (1024 columns), `k` (256) and `i` (128 rows; these, the Cholesky and LU
+//!   block sizes and the thread threshold are the defaults `sky tune`
+//!   replaces on a machine where it finds better ones, see [`tuning`]); the block of `B` is packed
 //!   once into slivers of 8 columns (shared by all workers) and each worker
 //!   packs its own rows of `A` into slivers of 4 rows; a 4 by 8 tile of
 //!   accumulators lives in registers while 256 rank-one updates stream
@@ -83,43 +86,77 @@
 //!
 //! # SIMD
 //!
-//! The hot loops are written so LLVM vectorizes them (NEON on aarch64 is
-//! part of the base ISA); on x86_64 they are also compiled with AVX2
-//! enabled (never FMA) and chosen at run time with
-//! `is_x86_feature_detected!`. The only `unsafe` in the crate is calling
-//! those `target_feature` functions after the check.
+//! The reproducible hot loops are written so LLVM vectorizes them (NEON on
+//! aarch64 is part of the base ISA); on x86_64 they are also compiled with
+//! AVX2 enabled (never FMA) and chosen at run time with
+//! `is_x86_feature_detected!`.
 //!
-//! # Cost of not fusing
+//! # Unsafe code
+//!
+//! Only three kinds, each commented where it is: calling a `target_feature`
+//! function after the run-time check, the NEON and AVX2 intrinsics of the
+//! relaxed kernels, and the FFI calls into Accelerate (macOS only).
+//!
+//! # Relaxed numerics
 //!
 //! Hardware FMA does a multiply and an add in one instruction and one
 //! rounding, which is twice the peak flop rate of the same silicon
 //! (`vfmadd`, `fmla`) and a different result. Sky's products round the
-//! product first, so on the same core these kernels top out at half the
-//! peak of an FMA library. (Apple's Accelerate also uses the AMX
-//! coprocessor, which no portable code reaches.) `benches/blas.rs` measures
+//! product first, so on the same core the reproducible kernels top out at
+//! half the peak of an FMA library, and Apple's Accelerate also uses the AMX
+//! coprocessor, which no portable code reaches. `benches/blas.rs` measures
 //! all of this.
+//!
+//! The opt-in answer is the **relaxed** family (the `*_relaxed*` and
+//! `*_fused*` functions, see [`Numerics`]): fused multiply-add microkernels
+//! (`vfmaq_laneq_f64` on aarch64, FMA3 on x86-64 when detected), a
+//! reassociated and threaded [`dot_relaxed`], and Accelerate's `cblas_dgemm`,
+//! `dpotrf`/`dpotrs` and `dgesv` on macOS ([`gemm_relaxed_with`],
+//! [`cholesky_relaxed_with`], [`solve_relaxed_with`]). They are separate
+//! functions, so a reproducible call never changes meaning, and they keep
+//! Sky's errors: a vendor factorization is trusted only when clearly
+//! successful, and otherwise the reproducible kernel decides (see the
+//! `relaxed` module). The spec's "Relaxed numerics" is the contract.
 
 #![deny(unsafe_code)]
 // Kernels take many operands (pointers, strides, extents), and their lane
 // loops are written with indices because that is how the arithmetic reads.
 #![allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 
+#[cfg(target_os = "macos")]
+mod accelerate;
 mod chol;
 mod dot;
 mod gemm;
 mod inverse;
 mod lu;
 mod micro;
+mod numerics;
+mod reassoc;
 pub mod reference;
+mod relaxed;
 mod threads;
 mod tri;
+pub mod tuning;
 
-pub use chol::{cholesky, cholesky_solve, cholesky_solve_with, cholesky_with, is_symmetric};
+pub use chol::{
+    cholesky, cholesky_fused_with, cholesky_solve, cholesky_solve_with, cholesky_with, is_symmetric,
+};
 pub use dot::{dot, sum_squares, sum_squares_scaled, LANES};
-pub use gemm::{gemm, gemm_into_with, gemm_with, syrk, syrk_with};
+pub use gemm::{
+    gemm, gemm_into_fused_with, gemm_into_with, gemm_with, syrk, syrk_fused_with, syrk_with,
+};
 pub use inverse::{inverse, inverse_with};
-pub use lu::{lu, lu_with, solve, Lu};
+pub use lu::{lu, lu_fused_with, lu_with, solve, Lu};
+pub use numerics::{fma_available, numerics, set_numerics, vendor, Numerics};
+pub use reassoc::{dot_relaxed, dot_relaxed_with, sum_squares_relaxed};
+pub use relaxed::{
+    cholesky_relaxed, cholesky_relaxed_with, cholesky_solve_relaxed, cholesky_solve_relaxed_with,
+    gemm_relaxed, gemm_relaxed_with, gemm_vendor, solve_relaxed, solve_relaxed_with,
+    solve_right_relaxed, solve_right_relaxed_with, syrk_relaxed, syrk_relaxed_with,
+};
 pub use threads::{default_threads, set_threads, MAX_THREADS};
+pub use tuning::register;
 
 /// Why a factorization or inverse failed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

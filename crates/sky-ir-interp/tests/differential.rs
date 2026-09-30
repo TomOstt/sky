@@ -2726,3 +2726,21 @@ fn a_vector_of_one_entry_and_other_corners() {
         assert_same(src);
     }
 }
+
+/// A variable that only the arm never taken assigns, read after an `if` that
+/// returns from the other arms. Once `fold` (or `specialize`, which folds its
+/// clones) decides that `if`, the variable is unassigned: the read is dead,
+/// and the optimized SIR must still be valid and behave as the tree-walker
+/// does.
+#[test]
+fn a_decided_branch_and_a_variable_only_the_dead_arm_assigns() {
+    for src in [
+        "def f(p, q):\n    if false:\n        t = p\n    elif q:\n        return 1\n    else:\n        return 2\n    \
+         if t > 0:\n        print(1)\n    return 3\nprint(f(1, true))\nprint(f(1, false))\nprint(f(1, 0))\n",
+        "k = 0\nwhile k < 3:\n    k = k + 1\ny = -(abs(k) + 1)\ndef f(p, q):\n    \
+         if 3 == max(1, y) and p != 1:\n        t = q\n    elif p >= 2:\n        return -q / (p - 3)\n    else:\n        return 5\n    \
+         return tan(t)\nprint(f(1, 3))\nprint(f(k, 3))\nprint(4)\n",
+    ] {
+        assert_same(src);
+    }
+}

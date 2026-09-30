@@ -18,9 +18,14 @@ fn repro() -> RewriteConfig {
     RewriteConfig::default()
 }
 
-/// The rules that fired, in order.
+/// The rules that fired, in order (the cost explanations, which say why an
+/// extracted form was chosen, are not rules and are checked on their own).
 fn fired(f: &mut Function, cfg: &RewriteConfig) -> Vec<&'static str> {
-    rewrite_function(f, cfg).iter().map(|r| r.rule).collect()
+    rewrite_function(f, cfg)
+        .iter()
+        .map(|r| r.rule)
+        .filter(|r| *r != sky_egraph::COST_RULE)
+        .collect()
 }
 
 /// The value a function returns for `args`, which must succeed.
@@ -114,6 +119,55 @@ fn alg_006_div_one_and_alg_007_neg_neg() {
         "{rules:?}"
     );
     assert_eq!(kinds(&f), ["return"]);
+}
+
+/// An array's negation is `0 - x` per entry, so `-(-x)` turns `-0` into `+0`
+/// and is not `x`: ALG-007 is for numbers (and for arrays proven not `-0`).
+#[test]
+fn alg_007_does_not_apply_to_arrays_that_may_hold_minus_zero() {
+    let v = Type::Number(sky_ir::NumberType {
+        dim: Dimension::DIMENSIONLESS,
+        shape: sky_types::Shape::vector(3u64),
+        tags: TagSet::EMPTY,
+        repr: sky_ir::Repr::Unchosen,
+    });
+    let mk = || {
+        let mut t = T::new(vec![v.clone()], vec![v.clone()]);
+        let p = t.params()[0];
+        let n = t.op(OpKind::Neg, &[p], v.clone());
+        let r = t.op(OpKind::Neg, &[n], v.clone());
+        t.ret(&[r])
+    };
+    let input = vec![Value::array(
+        vec![3],
+        vec![-0.0, 0.0, 2.0],
+        Dimension::DIMENSIONLESS,
+    )];
+    let run_array = |f: &Function| {
+        let m = module(f);
+        sky_ast::with_deep_stack(|| {
+            sky_ir_interp::call(&m, "f", input.clone(), &mut Vec::new()).expect("runs")
+        })
+    };
+    let original = mk();
+    for cfg in [repro(), fast()] {
+        let mut g = original.clone();
+        assert!(fired(&mut g, &cfg).is_empty());
+        assert_eq!(kinds(&g), ["neg", "neg", "return"]);
+    }
+    // `-0.0` comes back as `+0.0`, which `x` itself would not be.
+    let Value::Array { data, .. } = &run_array(&original)[0] else {
+        panic!("not an array")
+    };
+    assert_eq!(data[0].to_bits(), 0.0f64.to_bits());
+
+    // The same program on numbers is still `x`.
+    let mut s = unary(|t, x| {
+        let n = t.un(OpKind::Neg, x);
+        t.un(OpKind::Neg, n)
+    });
+    assert_eq!(fired(&mut s, &repro()), ["ALG-007"]);
+    assert_eq!(value(&s, &[-0.0]).to_bits(), (-0.0f64).to_bits());
 }
 
 #[test]
@@ -413,8 +467,10 @@ fn la_001_transpose_of_symmetric() {
         t.op(OpKind::Transpose, &[a], matrix(TagSet::of(Tag::Symmetric)))
     });
     let rw = rewrite_function(&mut f, &repro());
-    assert_eq!(rw.len(), 1);
+    assert_eq!(rw.len(), 2);
     assert_eq!(rw[0].rule, "LA-001");
+    // The array result also gets the explanation of the cheaper choice.
+    assert_eq!(rw[1].rule, "EG-COST-001");
     assert_eq!(kinds(&f), ["return"]);
 
     // PositiveDefinite implies Symmetric (tags are closed).

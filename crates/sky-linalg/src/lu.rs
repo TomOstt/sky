@@ -56,6 +56,8 @@ struct Factor<'a> {
     tol: f64,
     swaps: &'a mut [usize],
     threads: usize,
+    /// Fuse the multiplies of the GEMM updates (relaxed numerics).
+    fma: bool,
 }
 
 impl Factor<'_> {
@@ -142,7 +144,7 @@ impl Factor<'_> {
             &mut block,
             cols,
             self.threads,
-            threads::PARALLEL_MIN_MADDS / 8,
+            threads::par_min_madds() / 8,
         );
         if !block.iter().all(|x| x.is_finite()) {
             return Err(Stop::NonFinite);
@@ -182,7 +184,7 @@ impl Factor<'_> {
             rows,
             cols,
             k,
-            Op::subtract(Op::ALL),
+            Op::subtract(Op::ALL).fused(self.fma),
             self.threads,
         );
         self.columns(mid, c1)
@@ -191,6 +193,18 @@ impl Factor<'_> {
 
 /// Factors the `n` by `n` matrix `a` (row-major) on up to `threads` workers.
 pub fn lu_with(a: &[f64], n: usize, threads: usize) -> Result<Lu, LinalgError> {
+    lu_impl(a, n, threads, false)
+}
+
+/// [`lu_with`] with the GEMM updates (nearly all the work) on the fused
+/// kernel: relaxed numerics without a vendor library. Singularity is decided
+/// by the same test (`n·ε·max|aᵢⱼ|` on the pivots), which the different
+/// rounding can flip only for a matrix within rounding error of it.
+pub fn lu_fused_with(a: &[f64], n: usize, threads: usize) -> Result<Lu, LinalgError> {
+    lu_impl(a, n, threads, crate::fma_available())
+}
+
+fn lu_impl(a: &[f64], n: usize, threads: usize, fma: bool) -> Result<Lu, LinalgError> {
     assert_eq!(a.len(), n * n, "lu: shape mismatch");
     let mut w = a.to_vec();
     let scale = a.iter().fold(0.0_f64, |s, x| s.max(x.abs()));
@@ -201,6 +215,7 @@ pub fn lu_with(a: &[f64], n: usize, threads: usize) -> Result<Lu, LinalgError> {
         tol: n as f64 * f64::EPSILON * scale,
         swaps: &mut swaps,
         threads,
+        fma,
     };
     match f.columns(0, n) {
         Ok(()) => Ok(Lu { n, lu: w, swaps }),
@@ -243,7 +258,7 @@ impl Lu {
             }
         }
         let v = View::row_major(&self.lu, n);
-        let par = threads::PARALLEL_MIN_MADDS;
+        let par = threads::par_min_madds();
         tri::solve_in_place(v, n, false, true, &mut x, k, threads, par);
         tri::solve_in_place(v, n, true, false, &mut x, k, threads, par);
         if !x.iter().all(|v| v.is_finite()) {
@@ -279,7 +294,7 @@ impl Lu {
             }
         }
         let v = self.transposed();
-        let par = threads::PARALLEL_MIN_MADDS;
+        let par = threads::par_min_madds();
         tri::solve_in_place(v, n, true, true, &mut t, m, threads, par);
         tri::solve_in_place(v, n, false, false, &mut t, m, threads, par);
         if !t.iter().all(|v| v.is_finite()) {

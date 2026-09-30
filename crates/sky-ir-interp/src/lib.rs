@@ -58,6 +58,7 @@ mod kernel;
 mod machine;
 mod native;
 mod par;
+mod tuning;
 
 #[cfg(test)]
 mod fused_tests;
@@ -79,6 +80,7 @@ pub use sky_ir::parallel::Config as ParConfig;
 use sky_ir::Module;
 
 pub use native::JitOptions;
+pub use tuning::register;
 
 /// A failure while running SIR, located at the failing operation.
 ///
@@ -189,6 +191,21 @@ pub fn call_metered(
     call: Span,
 ) -> Result<Vec<Value>, IrRuntimeError> {
     machine::call_metered(module, name, args, out, stack, Some(call))
+}
+
+/// [`call_with`] with the native-kernel options chosen too (`call_with`
+/// uses [`JitOptions::default`]): what `sky tune` needs to time the
+/// parallel thresholds with native kernels off. The results and errors are
+/// the same for every choice.
+pub fn call_with_options(
+    module: &Module,
+    name: &str,
+    args: Vec<Value>,
+    out: &mut dyn Write,
+    cfg: &ParConfig,
+    jit: JitOptions,
+) -> Result<Vec<Value>, IrRuntimeError> {
+    machine::call_par_jit(module, name, args, out, cfg, jit)
 }
 
 /// [`call`] with the native-kernel options chosen: see [`JitOptions`]. The

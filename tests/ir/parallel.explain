@@ -63,19 +63,53 @@ tests/ir/parallel.sky:19:5: note: [MEM-001] `(a + b) * 2 - a` reuses `a`'s buffe
    = note: `a` is not used again after this on any path, and has the shape of the result
    = note: applied by the `lifetimes` analysis of the SIR interpreter
 
+tests/ir/parallel.sky:20:5: note: [SPEC-005] specialized `work` for n: Scalar (dimensionless): 1 run-time type check removed
+   |
+20 | x = work(1000)
+   |     ^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time type check removed: operations of `work` that had to find out at run time what a value is, and know it in `work[n:Scalar]`
+   = note: because `work[n:Scalar]` returns a Scalar (dimensionless)
+   = note: because the argument for `n` is a Scalar (dimensionless)
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
 tests/ir/parallel.sky:20:5: note: [PAR-002] these 2 calls are independent (pure): run concurrently on up to 8 threads
    |
 20 | x = work(1000)
    |     ^^^^^^^^^^
-   = note: because `work` has no `print` (directly or in what it calls), and no call uses another's result, so their order cannot show in the output
+   = note: because `work[n:Scalar]` has no `print` (directly or in what it calls), and no call uses another's result, so their order cannot show in the output
    = note: because each is expensive enough to start elsewhere: at least 704 estimated operations (the threshold is 400)
    = note: because any of them may fail: every call is awaited and the error of the earliest one in program order is reported, as in a sequential run
 
-tests/ir/parallel.sky:22:5: note: [PAR-003] the call to `noisy` is not run concurrently with the calls after it
+tests/ir/parallel.sky:21:5: note: [SPEC-002] this call uses the existing specialization `work[n:Scalar]`
+   |
+21 | y = work(2000)
+   |     ^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because the argument for `n` is a Scalar (dimensionless)
+
+tests/ir/parallel.sky:22:5: note: [SPEC-005] specialized `noisy` for n: Scalar (dimensionless): 1 run-time type check removed
    |
 22 | p = noisy(1)
    |     ^^^^^^^^
-   = note: because `noisy` prints, and output order is behaviour: it stays in program order
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time type check removed: operations of `noisy` that had to find out at run time what a value is, and know it in `noisy[n:Scalar]`
+   = note: because `noisy[n:Scalar]` returns a Scalar (dimensionless)
+   = note: because the argument for `n` is a Scalar (dimensionless)
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/parallel.sky:22:5: note: [PAR-003] the call to `noisy[n:Scalar]` is not run concurrently with the calls after it
+   |
+22 | p = noisy(1)
+   |     ^^^^^^^^
+   = note: because `noisy[n:Scalar]` prints, and output order is behaviour: it stays in program order
+
+tests/ir/parallel.sky:23:5: note: [SPEC-002] this call uses the existing specialization `work[n:Scalar]`
+   |
+23 | q = work(3000)
+   |     ^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because the argument for `n` is a Scalar (dimensionless)
 
 tests/ir/parallel.sky:24:1: note: printed value of `x + y` is accurate to within 2.2e-15 relative
    |

@@ -84,6 +84,8 @@ pub(crate) struct Program {
     pub dims: Vec<Dimension>,
     /// The operations native code refers to by index.
     pub sites: Vec<Site>,
+    /// Relaxed numerics: kernels compiled while running fuse multiply-adds.
+    pub relaxed: bool,
 }
 
 /// One entry of [`Program::sites`]: an operation of a function, or (`op ==
@@ -171,7 +173,7 @@ struct State {
     /// Compiled `fused` kernels of this run, by the operation's address
     /// (stable while the run borrows the module; the state, and so the
     /// cache, is per run).
-    kernels: HashMap<usize, KernelEntry>,
+    kernels: Kernels,
     out: NonNull<dyn Write>,
 }
 
@@ -206,6 +208,7 @@ pub(crate) fn begin(program: Arc<Program>, out: &mut dyn Write) -> RunGuard {
             out,
         ))
     };
+    let relaxed = program.relaxed;
     STATE.with(|s| {
         *s.borrow_mut() = Some(State {
             program,
@@ -220,7 +223,10 @@ pub(crate) fn begin(program: Arc<Program>, out: &mut dyn Write) -> RunGuard {
             deopt: false,
             written: 0,
             scratch: Vec::new(),
-            kernels: HashMap::new(),
+            kernels: Kernels {
+                entries: HashMap::new(),
+                contract: relaxed,
+            },
             out,
         });
     });
@@ -369,7 +375,8 @@ impl State {
 
 // ----- boxing and handles -----
 
-pub(crate) extern "C" fn sky_rt_box_num(dim: i32, x: f64) -> i64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_box_num(dim: i32, x: f64) -> i64 {
     with(0, |st| {
         let d = st.program.dims.get(dim as usize).copied();
         match d {
@@ -382,11 +389,13 @@ pub(crate) extern "C" fn sky_rt_box_num(dim: i32, x: f64) -> i64 {
     })
 }
 
-pub(crate) extern "C" fn sky_rt_box_bool(b: i32) -> i64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_box_bool(b: i32) -> i64 {
     with(0, |st| st.alloc(Rc::new(Value::Bool(b != 0))))
 }
 
-pub(crate) extern "C" fn sky_rt_const_str(site: i32) -> i64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_const_str(site: i32) -> i64 {
     with(0, |st| {
         let text = match st.program.op(site) {
             Some((
@@ -405,11 +414,13 @@ pub(crate) extern "C" fn sky_rt_const_str(site: i32) -> i64 {
     })
 }
 
-pub(crate) extern "C" fn sky_rt_const_none() -> i64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_const_none() -> i64 {
     with(0, |st| st.alloc(Rc::new(Value::None)))
 }
 
-pub(crate) extern "C" fn sky_rt_retain(h: i64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_retain(h: i64) {
     with((), |st| {
         let i = usize::try_from(h.wrapping_sub(1)).unwrap_or(usize::MAX);
         if let Some(c) = st.cells.get_mut(i).filter(|c| c.rc > 0) {
@@ -418,7 +429,8 @@ pub(crate) extern "C" fn sky_rt_retain(h: i64) {
     });
 }
 
-pub(crate) extern "C" fn sky_rt_release(h: i64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_release(h: i64) {
     with((), |st| st.release(h));
 }
 
@@ -461,29 +473,34 @@ fn bool_of(h: i64, release: bool) -> i32 {
 
 /// The number in handle `h` (which is released): NaN and a deoptimization if
 /// it is not a number of dimension `dim`.
-pub(crate) extern "C" fn sky_rt_take_num(h: i64, dim: i32) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_take_num(h: i64, dim: i32) -> f64 {
     number_of(h, dim, true)
 }
 
 /// [`sky_rt_take_num`] without releasing `h`.
-pub(crate) extern "C" fn sky_rt_peek_num(h: i64, dim: i32) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_peek_num(h: i64, dim: i32) -> f64 {
     number_of(h, dim, false)
 }
 
 /// The Bool in handle `h` (which is released) as 0 or 1, or -1 and a
 /// deoptimization if it is not a Bool.
-pub(crate) extern "C" fn sky_rt_take_bool(h: i64) -> i32 {
+#[no_mangle]
+pub extern "C" fn sky_rt_take_bool(h: i64) -> i32 {
     bool_of(h, true)
 }
 
 /// [`sky_rt_take_bool`] without releasing `h`.
-pub(crate) extern "C" fn sky_rt_peek_bool(h: i64) -> i32 {
+#[no_mangle]
+pub extern "C" fn sky_rt_peek_bool(h: i64) -> i32 {
     bool_of(h, false)
 }
 
 /// The condition of the `if` or `while` at `site` held in handle `h`: 0 or 1,
 /// or -1 with `sky run`'s error for a condition that is not a Bool.
-pub(crate) extern "C" fn sky_rt_cond(site: i32, h: i64) -> i32 {
+#[no_mangle]
+pub extern "C" fn sky_rt_cond(site: i32, h: i64) -> i32 {
     with(-1, |st| {
         let Some(v) = st.take_value(h) else {
             return -1;
@@ -505,18 +522,21 @@ pub(crate) extern "C" fn sky_rt_cond(site: i32, h: i64) -> i32 {
 
 // ----- operands and generic operations -----
 
-pub(crate) extern "C" fn sky_rt_push_num(dim: i32, x: f64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_push_num(dim: i32, x: f64) {
     with((), |st| match st.program.dims.get(dim as usize).copied() {
         Some(d) => st.args.push(Arg::Val(Value::number(x, d))),
         None => st.fail(internal("unknown dimension")),
     });
 }
 
-pub(crate) extern "C" fn sky_rt_push_bool(b: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_push_bool(b: i32) {
     with((), |st| st.args.push(Arg::Val(Value::Bool(b != 0))));
 }
 
-pub(crate) extern "C" fn sky_rt_push_ref(h: i64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_push_ref(h: i64) {
     with((), |st| {
         if let Some(v) = st.take_value(h) {
             st.args.push(Arg::Shared(v));
@@ -526,7 +546,8 @@ pub(crate) extern "C" fn sky_rt_push_ref(h: i64) {
 
 /// Runs the operation at `site` on the operands pushed since the last
 /// operation, and returns a handle to its result (0 on failure).
-pub(crate) extern "C" fn sky_rt_op(site: i32) -> i64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_op(site: i32) -> i64 {
     with(0, |st| {
         let args = std::mem::take(&mut st.args);
         let mut scratch = std::mem::take(&mut st.scratch);
@@ -569,7 +590,7 @@ fn fail_with(st: &mut State, site: i32, values: &[f64]) {
             .unwrap_or(Dimension::DIMENSIONLESS);
         args.push(Arg::Val(Value::number(*x, dim)));
     }
-    match eval_op(f, op, &args, &mut Vec::new(), &mut HashMap::new()) {
+    match eval_op(f, op, &args, &mut Vec::new(), &mut Kernels::default()) {
         Err(e) => st.fail(e),
         Ok(_) => st.fail(internal(format!(
             "`{}` failed inline but succeeds in the runtime",
@@ -579,17 +600,20 @@ fn fail_with(st: &mut State, site: i32, values: &[f64]) {
 }
 
 /// The operation at `site` failed inline on the operand `a`.
-pub(crate) extern "C" fn sky_rt_fail1(site: i32, a: f64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_fail1(site: i32, a: f64) {
     with((), |st| fail_with(st, site, &[a]));
 }
 
 /// The operation at `site` failed inline on the operands `a` and `b`.
-pub(crate) extern "C" fn sky_rt_fail2(site: i32, a: f64, b: f64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_fail2(site: i32, a: f64, b: f64) {
     with((), |st| fail_with(st, site, &[a, b]));
 }
 
 /// The call at `site` is nested more than `MAX_CALL_DEPTH` deep.
-pub(crate) extern "C" fn sky_rt_fail_depth(site: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_fail_depth(site: i32) {
     with((), |st| {
         let span = st.program.span(site);
         let callee = match st.program.op(site) {
@@ -602,12 +626,15 @@ pub(crate) extern "C" fn sky_rt_fail_depth(site: i32) {
             )) => callee.clone(),
             _ => String::new(),
         };
-        st.fail(recursion_too_deep(&callee, span));
+        // The user's name, as the interpreters say it: not the clone's
+        // (`f[n:Scalar]`, `f[N=3]`).
+        st.fail(recursion_too_deep(sky_ir::source_name(&callee), span));
     });
 }
 
 /// The function at `site` was entered with the stack budget used up.
-pub(crate) extern "C" fn sky_rt_fail_stack(site: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_fail_stack(site: i32) {
     with((), |st| {
         let span = st.program.span(site);
         st.fail(stack_exhausted(span));
@@ -615,7 +642,8 @@ pub(crate) extern "C" fn sky_rt_fail_stack(site: i32) {
 }
 
 /// `literal.error` and `input`: operations that fail whenever they run.
-pub(crate) extern "C" fn sky_rt_fail_always(site: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_fail_always(site: i32) {
     with((), |st| {
         let s = st.program.span(site);
         let e = match st.program.op(site) {
@@ -639,24 +667,28 @@ pub(crate) extern "C" fn sky_rt_fail_always(site: i32) {
 
 /// `f(x)` for the math function at `site`, in the interpreters' own code;
 /// NaN with the pending error set on failure.
-pub(crate) extern "C" fn sky_rt_math1(site: i32, x: f64) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_math1(site: i32, x: f64) -> f64 {
     math(site, x, 0.0)
 }
 
 /// `f(x, y)` for the two-argument math function at `site`.
-pub(crate) extern "C" fn sky_rt_math2(site: i32, x: f64, y: f64) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_math2(site: i32, x: f64, y: f64) -> f64 {
     math(site, x, y)
 }
 
 /// `f(x)` for the math function number `f` (its place in `MathFn::ALL`):
 /// the value only, with no lookup of the site and no state. Native code has
 /// already checked the domain, and checks the result, inline.
-pub(crate) extern "C" fn sky_rt_libm1(f: i32, x: f64) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_libm1(f: i32, x: f64) -> f64 {
     libm(f, x, 0.0)
 }
 
 /// [`sky_rt_libm1`] for a two-argument function.
-pub(crate) extern "C" fn sky_rt_libm2(f: i32, x: f64, y: f64) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_libm2(f: i32, x: f64, y: f64) -> f64 {
     libm(f, x, y)
 }
 
@@ -690,7 +722,8 @@ fn math(site: i32, x: f64, y: f64) -> f64 {
 
 /// `b ^ x` for the `pow.const` or `pow` at `site`: `sky_interp`'s
 /// `pow_scalar`; NaN with the pending error set on failure.
-pub(crate) extern "C" fn sky_rt_pow_scalar(site: i32, b: f64, x: f64) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_pow_scalar(site: i32, b: f64, x: f64) -> f64 {
     with(f64::NAN, |st| {
         let span = st.program.span(site);
         let base_span = st
@@ -714,7 +747,8 @@ pub(crate) extern "C" fn sky_rt_pow_scalar(site: i32, b: f64, x: f64) -> f64 {
 // the places that need a handle. An array's shape is passed as `rows` and
 // `cols`: `cols == 0` is a vector of `rows` entries.
 
-pub(crate) extern "C" fn sky_rt_push_elem(x: f64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_push_elem(x: f64) {
     with((), |st| st.raw.push(x));
 }
 
@@ -743,7 +777,8 @@ fn array_dims(rows: i32, cols: i32) -> Vec<usize> {
 
 /// Pushes the array of the entries pushed as an operand of the next
 /// operation.
-pub(crate) extern "C" fn sky_rt_push_array(dim: i32, rows: i32, cols: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_push_array(dim: i32, rows: i32, cols: i32) {
     with((), |st| {
         if let Some(v) = take_array(st, dim, rows, cols) {
             st.args.push(Arg::Val(v));
@@ -760,7 +795,8 @@ pub(crate) extern "C" fn sky_rt_box_array(dim: i32, rows: i32, cols: i32) -> i64
 }
 
 /// Prints the array of the entries pushed, as one item of the line.
-pub(crate) extern "C" fn sky_rt_print_array(dim: i32, rows: i32, cols: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_print_array(dim: i32, rows: i32, cols: i32) {
     let text = with(None, |st| {
         take_array(st, dim, rows, cols).map(|v| v.print_text())
     });
@@ -773,13 +809,8 @@ pub(crate) extern "C" fn sky_rt_print_array(dim: i32, rows: i32, cols: i32) {
 /// dimension given, so `sky_rt_elem` can read its entries: 0, or -1 and a
 /// deoptimization if it is not what the type says. With `release`, `h` is
 /// released either way.
-pub(crate) extern "C" fn sky_rt_unpack(
-    h: i64,
-    dim: i32,
-    rows: i32,
-    cols: i32,
-    release: i32,
-) -> i32 {
+#[no_mangle]
+pub extern "C" fn sky_rt_unpack(h: i64, dim: i32, rows: i32, cols: i32, release: i32) -> i32 {
     with(-1, |st| {
         let want = st.program.dims.get(dim as usize).copied();
         let v = st.value(h);
@@ -808,7 +839,8 @@ pub(crate) extern "C" fn sky_rt_unpack(
 }
 
 /// Entry `i` of the array [`sky_rt_unpack`] unpacked.
-pub(crate) extern "C" fn sky_rt_elem(i: i32) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_elem(i: i32) -> f64 {
     with(f64::NAN, |st| {
         st.unpacked.get(i as usize).copied().unwrap_or(f64::NAN)
     })
@@ -817,18 +849,21 @@ pub(crate) extern "C" fn sky_rt_elem(i: i32) -> f64 {
 /// The operation at `site`, which failed inline on the operands pushed
 /// (arrays and numbers), runs in the interpreters' own code to produce its
 /// error, as `sky_rt_fail1` does for one number.
-pub(crate) extern "C" fn sky_rt_fail_op(site: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_fail_op(site: i32) {
     with((), |st| {
         let args = std::mem::take(&mut st.args);
         let program = st.program.clone();
         match program.op(site) {
-            Some((f, op)) => match eval_op(f, op, &args, &mut Vec::new(), &mut HashMap::new()) {
-                Err(e) => st.fail(e),
-                Ok(_) => st.fail(internal(format!(
-                    "`{}` failed inline but succeeds in the runtime",
-                    op.kind.mnemonic()
-                ))),
-            },
+            Some((f, op)) => {
+                match eval_op(f, op, &args, &mut Vec::new(), &mut Kernels::default()) {
+                    Err(e) => st.fail(e),
+                    Ok(_) => st.fail(internal(format!(
+                        "`{}` failed inline but succeeds in the runtime",
+                        op.kind.mnemonic()
+                    ))),
+                }
+            }
             None => st.fail(internal("unknown site")),
         }
         let mut args = args;
@@ -848,18 +883,21 @@ fn print_item(text: String) {
     });
 }
 
-pub(crate) extern "C" fn sky_rt_print_num(dim: i32, x: f64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_print_num(dim: i32, x: f64) {
     let d = with(None, |st| st.program.dims.get(dim as usize).copied());
     if let Some(d) = d {
         print_item(Value::number(x, d).print_text());
     }
 }
 
-pub(crate) extern "C" fn sky_rt_print_bool(b: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_print_bool(b: i32) {
     print_item(Value::Bool(b != 0).print_text());
 }
 
-pub(crate) extern "C" fn sky_rt_print_ref(h: i64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_print_ref(h: i64) {
     let v = with(None, |st| st.value(h));
     if let Some(v) = v {
         print_item(v.print_text());
@@ -868,7 +906,8 @@ pub(crate) extern "C" fn sky_rt_print_ref(h: i64) {
 
 /// Ends the `print` at `site`: writes the line in one piece, like the SIR
 /// interpreter. 0 on success, 1 with the pending error set otherwise.
-pub(crate) extern "C" fn sky_rt_print_end(site: i32) -> i32 {
+#[no_mangle]
+pub extern "C" fn sky_rt_print_end(site: i32) -> i32 {
     with(1, |st| {
         let mut line = std::mem::take(&mut st.line);
         st.first = true;
@@ -898,7 +937,8 @@ pub(crate) extern "C" fn sky_rt_print_end(site: i32) -> i32 {
 /// 0 if it is false (the caller then pushes the values of the names and
 /// calls [`sky_rt_assert_fail`]), -1 with the pending error set if it is not
 /// a Bool.
-pub(crate) extern "C" fn sky_rt_assert_dyn(site: i32, h: i64) -> i32 {
+#[no_mangle]
+pub extern "C" fn sky_rt_assert_dyn(site: i32, h: i64) -> i32 {
     with(-1, |st| {
         let Some(v) = st.take_value(h) else {
             return -1;
@@ -924,7 +964,8 @@ pub(crate) extern "C" fn sky_rt_assert_dyn(site: i32, h: i64) -> i32 {
 /// The contract at `site` is false. The values of its names were pushed;
 /// `call_site` is the site of the call that entered the function (or -1),
 /// which a failed `requires` labels "called here".
-pub(crate) extern "C" fn sky_rt_assert_fail(site: i32, call_site: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_assert_fail(site: i32, call_site: i32) {
     with((), |st| {
         let args = std::mem::take(&mut st.args);
         let call = (call_site >= 0).then(|| st.program.span(call_site));
@@ -984,7 +1025,7 @@ fn eval_op(
     op: &OpData,
     a: &[Arg],
     scratch: &mut Vec<Option<Value>>,
-    kernels: &mut HashMap<usize, KernelEntry>,
+    kernels: &mut Kernels,
 ) -> R<Value> {
     let s = op.span;
     let arg = |i: usize| -> R<&Value> {
@@ -1175,6 +1216,15 @@ fn slice(op: &OpData, a: &[Arg], axes: &[SliceAxis]) -> R<Value> {
 /// (`fused_op` in `sky-ir-interp`): each body operation is the operation of
 /// the same kind on numbers, except `neg`, which is `0 - x`. This is the
 /// entry point a compiled kernel replaces.
+/// The kernels of a run: one entry per `fused` operation that ran often
+/// enough to be compiled.
+#[derive(Default)]
+pub(crate) struct Kernels {
+    entries: HashMap<usize, KernelEntry>,
+    /// Compile kernels with fused multiply-adds (relaxed numerics).
+    contract: bool,
+}
+
 /// What the run knows of one `fused` operation: the operand kinds its kernel
 /// was compiled (or refused) for, the kernel, and how many elements the
 /// interpreted loop has run for it.
@@ -1187,8 +1237,11 @@ pub(crate) struct KernelEntry {
 
 /// Elements a `fused` operation runs interpreted before its body is
 /// compiled: compiling costs about what interpreting this many does (the
-/// SIR interpreter's threshold, `JitOptions::DEFAULT_THRESHOLD`).
-const KERNEL_THRESHOLD: usize = 512;
+/// SIR interpreter's threshold, `JitOptions::DEFAULT_THRESHOLD`; 512 unless
+/// `sky tune` found another, see [`crate::tuning`]).
+fn kernel_threshold() -> usize {
+    crate::tuning::kernel_threshold()
+}
 
 /// A compiled kernel for `op` if one pays, run on the operands: its result
 /// and error are the loop's below (see `crate::kernel`). `None`: run the loop.
@@ -1197,9 +1250,9 @@ fn fused_native(
     func: &Function,
     a: &[Arg],
     count: usize,
-    kernels: &mut HashMap<usize, KernelEntry>,
+    kernels: &mut Kernels,
 ) -> Option<R<(Vec<f64>, Dimension)>> {
-    use crate::kernel::{compile_kernel, Input, InputSig};
+    use crate::kernel::{compile_kernel_with, Input, InputSig, Options};
     let mut sigs = Vec::with_capacity(a.len());
     let mut args = Vec::with_capacity(a.len());
     for input in a {
@@ -1221,13 +1274,20 @@ fn fused_native(
             _ => return None,
         }
     }
-    let entry = kernels.entry(op as *const OpData as usize).or_default();
+    let entry = kernels
+        .entries
+        .entry(op as *const OpData as usize)
+        .or_default();
     if entry.sigs != sigs {
         entry.interpreted = entry.interpreted.saturating_add(count);
-        if entry.interpreted < KERNEL_THRESHOLD {
+        if entry.interpreted < kernel_threshold() {
             return None;
         }
-        entry.kernel = compile_kernel(func, op, &sigs).ok();
+        let options = Options {
+            contract: kernels.contract,
+            ..Options::default()
+        };
+        entry.kernel = compile_kernel_with(func, op, &sigs, options).ok();
         entry.sigs = sigs;
     }
     let kernel = entry.kernel.as_ref()?;
@@ -1243,7 +1303,7 @@ fn fused(
     op: &OpData,
     a: &[Arg],
     vals: &mut Vec<Option<Value>>,
-    kernels: &mut HashMap<usize, KernelEntry>,
+    kernels: &mut Kernels,
 ) -> R<Value> {
     let s = op.span;
     let [region] = op.regions[..] else {
@@ -1437,7 +1497,7 @@ fn body_eval(func: &Function, op: &OpData, vals: &mut [Option<Value>]) -> R<()> 
             for v in &op.operands {
                 args.push(Arg::Val(value_of(vals, *v, s)?.clone()));
             }
-            eval_op(func, op, &args, &mut Vec::new(), &mut HashMap::new())?
+            eval_op(func, op, &args, &mut Vec::new(), &mut Kernels::default())?
         }
     };
     let [r] = op.results[..] else {

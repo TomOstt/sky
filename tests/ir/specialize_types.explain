@@ -1,0 +1,83 @@
+tests/ir/specialize_types.sky:9:5: note: cost of `fib`: unbounded (an operation at line 12 on a value of unknown shape; recursive call to `fib` at line 12; 3 more)
+  |
+9 | def fib(n):
+  |     ^^^
+  = note: the static cost model has no bound for it
+
+tests/ir/specialize_types.sky:12:12: note: [SPEC-002] this call uses the existing specialization `fib[n:Scalar]`
+   |
+12 |     return fib(n - 1) + fib(n - 2)
+   |            ^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because the argument for `n` is a Scalar (dimensionless)
+
+tests/ir/specialize_types.sky:12:12: note: [PAR-003] these 2 independent calls are not run concurrently
+   |
+12 |     return fib(n - 1) + fib(n - 2)
+   |            ^^^^^^^^^^^^^^^^^^^^^^^
+   = note: because `fib[n:Scalar]` is recursive (or a chain of calls deeper than 64): a worker starts on a new stack, and whether a run stops with "the program nests too deeply" must not depend on the thread count
+
+tests/ir/specialize_types.sky:12:25: note: [SPEC-002] this call uses the existing specialization `fib[n:Scalar]`
+   |
+12 |     return fib(n - 1) + fib(n - 2)
+   |                         ^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because the argument for `n` is a Scalar (dimensionless)
+
+tests/ir/specialize_types.sky:14:5: note: cost of `sq`: unbounded (an operation at line 15 on a value of unknown shape)
+   |
+14 | def sq(x):
+   |     ^^
+   = note: the static cost model has no bound for it
+
+tests/ir/specialize_types.sky:17:5: note: cost of `twice`: unbounded (an operation at line 18 on a value of unknown shape)
+   |
+17 | def twice(x):
+   |     ^^^^^
+   = note: the static cost model has no bound for it
+
+tests/ir/specialize_types.sky:20:7: note: [SPEC-005] specialized `fib` for n: Scalar (dimensionless): 4 run-time type checks removed
+   |
+20 | print(fib(10), sq(3), sq(3 m), twice(2))
+   |       ^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 4 run-time type checks removed: operations of `fib` that had to find out at run time what a value is, and know it in `fib[n:Scalar]`
+   = note: because `fib[n:Scalar]` returns a Scalar (dimensionless)
+   = note: because the argument for `n` is a Scalar (dimensionless)
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_types.sky:20:7: note: [PAR-003] these 4 independent calls are not run concurrently
+   |
+20 | print(fib(10), sq(3), sq(3 m), twice(2))
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: because `fib[n:Scalar]` is recursive (or a chain of calls deeper than 64): a worker starts on a new stack, and whether a run stops with "the program nests too deeply" must not depend on the thread count
+
+tests/ir/specialize_types.sky:20:16: note: [SPEC-005] specialized `sq` for x: Scalar (dimensionless): 1 run-time type check removed
+   |
+20 | print(fib(10), sq(3), sq(3 m), twice(2))
+   |                ^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time type check removed: operations of `sq` that had to find out at run time what a value is, and know it in `sq[x:Scalar]`
+   = note: because `sq[x:Scalar]` returns a Scalar (dimensionless)
+   = note: because the argument for `x` is a Scalar (dimensionless)
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_types.sky:20:23: note: [SPEC-005] specialized `sq` for x: Scalar (length): 1 run-time type check removed
+   |
+20 | print(fib(10), sq(3), sq(3 m), twice(2))
+   |                       ^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time type check removed: operations of `sq` that had to find out at run time what a value is, and know it in `sq[x:Scalar(length)]`
+   = note: because `sq[x:Scalar(length)]` returns a Scalar (L²)
+   = note: because the argument for `x` is a Scalar (length)
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_types.sky:20:32: note: [SPEC-005] specialized `twice` for x: Scalar (dimensionless): 1 run-time type check removed
+   |
+20 | print(fib(10), sq(3), sq(3 m), twice(2))
+   |                                ^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time type check removed: operations of `twice` that had to find out at run time what a value is, and know it in `twice[x:Scalar]`
+   = note: because `twice[x:Scalar]` returns a Scalar (dimensionless)
+   = note: because the argument for `x` is a Scalar (dimensionless)
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged

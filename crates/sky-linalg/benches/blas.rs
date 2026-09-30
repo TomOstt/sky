@@ -17,6 +17,14 @@
 //!
 //! The `naive` column is the plain reference loops (`sky_linalg::reference`)
 //! that define the results the fast kernels must reproduce.
+//!
+//! Two more columns are Sky's **relaxed** numerics (opt-in, not
+//! bit-reproducible; see the spec's "Relaxed numerics"): `fused` is the
+//! crate's own kernels with fused multiply-add (NEON or FMA3, no library),
+//! and `relaxed` is what `sky run --numerics=relaxed` calls (the vendor
+//! library where there is one and the size pays, else `fused`). The column
+//! named after the vendor library is the same library called from C, the
+//! ceiling `relaxed` is measured against.
 
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
@@ -183,6 +191,8 @@ struct Row {
     naive: f64,
     faer: f64,
     mm: f64,
+    fused: f64,
+    relaxed: f64,
 }
 
 fn measure(op: &str, n: usize, threads: usize, par: Par) -> Row {
@@ -198,6 +208,7 @@ fn measure(op: &str, n: usize, threads: usize, par: Par) -> Row {
     let mut c = vec![0.0; n * n];
     let mut fc = Mat::<f64>::zeros(n, n);
     let mut c2 = vec![0.0; n * n];
+    let mut c3 = vec![0.0; n * n];
     let with_naive = n <= 256;
     let mut names = vec!["sky"];
     let mut contenders: Vec<Box<dyn FnMut() + '_>> = Vec::new();
@@ -226,6 +237,29 @@ fn measure(op: &str, n: usize, threads: usize, par: Par) -> Row {
                     ));
                 }));
             }
+            names.push("fused");
+            contenders.push(Box::new(|| {
+                sky::gemm_into_fused_with(
+                    std::hint::black_box(&a),
+                    n,
+                    n,
+                    std::hint::black_box(&b),
+                    n,
+                    &mut c3,
+                    threads,
+                )
+            }));
+            names.push("relaxed");
+            contenders.push(Box::new(|| {
+                std::hint::black_box(sky::gemm_relaxed_with(
+                    std::hint::black_box(&a),
+                    n,
+                    n,
+                    std::hint::black_box(&b),
+                    n,
+                    threads,
+                ));
+            }));
             names.push("faer");
             contenders.push(Box::new(|| {
                 faer::linalg::matmul::matmul(
@@ -262,6 +296,18 @@ fn measure(op: &str, n: usize, threads: usize, par: Par) -> Row {
                     );
                 }));
             }
+            names.push("fused");
+            contenders.push(Box::new(|| {
+                std::hint::black_box(
+                    sky::cholesky_fused_with(std::hint::black_box(&s), n, threads).unwrap(),
+                );
+            }));
+            names.push("relaxed");
+            contenders.push(Box::new(|| {
+                std::hint::black_box(
+                    sky::cholesky_relaxed_with(std::hint::black_box(&s), n, threads).unwrap(),
+                );
+            }));
             names.push("faer");
             contenders.push(Box::new(|| {
                 std::hint::black_box(fs.llt(Side::Lower).unwrap());
@@ -280,6 +326,17 @@ fn measure(op: &str, n: usize, threads: usize, par: Par) -> Row {
                     std::hint::black_box(sky::reference::lu_solve(&f, &rhs, 1));
                 }));
             }
+            names.push("fused");
+            contenders.push(Box::new(|| {
+                let f = sky::lu_fused_with(std::hint::black_box(&a), n, threads).unwrap();
+                std::hint::black_box(f.solve_with(&rhs, 1, threads));
+            }));
+            names.push("relaxed");
+            contenders.push(Box::new(|| {
+                std::hint::black_box(
+                    sky::solve_relaxed_with(std::hint::black_box(&a), n, &rhs, 1, threads).unwrap(),
+                );
+            }));
             names.push("faer");
             contenders.push(Box::new(|| {
                 let lu = PartialPivLu::new(fa.as_ref());
@@ -302,6 +359,8 @@ fn measure(op: &str, n: usize, threads: usize, par: Par) -> Row {
         naive: get("naive"),
         faer: get("faer"),
         mm: get("mm"),
+        fused: get("fused"),
+        relaxed: get("relaxed"),
     }
 }
 
@@ -315,8 +374,19 @@ fn worker(threads: usize, sizes: &[usize]) {
     let (vname, vend) = vendor(sizes, threads);
     println!("\n== {threads} thread(s) ==   GFLOP/s (higher is better); ratio = Sky / baseline");
     println!(
-        "{:<6} {:>5} {:>9} {:>9} {:>9} {:>9} {:>10}  {:>10} {:>8}",
-        "op", "n", "sky", "naive", "faer", "matmul", vname, "vs faer/mm", "vs best"
+        "{:<6} {:>5} {:>9} {:>9} {:>9} {:>9} {:>9} {:>9} {:>10}  {:>10} {:>9} {:>9}",
+        "op",
+        "n",
+        "sky",
+        "naive",
+        "fused",
+        "relaxed",
+        "faer",
+        "matmul",
+        vname,
+        "vs faer/mm",
+        "relx/vend",
+        "relx/sky"
     );
     let cell = |x: f64| {
         if x.is_nan() {
@@ -336,16 +406,19 @@ fn worker(threads: usize, sizes: &[usize]) {
             let r = measure(op, n, threads, par);
             let v = vend.get(&(op.to_string(), n)).copied().unwrap_or(f64::NAN);
             println!(
-                "{:<6} {:>5} {:>9} {:>9} {:>9} {:>9} {:>10}  {:>10} {:>8}",
+                "{:<6} {:>5} {:>9} {:>9} {:>9} {:>9} {:>9} {:>9} {:>10}  {:>10} {:>9} {:>9}",
                 op,
                 n,
                 cell(r.sky),
                 cell(r.naive),
+                cell(r.fused),
+                cell(r.relaxed),
                 cell(r.faer),
                 cell(r.mm),
                 cell(v),
                 cell(r.sky / best(&[r.faer, r.mm])),
-                cell(r.sky / best(&[r.faer, r.mm, v]))
+                cell(r.relaxed / v),
+                cell(r.relaxed / r.sky)
             );
         }
     }

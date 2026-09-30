@@ -71,13 +71,17 @@ fn tune_show_reset_round_trip() {
     assert!(out(&o).contains("no tuning results yet"), "{}", out(&o));
     assert!(!db.exists(), "--show writes nothing");
 
-    let o = sky(&db, &["tune", "--budget-ms=20"]);
+    // The demos, one at a time (the registry now holds heavier kernels too).
+    let o = sky(&db, &["tune", "--budget-ms=20", "dot_blocked"]);
     assert_eq!(o.status.code(), Some(0), "{}", err(&o));
     let text = out(&o);
     assert!(text.contains("dot_blocked [2^18] unroll "), "{text}");
-    assert!(text.contains("transpose_tiled [512x512] tile "), "{text}");
     assert!(text.contains("GB/s"), "{text}");
-    assert!(text.contains("stored 2 results in"), "{text}");
+    assert!(text.contains("stored 1 result in"), "{text}");
+    let o = sky(&db, &["tune", "--budget-ms=20", "transpose_tiled"]);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    let text = out(&o);
+    assert!(text.contains("transpose_tiled [512x512] tile "), "{text}");
     assert!(text.contains("<- chosen"), "{text}");
 
     let stored = fs::read_to_string(&db).unwrap();
@@ -137,7 +141,7 @@ fn a_file_that_is_not_our_database_is_never_overwritten_or_deleted() {
     let db = dir.join("thesis.txt");
     fs::write(&db, "chapter one\n").unwrap();
 
-    let o = sky(&db, &["tune", "--budget-ms=20"]);
+    let o = sky(&db, &["tune", "--budget-ms=20", "dot"]);
     assert_eq!(o.status.code(), Some(1), "{}", out(&o));
     assert!(err(&o).contains("not overwriting"), "{}", err(&o));
     let o = sky(&db, &["tune", "--reset"]);
@@ -159,4 +163,142 @@ fn malformed_entries_are_reported_by_show_and_ignored() {
     assert_eq!(o.status.code(), Some(0));
     assert!(err(&o).contains("bad fingerprint"), "{}", err(&o));
     assert!(out(&o).contains("no tuning results yet"), "{}", out(&o));
+}
+
+/// The linear algebra and interpreter tunables (the smallest size class of
+/// each kernel, and the cheap thresholds: the big classes take minutes in an
+/// unoptimised interpreter), through `sky tune --budget-ms`, with the
+/// database in a temporary file.
+#[test]
+fn tune_measures_the_kernel_tunables_and_check_explain_cites_them() {
+    let dir = scratch("kernels");
+    let db = dir.join("tune.db");
+    let names = sky_tune_names(&db);
+    for needle in [
+        "linalg_gemm_le64",
+        "linalg_gemm_gt1024",
+        "linalg_cholesky_le256",
+        "linalg_threads",
+        "interp_native",
+        "interp_fused_work",
+        "interp_array_elements",
+    ] {
+        assert!(
+            names.contains(needle),
+            "{needle} is not registered: {names}"
+        );
+    }
+
+    let mut results = Vec::new();
+    for name in [
+        "linalg_gemm_le64",
+        "linalg_cholesky_le64",
+        "linalg_threads",
+        "interp_native",
+    ] {
+        let o = sky(&db, &["tune", "--budget-ms=20", name]);
+        assert_eq!(o.status.code(), Some(0), "{name}: {}", err(&o));
+        let text = out(&o);
+        assert!(text.contains("stored 1 result in"), "{text}");
+        assert!(text.contains("<- chosen"), "{text}");
+        results.push(text);
+    }
+    // Each candidate is listed with a rate (or milliseconds).
+    assert!(results[0].contains("gemm [le64] "), "{}", results[0]);
+    assert!(
+        results[0].contains("kc 256, mc 128, nc 1024"),
+        "{}",
+        results[0]
+    );
+    assert!(results[0].contains("GFLOP/s"), "{}", results[0]);
+    assert!(results[1].contains("cholesky [le64] nb "), "{}", results[1]);
+    assert!(
+        results[2].contains("threads [all] madds "),
+        "{}",
+        results[2]
+    );
+    assert!(
+        results[3].contains("fused_native [cold] min_elements "),
+        "{}",
+        results[3]
+    );
+
+    let stored = fs::read_to_string(&db).unwrap();
+    assert_eq!(stored.matches("\nresult ").count(), 4, "{stored}");
+    let shown = out(&sky(&db, &["tune", "--show"]));
+    for line in [
+        "gemm [le64]",
+        "cholesky [le64]",
+        "threads [all]",
+        "fused_native [cold]",
+    ] {
+        assert!(shown.contains(line), "{shown}");
+    }
+
+    // `sky check --explain` cites what was tuned where it picks a kernel.
+    let src = dir.join("chain.sky");
+    fs::write(
+        &src,
+        "A: Matrix[500, 500]\nB: Matrix[500, 500]\nC: Matrix[500, 500]\nv: Vector[500]\nx = A @ B @ C @ v\n",
+    )
+    .unwrap();
+    let o = sky(&db, &["check", "--explain", src.to_str().unwrap()]);
+    let text = err(&o);
+    assert!(
+        text.contains("GEMM blocks for sizes up to 64: tuned on this machine ("),
+        "{text}"
+    );
+    // Only the classes that were tuned, and nothing without a database.
+    assert!(!text.contains("sizes up to 256"), "{text}");
+    let o = sky(
+        &dir.join("none.db"),
+        &["check", "--explain", src.to_str().unwrap()],
+    );
+    assert!(!err(&o).contains("tuned on this machine"), "{}", err(&o));
+}
+
+/// The registered names, from the error `sky tune` gives for a filter that
+/// matches none of them.
+fn sky_tune_names(db: &PathBuf) -> String {
+    let o = sky(db, &["tune", "no-such-kernel"]);
+    assert_eq!(o.status.code(), Some(2));
+    err(&o)
+}
+
+/// Tuning never changes what a program prints: the same output with no
+/// database, and with one holding the extreme values a hand edit could put
+/// there (clamped by the kernels).
+#[test]
+fn a_tuned_database_changes_no_output() {
+    let dir = scratch("same-output");
+    let src = dir.join("prog.sky");
+    fs::write(
+        &src,
+        "K: PositiveDefinite Matrix[2, 2] = [[4, 1], [1, 3]]\nf: Vector[2] = [1, 2]\nx = K⁻¹ @ f\nprint(x)\nprint(K @ K)\n",
+    )
+    .unwrap();
+    let run = |db: &PathBuf| {
+        let o = sky(db, &["run", src.to_str().unwrap()]);
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        out(&o)
+    };
+    let plain = run(&dir.join("none.db"));
+    assert!(!plain.is_empty());
+
+    let db = dir.join("tune.db");
+    let fp = sky_hw::current_fingerprint();
+    let row = |kernel: &str, class: &str, params: &str, default: &str| {
+        format!(
+            "result fp={fp} kernel={kernel} size={class} params={params} default={default} best_ns=1 default_ns=2 when=1790000000\n"
+        )
+    };
+    let mut text = String::from("sky-tune-db 1\n");
+    text += &row("gemm", "le64", "kc:3,mc:1,nc:9", "kc:256,mc:128,nc:1024");
+    text += &row("cholesky", "le64", "nb:1000000", "nb:32");
+    text += &row("threads", "all", "madds:1", "madds:2097152");
+    text += &row("fused_native", "cold", "min_elements:0", "min_elements:512");
+    text += &row("par_fused_work", "all", "work:0", "work:4096");
+    text += &row("par_array_elements", "all", "elements:0", "elements:262144");
+    fs::write(&db, text).unwrap();
+    assert_eq!(run(&db), plain);
 }

@@ -34,7 +34,7 @@ tests/ir/pipeline.sky:10:5: note: [ALG-007] `-(-t)` is rewritten to `t`
 10 | z = -(-t)
    |     ^^^^^
    = note: applied by the `egraph` pass
-   = note: because negation only flips the sign bit, so applying it twice restores every bit
+   = note: because negating a number only flips its sign bit, so applying it twice restores every bit; negating an array is 0 - x per entry, which turns -0 into +0, so for an array the entries must be proven not -0
 
 tests/ir/pipeline.sky:12:7: note: `A⁻¹ @ b` is rewritten to a Cholesky solve
    |

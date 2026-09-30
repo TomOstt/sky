@@ -163,7 +163,11 @@ fn groups_nest() {
     );
     let ir = compile(&src);
     let plan = parallel::analyze(&ir, &Config::eager(4));
-    assert_eq!(plan.function("both").map_or(0, |f| f.groups.len()), 1);
+    assert_eq!(
+        plan.function("both[x:Scalar]")
+            .map_or(0, |f| f.groups.len()),
+        1
+    );
     assert_eq!(plan.function(Module::MAIN).map_or(0, |f| f.groups.len()), 1);
     everywhere(&src);
 }

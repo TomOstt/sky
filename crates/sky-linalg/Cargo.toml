@@ -9,8 +9,12 @@ publish.workspace = true
 
 [dependencies]
 rayon = "1.12.0"
+# Tuned block sizes and thresholds (`sky tune`), read once per process.
+sky-tune = { path = "../sky-tune" }
 
 [dev-dependencies]
+# The fingerprint a hand-written database (`tests/tuned_db.rs`) is keyed by.
+sky-hw = { path = "../sky-hw" }
 # Property tests only.
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 # The baselines `benches/blas.rs` compares against. They fuse multiply-add,

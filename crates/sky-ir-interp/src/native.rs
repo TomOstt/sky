@@ -48,8 +48,11 @@ pub struct JitOptions {
 }
 
 impl JitOptions {
-    /// The element count from which compiling pays off; see the module docs.
-    pub const DEFAULT_THRESHOLD: usize = 512;
+    /// The element count from which compiling pays off on the machine the
+    /// default was measured on; see the module docs. A run uses the count
+    /// `sky tune` found best on this machine, if it has (`sky_jit::tuning`),
+    /// and this otherwise.
+    pub const DEFAULT_THRESHOLD: usize = sky_jit::tuning::DEFAULT_KERNEL_THRESHOLD;
 
     /// The options `SKY_JIT` and `SKY_JIT_MIN_ELEMENTS` ask for, read once
     /// per process.
@@ -75,7 +78,7 @@ impl JitOptions {
             enabled: !off,
             min_elements: min_elements
                 .and_then(|v| v.trim().parse().ok())
-                .unwrap_or(Self::DEFAULT_THRESHOLD),
+                .unwrap_or_else(sky_jit::tuning::kernel_threshold),
         }
     }
 

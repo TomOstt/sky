@@ -1,0 +1,19 @@
+[package]
+name = "sky-rt"
+description = "The runtime library of executables built by `sky build`"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+# `staticlib` is what `sky build` links an executable against
+# (`libsky_rt.a`, next to the `sky` binary in a cargo target directory); the
+# `rlib` is for `sky-cli`, which writes the metadata this crate reads.
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+sky-diag = { path = "../sky-diag" }
+sky-ir-interp = { path = "../sky-ir-interp" }
+sky-jit = { path = "../sky-jit" }

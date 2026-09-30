@@ -237,6 +237,10 @@ struct Stats {
     specialized_programs: AtomicUsize,
     clones: AtomicUsize,
     unrolled: AtomicUsize,
+    /// Clones made for the types of unannotated parameters (`SPEC-005`),
+    /// and the programs that have one.
+    typed: AtomicUsize,
+    typed_programs: AtomicUsize,
     failing: AtomicUsize,
 }
 
@@ -288,6 +292,15 @@ fn check(src: &str, stats: &Stats) -> Result<(), String> {
         .iter()
         .filter(|x| x.rule == sky_opt::specialize::RULE_UNROLLED)
         .count();
+    let typed = report
+        .explanations
+        .iter()
+        .filter(|x| x.rule == sky_opt::specialize::RULE_RETYPED)
+        .count();
+    stats.typed.fetch_add(typed, Ordering::Relaxed);
+    if typed > 0 {
+        stats.typed_programs.fetch_add(1, Ordering::Relaxed);
+    }
     stats.programs.fetch_add(1, Ordering::Relaxed);
     stats.clones.fetch_add(n, Ordering::Relaxed);
     stats.unrolled.fetch_add(loops, Ordering::Relaxed);
@@ -351,12 +364,15 @@ fn campaign(
 fn report(what: &str, stats: &Stats) {
     eprintln!(
         "fuzz_specialize {what}: {} programs ({} skipped as unchecked), {} with a specialization \
-         ({} clones, {} loops unrolled), {} ending in a run-time error",
+         ({} clones, {} loops unrolled), {} typed clones in {} programs, {} ending in a run-time \
+         error",
         stats.programs.load(Ordering::Relaxed),
         stats.skipped.load(Ordering::Relaxed),
         stats.specialized_programs.load(Ordering::Relaxed),
         stats.clones.load(Ordering::Relaxed),
         stats.unrolled.load(Ordering::Relaxed),
+        stats.typed.load(Ordering::Relaxed),
+        stats.typed_programs.load(Ordering::Relaxed),
         stats.failing.load(Ordering::Relaxed),
     );
 }

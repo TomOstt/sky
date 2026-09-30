@@ -223,8 +223,7 @@ pub fn solve(
     let adims = [n, n];
     let x = match method {
         SolveMethod::Lu => {
-            let lu = lu_factor(ad, n).map_err(|_| singular(whole, aspan, &adims))?;
-            lu.solve(bd, k)
+            linalg::lu_solve(ad, n, bd, k).map_err(|_| singular(whole, aspan, &adims))?
         }
         SolveMethod::Diagonal => {
             let d = diagonal_of(ad, n, whole, aspan, &adims)?;
@@ -286,8 +285,7 @@ pub fn solve_right(
     let adims = [n, n];
     let z = match method {
         SolveMethod::Lu => {
-            let lu = lu_factor(ad, n).map_err(|_| singular(whole, aspan, &adims))?;
-            lu.solve_right(xd, m)
+            linalg::lu_solve_right(ad, n, xd, m).map_err(|_| singular(whole, aspan, &adims))?
         }
         SolveMethod::Diagonal => {
             let d = diagonal_of(ad, n, whole, aspan, &adims)?;

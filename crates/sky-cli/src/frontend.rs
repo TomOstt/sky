@@ -50,6 +50,17 @@ impl FrontEnd {
     }
 }
 
+/// What `--explain` needs to know about the run it explains.
+#[derive(Clone, Copy, Debug)]
+pub struct Context {
+    /// The thread count the parallelism notes speak of (`--threads`,
+    /// `SKY_THREADS`).
+    pub threads: usize,
+    /// The run uses relaxed numerics (`--numerics=relaxed`, or `sky.toml`),
+    /// so `--explain` says where they apply.
+    pub relaxed: bool,
+}
+
 /// Lexes, parses, and (if parsing succeeded) type-checks `src` starting
 /// from `env`. With `explain`, the checker's rewrite decisions follow as
 /// notes. Never executes anything. Runs inside `with_deep_stack`.
@@ -59,7 +70,11 @@ impl FrontEnd {
 /// first edition-dependent rule has one place to read it, and no phase can
 /// forget to ask.
 pub fn analyze(src: &str, env: Env, explain: bool, edition: Edition) -> FrontEnd {
-    analyze_ir(src, env, explain, false, false, 1, edition)
+    let context = Context {
+        threads: 1,
+        relaxed: false,
+    };
+    analyze_ir(src, env, explain, false, false, context, edition)
 }
 
 /// [`analyze`], and with `explain` or `emit_ir`, also lowers a program the
@@ -69,8 +84,8 @@ pub fn analyze(src: &str, env: Env, explain: bool, edition: Edition) -> FrontEnd
 /// every stage. A program that cannot be lowered is not an error here:
 /// [`FrontEnd::ir`] says why.
 ///
-/// `threads` is the thread count the parallelism notes of `explain` speak
-/// of (`--threads`, `SKY_THREADS`).
+/// `context` says what the notes of `explain` speak of: the thread count
+/// (`--threads`, `SKY_THREADS`) and whether the run is relaxed.
 ///
 /// With `budgets` (`sky check`), the `accuracy` statements are checked by the
 /// roundoff analysis (see [`crate::accuracy`]), and with `explain` too the
@@ -81,7 +96,7 @@ pub fn analyze_ir(
     explain: bool,
     emit_ir: bool,
     budgets: bool,
-    threads: usize,
+    context: Context,
     _edition: Edition,
 ) -> FrontEnd {
     let mut ir_out = None;
@@ -101,7 +116,7 @@ pub fn analyze_ir(
                 // checker never reports on a statement the parser dropped.
                 let checked = sky_types::check_module_with(&module, src, env);
                 if (explain || emit_ir) && !checked.has_errors() {
-                    let outcome = ir::build(&module, src, &checked, emit_ir, explain, threads);
+                    let outcome = ir::build(&module, src, &checked, emit_ir, explain, context);
                     match &outcome {
                         ir::Outcome::Ready(ready) => pass_notes = ready.notes.clone(),
                         // Only `--emit-ir` says so: `--explain` alone stays
@@ -126,8 +141,23 @@ pub fn analyze_ir(
                 }
                 if explain {
                     diagnostics.extend(checked.ode_notes.iter().cloned());
-                    diagnostics.extend(checked.rewrites.iter().map(|r| r.to_diagnostic(src)));
-                    diagnostics.extend(checked.chain_notes.iter().cloned());
+                    diagnostics.extend(checked.rewrites.iter().map(|r| {
+                        let d = r.to_diagnostic(src);
+                        // A solve runs on the blocked kernels `sky tune` tunes.
+                        if d.message.contains("Cholesky") {
+                            ir::cite_tuning(d, &["cholesky", "gemm"])
+                        } else if d.message.contains("solve[lu]") {
+                            ir::cite_tuning(d, &["gemm"])
+                        } else {
+                            d
+                        }
+                    }));
+                    diagnostics.extend(
+                        checked
+                            .chain_notes
+                            .iter()
+                            .map(|d| ir::cite_tuning(d.clone(), &["gemm"])),
+                    );
                     if checked.chain_notes_omitted > 0 {
                         let last = checked
                             .chain_notes

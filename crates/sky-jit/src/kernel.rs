@@ -144,6 +144,15 @@ pub struct Options {
     /// Collect the check with a fused multiply-add where the host has one
     /// (one instruction instead of two). Off exercises the portable form.
     pub fma_check: bool,
+    /// **Relaxed numerics**: fuse `a*b + c` (and `a*b - c`, `c - a*b`) into
+    /// one fused multiply-add wherever the product feeds only that sum and
+    /// depends on the element, on hosts that have the instruction. Off (the
+    /// default, and reproducible numerics) never contracts, and the kernel's
+    /// bits are the interpreter's. On, the elements differ from the
+    /// interpreter's by the rounding the fusion removes; the errors are still
+    /// the interpreter's (a failure runs the unfused reference path), and a
+    /// product that overflows but is rescued by the addend is accepted.
+    pub contract: bool,
 }
 
 impl Default for Options {
@@ -153,6 +162,7 @@ impl Default for Options {
             unroll: 4,
             check_finite: true,
             fma_check: true,
+            contract: false,
         }
     }
 }
@@ -189,31 +199,46 @@ enum Kind {
     /// A call through `kernel_rt::math`; the second operand is `None` for a
     /// function of one argument.
     Math(MathFn, usize, Option<usize>),
+    /// A contracted `x*y + z` (relaxed numerics only, see
+    /// [`Options::contract`]): one fused multiply-add of the three operands,
+    /// with the product negated for `z - x*y` and the addend for `x*y - z`.
+    Fma {
+        x: usize,
+        y: usize,
+        z: usize,
+        neg_product: bool,
+        neg_addend: bool,
+    },
 }
 
 impl Kind {
-    fn operands(&self) -> [Option<usize>; 2] {
+    fn operands(&self) -> [Option<usize>; 3] {
         match *self {
-            Kind::Input(_) | Kind::Const(_) => [None, None],
-            Kind::Bin(_, a, b) => [Some(a), Some(b)],
-            Kind::Neg(a) | Kind::Sqrt(a) | Kind::Abs(a) => [Some(a), None],
-            Kind::Math(_, a, b) => [Some(a), b],
+            Kind::Input(_) | Kind::Const(_) => [None, None, None],
+            Kind::Bin(_, a, b) => [Some(a), Some(b), None],
+            Kind::Neg(a) | Kind::Sqrt(a) | Kind::Abs(a) => [Some(a), None, None],
+            Kind::Math(_, a, b) => [Some(a), b, None],
+            Kind::Fma { x, y, z, .. } => [Some(x), Some(y), Some(z)],
         }
     }
 
     /// Which operands, if non-finite, make the result non-finite.
-    fn monotone(&self) -> [bool; 2] {
+    fn monotone(&self) -> [bool; 3] {
         match self {
-            Kind::Bin(Bin::Div, ..) => [true, false],
-            Kind::Bin(..) => [true, true],
-            Kind::Neg(_) | Kind::Sqrt(_) | Kind::Abs(_) => [true, false],
-            Kind::Input(_) | Kind::Const(_) | Kind::Math(..) => [false, false],
+            Kind::Bin(Bin::Div, ..) => [true, false, false],
+            Kind::Bin(..) => [true, true, false],
+            Kind::Neg(_) | Kind::Sqrt(_) | Kind::Abs(_) => [true, false, false],
+            Kind::Input(_) | Kind::Const(_) | Kind::Math(..) => [false, false, false],
+            Kind::Fma { .. } => [true, true, true],
         }
     }
 
     /// Whether the operation can fail (its result can be non-finite).
     fn fallible(&self) -> bool {
-        matches!(self, Kind::Bin(..) | Kind::Sqrt(_) | Kind::Math(..))
+        matches!(
+            self,
+            Kind::Bin(..) | Kind::Sqrt(_) | Kind::Math(..) | Kind::Fma { .. }
+        )
     }
 }
 
@@ -224,6 +249,8 @@ struct Node {
     uniform: bool,
     /// This node's result is checked for being finite.
     check: bool,
+    /// Folded into a [`Kind::Fma`]: not computed at all.
+    dead: bool,
 }
 
 struct Plan {
@@ -259,7 +286,12 @@ fn const_dim(func: &Function, op: &OpData) -> Result<Dimension, Refusal> {
 
 /// Analyses the body: validates it, computes dimensions, and decides what
 /// is uniform and what is checked.
-fn plan(func: &Function, fused: &OpData, sigs: &[InputSig]) -> Result<(Plan, Reference), Refusal> {
+fn plan(
+    func: &Function,
+    fused: &OpData,
+    sigs: &[InputSig],
+    contract: bool,
+) -> Result<(Plan, Reference), Refusal> {
     if fused.kind != OpKind::Fused {
         return refuse("not a `fused` operation");
     }
@@ -300,6 +332,7 @@ fn plan(func: &Function, fused: &OpData, sigs: &[InputSig]) -> Result<(Plan, Ref
             kind: Kind::Input(k),
             uniform: !sig.array,
             check: false,
+            dead: false,
         });
         dims.push(sig.dim);
     }
@@ -410,6 +443,7 @@ fn plan(func: &Function, fused: &OpData, sigs: &[InputSig]) -> Result<(Plan, Ref
             kind,
             uniform,
             check: false,
+            dead: false,
         });
         dims.push(dim);
         ops.push((op.clone(), const_dim_or_default(func, op)));
@@ -418,6 +452,9 @@ fn plan(func: &Function, fused: &OpData, sigs: &[InputSig]) -> Result<(Plan, Ref
         return refuse("the body yields a value it does not define");
     };
 
+    if contract {
+        contract_products(&mut nodes, y);
+    }
     // Which values need their own finiteness check: going backwards, a
     // value that can fail and is not covered by a later check on a value
     // it flows into monotonically is checked itself.
@@ -425,6 +462,9 @@ fn plan(func: &Function, fused: &OpData, sigs: &[InputSig]) -> Result<(Plan, Ref
     detected[y] = true;
     nodes[y].check = true;
     for i in (0..nodes.len()).rev() {
+        if nodes[i].dead {
+            continue;
+        }
         if nodes[i].kind.fallible() && !detected[i] {
             nodes[i].check = true;
             detected[i] = true;
@@ -440,7 +480,7 @@ fn plan(func: &Function, fused: &OpData, sigs: &[InputSig]) -> Result<(Plan, Ref
     }
     let mut splat = vec![false; nodes.len()];
     splat[y] = nodes[y].uniform;
-    for n in nodes.iter().filter(|n| !n.uniform) {
+    for n in nodes.iter().filter(|n| !n.uniform && !n.dead) {
         for o in n.kind.operands().iter().flatten() {
             splat[*o] = nodes[*o].uniform;
         }
@@ -463,6 +503,58 @@ fn plan(func: &Function, fused: &OpData, sigs: &[InputSig]) -> Result<(Plan, Ref
             sigs: sigs.to_vec(),
         },
     ))
+}
+
+/// Folds `x*y + z`, `x*y - z` and `z - x*y` into [`Kind::Fma`] nodes: a
+/// product that depends on the element and feeds exactly one sum. The
+/// product node is left `dead` (never computed, never checked): its value
+/// exists only inside the fused operation, so a product that overflows
+/// while the sum does not is accepted (relaxed numerics; a failing element
+/// is always decided by the unfused reference path).
+fn contract_products(nodes: &mut [Node], yielded: usize) {
+    let mut uses = vec![0usize; nodes.len()];
+    for n in nodes.iter() {
+        for o in n.kind.operands().iter().flatten() {
+            uses[*o] += 1;
+        }
+    }
+    uses[yielded] += 1;
+    for i in 0..nodes.len() {
+        let Kind::Bin(bin @ (Bin::Add | Bin::Sub), l, r) = nodes[i].kind else {
+            continue;
+        };
+        let is_product = |m: usize, nodes: &[Node]| {
+            matches!(nodes[m].kind, Kind::Bin(Bin::Mul, ..))
+                && uses[m] == 1
+                && !nodes[m].uniform
+                && !nodes[m].dead
+        };
+        // The right operand first: in `a*b + c*d` the later product stays
+        // adjacent to the sum, as in the scalar rule of native code.
+        let (m, z, product_is_left) = if is_product(r, nodes) {
+            (r, l, false)
+        } else if is_product(l, nodes) {
+            (l, r, true)
+        } else {
+            continue;
+        };
+        let Kind::Bin(Bin::Mul, x, y) = nodes[m].kind else {
+            continue;
+        };
+        let (neg_product, neg_addend) = match (bin, product_is_left) {
+            (Bin::Add, _) => (false, false),
+            (_, true) => (false, true),
+            (_, false) => (true, false),
+        };
+        nodes[i].kind = Kind::Fma {
+            x,
+            y,
+            z,
+            neg_product,
+            neg_addend,
+        };
+        nodes[m].dead = true;
+    }
 }
 
 /// A constant's dimension for the reference path (others do not use it).
@@ -524,7 +616,7 @@ impl Gen<'_> {
         pre: &Pre,
         mode: Mode,
         kind: Kind,
-        args: [Option<Cv>; 2],
+        args: [Option<Cv>; 3],
     ) -> Cv {
         let zero = if mode.lanes() == 1 {
             pre.zero_s
@@ -533,6 +625,16 @@ impl Gen<'_> {
         };
         let (x, y) = (args[0].unwrap_or(zero), args[1].unwrap_or(zero));
         match kind {
+            Kind::Fma {
+                neg_product,
+                neg_addend,
+                ..
+            } => {
+                let z = args[2].unwrap_or(zero);
+                let x = if neg_product { b.ins().fneg(x) } else { x };
+                let z = if neg_addend { b.ins().fneg(z) } else { z };
+                b.ins().fma(x, y, z)
+            }
             Kind::Bin(Bin::Add, ..) => b.ins().fadd(x, y),
             Kind::Bin(Bin::Sub, ..) => b.ins().fsub(x, y),
             Kind::Bin(Bin::Mul, ..) => b.ins().fmul(x, y),
@@ -613,7 +715,7 @@ impl Gen<'_> {
             let mut acc: Vec<Cv> = accs[slot * self.groups..(slot + 1) * self.groups].to_vec();
             let mut checked = 0;
             for (idx, node) in self.plan.nodes.iter().enumerate() {
-                if node.uniform {
+                if node.uniform || node.dead {
                     continue;
                 }
                 let get = |vals: &[Option<Cv>], o: usize| -> Cv {
@@ -634,7 +736,11 @@ impl Gen<'_> {
                     },
                     kind => {
                         let ops = kind.operands();
-                        let args = [ops[0].map(|o| get(&vals, o)), ops[1].map(|o| get(&vals, o))];
+                        let args = [
+                            ops[0].map(|o| get(&vals, o)),
+                            ops[1].map(|o| get(&vals, o)),
+                            ops[2].map(|o| get(&vals, o)),
+                        ];
                         self.op(b, pre, mode, kind, args)
                     }
                 };
@@ -749,6 +855,7 @@ fn compile_function(
                     let args = [
                         ops[0].and_then(|o| pre.scalar[o]),
                         ops[1].and_then(|o| pre.scalar[o]),
+                        ops[2].and_then(|o| pre.scalar[o]),
                     ];
                     gen.op(&mut b, &pre, smode, kind, args)
                 }
@@ -922,7 +1029,7 @@ fn block_args(values: &[Cv]) -> Vec<cranelift_codegen::ir::BlockArg> {
 
 /// Whether the host has a fused multiply-add instruction (so that
 /// `fma` is one instruction and not a library call).
-fn has_fma(isa: &OwnedTargetIsa) -> bool {
+pub(crate) fn has_fma(isa: &OwnedTargetIsa) -> bool {
     isa.triple().architecture.to_string().starts_with("aarch64")
         || isa
             .isa_flags()
@@ -987,9 +1094,10 @@ pub fn compile_kernel_with(
     inputs: &[InputSig],
     options: Options,
 ) -> Result<Kernel, Refusal> {
-    let (plan, reference) = plan(func, fused, inputs)?;
-    let out_dim = plan.out_dim;
     let isa = isa().map_err(|e| Refusal(format!("no code generator for this host: {e}")))?;
+    let contract = options.contract && has_fma(&isa);
+    let (plan, reference) = plan(func, fused, inputs, contract)?;
+    let out_dim = plan.out_dim;
     let fma = options.fma_check && has_fma(&isa);
     let mut builder = crate::jit_builder(isa, crate::KERNEL_ARENA_BYTES)
         .map_err(|e| Refusal(format!("no memory for a native kernel: {e}")))?;

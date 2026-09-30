@@ -7,19 +7,24 @@ use sky_project::{Project, SystemIdentity};
 use sky_syntax::Edition;
 
 mod accuracy;
+mod build;
 mod cost;
 mod frontend;
 mod hw;
 mod ir;
+mod numerics;
 mod repl;
 mod run;
 mod tune;
 
-const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] [--emit=clif] [--threads=N] <file.sky>\n       sky run [--engine=auto|ast|sir|native] [--threads=N] <file.sky>\n       sky repl\n\
+const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] [--emit=clif] [--threads=N] [--numerics=MODE] <file.sky>\n       sky run [--engine=auto|ast|sir|native] [--threads=N] [--numerics=MODE] <file.sky>\n       sky build [--emit=exe|obj] [-o <path>] [--target=<triple>] [--runtime=<path>] <file.sky>\n       sky repl\n\
                      sky hw\n\
                      sky tune [--show | --reset] [--budget-ms=<n>] [<kernel>]\n\n\
                      <stage> is `lower`, `final` (the default), or `after:<pass>` for one of\n\
                      fold, egraph, contracts, dce, fuse, cholesky\n\
+                     `sky build` compiles the program ahead of time to a native executable\n\
+                     (`--emit=obj`: to an object file), linked with the system's C compiler\n\
+                     and the runtime library `libsky_rt.a`; it runs like `sky run --engine=native`\n\
                      --emit=clif prints the Cranelift IR the native engine compiles\n\
                      --engine picks how `sky run` executes: `ast` (the tree-walking\n\
                      interpreter, the default), `sir` (lower to SIR, run the optimized IR),\n\
@@ -29,6 +34,11 @@ const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] [--emit=
                      `sky hw` prints what this machine can do and what Sky uses it for;\n\
                      `sky tune` measures kernel parameters here and remembers the winners\n\
                      (`--show` lists them, `--reset` forgets them)\n\
+                     --numerics picks the arithmetic of arrays: `reproducible` (the default:\n\
+                     the same bits on every machine, thread count and engine) or `relaxed`\n\
+                     (faster: fused multiply-add, reassociated sums, the platform's BLAS;\n\
+                     agrees to rounding error, not bit for bit). `numerics = \"relaxed\"` in\n\
+                     sky.toml sets it for a project; the flag wins\n\
                      --threads sets how many threads independent work may use (default:\n\
                      SKY_THREADS, else the machine's cores); 1 is sequential, and the\n\
                      output is the same for every count. `sky run` uses it on the SIR\n\
@@ -76,7 +86,7 @@ fn main() -> ExitCode {
             check(&opts, &file, &src)
         }
         Some("run") => {
-            let (path, engine, threads) = match parse_run_args(&args[1..]) {
+            let (path, engine, threads, numerics) = match parse_run_args(&args[1..]) {
                 Ok(x) => x,
                 Err(msg) => {
                     eprintln!("{USAGE}");
@@ -90,7 +100,24 @@ fn main() -> ExitCode {
                 Ok(x) => x,
                 Err(code) => return code,
             };
-            run::run(&path, &file, &src, engine, threads)
+            run::run(&path, &file, &src, engine, threads, numerics)
+        }
+        Some("build") => {
+            let opts = match build::BuildArgs::parse(&args[1..]) {
+                Ok(o) => o,
+                Err(msg) => {
+                    eprintln!("{USAGE}");
+                    if let Some(msg) = msg {
+                        eprintln!("\nerror: {msg}");
+                    }
+                    return ExitCode::from(2);
+                }
+            };
+            let (file, src) = match read_entry(&opts.path) {
+                Ok(x) => x,
+                Err(code) => return code,
+            };
+            build::build(&opts, &file, &src)
         }
         Some("repl") => {
             if args.len() != 1 {
@@ -129,15 +156,27 @@ fn parse_threads(text: &str) -> Result<usize, Option<String>> {
     sky_ir::parallel::parse_threads(text).map_err(Some)
 }
 
+/// What `sky run`'s arguments say.
+type RunArgs = (
+    String,
+    run::Engine,
+    Option<usize>,
+    Option<sky_project::Numerics>,
+);
+
 /// Parses `sky run`'s arguments: one file, at most one
-/// `--engine=ast|sir|auto` and at most one `--threads=N` (before or after the
-/// file, like `check`'s flags). `Err` is a usage error: the message, if it
-/// needs one beyond the usage text.
-fn parse_run_args(args: &[String]) -> Result<(String, run::Engine, Option<usize>), Option<String>> {
-    let (mut path, mut engine, mut threads) = (None, None, None);
+/// `--engine=ast|sir|auto`, at most one `--threads=N` and at most one
+/// `--numerics=MODE` (before or after the file, like `check`'s flags). `Err`
+/// is a usage error: the message, if it needs one beyond the usage text.
+fn parse_run_args(args: &[String]) -> Result<RunArgs, Option<String>> {
+    let (mut path, mut engine, mut threads, mut numerics) = (None, None, None, None);
     for arg in args {
         if let Some(text) = arg.strip_prefix("--threads=") {
             if threads.replace(parse_threads(text)?).is_some() {
+                return Err(None);
+            }
+        } else if let Some(text) = arg.strip_prefix("--numerics=") {
+            if numerics.replace(numerics::parse(text)?).is_some() {
                 return Err(None);
             }
         } else if let Some(text) = arg.strip_prefix("--engine=") {
@@ -154,7 +193,12 @@ fn parse_run_args(args: &[String]) -> Result<(String, run::Engine, Option<usize>
             return Err(None);
         }
     }
-    Ok((path.ok_or(None)?, engine.unwrap_or_default(), threads))
+    Ok((
+        path.ok_or(None)?,
+        engine.unwrap_or_default(),
+        threads,
+        numerics,
+    ))
 }
 
 /// Opens and reads the entry file for `check` and `run`. One open, then
@@ -185,6 +229,8 @@ struct CheckArgs {
     threads: Option<usize>,
     /// `--emit=clif`: the Cranelift IR of the program.
     emit_clif: bool,
+    /// `--numerics=MODE`: what `--explain` and `--emit=clif` speak of.
+    numerics: Option<sky_project::Numerics>,
 }
 
 impl CheckArgs {
@@ -192,8 +238,8 @@ impl CheckArgs {
     /// the file). `Err` is a usage error: the message, if it needs one
     /// beyond the usage text.
     fn parse(args: &[String]) -> Result<CheckArgs, Option<String>> {
-        let (mut path, mut explain, mut emit_ir, mut emit_clif, mut threads) =
-            (None, false, None, false, None);
+        let (mut path, mut explain, mut emit_ir, mut emit_clif, mut threads, mut numerics) =
+            (None, false, None, false, None, None);
         for arg in args {
             if arg == "--explain" {
                 if std::mem::replace(&mut explain, true) {
@@ -209,6 +255,10 @@ impl CheckArgs {
                 }
             } else if let Some(text) = arg.strip_prefix("--threads=") {
                 if threads.replace(parse_threads(text)?).is_some() {
+                    return Err(None);
+                }
+            } else if let Some(text) = arg.strip_prefix("--numerics=") {
+                if numerics.replace(numerics::parse(text)?).is_some() {
                     return Err(None);
                 }
             } else if let Some(what) = arg.strip_prefix("--emit=") {
@@ -232,6 +282,7 @@ impl CheckArgs {
                 emit_ir,
                 emit_clif,
                 threads,
+                numerics,
             }),
             None => Err(None),
         }
@@ -271,6 +322,7 @@ fn check(opts: &CheckArgs, file: &File, src: &str) -> ExitCode {
             println!("{line}");
         }
     };
+    let mode = numerics::Mode::resolve(opts.numerics, &discovery);
     if opts.explain {
         let origin = match &discovery.project {
             Project::Rooted { manifest, .. } => {
@@ -282,12 +334,17 @@ fn check(opts: &CheckArgs, file: &File, src: &str) -> ExitCode {
             Project::SingleFile => "no sky.toml: the latest".to_string(),
         };
         facts(format!("edition: {} ({origin})", discovery.edition));
+        // Only a relaxed run has anything to say: the default's output is
+        // what it always was.
+        if mode.relaxed() {
+            facts(mode.explain_line());
+        }
     }
     // The whole front end runs in one call on the known-size stack, so the
     // parser's and checker's depth limits hold (and a panic inside
     // propagates unchanged).
     let (rendered, ok, ir_text, internal) =
-        sky_ast::with_deep_stack(|| check_source(path, src, opts, discovery.edition));
+        sky_ast::with_deep_stack(|| check_source(path, src, opts, discovery.edition, &mode));
     eprint!("{}", rendered.join("\n"));
     if let Some(text) = ir_text {
         print!("{text}");
@@ -315,6 +372,7 @@ fn check_source(
     src: &str,
     opts: &CheckArgs,
     edition: Edition,
+    mode: &numerics::Mode,
 ) -> (Vec<String>, bool, Option<String>, Option<String>) {
     let front = frontend::analyze_ir(
         src,
@@ -322,8 +380,12 @@ fn check_source(
         opts.explain,
         opts.emit_ir.is_some() || opts.emit_clif,
         true,
-        opts.threads
-            .unwrap_or_else(sky_ir::parallel::Config::default_threads),
+        frontend::Context {
+            threads: opts
+                .threads
+                .unwrap_or_else(sky_ir::parallel::Config::default_threads),
+            relaxed: mode.relaxed(),
+        },
         edition,
     );
     // Pass the source unchanged: spans are byte offsets into it, and the
@@ -343,7 +405,7 @@ fn check_source(
     // CLIF, and a note says why (as `--emit-ir` does for a program without IR).
     if opts.emit_clif {
         if let Some(ir::Outcome::Ready(ready)) = &front.ir {
-            match sky_jit::emit_clif(&ready.module) {
+            match sky_jit::emit_clif_with(&ready.module, mode.kernels()) {
                 Ok(clif) => text.get_or_insert_with(String::new).push_str(&clif),
                 Err(e) => {
                     let span = e.span.unwrap_or(Span::point(0));

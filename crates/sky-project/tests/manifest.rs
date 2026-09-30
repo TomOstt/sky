@@ -9,7 +9,8 @@ use std::os::unix::fs::PermissionsExt;
 
 use common::{me, my_uid, FakeIdentity, TempDir};
 use sky_project::{
-    discover, DiscoverError, Edition, ManifestErrorKind, Project, SourceError, MAX_MANIFEST_BYTES,
+    discover, DiscoverError, Edition, ManifestErrorKind, Numerics, Project, SourceError,
+    MAX_MANIFEST_BYTES,
 };
 
 fn id(t: &TempDir) -> FakeIdentity {
@@ -27,6 +28,53 @@ fn declared_edition_is_read() {
     let d = discover(&f, &id(&t)).unwrap();
     assert_eq!(d.edition, Edition::E2026);
     assert!(matches!(d.project, Project::Rooted { .. }));
+}
+
+#[test]
+fn declared_numerics_are_read_and_default_to_reproducible() {
+    let t = TempDir::new("m-numerics");
+    t.file(
+        "home/relaxed/sky.toml",
+        "edition = \"2026\"\nnumerics = \"relaxed\"\n",
+    );
+    let f = t.file("home/relaxed/main.sky", "");
+    let d = discover(&f, &id(&t)).unwrap();
+    assert_eq!((d.edition, d.numerics), (Edition::E2026, Numerics::Relaxed));
+    // A manifest that says nothing, and a lone file, are reproducible.
+    t.file("home/plain/sky.toml", "edition = \"2026\"\n");
+    let f = t.file("home/plain/main.sky", "");
+    assert_eq!(
+        discover(&f, &id(&t)).unwrap().numerics,
+        Numerics::Reproducible
+    );
+    let f = t.file("home/single/main.sky", "");
+    assert_eq!(
+        discover(&f, &id(&t)).unwrap().numerics,
+        Numerics::Reproducible
+    );
+}
+
+#[test]
+fn an_unknown_numerics_is_an_error_with_a_span() {
+    let t = TempDir::new("m-numerics-bad");
+    let manifest = t.file("home/proj/sky.toml", "numerics = \"fast\"\n");
+    let f = t.file("home/proj/main.sky", "");
+    let err = discover(&f, &id(&t)).unwrap_err();
+    let m = manifest.display();
+    let expected = format!(
+        "\
+{m}:1:12: error: numerics `fast` is not `reproducible` or `relaxed`
+  |
+1 | numerics = \"fast\"
+  |            ^^^^^^ expected \"reproducible\" or \"relaxed\"
+  = note: `reproducible` (the default) gives the same bits on every machine; `relaxed` is faster and only reproducible to rounding error
+  = help: write `numerics = \"relaxed\"`, or remove the line
+"
+    );
+    assert_eq!(
+        err.to_diagnostic().render_to_string(&err.source_file()),
+        expected
+    );
 }
 
 #[test]
@@ -100,7 +148,7 @@ fn an_unknown_key_gets_a_did_you_mean() {
   |
 1 | editon = \"2026\"
   | ^^^^^^ not a sky.toml key
-  = note: the only key is `edition`; sky.toml cannot add import paths or change how imports resolve
+  = note: the keys are `edition` and `numerics`; sky.toml cannot add import paths or change how imports resolve
   = help: did you mean `edition`?
 "
     );

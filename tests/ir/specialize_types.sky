@@ -1,0 +1,21 @@
+# An unannotated parameter is `unknown` in SIR: every operation on it is a
+# run-time check. A call that passes values of known types gets a clone whose
+# parameters have those types, typed again inside (`fib[n:Scalar]` has no
+# `unknown` value left, and returns a number). The recursive calls find the
+# clone by name. The clone is per exact type, dimension included: `sq(3)`
+# and `sq(3 m)` are different clones. `twice(true)` is an error at run time
+# (`+` needs numbers), so a Bool clone would not verify: that call keeps the
+# generic `twice`, and its error is unchanged.
+def fib(n):
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+def sq(x):
+    return x * x
+
+def twice(x):
+    return x + x
+
+print(fib(10), sq(3), sq(3 m), twice(2))
+print(twice(true))

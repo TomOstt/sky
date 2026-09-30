@@ -401,6 +401,49 @@ fn fold_op(
     true
 }
 
+/// Whether the users of an `if`'s results accept the values the taken arm
+/// yields in their place. The users were checked against the results' types.
+/// Where a yielded value has another type (the results of a variable that
+/// only one arm assigns are `unknown`, and the arm that leaves it unassigned
+/// yields `nothing`), an operation that needs a number (`tan(t)`, `t > 0`,
+/// on a path the return flags keep from ever running, but that the verifier
+/// still reads) would see the yielded type: not valid IR. Only users that
+/// pass values on to a slot that takes the yielded type (a `yield` to an
+/// `if`'s result, a `return`, `print`) are known to be fine.
+fn arm_fits(f: &Function, results: &[ValueId], yielded: &[ValueId]) -> bool {
+    let mismatched: Vec<(ValueId, ValueId)> = results
+        .iter()
+        .zip(yielded)
+        .filter(|(r, y)| f.ty(**r) != f.ty(**y))
+        .map(|(r, y)| (*r, *y))
+        .collect();
+    if mismatched.is_empty() {
+        return true;
+    }
+    reachable_ops(f).into_iter().all(|o| {
+        let op = f.op(o);
+        op.operands.iter().enumerate().all(|(i, v)| {
+            let Some((_, y)) = mismatched.iter().find(|(r, _)| r == v) else {
+                return true;
+            };
+            let target = match op.kind {
+                OpKind::Print => return true,
+                OpKind::Return => f.results.get(i),
+                OpKind::Yield => f
+                    .block(op.parent)
+                    .parent
+                    .and_then(|r| f.region(r).parent)
+                    .map(|owner| f.op(owner))
+                    .filter(|owner| owner.kind == OpKind::If)
+                    .and_then(|owner| owner.results.get(i))
+                    .map(|res| f.ty(*res)),
+                _ => None,
+            };
+            target.is_some_and(|t| sky_ir::assignable(f.ty(*y), t))
+        })
+    })
+}
+
 /// `if` on a constant condition: inline the taken region in place of the
 /// `if`. Returns whether it did.
 fn fold_if(f: &mut Function, id: OpId, out: &mut Vec<Rewrite>) -> bool {
@@ -427,6 +470,9 @@ fn fold_if(f: &mut Function, id: OpId, out: &mut Vec<Rewrite>) -> bool {
         return false;
     }
     let yielded = term.operands.clone();
+    if !arm_fits(f, &op.results, &yielded) {
+        return false;
+    }
 
     // Splice the region's operations in where the `if` was.
     let parent = op.parent;

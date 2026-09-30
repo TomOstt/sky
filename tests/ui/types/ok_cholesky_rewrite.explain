@@ -36,8 +36,29 @@ tests/ui/types/ok_cholesky_rewrite.sky:11:5: note: `inv(K⁻¹) @ (f + f)` is re
    |         --- positive definite
    = note: rewrite `(K⁻¹)⁻¹ @ (f + f)` to a Cholesky solve: K⁻¹ is Matrix[3,3] and PositiveDefinite, (f + f) is Vector[3]. Factor (K⁻¹) = L·Lᵀ (L lower-triangular), solve L·y = (f + f), then Lᵀ·x = y. x = (K⁻¹)⁻¹·(f + f) is Vector[3], and (K⁻¹)⁻¹ is never formed.
 
-tests/ui/types/ok_cholesky_rewrite.sky:11:17: note: [PAR-003] this elementwise `add` over 3 elements is not parallelized: it may fail and is small
+tests/ui/types/ok_cholesky_rewrite.sky:11:17: note: [ALG-015] `f + f` is rewritten to `2 * f`
+   |
+11 | w = inv(K⁻¹) @ (f + f)
+   |                 ^^^^^
+   = note: applied by the `egraph` pass
+   = note: because for an array, x + x and 2 * x are both the correctly rounded 2x in every entry (-0 included) or overflow in the same entries, and the product reads the array once
+
+tests/ui/types/ok_cholesky_rewrite.sky:11:17: note: [EG-COST-001] `f + f` is rewritten to `2 * f`
+   |
+11 | w = inv(K⁻¹) @ (f + f)
+   |                 ^^^^^
+   = note: applied by the `egraph` pass
+   = note: because chose `2 * f` over `f + f`: 3 vs 3 flops, 48 vs 72 bytes (weighted cost 73 vs 76)
+
+tests/ui/types/ok_cholesky_rewrite.sky:11:17: note: [PAR-003] this elementwise `mul` over 3 elements is not parallelized: it may fail and is small
    |
 11 | w = inv(K⁻¹) @ (f + f)
    |                 ^^^^^
    = note: because 3 elements is under the threshold of 262144: splitting it across threads costs more than it saves
+
+tests/ui/types/ok_cholesky_rewrite.sky:11:17: note: [MEM-001] `f + f` reuses `f`'s buffer: no allocation for this result
+   |
+11 | w = inv(K⁻¹) @ (f + f)
+   |                 ^^^^^
+   = note: `f` is not used again after this on any path, and has the shape of the result
+   = note: applied by the `lifetimes` analysis of the SIR interpreter

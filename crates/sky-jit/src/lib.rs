@@ -12,7 +12,10 @@
 //!   own (the SIR interpreter uses them for large arrays) and from `module`.
 //! * `runtime.rs`: the `extern "C"` functions native code calls (math
 //!   functions through `sky_interp::math::apply`, array operations, errors),
-//!   so native results are bit-identical to the interpreters'.
+//!   so native results are bit-identical to the interpreters'. They are
+//!   `#[no_mangle]`, so an object file can import them by name.
+//! * `aot.rs`: the same translation written to an object file, for `sky
+//!   build`; see [`aot`].
 //!
 //! The whole-module engine's entry points are [`compile`] (a SIR module to
 //! machine code), [`Compiled::run`] and [`Compiled::run_or_rerun`], and
@@ -48,11 +51,13 @@ pub fn host_isa() -> Result<OwnedTargetIsa, String> {
         .map_err(|e| e.to_string())
 }
 
+pub mod aot;
 mod icache;
 pub mod kernel;
 pub mod kernel_rt;
 mod module;
 mod runtime;
+pub mod tuning;
 /// A JIT builder for `isa` whose code and data live in **one** region of
 /// `reserve` bytes, reserved up front (untouched pages cost no memory).
 ///
@@ -81,4 +86,8 @@ pub(crate) const KERNEL_ARENA_BYTES: usize = 16 << 20;
 
 pub mod smoke;
 
-pub use module::{compile, emit_clif, CompileError, Compiled, RunFailure, SkipWriter};
+pub use module::{
+    compile, compile_with, compile_with_slp, emit_clif, emit_clif_with, emit_clif_with_slp,
+    fused_sums, CompileError, Compiled, RunFailure, SkipWriter, Slp,
+};
+pub use sky_interp::linalg::Numerics;

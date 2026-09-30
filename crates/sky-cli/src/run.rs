@@ -1,10 +1,15 @@
 //! `sky run <file>`: check the file, and only if it has no errors, run it.
 //!
-//! # Two engines
+//! # Three engines
 //!
-//! A checked program runs on one of two engines that must behave the same
+//! A checked program runs on one of three engines that must behave the same
 //! byte for byte (stdout, diagnostics, exit status):
 //!
+//! * native: the SIR compiled to machine code through Cranelift
+//!   (`sky_jit`), whole module, in memory. It runs the optimized SIR of the
+//!   `sir` engine and is exact against it. It refuses a program with
+//!   something it cannot compile (`CompileError`), which `--engine=auto`
+//!   answers by falling back.
 //! * SIR: lower to SIR, run the default optimization pipeline with
 //!   verification, and execute on the SIR reference interpreter
 //!   (`sky_ir_interp`). `docs/design/ir.md` plans for it to become the
@@ -22,12 +27,13 @@
 //! elementwise kernels and independent pure calls); 1 means sequential, and
 //! the output is the same for every N. The tree-walker is always sequential.
 //!
-//! `--engine=auto` picks SIR and falls back to the tree-walker
-//! on a `LowerError`, silently: the program is valid, it is only that one
-//! engine cannot run it yet. `--engine=ast` and `--engine=sir` force one, for
-//! debugging and differential use; a forced SIR run of a program that does
-//! not lower is an error, so a fallback can never hide in a differential
-//! comparison.
+//! `--engine=auto` picks native code and falls back to SIR when the program
+//! does not compile natively, and to the tree-walker on a `LowerError`,
+//! silently: the program is valid, it is only that one engine cannot run it
+//! yet. `--engine=ast`, `--engine=sir` and `--engine=native` force one, for
+//! debugging and differential use; a forced SIR or native run of a program
+//! that does not lower (or compile) is an error, so a fallback can never hide
+//! in a differential comparison.
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -47,7 +53,8 @@ use crate::ir::{prepare_run, Runnable};
 /// Which engine `sky run` executes on (`--engine=`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Engine {
-    /// SIR, falling back to the tree-walker when the program does not lower.
+    /// Native code, falling back to SIR when the program does not compile
+    /// natively, and to the tree-walker when it does not lower.
     Auto,
     /// The AST tree-walker: the default until SIR is faster (see the module
     /// docs).
@@ -55,6 +62,9 @@ pub enum Engine {
     Ast,
     /// SIR only: a program that does not lower is an error.
     Sir,
+    /// Native code only: a program that does not lower or compile is an
+    /// error.
+    Native,
 }
 
 impl Engine {
@@ -64,6 +74,7 @@ impl Engine {
             "auto" => Some(Engine::Auto),
             "ast" => Some(Engine::Ast),
             "sir" => Some(Engine::Sir),
+            "native" => Some(Engine::Native),
             _ => None,
         }
     }
@@ -128,11 +139,18 @@ fn run_source(
     // clean. `--engine=ast` never lowers, as before.
     let sir = match engine {
         Engine::Ast => None,
-        Engine::Auto | Engine::Sir => match prepare_run(module, src, checked) {
+        Engine::Auto | Engine::Sir | Engine::Native => match prepare_run(module, src, checked) {
             Runnable::Ready(ir) => Some(ir),
-            Runnable::Unsupported(e) if engine == Engine::Sir => {
-                let d = Diagnostic::error(format!("cannot run on SIR: {}", e.message), e.span)
-                    .with_note("`--engine=sir` runs only programs that lower to SIR".to_string());
+            Runnable::Unsupported(e) if engine != Engine::Auto => {
+                let (what, flag) = if engine == Engine::Sir {
+                    ("on SIR", "sir")
+                } else {
+                    ("natively", "native")
+                };
+                let d = Diagnostic::error(format!("cannot run {what}: {}", e.message), e.span)
+                    .with_note(format!(
+                        "`--engine={flag}` runs only programs that lower to SIR"
+                    ));
                 let d = match e.note {
                     Some(n) => d.with_note(n),
                     None => d,
@@ -146,22 +164,50 @@ fn run_source(
             }
         },
     };
+    // Native code is compiled before anything runs, for the same reason: a
+    // program it refuses has printed nothing yet.
+    let native = match (&sir, engine) {
+        (Some(ir), Engine::Native | Engine::Auto) => match sky_jit::compile(ir) {
+            Ok(c) => Some(c),
+            Err(e) if engine == Engine::Native => {
+                let span = e.span.unwrap_or(module.span);
+                let d = Diagnostic::error(format!("cannot run natively: {}", e.message), span)
+                    .with_note(
+                        "`--engine=native` runs only programs that compile to machine code"
+                            .to_string(),
+                    );
+                return fail_with(&d, &rendered, &file);
+            }
+            Err(_) => None,
+        },
+        _ => None,
+    };
     let stdout = io::stdout();
     let mut out = Stdout {
         inner: stdout.lock(),
         closed: false,
     };
-    let result = match sir {
+    let result = match (native, sir) {
+        // A value the checker could not type that is not what a declaration
+        // says stops native code; SIR runs the program instead, from the
+        // start, skipping the output already written.
+        (Some(code), sir) => {
+            let rerun = |w: &mut dyn Write| match &sir {
+                Some(ir) => sky_ir_interp::run_with(ir, &mut { w }, &par_config(threads)),
+                None => Ok(()),
+            };
+            code.run_or_rerun(&mut out, rerun)
+                .0
+                .map_err(|e| e.to_diagnostic())
+        }
         // An operation's operands carry the spans of the source they were
         // read from, so SIR's error is worded and labelled exactly as the
         // tree-walker's, with nothing to replay.
-        Some(ir) => {
-            let cfg = sky_ir_interp::ParConfig::with_threads(
-                threads.unwrap_or_else(sky_ir_interp::ParConfig::default_threads),
-            );
+        (None, Some(ir)) => {
+            let cfg = par_config(threads);
             sky_ir_interp::run_with(&ir, &mut out, &cfg).map_err(|e| e.to_diagnostic())
         }
-        None => tree_walk(module, src, &front.cholesky_solves, checked, &mut out)
+        (None, None) => tree_walk(module, src, &front.cholesky_solves, checked, &mut out)
             .map_err(|e| e.to_diagnostic()),
     };
     let _ = out.flush();
@@ -170,6 +216,14 @@ fn run_source(
         Err(_) if out.closed => ExitCode::FAILURE,
         Err(d) => fail_with(&d, &rendered, &file),
     }
+}
+
+/// The SIR interpreter's thread configuration for `--threads` (default: the
+/// environment's, else the machine's cores).
+fn par_config(threads: Option<usize>) -> sky_ir_interp::ParConfig {
+    sky_ir_interp::ParConfig::with_threads(
+        threads.unwrap_or_else(sky_ir_interp::ParConfig::default_threads),
+    )
 }
 
 /// Runs the checked module on the tree-walking interpreter.

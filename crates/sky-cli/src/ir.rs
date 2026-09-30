@@ -74,6 +74,9 @@ pub enum Outcome {
 
 /// A lowered and optimized program.
 pub struct Ready {
+    /// The module after the whole pipeline: what `sky run` executes, and what
+    /// `--emit=clif` compiles.
+    pub module: sky_ir::Module,
     /// The text after lowering.
     pub lowered: String,
     /// The text after the whole pipeline.
@@ -156,13 +159,15 @@ pub fn build(
     } else {
         Vec::new()
     };
+    let finished = if print {
+        sky_ir::print(&ir)
+    } else {
+        String::new()
+    };
     Outcome::Ready(Box::new(Ready {
+        module: ir,
         lowered,
-        finished: if print {
-            sky_ir::print(&ir)
-        } else {
-            String::new()
-        },
+        finished,
         after: report.printed,
         notes,
     }))

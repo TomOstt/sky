@@ -2,7 +2,7 @@ use std::fs::File;
 use std::path::Path;
 use std::process::ExitCode;
 
-use sky_diag::{display_safe, SourceFile};
+use sky_diag::{display_safe, Diagnostic, SourceFile, Span};
 use sky_project::{Project, SystemIdentity};
 use sky_syntax::Edition;
 
@@ -15,15 +15,17 @@ mod repl;
 mod run;
 mod tune;
 
-const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] [--threads=N] <file.sky>\n       sky run [--engine=auto|ast|sir] [--threads=N] <file.sky>\n       sky repl\n\
+const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] [--emit=clif] [--threads=N] <file.sky>\n       sky run [--engine=auto|ast|sir|native] [--threads=N] <file.sky>\n       sky repl\n\
                      sky hw\n\
                      sky tune [--show | --reset] [--budget-ms=<n>] [<kernel>]\n\n\
                      <stage> is `lower`, `final` (the default), or `after:<pass>` for one of\n\
                      fold, egraph, contracts, dce, fuse, cholesky\n\
+                     --emit=clif prints the Cranelift IR the native engine compiles\n\
                      --engine picks how `sky run` executes: `ast` (the tree-walking\n\
                      interpreter, the default), `sir` (lower to SIR, run the optimized IR),\n\
-                     or `auto` (SIR, falling back to the tree-walker for programs SIR cannot\n\
-                     lower yet)\n\
+                     `native` (compile the optimized IR to machine code), or `auto` (native,\n\
+                     falling back to SIR, then to the tree-walker, for programs an engine\n\
+                     cannot take yet)\n\
                      `sky hw` prints what this machine can do and what Sky uses it for;\n\
                      `sky tune` measures kernel parameters here and remembers the winners\n\
                      (`--show` lists them, `--reset` forgets them)\n\
@@ -141,7 +143,7 @@ fn parse_run_args(args: &[String]) -> Result<(String, run::Engine, Option<usize>
         } else if let Some(text) = arg.strip_prefix("--engine=") {
             let e = run::Engine::parse(text).ok_or_else(|| {
                 Some(format!(
-                    "unknown engine `{}` (use `auto`, `ast` or `sir`)",
+                    "unknown engine `{}` (use `auto`, `ast`, `sir` or `native`)",
                     display_safe(text)
                 ))
             })?;
@@ -181,6 +183,8 @@ struct CheckArgs {
     emit_ir: Option<ir::Stage>,
     /// `--threads=N`: the thread count the parallelism notes speak of.
     threads: Option<usize>,
+    /// `--emit=clif`: the Cranelift IR of the program.
+    emit_clif: bool,
 }
 
 impl CheckArgs {
@@ -188,7 +192,8 @@ impl CheckArgs {
     /// the file). `Err` is a usage error: the message, if it needs one
     /// beyond the usage text.
     fn parse(args: &[String]) -> Result<CheckArgs, Option<String>> {
-        let (mut path, mut explain, mut emit_ir, mut threads) = (None, false, None, None);
+        let (mut path, mut explain, mut emit_ir, mut emit_clif, mut threads) =
+            (None, false, None, false, None);
         for arg in args {
             if arg == "--explain" {
                 if std::mem::replace(&mut explain, true) {
@@ -206,6 +211,16 @@ impl CheckArgs {
                 if threads.replace(parse_threads(text)?).is_some() {
                     return Err(None);
                 }
+            } else if let Some(what) = arg.strip_prefix("--emit=") {
+                if what != "clif" {
+                    return Err(Some(format!(
+                        "unknown --emit target `{}` (use `clif`)",
+                        display_safe(what)
+                    )));
+                }
+                if std::mem::replace(&mut emit_clif, true) {
+                    return Err(None);
+                }
             } else if arg.starts_with("--") || path.replace(arg.clone()).is_some() {
                 return Err(None);
             }
@@ -215,6 +230,7 @@ impl CheckArgs {
                 path,
                 explain,
                 emit_ir,
+                emit_clif,
                 threads,
             }),
             None => Err(None),
@@ -249,7 +265,7 @@ fn check(opts: &CheckArgs, file: &File, src: &str) -> ExitCode {
     // pin stderr), unless `--emit-ir` owns stdout. After discovery so an
     // invalid manifest never prints an edition.
     let facts = |line: String| {
-        if opts.emit_ir.is_some() {
+        if opts.emit_ir.is_some() || opts.emit_clif {
             eprintln!("{line}");
         } else {
             println!("{line}");
@@ -304,7 +320,7 @@ fn check_source(
         src,
         sky_types::Env::with_prelude(),
         opts.explain,
-        opts.emit_ir.is_some(),
+        opts.emit_ir.is_some() || opts.emit_clif,
         true,
         opts.threads
             .unwrap_or_else(sky_ir::parallel::Config::default_threads),
@@ -313,13 +329,30 @@ fn check_source(
     // Pass the source unchanged: spans are byte offsets into it, and the
     // renderer escapes terminal-unsafe characters itself (spec/diagnostics.md).
     let file = SourceFile::new(path, src);
-    let (mut text, mut internal) = (None, None);
+    let (mut text, mut internal) = (None::<String>, None);
+    let mut front = front;
     match (&front.ir, &opts.emit_ir) {
         (Some(ir::Outcome::Ready(ready)), Some(stage)) => {
             text = Some(ready.text(stage).to_string());
         }
         (Some(ir::Outcome::Internal(message)), _) => internal = Some(message.clone()),
         _ => {}
+    }
+    // `--emit=clif`: the Cranelift IR of the optimized program, after the IR
+    // text if both were asked for. A program native code cannot take has no
+    // CLIF, and a note says why (as `--emit-ir` does for a program without IR).
+    if opts.emit_clif {
+        if let Some(ir::Outcome::Ready(ready)) = &front.ir {
+            match sky_jit::emit_clif(&ready.module) {
+                Ok(clif) => text.get_or_insert_with(String::new).push_str(&clif),
+                Err(e) => {
+                    let span = e.span.unwrap_or(Span::point(0));
+                    let note = Diagnostic::note(format!("no Cranelift IR: {e}"), span);
+                    front.diagnostics.push(note);
+                    front.diagnostics.sort_by_key(|d| d.primary.span.start);
+                }
+            }
+        }
     }
     (front.render(&file), front.ok, text, internal)
 }

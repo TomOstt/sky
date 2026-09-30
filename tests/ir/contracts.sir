@@ -7,9 +7,9 @@ fn @<main>() -> () effects(io, fail, call) @ 0..401 {
   %3 = const.float 0 : num[T; ()] @ 312..315
   %4 = cmp.gt %t, %3 : bool @ 308..315 (308..309, 312..315)
   assert[assert] "t > 0 s" msg "time passes" names("t") %4, %t @ 308..315
+  %5 = const.float 1 : num[L; ()] @ 344..347
   %k = call @"ratio[a=3,b=2]"() : num[L; ()] @ 352..367
-  %6 = const.float 1 : num[L; ()] @ 395..398
-  %7 = add %k, %6 : num[L; ()] @ 391..398 (391..392, 395..398)
+  %7 = add %k, %5 : num[L; ()] @ 391..398 (391..392, 395..398)
   %8 = call @open_ended(%7) : num[L; ()] @ 380..399
   print %t, %k, %8 @ 368..400
   return @ 0..401

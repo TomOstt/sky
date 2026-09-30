@@ -1,7 +1,8 @@
 //! The default pipeline on the fuzzer's programs: for every program the
 //! `differential` fuzz harness generates (`fuzz/harness/differential.rs`, the
 //! generator only), the tree-walking interpreter, the lowered SIR and the
-//! lowered SIR after `fold`, `egraph`, `dce`, `fuse` and `cholesky` must give
+//! lowered SIR after the default pipeline (`specialize`, `fold`, `egraph`, `gvn`,
+//! `licm`, `contracts`, `dce`, `fuse`, `cholesky`, ...) must give
 //! the same stdout and the same error, compared as the whole rendered
 //! diagnostic: message, spans, labels, secondary labels and notes. That is
 //! what pins the passes' handling of operand spans (`OpData::operand_spans`):
@@ -168,8 +169,11 @@ fn replay_a_source_file() {
         println!("--- lowered ---\n{}", sky_ir::print(&ir));
         for pass in sky_opt::DEFAULT_PASSES {
             let one = match pass {
+                "specialize" => PassManager::new().with(sky_opt::SpecializePass),
                 "fold" => PassManager::new().with(sky_opt::FoldPass::default()),
                 "egraph" => PassManager::new().with(sky_egraph::EgraphPass::default()),
+                "gvn" => PassManager::new().with(sky_opt::GvnPass),
+                "licm" => PassManager::new().with(sky_opt::LicmPass),
                 "contracts" => PassManager::new().with(sky_opt::ContractsPass),
                 "dce" => PassManager::new().with(sky_opt::DcePass),
                 "powers" => PassManager::new().with(sky_opt::PowersPass),

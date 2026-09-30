@@ -1,0 +1,19 @@
+# Nothing here may move. `1 / d` does not change in the loop, but it can fail,
+# and the loop prints before it: hoisted, it would fail before the first line
+# is printed. The second loop's `x / j` fails on the first iteration (j = 0)
+# before `1 / e` could, so the error Sky reports is `x / i`'s.
+d: Scalar
+e: Scalar
+x: Scalar
+n: Scalar
+i = 0
+total = 0
+while i < n:
+    print(i)
+    total = total + 1 / d
+    i += 1
+j = 0
+while j < n:
+    total = total + x / j + 1 / e
+    j += 1
+print(total)

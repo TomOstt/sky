@@ -28,3 +28,28 @@ tests/ir/specialize_sign.sky:16:22: note: [SPEC-001] specialized `g` for x < 0 a
    = note: because the argument for `x` is negative (at most -1)
    = note: because in `g[x<0]`: 1 comparison decided by the sign, 2 branches decided, 1 operation folded to constants
    = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_sign.sky:16:29: note: [GVN-001] `abs(z)` reuses the value computed earlier on line 16
+   |
+16 | print(g(abs(z) + 1), g(-1 - abs(z)), h(abs(z) + 1))
+   |                             ^^^^^^
+   |         ------ computed here first
+   = note: applied by the `gvn` pass
+   = note: because the earlier `math.abs` has the same operands and runs first on every path to this one, so both compute the same value
+
+tests/ir/specialize_sign.sky:16:40: note: [GVN-001] `abs(z)` reuses the value computed earlier on line 16
+   |
+16 | print(g(abs(z) + 1), g(-1 - abs(z)), h(abs(z) + 1))
+   |                                        ^^^^^^
+   |         ------ computed here first
+   = note: applied by the `gvn` pass
+   = note: because the earlier `math.abs` has the same operands and runs first on every path to this one, so both compute the same value
+
+tests/ir/specialize_sign.sky:16:40: note: [GVN-001] `abs(z) + 1` reuses the value computed earlier on line 16
+   |
+16 | print(g(abs(z) + 1), g(-1 - abs(z)), h(abs(z) + 1))
+   |                                        ^^^^^^^^^^
+   |         ---------- computed here first
+   = note: applied by the `gvn` pass
+   = note: because the earlier `add` has the same operands and runs first on every path to this one, so both compute the same value
+   = note: because `add` can fail, but with the same operands the earlier one has failed already if this one would, and Sky reports the first failure, so this one can never be the failure that is reported

@@ -371,6 +371,27 @@ fn explanation_notes(
         .filter(|x| !(x.rule == CHOLESKY_RULE && checker_solves.contains(&x.span)))
         .filter(|x| x.after.is_empty() || x.before != x.after)
         .map(|x| {
+            // `gvn` and `licm` say where the other place is: a reused value
+            // was computed at line 4, a hoisted operation left the loop at
+            // line 12.
+            if let Some(headline) = sky_opt::motion_headline(x, src) {
+                let mut d = Diagnostic::note(headline, x.span)
+                    .with_note(format!("applied by the `{}` pass", x.pass));
+                if let Some(related) = x.related {
+                    d = d.with_secondary(
+                        related,
+                        if x.rule == sky_opt::GVN_RULE {
+                            "computed here first"
+                        } else {
+                            "the loop"
+                        },
+                    );
+                }
+                for reason in &x.because {
+                    d = d.with_note(format!("because {reason}"));
+                }
+                return d;
+            }
             let source = sky_ast::ast::span_text(src, x.span).filter(|t| !t.is_empty());
             match source {
                 Some(text) if x.after.is_empty() => note(&sky_ir::Explanation {

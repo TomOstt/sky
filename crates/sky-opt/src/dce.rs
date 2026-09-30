@@ -272,8 +272,12 @@ fn sweep_block(
     changed
 }
 
-/// Whether removing `id` (if its results are unused) is safe.
-fn removable(f: &Function, id: OpId, facts: &Analysis) -> bool {
+/// Whether removing `id` (if its results are unused) is safe. That is also
+/// the question "is `id` free of effects": it cannot print, fail, call or
+/// loop, so running it earlier, later, or not at all changes nothing anyone
+/// can see. `licm` asks it too, of the operations it moves and of the ones it
+/// leaves behind.
+pub(crate) fn removable(f: &Function, id: OpId, facts: &Analysis) -> bool {
     let op = f.op(id);
     let props = op.kind.properties();
     if props.terminator {

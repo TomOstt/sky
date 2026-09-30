@@ -83,6 +83,15 @@ tests/ir/specialize.sky:26:17: note: [SPEC-002] this call uses the existing spec
    = note: applied by the `specialize` pass
    = note: because the argument for `x` is the constant 2
 
+tests/ir/specialize.sky:26:17: note: [GVN-001] `twice(1 + 1)` reuses the value computed earlier on line 26
+   |
+26 | print(twice(2), twice(1 + 1))
+   |                 ^^^^^^^^^^^^
+   |       -------- computed here first
+   = note: applied by the `gvn` pass
+   = note: because the earlier `call` has the same operands and runs first on every path to this one, so both compute the same value
+   = note: because `call` can fail, but with the same operands the earlier one has failed already if this one would, and Sky reports the first failure, so this one can never be the failure that is reported
+
 tests/ir/specialize.sky:26:23: note: [FOLD-FLOAT-001] `1 + 1` is rewritten to `2`
    |
 26 | print(twice(2), twice(1 + 1))

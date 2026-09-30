@@ -29,20 +29,42 @@
 //! 3. `egraph`: e-graph rewriting under the `Reproducible` contract, which
 //!    enables only exact and conditional rules (`@fast` rules are never on
 //!    by default);
-//! 4. `contracts`: removes an `assert`, `requires` or `ensures` that the
+//! 4. `gvn`: global value numbering ([`crate::gvn`]): an operation identical
+//!    to one that dominates it reuses the earlier result, across blocks and
+//!    regions. It runs after the e-graph, which makes equal expressions
+//!    syntactically equal (and merges the ones in one segment already), and
+//!    before `licm`, so that an operation equal to an outer one is reused
+//!    rather than hoisted (a hoist of an operation that can fail may need a
+//!    guard; a reuse never does).
+//! 5. `licm`: loop-invariant code motion ([`crate::licm`]): what does not
+//!    change in a `while` is computed once before it, where that keeps the
+//!    program's output and first failure (the module documentation of
+//!    `licm` has the rules and the guard). It runs after `specialize`, which
+//!    unrolls small constant loops (nothing to hoist from those), after
+//!    `fold`, which turns operations into constants, and after the e-graph
+//!    and `gvn`, so it moves the simplified, unique operations. It runs
+//!    before `contracts`, `dce`, `powers` and `fuse`: `powers` then expands
+//!    a hoisted `x^n` once, outside the loop, and `fuse` sees only what
+//!    stays in the loop (a chain that is partly invariant would otherwise
+//!    fuse into one kernel that recomputes its invariant part on every
+//!    iteration); `dce` removes what the motion leaves dead. It runs before
+//!    `transposes`: a transpose it moves out is then left out of the product
+//!    (`transposes` does not fold a transpose that is computed outside the
+//!    loop the product is in, which would copy it on every iteration).
+//! 6. `contracts`: removes an `assert`, `requires` or `ensures` that the
 //!    exactness analysis proves true (from constants, and from the
 //!    arguments of every call of the function), and says so. It runs after
 //!    the e-graph, so it sees the simplified conditions, and before `dce`,
 //!    which then removes the comparison the check leaves unused;
-//! 5. `dce`: removes dead pure operations, and says so when named
+//! 7. `dce`: removes dead pure operations, and says so when named
 //!    (user-written) values disappear. It runs after the e-graph, which
 //!    leaves the operations it replaced behind;
-//! 6. `powers`: `x^n` for a constant integer `2 <= n <= 14` becomes the
+//! 8. `powers`: `x^n` for a constant integer `2 <= n <= 14` becomes the
 //!    multiplications `powi` performs, bit for bit (see [`crate::powers`]).
 //!    It runs before `fuse`, so the multiplications can fuse into an
 //!    elementwise kernel (`pow.const` does not), and after the e-graph,
 //!    which knows `pow.const`;
-//! 7. `fuse`: trees of elementwise array operations become `fused` kernels.
+//! 9. `fuse`: trees of elementwise array operations become `fused` kernels.
 //!    It runs after `dce`, because a dead operation left by the e-graph
 //!    would count as a second use of its operands and keep a temporary
 //!    alive, and after the e-graph, because a `fused` body is opaque to it
@@ -50,16 +72,16 @@
 //!    runs before `cholesky` only by convention: they touch different
 //!    operations, and `cholesky`'s result must stay last so it is never
 //!    rewritten.
-//! 8. `cholesky`: `A⁻¹ @ b` with a PositiveDefinite `A` becomes
-//!    `solve[cholesky](A, b)`, when the checker did not already rewrite it
-//!    (`B = inv(A)` and then `B @ b`, which only the IR sees through);
-//! 9. `transposes`: `transpose(A) @ B` becomes `matmul[ta](A, B)`: the
-//!    transpose is not materialized ([`crate::linalg`]). Exact;
-//! 10. `structure`: Gram products (`Aᵀ @ A`, one triangle mirrored), Diagonal
+//! 10. `cholesky`: `A⁻¹ @ b` with a PositiveDefinite `A` becomes
+//!     `solve[cholesky](A, b)`, when the checker did not already rewrite it
+//!     (`B = inv(A)` and then `B @ b`, which only the IR sees through);
+//! 11. `transposes`: `transpose(A) @ B` becomes `matmul[ta](A, B)`: the
+//!     transpose is not materialized ([`crate::linalg`]). Exact;
+//! 12. `structure`: Gram products (`Aᵀ @ A`, one triangle mirrored), Diagonal
 //!     scaling and the transpose of a Symmetric matrix ([`crate::linalg`]).
 //!     Exact. It runs after `transposes`, which is what turns `Aᵀ @ A` into
 //!     a product of one value by its own transpose;
-//! 11. `algorithms`: records the algorithm class the policy chooses for
+//! 13. `algorithms`: records the algorithm class the policy chooses for
 //!      each `matmul` ([`crate::algorithm`]). The default policy chooses
 //!      nothing, so the pass changes nothing until a kernel registers one.
 //!
@@ -76,17 +98,20 @@ use sky_egraph::EgraphPass;
 use sky_ir::{Changed, Module, Pass, PassCx, PassManager};
 
 use crate::algorithm::{algorithms, default_policy, MatMulPolicy};
-use crate::rewrite::Rewrite;
+use crate::rewrite::{Related, Rewrite};
 use crate::{
-    cholesky, contracts, dce, fold_with, fuse, powers, specialize, structure, transposes, FoldMode,
+    cholesky, contracts, dce, fold_with, fuse, gvn, licm, powers, specialize, structure,
+    transposes, FoldMode,
 };
 
 /// The pass names of [`default_pipeline`], in order: what
 /// `sky check --emit-ir=after:<name>` accepts.
-pub const DEFAULT_PASSES: [&str; 11] = [
+pub const DEFAULT_PASSES: [&str; 13] = [
     "specialize",
     "fold",
     "egraph",
+    "gvn",
+    "licm",
     "contracts",
     "dce",
     "powers",
@@ -104,6 +129,19 @@ fn run_reporting(
     m: &mut Module,
     cx: &mut PassCx,
     f: impl FnOnce(&mut Module) -> Vec<Rewrite>,
+) -> Changed {
+    let before = m.clone();
+    for rw in f(m) {
+        rw.explain(cx);
+    }
+    Changed::from(*m != before)
+}
+
+/// [`run_reporting`] for a pass whose records carry a second span.
+fn run_reporting_related(
+    m: &mut Module,
+    cx: &mut PassCx,
+    f: impl FnOnce(&mut Module) -> Vec<Related>,
 ) -> Changed {
     let before = m.clone();
     for rw in f(m) {
@@ -139,6 +177,34 @@ impl Pass for FoldPass {
 
     fn run(&self, m: &mut Module, cx: &mut PassCx) -> Changed {
         run_reporting(m, cx, |m| fold_with(m, self.mode))
+    }
+}
+
+/// Global value numbering ([`gvn`]) as a pass named `"gvn"`.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct GvnPass;
+
+impl Pass for GvnPass {
+    fn name(&self) -> &'static str {
+        "gvn"
+    }
+
+    fn run(&self, m: &mut Module, cx: &mut PassCx) -> Changed {
+        run_reporting_related(m, cx, gvn)
+    }
+}
+
+/// Loop-invariant code motion ([`licm`]) as a pass named `"licm"`.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct LicmPass;
+
+impl Pass for LicmPass {
+    fn name(&self) -> &'static str {
+        "licm"
+    }
+
+    fn run(&self, m: &mut Module, cx: &mut PassCx) -> Changed {
+        run_reporting_related(m, cx, licm)
     }
 }
 
@@ -280,6 +346,8 @@ pub fn default_passes_without_specialize(manager: PassManager) -> PassManager {
     manager
         .with(FoldPass::default())
         .with(EgraphPass::default())
+        .with(GvnPass)
+        .with(LicmPass)
         .with(ContractsPass)
         .with(DcePass)
         .with(PowersPass)

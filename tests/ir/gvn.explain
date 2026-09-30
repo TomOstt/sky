@@ -1,0 +1,53 @@
+tests/ir/gvn.sky:14:9: note: [GVN-001] `y * x` at line 14 reuses the value computed at line 12
+   |
+14 |     b = y * x
+   |         ^^^^^
+12 | a = x * y
+   |     ----- computed here first
+   = note: applied by the `gvn` pass
+   = note: because the earlier `mul` has the same operands and runs first on every path to this one, so both compute the same value
+   = note: because `mul` can fail, but with the same operands the earlier one has failed already if this one would, and Sky reports the first failure, so this one can never be the failure that is reported
+
+tests/ir/gvn.sky:15:5: note: printed value of `b` is accurate to within 2.0e292 absolute (in SI units)
+   |
+15 |     print(b)
+   |     ^^^^^^^^
+   = note: a proven bound on the rounding error against the exact real result (roundoff analysis)
+
+tests/ir/gvn.sky:18:1: note: printed value of `x * y + a` is accurate to within 6.0e292 absolute (in SI units)
+   |
+18 | print(x * y + a)
+   | ^^^^^^^^^^^^^^^^
+   = note: a proven bound on the rounding error against the exact real result (roundoff analysis)
+
+tests/ir/gvn.sky:18:7: note: [GVN-001] `x * y` at line 18 reuses the value computed at line 12
+   |
+18 | print(x * y + a)
+   |       ^^^^^
+12 | a = x * y
+   |     ----- computed here first
+   = note: applied by the `gvn` pass
+   = note: because the earlier `mul` has the same operands and runs first on every path to this one, so both compute the same value
+   = note: because `mul` can fail, but with the same operands the earlier one has failed already if this one would, and Sky reports the first failure, so this one can never be the failure that is reported
+
+tests/ir/gvn.sky:20:1: note: printed value of `x - y` is accurate to within 2.0e292 absolute (in SI units)
+   |
+20 | print(x - y, y - x)
+   | ^^^^^^^^^^^^^^^^^^^
+   = note: a proven bound on the rounding error against the exact real result (roundoff analysis)
+
+tests/ir/gvn.sky:20:1: note: printed value of `y - x` is accurate to within 2.0e292 absolute (in SI units)
+   |
+20 | print(x - y, y - x)
+   | ^^^^^^^^^^^^^^^^^^^
+   = note: a proven bound on the rounding error against the exact real result (roundoff analysis)
+
+tests/ir/gvn.sky:21:7: note: [GVN-001] `x / y` at line 21 reuses the value computed at line 19
+   |
+21 | print(x / y + q)
+   |       ^^^^^
+19 | q = x / y
+   |     ----- computed here first
+   = note: applied by the `gvn` pass
+   = note: because the earlier `div` has the same operands and runs first on every path to this one, so both compute the same value
+   = note: because `div` can fail, but with the same operands the earlier one has failed already if this one would, and Sky reports the first failure, so this one can never be the failure that is reported

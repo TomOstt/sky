@@ -4,13 +4,42 @@ tests/ir/parallel.sky:5:5: note: cost of `work`: unbounded (loop at line 8)
   |     ^^^^
   = note: the static cost model has no bound for it
 
+tests/ir/parallel.sky:9:40: note: [GVN-001] `i + 1` reuses the value computed earlier on line 9
+  |
+9 |         total = total + sqrt(i + 1) / (i + 1)
+  |                                        ^^^^^
+  |                              ----- computed here first
+  = note: applied by the `gvn` pass
+  = note: because the earlier `add` has the same operands and runs first on every path to this one, so both compute the same value
+  = note: because `add` can fail, but with the same operands the earlier one has failed already if this one would, and Sky reports the first failure, so this one can never be the failure that is reported
+
+tests/ir/parallel.sky:10:13: note: [GVN-001] `i + 1` at line 10 reuses the value computed at line 9
+   |
+10 |         i = i + 1
+   |             ^^^^^
+ 9 |         total = total + sqrt(i + 1) / (i + 1)
+   |                              ----- computed here first
+   = note: applied by the `gvn` pass
+   = note: because the earlier `add` has the same operands and runs first on every path to this one, so both compute the same value
+   = note: because `add` can fail, but with the same operands the earlier one has failed already if this one would, and Sky reports the first failure, so this one can never be the failure that is reported
+
 tests/ir/parallel.sky:13:5: note: cost of `noisy`: unbounded (an operation at line 15 on a value of unknown shape)
    |
 13 | def noisy(n):
    |     ^^^^^
    = note: the static cost model has no bound for it
 
-tests/ir/parallel.sky:19:5: note: [FUSE-001] `(a + b) * 2 - a` is rewritten to `fused(a, b, 2)`
+tests/ir/parallel.sky:18:5: note: [GVN-001] `zeros(1000000)` at line 18 reuses the value computed at line 17
+   |
+18 | b = zeros(1000000)
+   |     ^^^^^^^^^^^^^^
+17 | a = zeros(1000000)
+   |     -------------- computed here first
+   = note: applied by the `gvn` pass
+   = note: because the earlier `zeros` has the same operands and runs first on every path to this one, so both compute the same value
+   = note: because `zeros` can fail, but with the same operands the earlier one has failed already if this one would, and Sky reports the first failure, so this one can never be the failure that is reported
+
+tests/ir/parallel.sky:19:5: note: [FUSE-001] `(a + a) * 2 - a` is rewritten to `fused(a, 2)`
    |
 19 | d = (a + b) * 2 - a
    |     ^^^^^^^^^^^^^^^
@@ -39,7 +68,7 @@ tests/ir/parallel.sky:20:5: note: [PAR-002] these 2 calls are independent (pure)
 20 | x = work(1000)
    |     ^^^^^^^^^^
    = note: because `work` has no `print` (directly or in what it calls), and no call uses another's result, so their order cannot show in the output
-   = note: because each is expensive enough to start elsewhere: at least 1204 estimated operations (the threshold is 400)
+   = note: because each is expensive enough to start elsewhere: at least 704 estimated operations (the threshold is 400)
    = note: because any of them may fail: every call is awaited and the error of the earliest one in program order is reported, as in a sequential run
 
 tests/ir/parallel.sky:22:5: note: [PAR-003] the call to `noisy` is not run concurrently with the calls after it

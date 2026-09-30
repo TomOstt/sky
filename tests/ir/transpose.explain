@@ -15,3 +15,12 @@ tests/ir/transpose.sky:3:8: note: [LA-GRAM-001] `Aᵀ @ A` is rewritten to `matm
   = note: because A is multiplied by its own transpose: entries (i, j) and (j, i) sum the same products (`aₚᵢ·aₚⱼ` and `aₚⱼ·aₚᵢ`, and multiplication commutes) in the same order
   = note: because one triangle is computed and mirrored: 24 flops instead of 36
   = note: because exact: the result is bit for bit the general product's, and bitwise symmetric (its type gains the Symmetric tag)
+
+tests/ir/transpose.sky:4:8: note: [GVN-001] `transpose(A)` at line 4 reuses the value computed at line 3
+  |
+4 | same = transpose(A)
+  |        ^^^^^^^^^^^^
+3 | gram = Aᵀ @ A
+  |        -- computed here first
+  = note: applied by the `gvn` pass
+  = note: because the earlier `transpose` has the same operands and runs first on every path to this one, so both compute the same value

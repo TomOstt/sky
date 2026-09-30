@@ -510,7 +510,7 @@ fn operations_that_can_still_fail_are_kept_and_keep_failing() {
 // ----- the pipeline and its adapters -----
 
 #[test]
-fn the_default_pipeline_runs_the_eleven_passes_in_order() {
+fn the_default_pipeline_runs_the_thirteen_passes_in_order() {
     let mut m = sky_lower::lower_source("x = 2 * 3\nprint(x)\n").unwrap();
     let report = default_pipeline().verify_each(true).run(&mut m).unwrap();
     let names: Vec<&str> = report.ran.iter().map(|(n, _)| *n).collect();
@@ -520,6 +520,8 @@ fn the_default_pipeline_runs_the_eleven_passes_in_order() {
             "specialize",
             "fold",
             "egraph",
+            "gvn",
+            "licm",
             "contracts",
             "dce",
             "powers",
@@ -535,10 +537,9 @@ fn the_default_pipeline_runs_the_eleven_passes_in_order() {
     // the operands; nothing else had anything to do.
     assert!(!report.ran[0].1.is_yes());
     assert!(report.ran[1].1.is_yes());
-    assert!(!report.ran[2].1.is_yes());
-    assert!(!report.ran[3].1.is_yes());
-    assert!(report.ran[4].1.is_yes());
-    assert!(report.ran[5..].iter().all(|(_, c)| !c.is_yes()));
+    assert!(report.ran[2..=5].iter().all(|(_, c)| !c.is_yes()));
+    assert!(report.ran[6].1.is_yes());
+    assert!(report.ran[7..].iter().all(|(_, c)| !c.is_yes()));
     // A second run finds nothing left to do.
     let again = default_pipeline().verify_each(true).run(&mut m).unwrap();
     assert!(again.ran.iter().all(|(_, c)| !c.is_yes()), "{again:?}");

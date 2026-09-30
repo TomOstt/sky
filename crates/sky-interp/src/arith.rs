@@ -5,8 +5,10 @@
 //! every limit, so the rules that don't depend on how a program is
 //! represented live here once: the finite checks, `powi`/`powf` selection,
 //! the reciprocal, dynamic operand checks, and the resource-limit errors.
-//! Callers pass the spans to blame: a tree walker has one per operand, an IR
-//! op has only its own and passes it for all three.
+//! Callers pass the spans to blame: the whole expression's, and the
+//! operands' at the place they were read. A tree walker has them in the AST;
+//! an IR operation records them (`OpData::operand_spans`), and where it
+//! records none it passes its own for each.
 
 use sky_diag::Span;
 use sky_units::{Dimension, Rational};

@@ -24,9 +24,18 @@
 //! `array.literal`, `index` and `slice` (bounds and index errors), `zeros`,
 //! `identity`, `len` and `transpose`. There is one Gauss-Jordan inverse, one
 //! Cholesky factorization and one printing path, so a program prints the same
-//! bytes and fails with the same message in both. SIR operations carry one
-//! span, so an error's span is the operation's, where `sky run` points at an
-//! operand; messages are identical.
+//! bytes and fails with the same message in both.
+//!
+//! # Diagnostics
+//!
+//! An error is the tree-walker's whole diagnostic: message, primary span and
+//! label, secondary labels, notes and help. Those constructors take the
+//! spans of the operands, and an operation records them where it reads its
+//! operands (`OpData::operand_spans`: the divisor of `a / b`, the index of
+//! `v[i]`, the entries of an array literal, the item of a slice), which the
+//! interpreter passes on. An operation that recorded none (a pass could not
+//! keep them, or a hand-built module has none) gives its own span for each
+//! operand, so the diagnostic then points at the whole operation.
 //!
 //! # Malformed IR
 //!

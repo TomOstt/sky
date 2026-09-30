@@ -65,6 +65,12 @@ impl FunctionBuilder {
         self.func.ops[op.index()].span = span;
     }
 
+    /// Sets the source spans of `op`'s operands at their use (see
+    /// [`OpData::operand_spans`]): one per operand, or empty for unknown.
+    pub fn set_operand_spans(&mut self, op: OpId, spans: Vec<Span>) {
+        self.func.ops[op.index()].operand_spans = spans;
+    }
+
     /// Names a value for printing (`%x`).
     pub fn set_name(&mut self, v: ValueId, name: impl Into<String>) {
         self.func.values[v.index()].name = Some(name.into());
@@ -130,6 +136,7 @@ impl FunctionBuilder {
             results: Vec::new(),
             regions: Vec::new(),
             span,
+            operand_spans: Vec::new(),
             parent: self.at,
         });
         let results: Vec<ValueId> = result_types
@@ -147,6 +154,21 @@ impl FunctionBuilder {
             .collect();
         self.func.ops[op.index()].results = results.clone();
         self.func.blocks[self.at.index()].ops.push(op);
+        (op, results)
+    }
+
+    /// [`Self::op`] with the source span of each operand at its use (see
+    /// [`OpData::operand_spans`]).
+    pub fn op_with_spans(
+        &mut self,
+        kind: OpKind,
+        operands: Vec<ValueId>,
+        operand_spans: Vec<Span>,
+        result_types: Vec<Type>,
+        span: Span,
+    ) -> (OpId, Vec<ValueId>) {
+        let (op, results) = self.op(kind, operands, result_types, span);
+        self.set_operand_spans(op, operand_spans);
         (op, results)
     }
 

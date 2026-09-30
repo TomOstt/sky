@@ -503,6 +503,21 @@ impl<'a> FnVerifier<'a> {
                 }
             }
         }
+        if !op.operand_spans.is_empty() && op.operand_spans.len() != op.expected_operand_spans() {
+            self.err_op(
+                o,
+                format!(
+                    "`{}` has {} operand span(s), but {} operand(s){}: they must be one per operand (or none)",
+                    op.kind.mnemonic(),
+                    op.operand_spans.len(),
+                    op.operands.len(),
+                    match &op.kind {
+                        OpKind::Slice { axes } => format!(" and {} axis item(s)", axes.len()),
+                        _ => String::new(),
+                    }
+                ),
+            );
+        }
         // Results are defined after the operation's regions have been walked
         // (they are not visible inside them), but their `def` links and
         // types are checked now.

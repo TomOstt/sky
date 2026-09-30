@@ -591,6 +591,7 @@ fn rewrite_segment(
             results: vec![value],
             regions: Vec::new(),
             span: s.span,
+            operand_spans: Vec::new(),
             parent: block,
         });
         func.values.push(ValueData {

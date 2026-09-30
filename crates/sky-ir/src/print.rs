@@ -21,7 +21,9 @@
 //!   id, not the name.
 //! * **Spans are byte ranges** (`@ 34..52`), the only form the parser can
 //!   restore without the source file. An empty `0..0` span is omitted and
-//!   read back as `0..0`.
+//!   read back as `0..0`. The spans of an operation's operands, when it has
+//!   them (`OpData::operand_spans`), follow its own in parentheses, `add %a,
+//!   %b : num @ 34..52 (34..35, 38..52)`, and are left out when unknown.
 //! * **Numbering is canonical** ([`crate::canon`]): unnamed values are
 //!   `%<position>`; named values keep their name, uniquified.
 //! * The printer never panics, whatever the module holds: ids out of range
@@ -269,7 +271,19 @@ impl Printer<'_> {
         for &r in &op.regions {
             self.region(r, indent, depth);
         }
-        self.span(op.span);
+        if op.operand_spans.is_empty() {
+            self.span(op.span);
+        } else {
+            // The operand spans follow the operation's own, which must then
+            // be written even when it is `0..0`.
+            let _ = write!(self.out, " @ {}..{}", op.span.start, op.span.end);
+            let spans: Vec<String> = op
+                .operand_spans
+                .iter()
+                .map(|s| format!("{}..{}", s.start, s.end))
+                .collect();
+            let _ = write!(self.out, " ({})", spans.join(", "));
+        }
         self.out.push('\n');
     }
 

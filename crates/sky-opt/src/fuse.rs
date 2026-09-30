@@ -337,6 +337,7 @@ fn apply(f: &mut Function, tree: &[OpId]) -> Rewrite {
         results: vec![root_value],
         regions: vec![region],
         span,
+        operand_spans: Vec::new(),
         parent: block,
     });
     f.values[root_value.index()].def = ValueDef::OpResult {
@@ -392,6 +393,7 @@ fn apply(f: &mut Function, tree: &[OpId]) -> Rewrite {
         results: Vec::new(),
         regions: Vec::new(),
         span,
+        operand_spans: Vec::new(),
         parent: body,
     });
     let mut body_ops = tree.to_vec();

@@ -197,6 +197,7 @@ impl Builder {
             results: Vec::new(),
             regions: Vec::new(),
             span,
+            operand_spans: Vec::new(),
             parent,
         });
         op

@@ -129,7 +129,15 @@ pub fn all_ops() -> Module {
     );
     let input = b.op1(OpKind::Input { name: "in".into() }, vec![], len(), sp(0, 0));
 
-    let sum = b.op1(OpKind::Add, vec![x, c1], len(), sp(20, 25));
+    // Operations that know where their operands were read.
+    let (_, sum) = b.op_with_spans(
+        OpKind::Add,
+        vec![x, c1],
+        vec![sp(20, 21), sp(24, 25)],
+        vec![len()],
+        sp(20, 25),
+    );
+    let sum = sum[0];
     let diff = b.op1(OpKind::Sub, vec![x, c1], len(), sp(20, 25));
     let area = b.op1(
         OpKind::Mul,
@@ -191,14 +199,16 @@ pub fn all_ops() -> Module {
     let a_inv = b.op1(OpKind::Inverse, vec![a], pd_matrix(n.clone()), sp(0, 0));
     let prod = b.op1(OpKind::MatMul, vec![a, bv], vector(n.clone()), sp(0, 0));
     let at = b.op1(OpKind::Transpose, vec![a], pd_matrix(n.clone()), sp(0, 0));
-    let solved = b.op1(
+    let (_, solved) = b.op_with_spans(
         OpKind::Solve {
             method: SolveMethod::Cholesky,
         },
         vec![a, bv],
-        vector(n.clone()),
+        vec![sp(31, 32), sp(0, 0)],
+        vec![vector(n.clone())],
         sp(31, 40),
     );
+    let solved = solved[0];
     // Arrays: a 2x2 literal of lengths, positions, slices and builders.
     let lit = b.op1(
         OpKind::ArrayLiteral { cols: Some(2) },
@@ -223,7 +233,14 @@ pub fn all_ops() -> Module {
         one(),
         sp(0, 0),
     );
-    let entry = b.op1(OpKind::Index, vec![lit, zero, zero], len(), sp(46, 48));
+    let (_, entry) = b.op_with_spans(
+        OpKind::Index,
+        vec![lit, zero, zero],
+        vec![sp(46, 47), sp(47, 48), sp(48, 49)],
+        vec![len()],
+        sp(46, 49),
+    );
+    let entry = entry[0];
     let row = b.op1(
         OpKind::Index,
         vec![lit, zero],
@@ -235,7 +252,8 @@ pub fn all_ops() -> Module {
         ),
         sp(0, 0),
     );
-    let part = b.op1(
+    // A slice's operand spans are followed by one span per axis item.
+    let (_, part) = b.op_with_spans(
         OpKind::Slice {
             axes: vec![
                 SliceAxis::Range {
@@ -246,14 +264,23 @@ pub fn all_ops() -> Module {
             ],
         },
         vec![lit, zero, two, zero],
-        num(
+        vec![
+            sp(50, 51),
+            sp(52, 53),
+            sp(54, 55),
+            sp(57, 58),
+            sp(52, 55),
+            sp(57, 58),
+        ],
+        vec![num(
             Dimension::LENGTH,
             Shape::vector(2),
             TagSet::EMPTY,
             Repr::Unchosen,
-        ),
-        sp(0, 0),
+        )],
+        sp(50, 59),
     );
+    let part = part[0];
     let whole = b.op1(
         OpKind::Slice {
             axes: vec![

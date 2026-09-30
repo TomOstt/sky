@@ -13,7 +13,7 @@
 //!             ["effects" "(" effect ("," effect)* ")"] [span] "{" op* block* "}"
 //! param    := "%" NAME ":" type
 //! block    := "^" LABEL ["(" param ("," param)* ")"] ":" op*
-//! op       := [values "="] MNEMONIC attr [operands] [":" type ("," type)*] region* [span]
+//! op       := [values "="] MNEMONIC attr [operands] [":" type ("," type)*] region* [span [ranges]]
 //! attr     := "" | FLOAT | RATIONAL | "true" | "false" | STRING       (constants)
 //!           | "[" RATIONAL "]"                                        (pow.const)
 //!           | "[" "cholesky" "]"                                      (solve)
@@ -24,6 +24,8 @@
 //! region   := "{" block* "}"          (the function body's first block is implicit)
 //! operands := value ("," value)*      values := value ("," value)*     value := "%" NAME
 //! span     := "@" START ".." END      (byte offsets; omitted means 0..0)
+//! ranges   := "(" START ".." END ("," START ".." END)* ")"
+//!                                      (the source span of each operand at its use; omitted means unknown)
 //! type     := "num" "[" dim ";" shape [";" tags] [";" repr] "]"
 //!           | "bool" | "str" | "nothing" | "unknown"
 //! dim      := "1" | factor ("·" factor)*      factor := SYMBOL [exponent]   (as `Dimension` prints)
@@ -383,6 +385,26 @@ impl<'a> Parser<'a> {
         } else {
             Ok(Span { start: 0, end: 0 })
         }
+    }
+
+    /// An optional `(start..end, ...)`, the spans of an operation's
+    /// operands; absent means unknown (empty).
+    fn opt_operand_spans(&mut self) -> Res<Vec<Span>> {
+        self.skip_inline();
+        let mut spans = Vec::new();
+        if !self.eat('(') {
+            return Ok(spans);
+        }
+        loop {
+            self.skip_inline();
+            spans.push(self.span()?);
+            self.skip_inline();
+            if !self.eat(',') {
+                break;
+            }
+        }
+        self.expect(')')?;
+        Ok(spans)
     }
 
     // ----- module and functions -----
@@ -874,6 +896,8 @@ impl<'a> Parser<'a> {
         fs.b.set_insertion_block(here);
         let span = self.opt_span()?;
         fs.b.set_op_span(op, span);
+        let operand_spans = self.opt_operand_spans()?;
+        fs.b.set_operand_spans(op, operand_spans);
 
         self.skip_inline();
         match self.peek() {

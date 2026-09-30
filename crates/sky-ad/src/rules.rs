@@ -3,9 +3,8 @@
 //! The rules are written for numbers of any shape: the tangent of a value
 //! has the value's shape (a scalar for a scalar, an array of the same shape
 //! for an array) and dimension `dim(value)/dim(x)`. In `a * b` and `a / b`
-//! one operand may be an array and the other a scalar (the scaling of an
-//! array; SIR has no elementwise product of two arrays), and the rules are
-//! the same.
+//! the operands may be two arrays of one shape (entry by entry) or an array
+//! and a scalar (the scaling of an array), and the rules are the same.
 //!
 //! Notation: for the operation `r = op(a, b)`, `ta` and `tb` are the
 //! tangents of `a` and `b` (`d/dx`), and the rule computes `tr`. A `None`

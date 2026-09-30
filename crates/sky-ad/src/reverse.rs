@@ -110,6 +110,7 @@ pub(crate) fn build(module: &Module, f: &Function, wrt: usize) -> Res<(Function,
         map: vec![None; f.values.len()],
         tan: vec![None; f.values.len()],
         needs: Vec::new(),
+        in_body: false,
     };
     let grad_ty = shaped_type(
         d.dim_div(f_ty.dim, x_ty.dim)?,
@@ -638,7 +639,7 @@ impl Rev<'_> {
                     self.acc(a, c, span)?;
                 }
                 if self.d.active[b.index()] {
-                    let s = if self.d.shape_of(r).rank() == 0 {
+                    let s = if self.d.shape_of(b).rank() == self.d.shape_of(r).rank() {
                         self.mul(rb, pr, span)?
                     } else {
                         self.d.hadamard_sum(rb, pr, span)?
@@ -820,6 +821,10 @@ impl Rev<'_> {
                 continue;
             }
             let saved = self.d.x_dim;
+            if self.d.shape_of(r).rank() > 0 {
+                self.array_partial(op, r, rb, a)?;
+                continue;
+            }
             self.d.x_dim = self.d.dim_of(a)?;
             let seed = self.d.konst_dimless(1.0, self.d.repr_of(a), span);
             self.d.tan[a.index()] = Some(seed);
@@ -832,6 +837,44 @@ impl Rev<'_> {
             }
         }
         Ok(())
+    }
+
+    /// The adjoint contribution to operand `a` of an elementwise function
+    /// whose result `r` is an array: `r̄ ⊙ ∂r/∂a`, entry by entry.
+    ///
+    /// The tangent rule is linear in the tangent of `a`, so running it with
+    /// that tangent set to `r̄` itself (an array of `a`'s shape) gives the
+    /// product directly; `x_dim` is chosen so the typing works out (the
+    /// tangent of `a` is `dim(a)/x_dim = dim(r̄)`, and the result has
+    /// `dim(r)/x_dim = dim(F)/dim(a)`, the adjoint's). An operand that is a
+    /// number spread over the array is seeded with an array of ones, so the
+    /// rule gives `∂r/∂a` per entry, and the contributions are summed.
+    fn array_partial(&mut self, op: &OpData, r: ValueId, rb: ValueId, a: ValueId) -> Res<()> {
+        let span = op.span;
+        let saved = self.d.x_dim;
+        let same_shape = self.d.shape_of(a) == self.d.shape_of(r);
+        let (seed, x_dim) = if same_shape {
+            let dim_rb = self.d.new_num(rb)?.dim;
+            (rb, self.d.dim_div(self.d.dim_of(a)?, dim_rb)?)
+        } else {
+            let pr = self.d.primal(r)?;
+            (self.d.ones_like(pr, span)?, self.d.dim_of(a)?)
+        };
+        self.d.x_dim = x_dim;
+        self.d.tan[a.index()] = Some(seed);
+        let partial = self.d.tangent_rule(op, r);
+        self.d.tan[a.index()] = None;
+        self.d.x_dim = saved;
+        let Some(p) = partial? else {
+            return Ok(());
+        };
+        let c = if same_shape {
+            p
+        } else {
+            let prod = self.mul(rb, p, span)?;
+            self.d.sum_all(prod, span)?
+        };
+        self.acc(a, c, span)
     }
 
     fn adjoint_matmul(&mut self, op: &OpData, rb: ValueId) -> Res<()> {
@@ -1115,7 +1158,10 @@ impl Rev<'_> {
             self.d.x_dim = self.d.dim_of(args[k])?;
             let seed = self.d.konst_dimless(1.0, self.d.repr_of(args[k]), span);
             self.d.tan[args[k].index()] = Some(seed);
-            let term = src.op(self.d.process_ops(body)?);
+            self.d.in_body = true;
+            let term = self.d.process_ops(body);
+            self.d.in_body = false;
+            let term = src.op(term?);
             let [y] = term.operands[..] else {
                 return Err(self.d.malformed("the body of `fused` yields one value"));
             };

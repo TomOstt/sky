@@ -1,6 +1,8 @@
 # derivative(f, x)(args) has the type dim(f) / dim(x): the derivative of a
 # position with respect to time is a velocity, and with several parameters
-# the one named is the one differentiated.
+# the one named is the one differentiated. It has the shape of the array
+# involved: a position vector gives a velocity vector, and the derivative of
+# a scalar with respect to a vector (its gradient) has the vector's shape.
 def position(t: s) -> m:
     return 5 m/s^2 * t^2
 
@@ -17,3 +19,12 @@ f: N = derivative(spring, x)(0.1 m, 200 N/m)
 half: m^2 = derivative(spring, k)(0.1 m, 200 N/m)
 branchy: m/s = derivative(piecewise, t)(3 s)
 total = v + derivative(position, t)(1 s)
+
+def path(t: s) -> Vector[3] m:
+    return [t * 1 m/s, 1 m, 2 m]
+
+def U(p: Vector[3] m) -> J:
+    return 0.5 * 200 N/m * (p @ p)
+
+velocity: Vector[3] m/s = derivative(path, t)(2 s)
+force: Vector[3] N = -derivative(U, p)([0.1 m, 0 m, 0.2 m])

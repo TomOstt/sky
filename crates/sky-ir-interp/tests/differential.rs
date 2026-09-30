@@ -1036,3 +1036,125 @@ fn partial_notation_is_the_derivative_in_both_engines() {
     ));
     assert_eq!(o.stdout, "20 m/s\n20 m/s\n10 m/s^2\n200 m^2/s^2 600 W\n");
 }
+
+// ----- gradients of arrays: grad(f)(p) and derivative(f, p)(...) -----
+//
+// A function of a vector parameter has a gradient with the vector's shape
+// and the unit dim(f)/dim(p): the gradient of a potential of a position is a
+// force. `sky-ad` computes it (in reverse mode; forward mode, one pass per
+// entry, when the function loops). The tree-walker asks `sky-derive` for it
+// and lowering emits a call, so both must print the same bytes, and fail
+// the same way.
+
+#[test]
+fn the_force_of_a_gravitational_potential_points_to_the_origin() {
+    // U = -G M m / |p|; F = -∇U has magnitude G M m / r² and points at the
+    // centre. G is the predefined constant.
+    let o = assert_same(
+        "M = 5.972e24 kg\nmass = 1000 kg\n\
+         def U(p: Vector[3] m) -> J:\n    return -G * M * mass / sqrt(p @ p)\n\
+         p = [7000 km, 0 km, 0 km]\nF = -grad(U)(p)\nprint(F)\nprint(F[0])\n\
+         q = [0 m, 3 m, 4 m]\nprint(grad(U)(q))\n",
+    );
+    assert_eq!(o.error, None);
+    assert!(
+        o.stdout.starts_with("[-8134.4733877551"),
+        "the force at 7000 km, pointing along -x: {}",
+        o.stdout
+    );
+}
+
+#[test]
+fn the_gradient_of_a_spring_network_uses_a_matrix() {
+    // U = ½ (p - p0)ᵀ K (p - p0): ∇U = K (p - p0).
+    let o = assert_same(
+        "K = [[300, -100, 0], [-100, 200, -50], [0, -50, 100]] * 1 N/m\n\
+         p0 = [0.5 m, 0 m, 0.25 m]\n\
+         def U(p: Vector[3] m) -> J:\n    d = p - p0\n    return 0.5 * (d @ (K @ d))\n\
+         p = [0.6 m, 0.1 m, 0.2 m]\nprint(U(p))\nprint(grad(U)(p))\nprint(derivative(U, p)(p))\n",
+    );
+    assert_eq!(o.error, None);
+    assert_eq!(o.stdout.lines().count(), 3);
+    let lines: Vec<&str> = o.stdout.lines().collect();
+    assert_eq!(lines[1], lines[2], "grad(U) is derivative(U, p)");
+}
+
+#[test]
+fn a_gradient_through_if_index_slice_and_transpose() {
+    let o = assert_same(
+        "def f(p: Vector[4] m, A: Matrix[2, 2]) -> m:\n\
+         \x20   B = Aᵀ @ A\n\
+         \x20   s = p[1:3]\n\
+         \x20   if p[0] > 0 m:\n\
+         \x20       return s[0] * B[0, 1] + p[3] * B[1, 1]\n\
+         \x20   return s[1] * B[0, 0]\n\
+         A = [[1, 2], [3, 4]]\n\
+         print(derivative(f, p)([1 m, 2 m, 3 m, 4 m], A))\n\
+         print(derivative(f, p)([-1 m, 2 m, 3 m, 4 m], A))\n\
+         print(derivative(f, A)([1 m, 2 m, 3 m, 4 m], A))\n",
+    );
+    assert_eq!(o.error, None);
+    assert_eq!(o.stdout.lines().count(), 3);
+}
+
+#[test]
+fn a_gradient_through_a_loop_takes_a_pass_per_entry() {
+    // Reverse mode has no tape for the loop, so the gradient is forward
+    // mode, once per entry. It prints once per pass.
+    let o = assert_same(
+        "def f(p: Vector[3]) -> m:\n    print(\"called\")\n    acc = 0\n    i = 0\n\
+         \x20   while i < 3:\n        acc = acc + p[i] * p[i] * (i + 1)\n        i += 1\n\
+         \x20   return 1 m * acc\n\
+         print(grad(f)([0.5, 1, 2]))\n",
+    );
+    assert_eq!(o.stdout, "called\ncalled\ncalled\n[1 m, 4 m, 12 m]\n");
+}
+
+#[test]
+fn reverse_mode_runs_the_function_once() {
+    let o = assert_same(
+        "def f(p: Vector[3]) -> m:\n    print(\"called\")\n    return 1 m * (p @ p)\n\
+         print(grad(f)([0.5, 1, 2]))\n",
+    );
+    assert_eq!(o.stdout, "called\n[1 m, 2 m, 4 m]\n");
+}
+
+#[test]
+fn the_derivative_of_an_array_valued_function_of_a_scalar() {
+    // A position vector's derivative with respect to time is a velocity.
+    let o = assert_same(
+        "def r(t: s) -> Vector[2] m:\n    return [5 m/s^2 * t^2, 2 m/s * t]\n\
+         print(derivative(r, t)(2 s))\nprint((∂r/∂t)(1 s))\n",
+    );
+    assert_eq!(o.stdout, "[20 m/s, 2 m/s]\n[10 m/s, 2 m/s]\n");
+}
+
+#[test]
+fn helper_functions_of_arrays_are_differentiated_through() {
+    let o = assert_same(
+        "def norm(v: Vector[3] m) -> m:\n    return sqrt(v @ v)\n\
+         def U(p: Vector[3] m) -> J:\n    return 2 N/m * norm(p)^2\n\
+         print(grad(U)([1 m, 2 m, 2 m]))\n",
+    );
+    assert_eq!(o.stdout, "[4 N, 8 N, 8 N]\n");
+}
+
+#[test]
+fn a_gradient_that_fails_fails_alike_for_arrays() {
+    let o = assert_same(
+        "def root(p: Vector[2] m^2) -> m:\n    return sqrt(p[0]) + sqrt(p[1])\n\
+         print(1)\nprint(grad(root)([4 m^2, 0 m^2]))\n",
+    );
+    assert_eq!(o.stdout, "1\n");
+    assert_eq!(o.error.as_deref(), Some("division by zero"));
+}
+
+#[test]
+fn a_gradient_of_a_matrix_parameter() {
+    let o = assert_same(
+        "def f(A: Matrix[2, 2]) -> m:\n    B = inv(A)\n    return 1 m * (B[0, 0] + A[1, 0] * A[1, 1])\n\
+         print(grad(f)([[3, 1], [0.5, 2]]))\n",
+    );
+    assert_eq!(o.error, None);
+    assert!(o.stdout.starts_with("[["), "{}", o.stdout);
+}

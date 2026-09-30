@@ -150,7 +150,9 @@ pub(crate) fn ad_error(e: &sky_ad::AdError, span: Span) -> LowerError {
         sky_ad::AdError::UnknownType { .. } => {
             "give the parameters and results the derivative flows through a unit annotation"
         }
-        sky_ad::AdError::NonScalar { .. } => "derivatives of arrays come with array AD",
+        sky_ad::AdError::Unsupported { .. } => {
+            "`derivative` differentiates the function's SIR, which needs a rule for every operation the derivative flows through (a gradient through a loop needs the size of its array)"
+        }
         _ => "`derivative` differentiates the function's SIR, which needs a rule for every operation the derivative flows through",
     };
     LowerError::new(e.to_string(), span).with_note(note)

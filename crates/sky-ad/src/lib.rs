@@ -125,8 +125,6 @@ pub enum AdError {
     NonNumberParam { func: String, wrt: usize },
     /// A value the derivative needs has type `Unknown` (see the crate docs).
     UnknownType { func: String, what: String },
-    /// A value the derivative needs is an array; v1 AD is for scalars.
-    NonScalar { func: String, what: String },
     /// The function does not return exactly one scalar number.
     BadResult { func: String, why: String },
     /// An operation the derivative flows through has no rule (yet).
@@ -157,11 +155,6 @@ impl fmt::Display for AdError {
                 f,
                 "cannot differentiate `{func}`: {what} has an unknown type, so its derivative \
                  has no unit"
-            ),
-            AdError::NonScalar { func, what } => write!(
-                f,
-                "cannot differentiate `{func}`: {what} is not a scalar (array AD is not \
-                 supported yet)"
             ),
             AdError::BadResult { func, why } | AdError::Dimension { func, why } => {
                 write!(f, "cannot differentiate `{func}`: {why}")

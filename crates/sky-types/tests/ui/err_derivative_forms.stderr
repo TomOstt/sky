@@ -1,83 +1,75 @@
-crates/sky-types/tests/ui/err_derivative_forms.sky:15:26: error: `position` has no parameter `y`
+crates/sky-types/tests/ui/err_derivative_forms.sky:13:26: error: `position` has no parameter `y`
    |
-15 | a = derivative(position, y)(1 s)
+13 | a = derivative(position, y)(1 s)
    |                          ^ not a parameter of `position`
- 3 | def position(t: s) -> m:
+ 4 | def position(t: s) -> m:
    |     -------- `position` is defined here
    = note: its parameter is `t`
    = help: differentiate with respect to a parameter: `derivative(position, t)`
 
-crates/sky-types/tests/ui/err_derivative_forms.sky:16:26: error: the second argument of `derivative` is the name of a parameter of `position`
+crates/sky-types/tests/ui/err_derivative_forms.sky:14:26: error: the second argument of `derivative` is the name of a parameter of `position`
    |
-16 | b = derivative(position, 0)(1 s)
+14 | b = derivative(position, 0)(1 s)
    |                          ^ not a parameter name
- 3 | def position(t: s) -> m:
+ 4 | def position(t: s) -> m:
    |     -------- `position` is defined here
    = help: write the parameter's name, not its position: `derivative(position, t)`
 
-crates/sky-types/tests/ui/err_derivative_forms.sky:17:23: error: cannot differentiate `loose`: its parameter `t` has no unit
+crates/sky-types/tests/ui/err_derivative_forms.sky:15:23: error: cannot differentiate `loose`: its parameter `t` has no unit
    |
-17 | c = derivative(loose, k)(1 s)
+15 | c = derivative(loose, k)(1 s)
    |                       ^ while differentiating with respect to `k`
- 6 | def loose(t, k: m) -> m:
+ 7 | def loose(t, k: m) -> m:
    |     ----- `loose` is defined here
    = note: the derivative is computed through every parameter, so each needs a unit to type it
    = help: annotate the parameter with its unit, for example `t: s`
 
-crates/sky-types/tests/ui/err_derivative_forms.sky:18:23: error: cannot differentiate `loose` with respect to `t`: it has no unit
+crates/sky-types/tests/ui/err_derivative_forms.sky:16:23: error: cannot differentiate `loose` with respect to `t`: it has no unit
    |
-18 | d = derivative(loose, t)(1 s)
+16 | d = derivative(loose, t)(1 s)
    |                       ^ `t` is not annotated
- 6 | def loose(t, k: m) -> m:
+ 7 | def loose(t, k: m) -> m:
    |     ----- `loose` is defined here
    = note: the derivative has the unit of the result divided by the unit of `t`, and an unannotated parameter accepts any unit
    = help: annotate the parameter with its unit, for example `t: s`
 
-crates/sky-types/tests/ui/err_derivative_forms.sky:19:16: error: `derivative` needs a function defined with `def`, found the built-in `sqrt`
+crates/sky-types/tests/ui/err_derivative_forms.sky:17:16: error: `derivative` needs a function defined with `def`, found the built-in `sqrt`
    |
-19 | e = derivative(sqrt, x)(4)
+17 | e = derivative(sqrt, x)(4)
    |                ^^^^ a built-in function
    = note: a `def` states the units of its parameters and result, which the unit of the derivative is computed from
    = help: wrap it in a `def` that states its units, and differentiate that
 
-crates/sky-types/tests/ui/err_derivative_forms.sky:20:5: error: `derivative` takes 2 arguments, found 1: a function and the name of its parameter
+crates/sky-types/tests/ui/err_derivative_forms.sky:18:5: error: `derivative` takes 2 arguments, found 1: a function and the name of its parameter
    |
-20 | f = derivative(position)(1 s)
+18 | f = derivative(position)(1 s)
    |     ^^^^^^^^^^^^^^^^^^^^ missing argument
    = help: write `derivative(f, x)(...)`, then the arguments of `f`
 
-crates/sky-types/tests/ui/err_derivative_forms.sky:21:16: error: `derivative` needs a function defined with `def`
+crates/sky-types/tests/ui/err_derivative_forms.sky:19:16: error: `derivative` needs a function defined with `def`
    |
-21 | g = derivative(3 m, t)(1 s)
+19 | g = derivative(3 m, t)(1 s)
    |                ^^^ this is length
    = help: define the function with `def f(x: unit) -> unit: ...` and differentiate that
 
-crates/sky-types/tests/ui/err_derivative_forms.sky:22:22: error: cannot differentiate `norm` with respect to `v`: it is not a scalar
+crates/sky-types/tests/ui/err_derivative_forms.sky:20:16: error: cannot differentiate `shift` with respect to `p`: the derivative of an array with respect to an array is a Jacobian
    |
-22 | h = derivative(norm, v)(1 m)
-   |                      ^ this is Vector[3] [L]
- 9 | def norm(v: Vector[3] m) -> m:
-   |             ----------- declared here
-   = note: the derivative with respect to an array is a gradient, which comes with arrays at run time
-   = help: differentiate with respect to a scalar parameter
+20 | h = derivative(shift, p)([1 m, 2 m, 3 m])
+   |                ^^^^^ this function's result
+10 | def shift(p: Vector[3] m) -> Vector[3] m:
+   |     ----- `shift` is defined here
+   = note: the result is Vector[3] [L], so the derivative would have an entry for every result and every entry of `p`, and Sky does not have Jacobians yet
+   = help: differentiate a scalar result (a component, a norm, an energy) with respect to `p`, or an array result with respect to a scalar
 
-crates/sky-types/tests/ui/err_derivative_forms.sky:23:16: error: cannot differentiate `path`: its result is Vector[3] [L], not a number
+crates/sky-types/tests/ui/err_derivative_forms.sky:21:16: error: `derivative` needs a function defined with `def`, found another derivative
    |
-23 | i = derivative(path, t)(1 s)
-   |                ^^^^ this function's result
-12 | def path(t: s) -> Vector[3] m:
-   |     ---- `path` is defined here
-   = note: the derivative of an array-valued function is a Jacobian, which comes with arrays at run time
-
-crates/sky-types/tests/ui/err_derivative_forms.sky:24:16: error: `derivative` needs a function defined with `def`, found another derivative
-   |
-24 | j = derivative(derivative(position, t), t)(1 s)
+21 | j = derivative(derivative(position, t), t)(1 s)
    |                ^^^^^^^^^^^^^^^^^^^^^^^ this is `derivative(...)`, which can only be called
    = help: name the first derivative with a `def` that calls it, and differentiate that
 
-crates/sky-types/tests/ui/err_derivative_forms.sky:25:5: error: `derivative(position, t)` is a function, and must be called where it is written
+crates/sky-types/tests/ui/err_derivative_forms.sky:22:5: error: `derivative(position, t)` is a function, and must be called where it is written
    |
-25 | k = derivative(position, t)
+22 | k = derivative(position, t)
    |     ^^^^^^^^^^^^^^^^^^^^^^^ not called
    = note: Sky has no function values yet: a function can be called, but not stored or passed around
    = help: pass the arguments of the function: `derivative(position, t)(...)`, or name the derivative with a `def` that calls it

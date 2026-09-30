@@ -321,7 +321,8 @@ impl<'a> Interp<'a> {
             StmtKind::Pass => Ok(Flow::Normal(None)),
             // A budget is a claim about the program, checked by `sky check`;
             // running it changes nothing.
-            StmtKind::Accuracy { .. } => Ok(Flow::Normal(None)),
+            // Statements about the program, not steps of it.
+            StmtKind::Accuracy { .. } | StmtKind::Cost { .. } => Ok(Flow::Normal(None)),
             StmtKind::Break => Ok(Flow::Break),
             StmtKind::Continue => Ok(Flow::Continue),
             StmtKind::Equation(eq) => {
@@ -904,11 +905,17 @@ impl<'a> Interp<'a> {
     }
 }
 
-/// The `requires` and `ensures` lines a function body starts with.
+/// The `requires` and `ensures` lines a function body starts with (its
+/// `cost` lines, which state no run-time behaviour, are skipped over).
 fn contract_head(body: &Block) -> impl Iterator<Item = &Stmt> {
     body.stmts
         .iter()
-        .take_while(|s| is_contract(s, AssertKind::Requires) || is_contract(s, AssertKind::Ensures))
+        .take_while(|s| {
+            is_contract(s, AssertKind::Requires)
+                || is_contract(s, AssertKind::Ensures)
+                || matches!(s.kind, StmtKind::Cost { .. })
+        })
+        .filter(|s| !matches!(s.kind, StmtKind::Cost { .. }))
 }
 
 /// Whether `s` is a `requires` or `ensures` line (of kind `kind`).

@@ -1,0 +1,16 @@
+0def gram(A: Matrix[N, M]) -> Matrix[M, M]:
+    requires len(A) > 0
+    cost flops <= 2 * N * M^2
+    cost allocations == 0
+    cost bytes_read <= 8 * (N * M + 1) / 2
+    return A @ A
+cost = 3
+cost flops <= N
+cost speed <= 3
+cost flops < 3
+cost flops
+cost flops <= 
+def h():
+    y = 1
+    cost flops <= 1
+    pass

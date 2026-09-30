@@ -1,0 +1,35 @@
+tests/ui/check/err_cost_sizes.sky:3:27: error: `K` is not a size of `f`
+  |
+3 |     cost flops <= 2 * N * K
+  |                           ^ not a size in the parameters
+  = help: the sizes of `f` are `N`, `M`
+
+tests/ui/check/err_cost_sizes.sky:4:19: error: a size is not a unit: this reads as a quantity
+  |
+4 |     cost flops <= 2 N
+  |                   ^^^ in a cost bound
+  = help: write `2 * N` for 2 times the size `N`
+
+tests/ui/check/err_cost_sizes.sky:5:23: error: a size can only be divided by a number
+  |
+5 |     cost flops <= N / M
+  |                       ^ in a cost bound
+  = help: write the cost as a sum of terms with fractional coefficients, e.g. `N^3 / 3`
+
+tests/ui/check/err_cost_sizes.sky:6:19: error: this is not a polynomial in the sizes
+  |
+6 |     cost flops <= sqrt(N)
+  |                   ^^^^^^^ in a cost bound
+  = help: use numbers, sizes, `+`, `-`, `*`, `^` with a whole exponent, and `/` by a number
+
+tests/ui/check/err_cost_sizes.sky:7:23: error: the exponent must be a whole number, at most 64
+  |
+7 |     cost flops <= N ^ M
+  |                       ^ in a cost bound
+
+tests/ui/check/err_cost_sizes.sky:11:19: error: `n` is not a size of `g`
+   |
+11 |     cost flops <= n
+   |                   ^ not a size in the parameters
+   = note: a cost depends on the shapes of the arrays, not on the values of numbers
+   = help: a cost is a function of the sizes of the arrays: name them in the parameters, e.g. `A: Matrix[N, N]`

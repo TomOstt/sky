@@ -804,6 +804,8 @@ impl<'s> Checker<'s> {
                 }
             }
             StmtKind::Accuracy { name, tolerance } => self.accuracy_stmt(name, tolerance),
+            // Checked with its `def` (`check_cost_lines`): its names are sizes.
+            StmtKind::Cost { .. } => {}
             StmtKind::If {
                 branches,
                 else_block,

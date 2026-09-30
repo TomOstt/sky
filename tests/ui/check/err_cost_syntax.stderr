@@ -1,0 +1,39 @@
+tests/ui/check/err_cost_syntax.sky:2:1: error: `cost` is only allowed at the start of a function body
+  |
+2 | cost flops <= 1
+  | ^^^^^^^^^^^^^^^
+  = help: state a function's performance contract with `cost` right after its `def` line
+
+tests/ui/check/err_cost_syntax.sky:6:5: error: `cost` must come before the other statements of the function body
+  |
+6 |     cost flops <= 1
+  |     ^^^^^^^^^^^^^^^
+  = help: write the contract lines first, right after the `def` line
+
+tests/ui/check/err_cost_syntax.sky:10:10: error: `speed` is not something a `cost` line measures
+   |
+10 |     cost speed <= 1
+   |          ^^^^^
+   |     ---- this states a performance contract
+   = help: measure one of `flops`, `bytes_read`, `bytes_written`, `bytes`, `allocations`, `allocated_bytes`
+
+tests/ui/check/err_cost_syntax.sky:11:16: error: expected `<=` or `==` after `cost flops`, found `<`
+   |
+11 |     cost flops < 1
+   |                ^
+   |     ---- this states a performance contract
+   = help: a cost contract is an upper bound (`<=`) or an exact count (`==`)
+
+tests/ui/check/err_cost_syntax.sky:12:10: error: `runtime` is not something a `cost` line measures
+   |
+12 |     cost runtime <= 10 ms
+   |          ^^^^^^^
+   |     ---- this states a performance contract
+   = help: measure one of `flops`, `bytes_read`, `bytes_written`, `bytes`, `allocations`, `allocated_bytes`; a time is not a contract: it varies with the machine and its load, so it cannot be proven, while the count of operations and bytes is the same everywhere
+
+tests/ui/check/err_cost_syntax.sky:13:15: error: expected `<=` or `==` after `cost flops`, found end of line
+   |
+13 |     cost flops
+   |               ^
+   |     ---- this states a performance contract
+   = help: write `cost flops <= 2 * N^3` (at most) or `cost flops == 0` (exactly)

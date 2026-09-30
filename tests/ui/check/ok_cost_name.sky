@@ -1,0 +1,9 @@
+# `cost` and the words after it are ordinary names outside a function header.
+cost = 3
+flops = cost * 2
+print(cost, flops)
+
+def price(cost, flops):
+    return cost * flops
+
+print(price(2, 5))

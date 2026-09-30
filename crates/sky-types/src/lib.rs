@@ -44,6 +44,7 @@ mod cancellation;
 pub mod check;
 pub mod constant;
 mod contracts;
+pub mod cost;
 mod derivative;
 mod display;
 mod flow;

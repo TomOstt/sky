@@ -4,11 +4,17 @@
 //! minimum (so that small programs take the parallel paths) and with the
 //! defaults, for the lowered SIR and for the optimized SIR.
 //!
-//! Two generators feed it:
+//! Three generators feed it:
 //!
 //! * the differential fuzzer's (`fuzz/harness/differential.rs`): scalar
 //!   programs with functions, loops, recursion, contracts and run-time
-//!   failures, which exercise independent calls;
+//!   failures (few of them have two independent calls, so the next one
+//!   exists);
+//! * one here for call programs: small functions that fail for some
+//!   arguments, print, or call each other, combined in a main by
+//!   independent calls, dependent calls, a failing operation between calls,
+//!   prints between calls and loops, which exercise call groups and their
+//!   error order;
 //! * one here for array programs: vectors with entries chosen to overflow at
 //!   some elements only, scaled by zero or by huge numbers, in chains that
 //!   fuse, which exercise kernels, and several chunks failing at once.
@@ -240,6 +246,116 @@ fn array_program(seed: u64) -> String {
     src
 }
 
+/// The body of `f{i}`: pure, or (rarely) printing, that fails for some
+/// arguments and may call the functions before it.
+fn function_body(r: &mut Rng, i: usize) -> String {
+    let k = r.below(4);
+    let n = 2 + r.below(4);
+    let (a, b) = (1 + r.below(5), r.below(4));
+    let callee = |r: &mut Rng| r.below(i.max(1));
+    match r.below(16) {
+        0..=3 => format!("    return x * {a} + {b}\n"),
+        4..=5 => format!("    return x - {b}\n"),
+        6 => format!("    return 1 / (x - {k})\n"),
+        7 => format!("    return sqrt(x - {k})\n"),
+        8 => "    return x * 1e200 * 1e200\n".to_string(),
+        9 => format!(
+            "    total = 0\n    i = 0\n    while i < {n}:\n        total = total + x / (i + {})\n        i = i + 1\n    return total\n",
+            1 + r.below(3)
+        ),
+        10..=11 if i > 0 => {
+            let (j, l) = (callee(r), callee(r));
+            format!("    return f{j}(x) + f{l}(x + 1)\n")
+        }
+        12 if i > 0 => {
+            let j = callee(r);
+            format!("    return f{j}(x) * {a}\n")
+        }
+        13 => format!("    assert x < {}\n    return x + {b}\n", 3 + r.below(6)),
+        14 if r.below(2) == 0 => format!("    print(x)\n    return x + {b}\n"),
+        _ => format!("    return x * {a} - {b}\n"),
+    }
+}
+
+/// A program of a few small functions and a main that combines calls of them
+/// in every way that matters to `sky_ir::parallel`: independent calls in one
+/// expression, calls that use each other's results, an operation between
+/// calls that fails, prints between calls, calls in a loop. Most functions
+/// are pure and cheap to read, some fail for some arguments, a few print.
+fn call_program(seed: u64) -> String {
+    let mut r = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+    let mut src = String::new();
+    let nf = 2 + r.below(4);
+    for i in 0..nf {
+        src.push_str(&format!("def f{i}(x):\n{}", function_body(&mut r, i)));
+    }
+    let mut vars: Vec<String> = Vec::new();
+    let arg = |r: &mut Rng, vars: &[String]| -> String {
+        if !vars.is_empty() && r.below(3) == 0 {
+            vars[r.below(vars.len())].clone()
+        } else {
+            r.below(6).to_string()
+        }
+    };
+    let ops = ["+", "-", "*"];
+    for s in 0..(3 + r.below(8)) {
+        let v = format!("v{s}");
+        match r.below(8) {
+            0 | 1 => {
+                let (a, b) = (r.below(nf), r.below(nf));
+                let (x, y) = (arg(&mut r, &vars), arg(&mut r, &vars));
+                let op = ops[r.below(3)];
+                src.push_str(&format!("{v} = f{a}({x}) {op} f{b}({y})\n"));
+            }
+            2 => {
+                let (a, b, c) = (r.below(nf), r.below(nf), r.below(nf));
+                let (x, y, z) = (arg(&mut r, &vars), arg(&mut r, &vars), arg(&mut r, &vars));
+                src.push_str(&format!("{v} = f{a}({x}) * f{b}({y}) - f{c}({z})\n"));
+            }
+            3 => {
+                let (a, b, c) = (r.below(nf), r.below(nf), r.below(nf));
+                let (x, y) = (arg(&mut r, &vars), arg(&mut r, &vars));
+                src.push_str(&format!("{v} = f{a}({x}) + f{b}(f{c}({y}))\n"));
+            }
+            4 => {
+                // An operation that can fail between two calls.
+                let (a, b) = (r.below(nf), r.below(nf));
+                let (x, y) = (arg(&mut r, &vars), arg(&mut r, &vars));
+                let d = arg(&mut r, &vars);
+                src.push_str(&format!(
+                    "{v} = f{a}({x})\nw{s} = 1 / ({d} - {})\nu{s} = f{b}({y})\n",
+                    r.below(4)
+                ));
+                vars.push(format!("w{s}"));
+                vars.push(format!("u{s}"));
+            }
+            5 => {
+                let (a, b) = (r.below(nf), r.below(nf));
+                src.push_str(&format!(
+                    "s{s} = 0\ni{s} = 0\nwhile i{s} < {}:\n    s{s} = s{s} + f{a}(i{s}) + f{b}(i{s} + 1)\n    i{s} = i{s} + 1\n{v} = s{s}\n",
+                    2 + r.below(3)
+                ));
+            }
+            6 => {
+                // Prints between calls keep them apart.
+                let (a, b) = (r.below(nf), r.below(nf));
+                let (x, y) = (arg(&mut r, &vars), arg(&mut r, &vars));
+                src.push_str(&format!("{v} = f{a}({x})\nprint({v})\nq{s} = f{b}({y})\n"));
+                vars.push(format!("q{s}"));
+            }
+            _ => {
+                let a = r.below(nf);
+                let x = arg(&mut r, &vars);
+                src.push_str(&format!("{v} = f{a}({x})\nprint({v})\n"));
+            }
+        }
+        vars.push(v);
+    }
+    let last = vars.last().cloned().unwrap_or_else(|| "0".to_string());
+    src.push_str(&format!("print({last})\n"));
+    src
+}
+
 fn campaign(what: &str, first: u64, count: u64, program: impl Fn(u64) -> String + Sync) {
     let lanes = std::thread::available_parallelism().map_or(1, |n| n.get().min(8)) as u64;
     let keep_going = std::env::var("SKY_FUZZ_KEEP_GOING").is_ok();
@@ -323,4 +439,46 @@ fn the_array_generator_reaches_kernels_and_failures() {
     assert!(fused > 20, "only {fused} of 100 programs fuse");
     assert!(failed > 10, "only {failed} of 100 programs fail");
     assert!(ok > 10, "only {ok} of 100 programs succeed");
+}
+
+#[test]
+fn parallel_runs_agree_on_generated_call_programs() {
+    let first = env_number("SKY_FUZZ_FROM").unwrap_or(1);
+    let count = env_number("SKY_FUZZ_SEEDS").unwrap_or(300);
+    campaign("calls", first, count, call_program);
+}
+
+/// The call generator makes programs that have call groups, and that fail in
+/// some (not all) of the cases, or it would test nothing.
+#[test]
+fn the_call_generator_reaches_groups_and_failures() {
+    let (mut grouped, mut failed_groups, mut ok_groups) = (0, 0, 0);
+    for seed in 1..=200 {
+        let src = call_program(seed);
+        let mut ir = sky_lower::lower_source(&src).unwrap_or_else(|e| panic!("{e}\n{src}"));
+        default_passes(PassManager::new().verify_each(true))
+            .run(&mut ir)
+            .expect("the pipeline verifies");
+        if sky_ir::parallel::analyze(&ir, &Config::eager(4)).has_groups() {
+            grouped += 1;
+            let r = sky_ast::with_deep_stack(|| run(&ir, &src, &Config::sequential()));
+            if r.1.is_some() {
+                failed_groups += 1;
+            } else {
+                ok_groups += 1;
+            }
+        }
+    }
+    eprintln!(
+        "{grouped} of 200 programs have call groups: {failed_groups} fail, {ok_groups} succeed"
+    );
+    assert!(
+        grouped > 100,
+        "only {grouped} of 200 programs have call groups"
+    );
+    assert!(
+        failed_groups > 20,
+        "only {failed_groups} grouped programs fail"
+    );
+    assert!(ok_groups > 20, "only {ok_groups} grouped programs succeed");
 }

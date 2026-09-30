@@ -422,8 +422,15 @@ impl Lower<'_> {
                         .with_note(UNCERTAINTY));
                     }
                     // Vector builtins that run on the tree-walker only.
-                    (name @ ("norm" | "dot" | "explain"), _) => {
-                        return self.err(format!("`{name}` is not supported by SIR yet"), e.span);
+                    (name @ ("norm" | "dot"), _) => {
+                        return Err(LowerError::new(
+                            format!("`{name}` is not supported by SIR yet"),
+                            e.span,
+                        )
+                        .with_note("in a function SIR must run (one you differentiate, say), write `sqrt(v @ v)` for `norm(v)` and `a @ b` for `dot(a, b)`"));
+                    }
+                    ("explain", _) => {
+                        return self.err("`explain` is not supported by SIR yet", e.span);
                     }
                     (name, _) => {
                         if let Some(f) = sky_ir::MathFn::from_name(name) {

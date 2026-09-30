@@ -14,7 +14,9 @@ See `spec/v0.1.md` for the v0.1 scope.
 - **Matrix properties are proven, then used.** Sky checks that a `PositiveDefinite` matrix literal really is positive definite. `K⁻¹ @ f` then runs as a Cholesky solve, so the inverse is never formed.
 - **Loops and functions stay checked.** A `while` loop over a falling projectile keeps its time, height and speed in their units through every step.
 
-The expected output is in [`examples/showcase.out`](examples/showcase.out). A test runs every example on both engines and compares the output byte for byte.
+[`examples/orbit.sky`](examples/orbit.sky) shows the numerics built so far. It is a year of Earth's orbit, with the force written as `-grad(U)(r)` of a potential. The script states its tolerance and that energy is conserved. Sky picks a symplectic integrator and explains the choice, and energy drifts by about 4e-12. The same file checks a contract (`requires`, `assert`) and carries a measurement's uncertainty (`1.000 ± 0.005 m`) through a formula.
+
+The expected output of each example is next to it (`showcase.out`, `orbit.out`). A test runs every example on both engines and compares the output byte for byte.
 
 ## Status
 

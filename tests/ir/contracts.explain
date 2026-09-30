@@ -37,3 +37,9 @@ tests/ir/contracts.sky:16:8: note: [CONTRACT-001] this `assert` always holds, so
    |        ^^^^^^^^^
    = note: applied by the `contracts` pass
    = note: because the condition is true for every value the analysis allows, so it cannot be false
+
+tests/ir/contracts.sky:18:1: note: printed value of `t` is accurate to within 5.9e-17 relative
+   |
+18 | print(t, k, open_ended(k + 1 m))
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: a proven bound on the rounding error against the exact real result (roundoff analysis)

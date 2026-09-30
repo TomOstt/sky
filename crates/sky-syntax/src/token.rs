@@ -67,6 +67,9 @@ pub enum TokenKind {
     Partial,
     /// The glyph `∇` (ASCII spelling is the stdlib function `grad`).
     Nabla,
+    /// `±` or `+/-`: `value ± uncertainty` (spec "Uncertainty"). The ASCII
+    /// `+-` is not this token: it is `Plus` then `Minus`.
+    PlusMinus,
     /// `==`
     Eq,
     /// `!=` or `≠`

@@ -1,5 +1,0 @@
-tests/ui/lexer/err_uncertainty_glyph.sky:2:10: error: unexpected character '±' (U+00B1)
-  |
-2 | m = 5.31 ± 0.02 kg
-  |          ^
-  = help: uncertainty (±) is not supported in v0.1

@@ -593,10 +593,9 @@ fn glyph_comparisons_map_to_ascii_kinds() {
     assert_eq!(line("a ≠ b"), line("a != b"));
 }
 
-/// Sky v0.1 has no uncertainty: `+-` is `a + (-b)` as in Python, and the
-/// glyph `±` is rejected with help rather than lexed as an operator.
+/// `+-` is `a + (-b)` as in Python, and not an uncertainty.
 #[test]
-fn plus_minus_is_plus_then_minus_and_glyph_is_rejected() {
+fn plus_dash_is_plus_then_minus() {
     assert_eq!(
         texts("a+-b\n")[..4],
         [(Ident, "a"), (Plus, "+"), (Minus, "-"), (Ident, "b")]
@@ -611,14 +610,31 @@ fn plus_minus_is_plus_then_minus_and_glyph_is_rejected() {
         line("f(x)+->y\n"),
         [Ident, LParen, Ident, RParen, Plus, Arrow, Ident]
     );
+}
 
-    let e = assert_err("m = 5.31 ± 0.02 kg\n", LexErrorKind::UnexpectedChar, "±");
-    assert_eq!(e.diagnostic.message, "unexpected character '±' (U+00B1)");
+/// `±` and `+/-` are the same token (spec "Uncertainty").
+#[test]
+fn plus_minus_glyph_and_ascii_spelling() {
     assert_eq!(
-        e.diagnostic.help,
-        ["uncertainty (±) is not supported in v0.1"]
+        texts("m = 5.31 ± 0.02 kg\n")[..6],
+        [
+            (Ident, "m"),
+            (Assign, "="),
+            (Float, "5.31"),
+            (PlusMinus, "±"),
+            (Float, "0.02"),
+            (Ident, "kg"),
+        ]
     );
-    assert_err("a±b\n", LexErrorKind::UnexpectedChar, "±");
+    assert_eq!(line("5.31 +/- 0.02 kg\n"), line("5.31 ± 0.02 kg\n"));
+    assert_eq!(texts("a+/-b\n")[1], (PlusMinus, "+/-"));
+    assert_eq!(line("a±b\n"), [Ident, PlusMinus, Ident]);
+    // The ASCII spelling is greedy, but only for exactly `+/-`.
+    assert_eq!(line("a +/-= b\n"), [Ident, PlusMinus, Assign, Ident]);
+    assert_eq!(line("a += b\n"), [Ident, PlusAssign, Ident]);
+    assert_eq!(line("a + / - b\n"), [Ident, Plus, Slash, Minus, Ident]);
+    // `±` is a single token of two bytes.
+    assert_eq!(lexed("±\n").tokens[0].span.range(), 0..2);
 }
 
 #[test]

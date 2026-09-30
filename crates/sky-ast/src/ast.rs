@@ -320,6 +320,22 @@ pub enum ExprKind {
         /// The `and`/`or` keywords: `operands.len() - 1` spans.
         op_spans: Vec<Span>,
     },
+    /// `value ± sigma` (or `value +/- sigma`): the value `value` with a
+    /// standard uncertainty (one standard deviation, 1σ) of `sigma` (spec
+    /// "Uncertainty"). It has the precedence and left associativity of `+`
+    /// and `-`, and is its own node rather than a [`BinaryOp`] because it
+    /// builds a different kind of value and has the shared-unit form:
+    /// `5.31 ± 0.02 kg` (a bare number before `±`, a unit literal after) is
+    /// read by the parser as `5.31 kg ± 0.02 kg`, so `value` is then a
+    /// [`ExprKind::UnitLiteral`] whose span covers the whole
+    /// `5.31 ± 0.02 kg` (the number and its unit are not adjacent in the
+    /// source). Both operands may be any expression of one dimension.
+    PlusMinus {
+        value: Box<Expr>,
+        sigma: Box<Expr>,
+        /// The `±` or `+/-` token.
+        op_span: Span,
+    },
     /// Postfix `⁻¹`. Its own node (not `x ^ -1`) because the type checker
     /// rewrites `A⁻¹ @ b` with a positive-definite `A` into a Cholesky solve.
     Inverse {

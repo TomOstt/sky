@@ -1383,6 +1383,7 @@ impl<'s> Checker<'s> {
             }
             ExprKind::IfElse { then, cond, else_ } => self.if_else(then, cond, else_),
             ExprKind::As { value, unit, .. } => self.show(e, value, unit),
+            ExprKind::PlusMinus { .. } => Ty::Unknown,
             ExprKind::Binary {
                 op,
                 op_span,

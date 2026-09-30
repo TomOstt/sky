@@ -1,0 +1,4 @@
+crates/sky-ast/tests/ui/err_plus_minus_prefix.sky:2:5: error: expected an expression, found `±`
+  |
+2 | x = ± 0.1
+  |     ^

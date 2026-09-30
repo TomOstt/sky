@@ -258,6 +258,15 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
                         stack.push(Node::Expr(lhs));
                         stack.push(Node::Expr(rhs));
                     }
+                    ExprKind::PlusMinus {
+                        value,
+                        sigma,
+                        op_span,
+                    } => {
+                        f(*op_span);
+                        stack.push(Node::Expr(value));
+                        stack.push(Node::Expr(sigma));
+                    }
                     ExprKind::BoolOp {
                         operands, op_spans, ..
                     } => {
@@ -377,6 +386,7 @@ const KINDS: &[TokenKind] = {
         Arrow,
         Plus,
         Minus,
+        PlusMinus,
         Star,
         Slash,
         Caret,

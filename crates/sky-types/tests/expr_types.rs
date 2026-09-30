@@ -79,6 +79,10 @@ impl Walk<'_> {
                 self.expr(else_, false);
             }
             ExprKind::As { value, .. } => self.expr(value, false),
+            ExprKind::PlusMinus { value, sigma, .. } => {
+                self.expr(value, false);
+                self.expr(sigma, false);
+            }
         }
     }
 

@@ -462,6 +462,10 @@ impl Lower<'_> {
                 }
             }
             ExprKind::As { value, .. } => self.scan_expr(value, defined, direct, callees),
+            ExprKind::PlusMinus { value, sigma, .. } => {
+                self.scan_expr(value, defined, direct, callees);
+                self.scan_expr(sigma, defined, direct, callees);
+            }
             ExprKind::Array(elements) => {
                 for el in elements {
                     self.scan_expr(el, defined, direct, callees);

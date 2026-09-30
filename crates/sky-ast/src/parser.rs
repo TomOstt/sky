@@ -31,7 +31,7 @@ use crate::ast::{
 };
 use crate::precedence::{
     bool_binding_power, infix_binding_power, is_postfix_start, prefix_binding_power, AS_BP,
-    CONDITIONAL_BP, CONDITIONAL_COND_BP, NOT_BP, POSTFIX_BP,
+    CONDITIONAL_BP, CONDITIONAL_COND_BP, NOT_BP, PLUS_MINUS_BP, POSTFIX_BP,
 };
 
 /// Maximum nesting depth. Each level counts once: a `(`...`)` group, a prefix
@@ -990,15 +990,22 @@ impl<'t, 's> Parser<'t, 's> {
         }
     }
 
+    /// `lhs op rhs` with `op` already consumed and counted. `op` is `None`
+    /// for `±`, which builds an `ExprKind::PlusMinus` instead of a binary
+    /// node. It shares this path (rather than having its own `Step`) so the
+    /// recursive frame of `expr_bp_inner` does not grow.
     fn parse_infix_rhs(
         &mut self,
         lhs: Expr,
-        op: BinaryOp,
+        op: Option<BinaryOp>,
         op_span: Span,
         r_bp: u8,
     ) -> Option<Expr> {
         let rhs = self.expr_bp(r_bp)?;
-        Some(binary(op, op_span, lhs, rhs))
+        Some(match op {
+            Some(op) => binary(op, op_span, lhs, rhs),
+            None => crate::plus_minus::plus_minus(lhs, rhs, op_span),
+        })
     }
 
     /// `lhs op x op y ...` for one `and`/`or`, with the first `op` consumed.
@@ -1179,6 +1186,18 @@ impl<'t, 's> Parser<'t, 's> {
                 r_bp,
             });
         }
+        if tok.kind == TokenKind::PlusMinus {
+            if PLUS_MINUS_BP.0 < min_bp {
+                return Some(Step::Done);
+            }
+            self.bump();
+            self.enter(tok.span)?;
+            return Some(Step::Infix {
+                op: None,
+                op_span: tok.span,
+                r_bp: PLUS_MINUS_BP.1,
+            });
+        }
         let Some((op, l_bp, r_bp)) = infix_binding_power(tok.kind) else {
             return Some(Step::Done);
         };
@@ -1205,7 +1224,7 @@ impl<'t, 's> Parser<'t, 's> {
         }
         self.enter(tok.span)?;
         Some(Step::Infix {
-            op,
+            op: Some(op),
             op_span: tok.span,
             r_bp,
         })
@@ -2618,8 +2637,9 @@ enum Step {
         op_span: Span,
         r_bp: u8,
     },
+    /// A binary operator, or `±` (`op: None`).
     Infix {
-        op: BinaryOp,
+        op: Option<BinaryOp>,
         op_span: Span,
         r_bp: u8,
     },
@@ -2834,6 +2854,7 @@ fn symbol(kind: TokenKind) -> &'static str {
         TokenKind::Assign => "=",
         TokenKind::Plus => "+",
         TokenKind::Minus => "-",
+        TokenKind::PlusMinus => "±",
         TokenKind::Star => "*",
         TokenKind::Slash => "/",
         TokenKind::Caret => "^",

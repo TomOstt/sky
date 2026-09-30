@@ -299,6 +299,7 @@ fn write_expr(out: &mut String, e: &Expr, src: &str) {
         ExprKind::Index { base, items } => write_index(out, base, items, src),
         ExprKind::Attribute { base, name } => write_attr(out, base, name.span, src),
         ExprKind::Paren(inner) => node(out, "paren", src, &[inner]),
+        ExprKind::PlusMinus { value, sigma, .. } => node(out, "plusminus", src, &[value, sigma]),
         ExprKind::IfElse { then, cond, else_ } => node(out, "ifelse", src, &[cond, then, else_]),
         ExprKind::As { value, unit, .. } => {
             out.push_str("(as ");

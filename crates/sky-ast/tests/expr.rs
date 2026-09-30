@@ -205,8 +205,8 @@ fn calls_indexing_and_attributes() {
 }
 
 #[test]
-fn plus_minus_ascii_is_plus_then_negation() {
-    // PR #4 has no `±` token and lexes `+-` as `Plus`, `Minus`.
+fn plus_dash_is_plus_then_negation() {
+    // `+-` is not an uncertainty: `±` and `+/-` are (see `plus_minus.rs`).
     check(&[
         ("x +- dx", "(+ x (neg dx))"),
         ("10 m +- 2 cm", "(+ (unit 10 m) (neg (unit 2 cm)))"),

@@ -478,6 +478,10 @@ impl<'a> Interp<'a> {
                 let v = self.eval(value)?;
                 show_value(self.src, unit, &v, e.span)
             }
+            ExprKind::PlusMinus { .. } => Err(RuntimeError::new(
+                "uncertainty is not supported by the interpreter yet",
+                e.span,
+            )),
         }
     }
 

@@ -5,7 +5,7 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 ## Signed off by Eng Lead
 
 **Token interface.** The parser uses the real lexer types from `sky_syntax` (#4): `Token`, `TokenKind`, `Kw`, and `Span` (a re-export of `sky_diag::Span`). It takes `&[Token]` plus the source `&str` and reads token text as `source[span]`.
-- There is no `±` token. The lexer rejects `±`, and `+-` is `Plus`, `Minus`.
+- `±` and `+/-` are one token, `PlusMinus` (spec "Uncertainty"), with the precedence of `+` and `-` and an `ExprKind::PlusMinus` node; `5.31 ± 0.02 kg` shares its unit (see `plus_minus.rs`). `+-` is still `Plus`, `Minus`.
 - `d`, `inv`, `grad` are plain names, so `d = 3` and `inv(A)` parse.
 
 **Unit literals.** The normative grammar is in `spec/v0.1.md`, "Unit literals".

@@ -80,6 +80,15 @@ impl Lower<'_> {
                 let unit = self.text(unit.span()).to_string();
                 Ok(self.op1(OpKind::Show { unit }, vec![a], Type::Str, e.span))
             }
+            // Uncertainty is a run-time property of a number that the SIR
+            // types (numbers with a dimension) cannot carry, so a program
+            // that uses `±` is not lowered: `--engine=auto` runs it on the
+            // tree-walker and `--engine=sir` says so (spec "Uncertainty").
+            ExprKind::PlusMinus { .. } => Err(LowerError::new(
+                "uncertainty (`±`) is not supported by SIR yet",
+                e.span,
+            )
+            .with_note(UNCERTAINTY)),
             ExprKind::Index { base, items } => self.index_expr(e, base, items),
             ExprKind::Array(elems) => self.array_literal(e, elems),
             ExprKind::Attribute { name, .. } => Err(LowerError::new(
@@ -470,6 +479,10 @@ impl Lower<'_> {
         )
     }
 }
+
+/// Why a program with `±` does not lower.
+pub(crate) const UNCERTAINTY: &str =
+    "values with an uncertainty run on the tree-walking interpreter (`--engine=ast`, or `--engine=auto`, which falls back to it)";
 
 /// Why an index or attribute write, or an attribute read, is rejected.
 pub(crate) const ARRAYS: &str =

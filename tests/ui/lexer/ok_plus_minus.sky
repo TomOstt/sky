@@ -1,0 +1,4 @@
+# Uncertainty: `±` and its ASCII spelling `+/-` are one token; `+-` is not.
+m = 5.31 ± 0.02 kg
+n = 5.31 +/- 0.02 kg
+d = m - n

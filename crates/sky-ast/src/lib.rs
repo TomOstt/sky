@@ -15,6 +15,7 @@
 pub mod ast;
 pub mod parser;
 mod partial;
+mod plus_minus;
 pub mod precedence;
 mod sexpr;
 pub mod unit_text;

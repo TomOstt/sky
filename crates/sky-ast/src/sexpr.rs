@@ -180,6 +180,8 @@ impl Stmt {
             StmtKind::Pass => out.push_str("(pass)"),
             StmtKind::Break => out.push_str("(break)"),
             StmtKind::Continue => out.push_str("(continue)"),
+            StmtKind::Equation(eq) => out.push_str(&crate::parser::equation_sexpr(eq, src)),
+            StmtKind::Solve(solve) => out.push_str(&crate::parser::solve_sexpr(solve, src)),
         }
         out
     }

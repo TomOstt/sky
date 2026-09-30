@@ -23,8 +23,8 @@
 //!   `0..source.len()`.
 
 use sky_ast::{
-    parse_module, with_deep_stack, AssignTarget, Block, Expr, ExprKind, IndexItem, Kw, Module,
-    Span, Stmt, StmtKind, Token, TokenKind, TypeExpr, UnitExpr,
+    parse_module, with_deep_stack, AssignTarget, Block, EquationItem, Expr, ExprKind, IndexItem,
+    Kw, Module, SolveOption, Span, Stmt, StmtKind, Token, TokenKind, TypeExpr, UnitExpr,
 };
 use sky_diag::{Diagnostic, SourceFile};
 
@@ -232,6 +232,58 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
                     stack.push(Node::Expr(v));
                 }
             }
+            StmtKind::Equation(eq) => {
+                f(eq.name.span);
+                f(eq.time.span);
+                push_type(&eq.time_ty, &mut stack, &mut f);
+                for item in &eq.items {
+                    f(item.span());
+                    match item {
+                        EquationItem::State { name, ty, .. } => {
+                            f(name.span);
+                            push_type(ty, &mut stack, &mut f);
+                        }
+                        EquationItem::Derivative {
+                            name, prime, value, ..
+                        } => {
+                            f(name.span);
+                            f(*prime);
+                            stack.push(Node::Expr(value));
+                        }
+                        EquationItem::Local { name, value, .. } => {
+                            f(name.span);
+                            stack.push(Node::Expr(value));
+                        }
+                    }
+                }
+            }
+            StmtKind::Solve(solve) => {
+                f(solve.target.span);
+                f(solve.keyword);
+                f(solve.equation.span);
+                stack.push(Node::Expr(&solve.from));
+                stack.push(Node::Expr(&solve.to));
+                for init in &solve.initial {
+                    f(init.name.span);
+                    stack.push(Node::Expr(&init.value));
+                }
+                for option in &solve.options {
+                    f(option.keyword());
+                    match option {
+                        SolveOption::Tolerance { value, .. } => stack.push(Node::Expr(value)),
+                        SolveOption::Conserve {
+                            name,
+                            value,
+                            within,
+                            ..
+                        } => {
+                            f(name.span);
+                            stack.push(Node::Expr(value));
+                            stack.extend(within.iter().map(Node::Expr));
+                        }
+                    }
+                }
+            }
         }
     }
     while let Some(node) = stack.pop() {
@@ -384,6 +436,7 @@ const KINDS: &[TokenKind] = {
         Assign,
         Dot,
         Arrow,
+        Prime,
         Plus,
         Minus,
         PlusMinus,

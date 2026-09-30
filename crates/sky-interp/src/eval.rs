@@ -301,6 +301,7 @@ impl<'a> Interp<'a> {
             StmtKind::Pass => Ok(Flow::Normal(None)),
             StmtKind::Break => Ok(Flow::Break),
             StmtKind::Continue => Ok(Flow::Continue),
+            StmtKind::Equation(_) | StmtKind::Solve(_) => Ok(Flow::Normal(None)),
             StmtKind::Assign { target, value } => match target {
                 AssignTarget::Name(id) => {
                     let v = self.eval(value)?;

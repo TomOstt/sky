@@ -173,6 +173,7 @@ impl Walk<'_> {
                 }
             }
             StmtKind::Pass | StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Equation(_) | StmtKind::Solve(_) => {}
         }
     }
 }

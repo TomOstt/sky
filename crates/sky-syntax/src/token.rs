@@ -48,6 +48,10 @@ pub enum TokenKind {
     Dot,
     /// `->`
     Arrow,
+    /// `'` directly after a name (`r'`, `r''`): the derivative mark of an
+    /// `equation`. Anywhere else `'` is still an unexpected character (Sky's
+    /// strings use `\"`).
+    Prime,
 
     // Operators.
     Plus,

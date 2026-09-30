@@ -1,0 +1,10 @@
+equation orbit(t: s):
+    r: Vector[2] m
+    v: Vector[2] m/s
+    r' = v
+    v' = -GM * r / norm(r)^3
+
+sol = solve orbit from 0 s to 1 yr with r = [1 AU, 0 m], v = [0 m/s, 29.8 km/s]:
+    tolerance 1e-9
+    conserve energy = 0.5 * norm(v)^2 - GM / norm(r) within 1e-6
+print(sol.r)

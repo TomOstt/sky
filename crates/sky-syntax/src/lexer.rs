@@ -418,6 +418,23 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Whether a `'` at `start` (already consumed) follows a name or another
+    /// prime with no space between: `r'` and `r''`.
+    fn prime_allowed(&self, start: usize) -> bool {
+        self.src[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c == '\'' || is_ident_continue(c))
+            && self
+                .tokens
+                .last()
+                .is_some_and(|t| matches!(t.kind, TokenKind::Ident | TokenKind::Prime))
+            && self
+                .tokens
+                .last()
+                .is_some_and(|t| t.span.end as usize == start)
+    }
+
     fn offset(&self) -> u32 {
         self.pos as u32
     }
@@ -488,6 +505,9 @@ impl<'a> Lexer<'a> {
                 ')' | ']' => self.close_bracket(c, start)?,
                 ',' => TokenKind::Comma,
                 ':' => TokenKind::Colon,
+                // `r'` is the derivative of `r` (see `equation`). Only right
+                // after a name or another prime, so `'text'` keeps its help.
+                '\'' if self.prime_allowed(start) => TokenKind::Prime,
                 '.' => TokenKind::Dot,
                 '*' if self.eat('=') => TokenKind::StarAssign,
                 '*' => TokenKind::Star,

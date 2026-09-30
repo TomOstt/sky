@@ -231,6 +231,14 @@ impl Lower<'_> {
             } => self.lower_def(name, params, body, s.span),
             StmtKind::Return(value) => self.return_stmt(s.span, value.as_ref()),
             StmtKind::Pass => Ok(()),
+            // Differential equations run on the tree-walker only: the
+            // solvers (`sky-ode`) call back into the evaluator for every
+            // right-hand side, and SIR has no such operation yet.
+            StmtKind::Equation(_) | StmtKind::Solve(_) => Err(LowerError::new(
+                "differential equations are not supported by SIR yet",
+                s.span,
+            )
+            .with_note("`equation` and `solve` run on the tree-walking interpreter (`--engine=ast`, or `--engine=auto`, which falls back to it)")),
             StmtKind::Break => {
                 let d = self.st.loops;
                 if d == 0 {

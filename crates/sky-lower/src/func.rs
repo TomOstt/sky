@@ -383,8 +383,14 @@ impl Lower<'_> {
                     self.scan_expr(v, defined, direct, callees);
                 }
             }
-            // A nested `def` is its own function.
-            StmtKind::Def { .. } | StmtKind::Pass | StmtKind::Break | StmtKind::Continue => {}
+            // A nested `def` is its own function. Equations do not lower
+            // (see `stmt`), so what they read does not matter.
+            StmtKind::Def { .. }
+            | StmtKind::Equation(_)
+            | StmtKind::Solve(_)
+            | StmtKind::Pass
+            | StmtKind::Break
+            | StmtKind::Continue => {}
         }
     }
 

@@ -578,6 +578,11 @@ pub enum StmtKind {
     Pass,
     Break,
     Continue,
+    /// `equation name(t: s): ...`: a system of differential equations
+    /// (spec "Differential equations").
+    Equation(Box<Equation>),
+    /// `sol = solve name from a to b with ...: options`: solves an equation.
+    Solve(Box<Solve>),
 }
 
 /// An indented run of statements after a `:`. Never empty in a tree the
@@ -605,4 +610,104 @@ pub struct Module {
     pub stmts: Vec<Stmt>,
     /// `0..source.len()` (saturating at `u32::MAX`).
     pub span: Span,
+}
+
+/// `equation name(t: s):` and its body. The body is a run of [`EquationItem`]s:
+/// the state variables' types, the derivative equations, and local names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Equation {
+    pub name: Ident,
+    /// The independent variable: the `t` of `(t: s)`.
+    pub time: Ident,
+    /// Its type: a scalar, usually a unit (`s`).
+    pub time_ty: TypeExpr,
+    /// At least one item.
+    pub items: Vec<EquationItem>,
+}
+
+/// One line of an equation's body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EquationItem {
+    /// `r: Vector[2] m`: declares a state variable and its type.
+    State {
+        name: Ident,
+        ty: TypeExpr,
+        span: Span,
+    },
+    /// `r' = v`: the derivative of a state variable, in terms of the state
+    /// variables, the time, and names from outside.
+    Derivative {
+        name: Ident,
+        /// The `'`.
+        prime: Span,
+        value: Expr,
+        span: Span,
+    },
+    /// `rn = norm(r)`: a name used by the equations below it.
+    Local {
+        name: Ident,
+        value: Expr,
+        span: Span,
+    },
+}
+
+impl EquationItem {
+    pub fn span(&self) -> Span {
+        match self {
+            EquationItem::State { span, .. }
+            | EquationItem::Derivative { span, .. }
+            | EquationItem::Local { span, .. } => *span,
+        }
+    }
+}
+
+/// `sol = solve orbit from 0 s to 1 yr with r = ..., v = ...:` and its
+/// options block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Solve {
+    /// The name that receives the solution.
+    pub target: Ident,
+    /// The `solve` keyword.
+    pub keyword: Span,
+    /// The equation being solved.
+    pub equation: Ident,
+    pub from: Expr,
+    pub to: Expr,
+    /// The `with` list: an initial value for each state variable.
+    pub initial: Vec<Initial>,
+    /// The indented block, if any.
+    pub options: Vec<SolveOption>,
+}
+
+/// `r = [1 AU, 0 m]` in a `with` list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Initial {
+    pub name: Ident,
+    pub value: Expr,
+}
+
+/// One line of a `solve` block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SolveOption {
+    /// `tolerance 1e-9`: the relative accuracy asked of the solution.
+    Tolerance { keyword: Span, value: Expr },
+    /// `conserve energy = expr` (optionally `... within 1e-6`): a quantity
+    /// the solver must keep (nearly) constant. `within` is the largest
+    /// relative drift allowed, checked at the end of the run.
+    Conserve {
+        keyword: Span,
+        name: Ident,
+        value: Expr,
+        within: Option<Expr>,
+    },
+}
+
+impl SolveOption {
+    pub fn keyword(&self) -> Span {
+        match self {
+            SolveOption::Tolerance { keyword, .. } | SolveOption::Conserve { keyword, .. } => {
+                *keyword
+            }
+        }
+    }
 }

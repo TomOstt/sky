@@ -180,6 +180,7 @@ fn canonical_text(kind: TokenKind) -> &'static str {
         Ge => ">=",
         Dot => ".",
         Arrow => "->",
+        Prime => "'",
         PlusAssign => "+=",
         MinusAssign => "-=",
         StarAssign => "*=",

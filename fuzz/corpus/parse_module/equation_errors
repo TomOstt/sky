@@ -1,0 +1,14 @@
+0equation e(t: s):
+    x: m
+    x'' = 1 m/s^2
+    y 1
+sol = solve orbit 0 s to 1 yr
+sol = solve orbit from 0 s to 1 yr with r 1
+s = solve orbit from 0 s to 1 yr:
+    tol 1
+equation e(t: s):
+equation (t):
+    r'
+    ' = 1
+sol = solve e from to with :
+    conserve within

@@ -146,7 +146,14 @@ pub fn parse_module(tokens: &[Token], src: &str) -> (Module, Vec<ParseError>) {
     (module, p.errors)
 }
 
+#[path = "parse_ode.rs"]
+mod ode;
+pub(crate) use ode::{equation_sexpr, solve_sexpr};
+
 struct Parser<'t, 's> {
+    /// True while parsing the header or options of a `solve`, where `to`,
+    /// `with` and `within` end an expression (see `parse_ode.rs`).
+    solve_words: bool,
     /// Tokens up to (not including) the first `Eof`.
     tokens: &'t [Token],
     src: &'s str,
@@ -170,6 +177,7 @@ impl<'t, 's> Parser<'t, 's> {
                 .unwrap_or(Span::point(0)),
         };
         Parser {
+            solve_words: false,
             tokens: tokens.get(..end).unwrap_or(tokens),
             src,
             pos: 0,
@@ -313,6 +321,9 @@ impl<'t, 's> Parser<'t, 's> {
     /// `Dedent`), so the caller just carries on.
     fn parse_item(&mut self) -> Option<Stmt> {
         let tok = self.current();
+        if self.at_solve() {
+            return self.parse_solve();
+        }
         let TokenKind::Keyword(kw) = tok.kind else {
             return self.parse_simple_item();
         };
@@ -321,9 +332,9 @@ impl<'t, 's> Parser<'t, 's> {
             Kw::While => self.parse_while(),
             Kw::For => self.parse_for(),
             Kw::Def => self.parse_def(),
-            Kw::Import | Kw::Equation | Kw::Solve | Kw::Field | Kw::Else | Kw::Elif => {
-                self.reject_statement(tok, kw)
-            }
+            Kw::Equation => self.parse_equation(),
+            Kw::Solve => self.reject_bare_solve(),
+            Kw::Import | Kw::Field | Kw::Else | Kw::Elif => self.reject_statement(tok, kw),
             _ => self.parse_simple_item(),
         }
     }
@@ -391,7 +402,7 @@ impl<'t, 's> Parser<'t, 's> {
         let err = match kw {
             Kw::Import => ParseError::new("`import` is not supported yet", tok.span)
                 .with_help("there is no module loader yet; keep the code in one file for now"),
-            Kw::Equation | Kw::Solve | Kw::Field => ParseError::new(
+            Kw::Field => ParseError::new(
                 format!("`{word}` is reserved for a future version"),
                 tok.span,
             )
@@ -1271,7 +1282,7 @@ impl<'t, 's> Parser<'t, 's> {
                 } else {
                     Literal::Float(tok.span)
                 };
-                if self.peek() == TokenKind::Ident {
+                if self.peek() == TokenKind::Ident && !self.stops_unit() {
                     return self.parse_unit_literal(value);
                 }
                 Some(literal(value))
@@ -1757,7 +1768,12 @@ impl<'t, 's> Parser<'t, 's> {
                     );
                 }
                 Kw::And | Kw::Or | Kw::Not | Kw::True | Kw::False => {}
-                Kw::Equation | Kw::Solve | Kw::Field => {
+                Kw::Equation | Kw::Solve => {
+                    err = err.with_help(
+                        "`equation` and `solve` start statements: `sol = solve orbit from 0 s to 1 yr with ...`",
+                    );
+                }
+                Kw::Field => {
                     err = err.with_help("this word is reserved for a future version");
                 }
                 Kw::In => err = err.with_help(
@@ -1987,7 +2003,7 @@ impl<'t, 's> Parser<'t, 's> {
         }
         // `5 kg m`: compound units need `*`, never juxtaposition.
         let tok = self.current();
-        if tok.kind == TokenKind::Ident {
+        if tok.kind == TokenKind::Ident && !self.stops_unit() {
             let unit_text = self.text(unit.span());
             let name = self.text(tok.span);
             let mut err = ParseError::new(
@@ -2877,6 +2893,7 @@ fn symbol(kind: TokenKind) -> &'static str {
         TokenKind::AtAssign => "@=",
         TokenKind::Dot => ".",
         TokenKind::Arrow => "->",
+        TokenKind::Prime => "'",
         TokenKind::Keyword(kw) => kw.as_str(),
         TokenKind::Int => "integer",
         TokenKind::Float => "float",

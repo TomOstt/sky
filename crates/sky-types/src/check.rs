@@ -803,6 +803,7 @@ impl<'s> Checker<'s> {
             StmtKind::Pass => {}
             StmtKind::Break => self.break_stmt(stmt.span),
             StmtKind::Continue => self.continue_stmt(stmt.span),
+            StmtKind::Equation(_) | StmtKind::Solve(_) => {}
         }
     }
 

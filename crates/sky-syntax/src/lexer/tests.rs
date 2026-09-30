@@ -522,6 +522,21 @@ fn every_operator_ascii_forms() {
 }
 
 #[test]
+fn prime_marks_a_derivative_only_right_after_a_name() {
+    assert_eq!(line("r' = v\n"), [Ident, Prime, Assign, Ident]);
+    assert_eq!(line("r'' = v\n"), [Ident, Prime, Prime, Assign, Ident]);
+    assert_eq!(
+        line("x = f'(1)\n")[2..],
+        [Ident, Prime, LParen, Int, RParen]
+    );
+    // Not after a space, an operator, or at the start: still an error.
+    assert_err("r ' = v\n", LexErrorKind::UnexpectedChar, "'");
+    assert_err("x = 'text'\n", LexErrorKind::UnexpectedChar, "'");
+    assert_err("x = (1)'\n", LexErrorKind::UnexpectedChar, "'");
+    assert_err("x = 2'\n", LexErrorKind::UnexpectedChar, "'");
+}
+
+#[test]
 fn every_operator_glyph_forms() {
     assert_eq!(
         texts("⁻¹ ∂ ∇ ≤ ≥ ≠\n"),

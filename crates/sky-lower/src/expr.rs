@@ -60,6 +60,9 @@ impl Lower<'_> {
             }
             ExprKind::Binary { op, lhs, rhs, .. } => {
                 if *op == BinaryOp::MatMul {
+                    if let Some(v) = self.chain_site(e, lhs, rhs)? {
+                        return Ok(v);
+                    }
                     if let Some(v) = self.cholesky_site(e, lhs, rhs)? {
                         return Ok(v);
                     }

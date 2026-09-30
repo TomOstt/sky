@@ -40,6 +40,7 @@
 
 pub mod arith;
 pub mod array;
+mod chain_exec;
 pub mod contract;
 mod derivative;
 mod env;

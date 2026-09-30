@@ -1,7 +1,8 @@
 //! The front end shared by `check`, `run` and `repl`: lex, parse, and
 //! type-check one source text, and collect every diagnostic.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use sky_ast::{Module, ParseError};
 use sky_diag::{Diagnostic, Severity, SourceFile, Span};
@@ -23,6 +24,9 @@ pub struct FrontEnd {
     /// The `A⁻¹ @ b` sites the checker rewrote to Cholesky solves, which the
     /// interpreter must honour (see `sky_interp::run_module_with`).
     pub cholesky_solves: HashSet<Span>,
+    /// The `@` chains the checker planned (order, solves), which the
+    /// interpreter must honour too (see `sky_interp::RuntimeEnv::add_chain_plans`).
+    pub chains: HashMap<Span, Arc<sky_types::ChainPlan>>,
     /// The checker's whole result, when the module parsed: `sky run`'s SIR
     /// engine lowers with it (lowering reads the types the checker recorded
     /// and must not re-derive them). Its diagnostics are also in
@@ -82,6 +86,7 @@ pub fn analyze_ir(
     let mut checked_out = None;
     let mut env_out = env.clone();
     let mut solves = HashSet::new();
+    let mut chains = HashMap::new();
     let mut diagnostics: Vec<Diagnostic> = match sky_syntax::lex(src) {
         Err(e) => e.diagnostics().cloned().collect(),
         Ok(lexed) => {
@@ -118,6 +123,21 @@ pub fn analyze_ir(
                 if explain {
                     diagnostics.extend(checked.ode_notes.iter().cloned());
                     diagnostics.extend(checked.rewrites.iter().map(|r| r.to_diagnostic(src)));
+                    diagnostics.extend(checked.chain_notes.iter().cloned());
+                    if checked.chain_notes_omitted > 0 {
+                        let last = checked
+                            .chain_notes
+                            .last()
+                            .map_or(Span::point(0), |d| d.primary.span);
+                        let n = checked.chain_notes_omitted;
+                        diagnostics.push(Diagnostic::note(
+                            format!(
+                                "{n} more chain rewrite{} not shown",
+                                if n == 1 { "" } else { "s" }
+                            ),
+                            last,
+                        ));
+                    }
                     if checked.rewrites_omitted > 0 {
                         let last = checked.rewrites.last().map_or(Span::point(0), |r| r.span);
                         diagnostics.push(Diagnostic::note(
@@ -138,6 +158,7 @@ pub fn analyze_ir(
                 diagnostics.append(&mut pass_notes);
                 env_out = checked.env.clone();
                 solves = checked.cholesky_solves.clone();
+                chains = checked.chains.clone();
                 checked_out = Some(checked);
                 module_out = Some(module);
             } else {
@@ -155,6 +176,7 @@ pub fn analyze_ir(
         module: module_out,
         env: env_out,
         cholesky_solves: solves,
+        chains,
         checked: checked_out,
         ir: ir_out,
         ok,

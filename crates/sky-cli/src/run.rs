@@ -145,9 +145,8 @@ fn run_source(path: &str, src: &str, edition: Edition, engine: Engine) -> ExitCo
         // read from, so SIR's error is worded and labelled exactly as the
         // tree-walker's, with nothing to replay.
         Some(ir) => sky_ir_interp::run(&ir, &mut out).map_err(|e| e.to_diagnostic()),
-        None => {
-            tree_walk(module, src, &front.cholesky_solves, &mut out).map_err(|e| e.to_diagnostic())
-        }
+        None => tree_walk(module, src, &front.cholesky_solves, checked, &mut out)
+            .map_err(|e| e.to_diagnostic()),
     };
     let _ = out.flush();
     match result {
@@ -162,9 +161,13 @@ fn tree_walk(
     module: &sky_ast::Module,
     src: &str,
     solves: &HashSet<Span>,
+    checked: &sky_types::Checked,
     out: &mut impl Write,
 ) -> Result<(), sky_interp::RuntimeError> {
     let mut env = RuntimeEnv::with_prelude();
+    // The chains the checker planned (order, solves): the tree-walker runs
+    // them as the plan says, as SIR does.
+    env.add_chain_plans(&checked.chains);
     // `derivative(f, x)(args)` runs on SIR (see `sky_derive`); the program
     // is only lowered if it asks for one.
     let mut derivatives = SirDerivatives::new(module, src);

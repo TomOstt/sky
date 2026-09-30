@@ -234,6 +234,7 @@ pub fn measure(program: &Program, cfg: Config) -> Result<Measurement, String> {
             Ok(Compiled {
                 module,
                 solves: checked.cholesky_solves,
+                chains: checked.chains,
                 raw,
                 opt,
             })
@@ -285,6 +286,7 @@ pub fn measure(program: &Program, cfg: Config) -> Result<Measurement, String> {
 struct Compiled {
     module: sky_ast::Module,
     solves: std::collections::HashSet<sky_diag::Span>,
+    chains: std::collections::HashMap<sky_diag::Span, std::sync::Arc<sky_types::ChainPlan>>,
     raw: sky_ir::Module,
     opt: sky_ir::Module,
 }
@@ -295,6 +297,7 @@ fn run_engine(engine: usize, c: &Compiled, src: &str) -> Result<Vec<u8>, String>
     match engine {
         0 => {
             let mut env = RuntimeEnv::with_prelude();
+            env.add_chain_plans(&c.chains);
             // As in `sky run`: a derivative runs on SIR through `sky-derive`.
             let mut derivatives = SirDerivatives::new(&c.module, src);
             run_module_with_derivatives(

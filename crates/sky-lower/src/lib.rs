@@ -225,6 +225,7 @@ mod accuracy;
 mod analysis;
 mod array;
 mod build;
+mod chain;
 mod contract;
 mod ctx;
 mod derivative;

@@ -1,6 +1,10 @@
 //! Runtime bindings.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
+
+use sky_diag::Span;
+use sky_types::ChainPlan;
 
 use crate::Value;
 
@@ -10,6 +14,11 @@ use crate::Value;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RuntimeEnv {
     vars: BTreeMap<String, Value>,
+    /// The checker's plans for `@` chains (`Checked::chains`), by the span
+    /// of the whole chain expression: the tree-walker computes a planned
+    /// chain in the plan's order and by its methods, as SIR does. Not
+    /// program state; a REPL adds the plans of each input as it goes.
+    chains: HashMap<Span, Arc<ChainPlan>>,
 }
 
 impl RuntimeEnv {
@@ -29,6 +38,19 @@ impl RuntimeEnv {
             }
         }
         env
+    }
+
+    /// Adds the chain plans of a checked input (`Checked::chains`, from
+    /// checking the very source that will run). Spans must not clash with
+    /// earlier plans (a REPL's are session offsets, so they do not).
+    pub fn add_chain_plans(&mut self, plans: &HashMap<Span, Arc<ChainPlan>>) {
+        self.chains
+            .extend(plans.iter().map(|(s, p)| (*s, Arc::clone(p))));
+    }
+
+    /// The plan for the chain expression at `span`, if the checker made one.
+    pub fn chain_plan(&self, span: Span) -> Option<&Arc<ChainPlan>> {
+        self.chains.get(&span)
     }
 
     pub fn get(&self, name: &str) -> Option<&Value> {

@@ -621,6 +621,13 @@ impl<'a> Interp<'a> {
     /// span of the whole expression) the interpreter factors `A` and solves
     /// for `b`, and never forms `A⁻¹`.
     fn matmul(&mut self, e: &Expr, lhs: &Expr, rhs: &Expr) -> R<Value> {
+        // A chain the checker planned (order, solves): its plan, exactly as
+        // SIR runs it. See `sky_types::chain`.
+        if let Some(plan) = self.env.chain_plan(e.span).cloned() {
+            if let Some(v) = self.run_chain(lhs, rhs, &plan)? {
+                return Ok(v);
+            }
+        }
         if self.solves.contains(&e.span) {
             if let Some(a) = self.inverted_operand(lhs) {
                 let av = self.eval(a)?;
@@ -635,7 +642,7 @@ impl<'a> Interp<'a> {
 
     /// `A` if `e` is `A⁻¹` or `inv(A)` (the builtin, not a user's own
     /// `inv`), possibly parenthesized: the forms the checker rewrites.
-    fn inverted_operand<'x>(&self, e: &'x Expr) -> Option<&'x Expr> {
+    pub(crate) fn inverted_operand<'x>(&self, e: &'x Expr) -> Option<&'x Expr> {
         let mut e = e;
         while let ExprKind::Paren(inner) = &e.kind {
             e = inner;

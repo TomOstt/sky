@@ -1,4 +1,5 @@
-# Symmetric is not enough for the Cholesky rewrite: the `.explain` is empty.
+# Symmetric is not enough for the Cholesky rewrite, so the solve is an LU one:
+# the `.explain` shows the general-matrix rewrite, not a Cholesky factorization.
 S: Symmetric Matrix[3, 3]
 b: Vector[3]
 x = S⁻¹ @ b

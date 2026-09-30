@@ -245,6 +245,7 @@ fn analyze_tail(session: &Session, src: &str, text: &str) -> FrontEnd {
     let mut module_out = None;
     let mut env_out = session.types.clone();
     let mut solves = HashSet::new();
+    let mut chains = std::collections::HashMap::new();
     let mut diagnostics: Vec<Diagnostic> = match sky_syntax::lex(src) {
         Err(e) => e.diagnostics().cloned().map(shift_diag).collect(),
         Ok(lexed) => {
@@ -260,6 +261,7 @@ fn analyze_tail(session: &Session, src: &str, text: &str) -> FrontEnd {
                 diagnostics.extend(checked.diagnostics);
                 env_out = checked.env;
                 solves = checked.cholesky_solves;
+                chains = checked.chains;
                 module_out = Some(module);
             } else {
                 diagnostics.extend(errors.into_iter().map(ParseError::into_diagnostic));
@@ -274,6 +276,7 @@ fn analyze_tail(session: &Session, src: &str, text: &str) -> FrontEnd {
         module: module_out,
         env: env_out,
         cholesky_solves: solves,
+        chains,
         // The REPL runs each input on the tree-walker; `sky run`'s SIR
         // engine is the only reader of the checker's result here.
         checked: None,
@@ -387,6 +390,9 @@ fn eval_input(session: &mut Session, src: &str, out: &mut impl Write) {
         _ => return,
     };
     let snapshot = session.values.clone();
+    // The plans of this input; earlier inputs' stay, for a function they
+    // defined that this input calls.
+    session.values.add_chain_plans(&front.chains);
     let program = OnceCell::new();
     let mut derivatives = SessionDerivatives {
         full: &full,

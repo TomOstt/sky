@@ -40,6 +40,7 @@
 
 pub mod arith;
 pub mod array;
+pub mod contract;
 mod derivative;
 mod env;
 mod erf;
@@ -56,6 +57,8 @@ mod vecfn;
 
 #[cfg(test)]
 mod array_tests;
+#[cfg(test)]
+mod contract_tests;
 #[cfg(test)]
 mod for_tests;
 #[cfg(test)]

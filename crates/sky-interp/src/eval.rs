@@ -11,8 +11,8 @@ use std::sync::Arc;
 use sky_ast::ast::span_text;
 
 use sky_ast::{
-    AssignTarget, BinaryOp, Block, BoolOp, Expr, ExprKind, IndexItem, Literal, Module, Stmt,
-    StmtKind, UnaryOp,
+    AssertKind, AssignTarget, BinaryOp, Block, BoolOp, Expr, ExprKind, IndexItem, Literal, Module,
+    Stmt, StmtKind, UnaryOp,
 };
 use sky_diag::Span;
 use sky_syntax::lexer::unescape_str;
@@ -23,6 +23,7 @@ use crate::arith::{
     ArithOp, StackMeter, MAX_CALL_DEPTH, R,
 };
 use crate::array::{self, Ix};
+use crate::contract;
 use crate::derivative::DerivativeHook;
 use crate::literal::{number_literal, unit_literal_si};
 use crate::show::show_value;
@@ -124,6 +125,9 @@ fn run<'a, W: Write>(
 struct Frame {
     /// The call's local variables: the parameters and what the body binds.
     vars: BTreeMap<String, Value>,
+    /// The call expression, for the "called here" label of a failed
+    /// `requires`.
+    call: Span,
     /// The function being run, for its captured functions.
     func: Arc<Function>,
 }
@@ -299,6 +303,20 @@ impl<'a> Interp<'a> {
                     None => Value::None,
                 };
                 Ok(Flow::Return(v))
+            }
+            // A postcondition runs when its function returns (see
+            // `call_user`), not where it is written.
+            StmtKind::Assert {
+                kind: AssertKind::Ensures,
+                ..
+            } => Ok(Flow::Normal(None)),
+            StmtKind::Assert {
+                kind,
+                cond,
+                message,
+            } => {
+                self.contract(*kind, cond, *message)?;
+                Ok(Flow::Normal(None))
             }
             StmtKind::Pass => Ok(Flow::Normal(None)),
             StmtKind::Break => Ok(Flow::Break),
@@ -679,16 +697,68 @@ impl<'a> Interp<'a> {
             let v = self.eval(a)?;
             vars.insert(name.clone(), v);
         }
+        // A postcondition sees the arguments as passed, and `result`. The
+        // contract lines are the head of the body, so a function without
+        // any costs one look at its first statement.
+        let has_ensures = contract_head(&func.body).any(|s| is_contract(s, AssertKind::Ensures));
+        let entry = has_ensures.then(|| vars.clone());
         self.frames.push(Frame {
             vars,
             func: func.clone(),
+            call: call.span,
         });
         let flow = self.block(&func.body);
         self.frames.pop();
-        match flow? {
-            Flow::Return(v) => Ok(v),
-            Flow::Normal(_) | Flow::Break | Flow::Continue => Ok(Value::None),
+        let value = match flow? {
+            Flow::Return(v) => v,
+            Flow::Normal(_) | Flow::Break | Flow::Continue => Value::None,
+        };
+        if let Some(mut vars) = entry {
+            vars.insert("result".to_string(), value.clone());
+            self.frames.push(Frame {
+                vars,
+                func: func.clone(),
+                call: call.span,
+            });
+            let checked = contract_head(&func.body).try_for_each(|s| match &s.kind {
+                StmtKind::Assert {
+                    kind: AssertKind::Ensures,
+                    cond,
+                    message,
+                } => self.contract(AssertKind::Ensures, cond, *message),
+                _ => Ok(()),
+            });
+            self.frames.pop();
+            checked?;
         }
+        Ok(value)
+    }
+
+    /// Checks the contract `kind cond, "message"`: the condition must be
+    /// true, or the run stops with the failure of [`crate::contract`],
+    /// which names the values the condition read. A failed `requires` also
+    /// points at the call.
+    fn contract(&mut self, kind: AssertKind, cond: &Expr, message: Option<Span>) -> R<()> {
+        let v = self.eval(cond)?;
+        if contract::expect_condition(kind, &v, cond.span)? {
+            return Ok(());
+        }
+        let shown: Vec<(&str, String)> = contract::condition_names(cond, self.src)
+            .into_iter()
+            .filter_map(|name| match self.lookup(name) {
+                Some(Value::Func(_)) | None => None,
+                Some(v) => Some((name, contract::show(v))),
+            })
+            .collect();
+        let text = contract::condition_text(self.src, cond.span);
+        let message = message.map(|m| contract::message_text(self.src, m));
+        let frame = self.frames.last();
+        let func = frame.map(|f| f.func.name.as_str());
+        let mut err = contract::failure(kind, func, &text, message.as_deref(), &shown, cond.span);
+        if let (AssertKind::Requires, Some(f)) = (kind, frame) {
+            err = err.with_secondary(f.call, "called here");
+        }
+        Err(err)
     }
 
     /// `print(a, b, ...)`: the values separated by single spaces, then a
@@ -829,6 +899,18 @@ impl<'a> Interp<'a> {
     ) -> R<Value> {
         order(op.symbol(), holds, l, r, whole, lspan, rspan).map(Value::Bool)
     }
+}
+
+/// The `requires` and `ensures` lines a function body starts with.
+fn contract_head(body: &Block) -> impl Iterator<Item = &Stmt> {
+    body.stmts
+        .iter()
+        .take_while(|s| is_contract(s, AssertKind::Requires) || is_contract(s, AssertKind::Ensures))
+}
+
+/// Whether `s` is a `requires` or `ensures` line (of kind `kind`).
+fn is_contract(s: &Stmt, kind: AssertKind) -> bool {
+    matches!(&s.kind, StmtKind::Assert { kind: k, .. } if *k == kind)
 }
 
 fn write_through(span: Span) -> RuntimeError {

@@ -306,14 +306,23 @@ fn apply(f: &mut Function, tree: &[OpId]) -> Rewrite {
 
     // Leaves: the operands the tree does not compute, once each, in order.
     let mut leaves: Vec<ValueId> = Vec::new();
+    // Where each leaf is first read, in the source: the span the operation
+    // that reads it recorded (its own, if it recorded none). The body's
+    // operations keep their own operand spans (their operands stay in place,
+    // only the values change), which is what their errors point at.
+    let mut leaf_spans: Vec<Span> = Vec::new();
     let mut seen: HashSet<ValueId> = HashSet::new();
     for &o in tree {
-        for &v in &f.op(o).operands {
+        for (i, &v) in f.op(o).operands.iter().enumerate() {
             let inside = defining_op(f, v).is_some_and(|p| in_tree.contains(&p));
             if !inside && seen.insert(v) {
                 leaves.push(v);
+                leaf_spans.push(f.op(o).operand_span(i));
             }
         }
+    }
+    if tree.iter().all(|&o| f.op(o).operand_spans.is_empty()) {
+        leaf_spans.clear();
     }
     let rewrite = explain(f, tree, &leaves);
     let span = rewrite.span;
@@ -337,7 +346,7 @@ fn apply(f: &mut Function, tree: &[OpId]) -> Rewrite {
         results: vec![root_value],
         regions: vec![region],
         span,
-        operand_spans: Vec::new(),
+        operand_spans: leaf_spans,
         parent: block,
     });
     f.values[root_value.index()].def = ValueDef::OpResult {

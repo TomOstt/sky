@@ -860,3 +860,85 @@ fn fusing_random_elementwise_programs_changes_nothing_observable() {
     assert!(fused_cases >= 300, "only {fused_cases} programs fused");
     assert!(failing_cases >= 100, "only {failing_cases} programs failed");
 }
+
+// ----- operand spans -----
+
+#[test]
+fn a_kernel_keeps_the_operand_spans_of_its_body_and_says_where_its_leaves_were_read() {
+    let text = format!(
+        "{HEAD}\nfn @f(%a: num[1; (3)], %s: num[1; ()], %z: num[1; ()]) -> (num[1; (3)]) effects(fail) {{
+  %t1 = mul %a, %s : num[1; (3)] @ 10..20 (10..11, 14..15)
+  %t2 = div %t1, %z : num[1; (3)] @ 10..30 (10..20, 24..25)
+  %c = neg %t2 : num[1; (3)] @ 9..30 (10..30)
+  return %c
+}}\n"
+    );
+    let before = parse(&text).unwrap();
+    let mut after = before.clone();
+    assert_eq!(fuse(&mut after).len(), 1);
+    verify(&after).unwrap_or_else(|e| panic!("{e:#?}\n{}", print(&after)));
+    let f = &after.functions[0];
+    let kernel = f
+        .ops
+        .iter()
+        .find(|o| o.kind == OpKind::Fused && o.parent == f.entry())
+        .expect("a kernel");
+    // The leaves are `a`, `s` and `z`, first read at these places.
+    assert_eq!(
+        kernel.operand_spans,
+        [Span::new(10, 11), Span::new(14, 15), Span::new(24, 25)]
+    );
+    let body = f.region(kernel.regions[0]).blocks[0];
+    let spans: Vec<Vec<Span>> = f
+        .block(body)
+        .ops
+        .iter()
+        .map(|o| f.op(*o).operand_spans.clone())
+        .collect();
+    assert_eq!(
+        spans,
+        [
+            vec![Span::new(10, 11), Span::new(14, 15)],
+            vec![Span::new(10, 20), Span::new(24, 25)],
+            vec![Span::new(10, 30)],
+            vec![],
+        ]
+    );
+    // So the error of the kernel is the unfused chain's, with its labels.
+    let args = |z: f64| {
+        vec![
+            vector(&[1.0, 2.0, 3.0]),
+            sky_ir_interp::Value::scalar(2.0),
+            sky_ir_interp::Value::scalar(z),
+        ]
+    };
+    let diagnostic = |m: &Module| {
+        sky_ast::with_deep_stack(|| {
+            sky_ir_interp::call(m, "f", args(0.0), &mut Vec::new())
+                .expect_err("divides by zero")
+                .to_diagnostic()
+        })
+    };
+    assert_eq!(diagnostic(&after), diagnostic(&before));
+    let d = diagnostic(&after);
+    assert_eq!(d.message, "division by zero");
+    assert_eq!(d.primary.span, Span::new(10, 30));
+    assert_eq!(d.secondary.len(), 1);
+    assert_eq!(d.secondary[0].span, Span::new(24, 25));
+}
+
+#[test]
+fn a_kernel_of_operations_without_operand_spans_has_none() {
+    let (m, _) = fused(
+        "  %t = mul %a, %s : num[1; (3)] @ 10..11
+  %c = add %t, %d : num[1; (3)] @ 12..13
+  return %c",
+    );
+    let f = &m.functions[0];
+    let kernel = f
+        .ops
+        .iter()
+        .find(|o| o.kind == OpKind::Fused && o.parent == f.entry())
+        .expect("a kernel");
+    assert!(kernel.operand_spans.is_empty());
+}

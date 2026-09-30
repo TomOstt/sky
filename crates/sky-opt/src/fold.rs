@@ -373,6 +373,8 @@ fn fold_op(
     let data = &mut f.ops[id.index()];
     data.kind = kind;
     data.operands.clear();
+    // A constant reads nothing, so it has no operand spans either.
+    data.operand_spans.clear();
     out.push(Rewrite {
         pass: "fold",
         rule,
@@ -435,6 +437,7 @@ fn fold_if(f: &mut Function, id: OpId, out: &mut Vec<Rewrite>) -> bool {
     let ifd = &mut f.ops[id.index()];
     ifd.regions.clear();
     ifd.operands.clear();
+    ifd.operand_spans.clear();
 
     let branch = if taken { "then" } else { "else" };
     let other = if taken { "else" } else { "then" };

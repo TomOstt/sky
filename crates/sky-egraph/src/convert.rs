@@ -220,6 +220,10 @@ struct Staged {
     operands: Vec<Src>,
     ty: NumberType,
     span: Span,
+    /// The source spans of the operands, when the extracted node is one of
+    /// the program's own (same operation on the same operand classes): where
+    /// the original read them. Empty when unknown (a node a rule made).
+    operand_spans: Vec<Span>,
     class: Id,
     /// The block position of the root this op is emitted before.
     place: usize,
@@ -284,6 +288,9 @@ fn rewrite_segment(
     let mut leaf_rec: HashMap<ValueId, Id> = HashMap::new();
     let mut internal: HashMap<ValueId, u32> = HashMap::new();
     let mut fallible_count = 0usize;
+    // Per node of `expr` made from an operation: the spans that operation
+    // recorded for its operands.
+    let mut operand_spans_of: HashMap<Id, Vec<Span>> = HashMap::new();
 
     for (_, id) in &exprs {
         let op = func.op(*id).clone();
@@ -389,6 +396,9 @@ fn rewrite_segment(
             node_facts,
             fallible,
         );
+        if !op.operand_spans.is_empty() && op.operand_spans.len() == op.operands.len() {
+            operand_spans_of.insert(r, op.operand_spans.clone());
+        }
         rec_of_value.insert(op.results[0], r);
     }
 
@@ -470,6 +480,20 @@ fn rewrite_segment(
         }
     }
 
+    // Likewise the operand spans of the program's own nodes, by canonical
+    // node (the first one added wins, as for the span).
+    let mut node_operand_spans: HashMap<SkyNode, Vec<Span>> = HashMap::new();
+    for (i, node) in expr.as_ref().iter().enumerate() {
+        if let Some(spans) = operand_spans_of.get(&Id::from(i)) {
+            let canon = node
+                .clone()
+                .map_children(|c| eg.find(eg_of[usize::from(c)]));
+            node_operand_spans
+                .entry(canon)
+                .or_insert_with(|| spans.clone());
+        }
+    }
+
     let mut staged: Vec<Staged> = Vec::new();
     let mut memo: HashMap<Id, Src> = HashMap::new();
     let mut root_srcs: Vec<(OpId, Src)> = Vec::new();
@@ -480,6 +504,7 @@ fn rewrite_segment(
             eg,
             &extractor,
             &node_spans,
+            &node_operand_spans,
             &leaf_values,
             &mut staged,
             &mut memo,
@@ -591,7 +616,12 @@ fn rewrite_segment(
             results: vec![value],
             regions: Vec::new(),
             span: s.span,
-            operand_spans: Vec::new(),
+            // An extracted node that is one of the program's own keeps where
+            // its operands were read; one a rule made has no such place
+            // (the e-class merges expressions that read their operands in
+            // different places): unknown, and a diagnostic points at the
+            // operation's own span.
+            operand_spans: s.operand_spans.clone(),
             parent: block,
         });
         func.values.push(ValueData {
@@ -674,6 +704,7 @@ fn resolve(
     eg: &Graph,
     extractor: &Extractor<'_, CostModel, SkyNode, SkyAnalysis>,
     node_spans: &HashMap<SkyNode, (u64, Span)>,
+    node_operand_spans: &HashMap<SkyNode, Vec<Span>>,
     leaf_values: &[ValueId],
     staged: &mut Vec<Staged>,
     memo: &mut HashMap<Id, Src>,
@@ -737,11 +768,17 @@ fn resolve(
             .iter()
             .map(|k| memo.get(&eg.find(*k)).copied())
             .collect::<Option<_>>()?;
+        let operand_spans = node_operand_spans
+            .get(&node)
+            .filter(|s| s.len() == operands.len())
+            .cloned()
+            .unwrap_or_default();
         staged.push(Staged {
             kind,
             operands,
             ty,
             span,
+            operand_spans,
             class: c,
             place,
         });

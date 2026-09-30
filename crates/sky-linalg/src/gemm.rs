@@ -138,6 +138,9 @@ pub(crate) struct Op {
     /// that diagonal are skipped, and a tile the diagonal cuts is computed
     /// in full. `isize::MAX / 2` means all of `C`.
     pub shift: isize,
+    /// Fuse each multiply into its add (relaxed numerics): only when
+    /// [`crate::fma_available`].
+    pub fma: bool,
 }
 
 impl Op {
@@ -148,6 +151,7 @@ impl Op {
             sub: false,
             zero: true,
             shift: Op::ALL,
+            fma: false,
         }
     }
 
@@ -156,7 +160,14 @@ impl Op {
             sub: true,
             zero: false,
             shift,
+            fma: false,
         }
+    }
+
+    /// The same operation with fused multiply-adds if `fma` (which must be
+    /// false unless [`crate::fma_available`]).
+    pub fn fused(self, fma: bool) -> Op {
+        Op { fma, ..self }
     }
 }
 
@@ -230,7 +241,7 @@ fn run_chunk(
                 }
                 let a_sliver = &ap[(ir / MR) * kc * MR..][..kc * MR];
                 let c = &mut chunk.c[(ic + ir) * ldc + jc + jr..];
-                tile(op.sub, kc, a_sliver, b_sliver, c, ldc, mr, nr, load);
+                tile(op.sub, op.fma, kc, a_sliver, b_sliver, c, ldc, mr, nr, load);
             }
         }
         ic += mc;
@@ -352,6 +363,51 @@ fn gemm_columns(
 // ---------------------------------------------------------------------------
 // The public products on contiguous row-major matrices.
 
+/// `acc + a*b`: with `FMA`, one fused rounding; without, the multiply and
+/// the add rounded separately (what Rust's `acc += a * b` is).
+#[inline(always)]
+fn madd<const FMA: bool>(acc: f64, a: f64, b: f64) -> f64 {
+    if FMA {
+        a.mul_add(b, acc)
+    } else {
+        acc + a * b
+    }
+}
+
+/// Makes `$name(fma, args...)` call `$inner::<false>` (or `$inner::<true>`
+/// when `fma`), and on x86-64 run the fused instance with FMA3 enabled, so
+/// `mul_add` is one instruction there and never a library call. The caller
+/// passes `fma = true` only when [`crate::fma_available`].
+macro_rules! fused_leaf {
+    ($name:ident, $x86:ident, $inner:ident, ($($arg:ident : $ty:ty),*)) => {
+        #[cfg(target_arch = "x86_64")]
+        #[target_feature(enable = "avx2,fma")]
+        #[allow(unsafe_code)]
+        unsafe fn $x86($($arg: $ty),*) {
+            $inner::<true>($($arg),*)
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        fn $name(fma: bool, $($arg: $ty),*) {
+            #[cfg(target_arch = "x86_64")]
+            if fma && crate::fma_available() {
+                // SAFETY: `fma_available` just confirmed AVX2 and FMA3; the
+                // function is safe code compiled with them enabled.
+                #[allow(unsafe_code)]
+                unsafe {
+                    return $x86($($arg),*);
+                }
+            }
+            #[cfg(target_arch = "aarch64")]
+            if fma {
+                return $inner::<true>($($arg),*);
+            }
+            let _ = fma;
+            $inner::<false>($($arg),*)
+        }
+    };
+}
+
 /// `c = a * b` for `a` (m by k) and `b` (k by n), all row-major, using up to
 /// `threads` workers; every entry of `c` is overwritten. Each entry is
 /// accumulated in the naive order with no fused multiply-add.
@@ -363,6 +419,38 @@ pub fn gemm_into_with(
     n: usize,
     c: &mut [f64],
     threads: usize,
+) {
+    gemm_into_impl(a, m, k, b, n, c, threads, false)
+}
+
+/// [`gemm_into_with`] with **relaxed numerics**: every product is fused into
+/// its sum (one rounding for `acc + a*b`) where the machine has the
+/// instruction ([`crate::fma_available`]). The order of each entry's sum is
+/// still `k` ascending, so the result differs from the reproducible one
+/// only by the rounding the fusion saves, and does not depend on the thread
+/// count. (The vendor library is [`crate::gemm_relaxed_with`]'s job.)
+pub fn gemm_into_fused_with(
+    a: &[f64],
+    m: usize,
+    k: usize,
+    b: &[f64],
+    n: usize,
+    c: &mut [f64],
+    threads: usize,
+) {
+    gemm_into_impl(a, m, k, b, n, c, threads, crate::fma_available())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn gemm_into_impl(
+    a: &[f64],
+    m: usize,
+    k: usize,
+    b: &[f64],
+    n: usize,
+    c: &mut [f64],
+    threads: usize,
+    fma: bool,
 ) {
     assert_eq!(
         (a.len(), b.len(), c.len()),
@@ -379,11 +467,11 @@ pub fn gemm_into_with(
     let madds = m * n * k;
     let threads = if madds >= par_min_madds() { threads } else { 1 };
     if n == 1 {
-        matvec(a, m, k, b, c, threads);
+        matvec(fma, a, m, k, b, c, threads);
     } else if m == 1 {
-        vecmat(a, k, b, n, c, threads);
+        vecmat(fma, a, k, b, n, c, threads);
     } else if n <= SMALL_MAX_COLS {
-        small_rows(a, m, k, b, n, c, threads);
+        small_rows(fma, a, m, k, b, n, c, threads);
     } else {
         gemm_view(
             View::row_major(a, k),
@@ -393,7 +481,7 @@ pub fn gemm_into_with(
             m,
             n,
             k,
-            Op::set(),
+            Op::set().fused(fma),
             threads,
         );
     }
@@ -420,6 +508,16 @@ pub fn gemm(a: &[f64], m: usize, k: usize, b: &[f64], n: usize) -> Vec<f64> {
 /// multiplication commutes), so only the lower triangle is computed and
 /// the upper mirrored: half the multiplications.
 pub fn syrk_with(b: &[f64], m: usize, k: usize, threads: usize) -> Vec<f64> {
+    syrk_impl(b, m, k, threads, false)
+}
+
+/// [`syrk_with`] with fused multiply-adds (relaxed numerics; see
+/// [`gemm_into_fused_with`]). The result is exactly symmetric, as always.
+pub fn syrk_fused_with(b: &[f64], m: usize, k: usize, threads: usize) -> Vec<f64> {
+    syrk_impl(b, m, k, threads, crate::fma_available())
+}
+
+fn syrk_impl(b: &[f64], m: usize, k: usize, threads: usize, fma: bool) -> Vec<f64> {
     assert_eq!(b.len(), m * k, "syrk: shape mismatch");
     let mut c = vec![0.0; m * m];
     if m == 0 || k == 0 {
@@ -448,6 +546,7 @@ pub fn syrk_with(b: &[f64], m: usize, k: usize, threads: usize) -> Vec<f64> {
         sub: false,
         zero: true,
         shift: 0,
+        fma,
     };
     // B(p, j) = b[j, p]: the transpose, read through strides.
     gemm_view(
@@ -475,12 +574,17 @@ pub fn syrk(b: &[f64], m: usize, k: usize) -> Vec<f64> {
 }
 
 /// The widest product the small kernels handle without packing.
-const SMALL_MAX_COLS: usize = 16;
+pub(crate) const SMALL_MAX_COLS: usize = 16;
 
 /// A product with at most `SMALL_MAX_COLS` columns, without packing: the `R`
 /// rows in flight give the adds independent chains, and the `N`-wide
 /// accumulators vectorize across columns.
-fn small<const N: usize, const R: usize>(a: &[f64], k: usize, b: &[f64], c: &mut [f64]) {
+fn small<const N: usize, const R: usize, const FMA: bool>(
+    a: &[f64],
+    k: usize,
+    b: &[f64],
+    c: &mut [f64],
+) {
     let m = c.len() / N;
     let mut i = 0;
     while i + R <= m {
@@ -490,7 +594,7 @@ fn small<const N: usize, const R: usize>(a: &[f64], k: usize, b: &[f64], c: &mut
             for (r, acc_r) in acc.iter_mut().enumerate() {
                 let av = a[(i + r) * k + p];
                 for j in 0..N {
-                    acc_r[j] += av * brow[j];
+                    acc_r[j] = madd::<FMA>(acc_r[j], av, brow[j]);
                 }
             }
         }
@@ -505,7 +609,7 @@ fn small<const N: usize, const R: usize>(a: &[f64], k: usize, b: &[f64], c: &mut
             let av = a[i * k + p];
             let brow = &b[p * N..p * N + N];
             for j in 0..N {
-                acc[j] += av * brow[j];
+                acc[j] = madd::<FMA>(acc[j], av, brow[j]);
             }
         }
         c[i * N..(i + 1) * N].copy_from_slice(&acc);
@@ -513,31 +617,48 @@ fn small<const N: usize, const R: usize>(a: &[f64], k: usize, b: &[f64], c: &mut
     }
 }
 
-fn small_dispatch(a: &[f64], k: usize, b: &[f64], n: usize, c: &mut [f64]) {
+fn small_dispatch<const FMA: bool>(a: &[f64], k: usize, b: &[f64], n: usize, c: &mut [f64]) {
     match n {
-        1 => small::<1, 4>(a, k, b, c),
-        2 => small::<2, 4>(a, k, b, c),
-        3 => small::<3, 4>(a, k, b, c),
-        4 => small::<4, 4>(a, k, b, c),
-        5 => small::<5, 4>(a, k, b, c),
-        6 => small::<6, 4>(a, k, b, c),
-        7 => small::<7, 4>(a, k, b, c),
-        8 => small::<8, 4>(a, k, b, c),
-        9 => small::<9, 2>(a, k, b, c),
-        10 => small::<10, 2>(a, k, b, c),
-        11 => small::<11, 2>(a, k, b, c),
-        12 => small::<12, 2>(a, k, b, c),
-        13 => small::<13, 2>(a, k, b, c),
-        14 => small::<14, 2>(a, k, b, c),
-        15 => small::<15, 2>(a, k, b, c),
-        16 => small::<16, 2>(a, k, b, c),
+        1 => small::<1, 4, FMA>(a, k, b, c),
+        2 => small::<2, 4, FMA>(a, k, b, c),
+        3 => small::<3, 4, FMA>(a, k, b, c),
+        4 => small::<4, 4, FMA>(a, k, b, c),
+        5 => small::<5, 4, FMA>(a, k, b, c),
+        6 => small::<6, 4, FMA>(a, k, b, c),
+        7 => small::<7, 4, FMA>(a, k, b, c),
+        8 => small::<8, 4, FMA>(a, k, b, c),
+        9 => small::<9, 2, FMA>(a, k, b, c),
+        10 => small::<10, 2, FMA>(a, k, b, c),
+        11 => small::<11, 2, FMA>(a, k, b, c),
+        12 => small::<12, 2, FMA>(a, k, b, c),
+        13 => small::<13, 2, FMA>(a, k, b, c),
+        14 => small::<14, 2, FMA>(a, k, b, c),
+        15 => small::<15, 2, FMA>(a, k, b, c),
+        16 => small::<16, 2, FMA>(a, k, b, c),
         _ => unreachable!("small products have at most sixteen columns"),
     }
 }
 
-fn small_rows(a: &[f64], m: usize, k: usize, b: &[f64], n: usize, c: &mut [f64], threads: usize) {
+fused_leaf!(
+    small_leaf,
+    small_fma3,
+    small_dispatch,
+    (a: &[f64], k: usize, b: &[f64], n: usize, c: &mut [f64])
+);
+
+#[allow(clippy::too_many_arguments)]
+fn small_rows(
+    fma: bool,
+    a: &[f64],
+    m: usize,
+    k: usize,
+    b: &[f64],
+    n: usize,
+    c: &mut [f64],
+    threads: usize,
+) {
     if threads <= 1 || m < 64 {
-        return small_dispatch(a, k, b, n, c);
+        return small_leaf(fma, a, k, b, n, c);
     }
     let rows_per = round_up(m.div_ceil(threads * 2), 4);
     let items: Vec<(&[f64], &mut [f64])> = a
@@ -545,13 +666,13 @@ fn small_rows(a: &[f64], m: usize, k: usize, b: &[f64], n: usize, c: &mut [f64],
         .zip(c.chunks_mut(rows_per * n))
         .collect();
     threads::for_each(threads, items, |(a_rows, c_rows)| {
-        small_dispatch(a_rows, k, b, n, c_rows)
+        small_leaf(fma, a_rows, k, b, n, c_rows)
     });
 }
 
 /// `y = A·x` for `A` (m by k): eight rows at a time, so eight independent
 /// chains, each entry summed in `k` order.
-fn matvec_rows(a: &[f64], k: usize, x: &[f64], y: &mut [f64]) {
+fn matvec_rows<const FMA: bool>(a: &[f64], k: usize, x: &[f64], y: &mut [f64]) {
     const R: usize = 8;
     let m = y.len();
     let mut i = 0;
@@ -560,7 +681,7 @@ fn matvec_rows(a: &[f64], k: usize, x: &[f64], y: &mut [f64]) {
         let rows: [&[f64]; R] = std::array::from_fn(|r| &a[(i + r) * k..(i + r + 1) * k]);
         for (p, &xp) in x.iter().enumerate() {
             for r in 0..R {
-                acc[r] += rows[r][p] * xp;
+                acc[r] = madd::<FMA>(acc[r], rows[r][p], xp);
             }
         }
         y[i..i + R].copy_from_slice(&acc);
@@ -570,33 +691,46 @@ fn matvec_rows(a: &[f64], k: usize, x: &[f64], y: &mut [f64]) {
         let row = &a[i * k..(i + 1) * k];
         let mut s = 0.0;
         for (av, xp) in row.iter().zip(x) {
-            s += av * xp;
+            s = madd::<FMA>(s, *av, *xp);
         }
         y[i] = s;
         i += 1;
     }
 }
 
-fn matvec(a: &[f64], m: usize, k: usize, x: &[f64], y: &mut [f64], threads: usize) {
+fused_leaf!(
+    matvec_leaf,
+    matvec_fma3,
+    matvec_rows,
+    (a: &[f64], k: usize, x: &[f64], y: &mut [f64])
+);
+
+fn matvec(fma: bool, a: &[f64], m: usize, k: usize, x: &[f64], y: &mut [f64], threads: usize) {
     if threads <= 1 || m < 64 {
-        return matvec_rows(a, k, x, y);
+        return matvec_leaf(fma, a, k, x, y);
     }
     let rows_per = round_up(m.div_ceil(threads * 2), 8);
     let items: Vec<(&[f64], &mut [f64])> =
         a.chunks(rows_per * k).zip(y.chunks_mut(rows_per)).collect();
     threads::for_each(threads, items, |(a_rows, y_rows)| {
-        matvec_rows(a_rows, k, x, y_rows)
+        matvec_leaf(fma, a_rows, k, x, y_rows)
     });
 }
 
 /// `y[j0..j0+W] = Σ_p x[p] · B[p, j0..j0+W]`, `p` ascending, for a block of
 /// `W` columns held in registers.
-fn vecmat_block<const W: usize>(x: &[f64], b: &[f64], n: usize, j0: usize, y: &mut [f64]) {
+fn vecmat_block<const W: usize, const FMA: bool>(
+    x: &[f64],
+    b: &[f64],
+    n: usize,
+    j0: usize,
+    y: &mut [f64],
+) {
     let mut acc = [0.0_f64; W];
     for (p, &xp) in x.iter().enumerate() {
         let row = &b[p * n + j0..p * n + j0 + W];
         for j in 0..W {
-            acc[j] += xp * row[j];
+            acc[j] = madd::<FMA>(acc[j], xp, row[j]);
         }
     }
     y.copy_from_slice(&acc);
@@ -606,7 +740,7 @@ fn vecmat_block<const W: usize>(x: &[f64], b: &[f64], n: usize, j0: usize, y: &m
 const VECMAT_STREAM_COLS: usize = 512;
 
 /// `y = x·B` for `B` (k by n): the columns in blocks, `k` order per entry.
-fn vecmat_cols(x: &[f64], b: &[f64], n: usize, j_start: usize, y: &mut [f64]) {
+fn vecmat_cols<const FMA: bool>(x: &[f64], b: &[f64], n: usize, j_start: usize, y: &mut [f64]) {
     let total = y.len();
     let mut j = 0;
     if x.len() * n >= 1 << 18 {
@@ -625,10 +759,10 @@ fn vecmat_cols(x: &[f64], b: &[f64], n: usize, j_start: usize, y: &mut [f64]) {
                 let (x0, x1, x2, x3) = (x[p], x[p + 1], x[p + 2], x[p + 3]);
                 for c in 0..VECMAT_STREAM_COLS {
                     let mut a = block[c];
-                    a += x0 * r0[c];
-                    a += x1 * r1[c];
-                    a += x2 * r2[c];
-                    a += x3 * r3[c];
+                    a = madd::<FMA>(a, x0, r0[c]);
+                    a = madd::<FMA>(a, x1, r1[c]);
+                    a = madd::<FMA>(a, x2, r2[c]);
+                    a = madd::<FMA>(a, x3, r3[c]);
                     block[c] = a;
                 }
                 p += 4;
@@ -636,7 +770,7 @@ fn vecmat_cols(x: &[f64], b: &[f64], n: usize, j_start: usize, y: &mut [f64]) {
             while p < x.len() {
                 let r = row(p);
                 for (acc, &v) in block.iter_mut().zip(r) {
-                    *acc += x[p] * v;
+                    *acc = madd::<FMA>(*acc, x[p], v);
                 }
                 p += 1;
             }
@@ -644,23 +778,30 @@ fn vecmat_cols(x: &[f64], b: &[f64], n: usize, j_start: usize, y: &mut [f64]) {
         }
     }
     while j + 16 <= total {
-        vecmat_block::<16>(x, b, n, j_start + j, &mut y[j..j + 16]);
+        vecmat_block::<16, FMA>(x, b, n, j_start + j, &mut y[j..j + 16]);
         j += 16;
     }
     while j + 4 <= total {
-        vecmat_block::<4>(x, b, n, j_start + j, &mut y[j..j + 4]);
+        vecmat_block::<4, FMA>(x, b, n, j_start + j, &mut y[j..j + 4]);
         j += 4;
     }
     while j < total {
-        vecmat_block::<1>(x, b, n, j_start + j, &mut y[j..j + 1]);
+        vecmat_block::<1, FMA>(x, b, n, j_start + j, &mut y[j..j + 1]);
         j += 1;
     }
 }
 
-fn vecmat(x: &[f64], k: usize, b: &[f64], n: usize, y: &mut [f64], threads: usize) {
+fused_leaf!(
+    vecmat_leaf,
+    vecmat_fma3,
+    vecmat_cols,
+    (x: &[f64], b: &[f64], n: usize, j_start: usize, y: &mut [f64])
+);
+
+fn vecmat(fma: bool, x: &[f64], k: usize, b: &[f64], n: usize, y: &mut [f64], threads: usize) {
     debug_assert_eq!(x.len(), k);
     if threads <= 1 || n < 128 {
-        return vecmat_cols(x, b, n, 0, y);
+        return vecmat_leaf(fma, x, b, n, 0, y);
     }
     let width = round_up(n.div_ceil(threads * 2), 16);
     let items: Vec<(usize, &mut [f64])> = y
@@ -669,6 +810,6 @@ fn vecmat(x: &[f64], k: usize, b: &[f64], n: usize, y: &mut [f64], threads: usiz
         .map(|(i, ch)| (i * width, ch))
         .collect();
     threads::for_each(threads, items, |(j0, y_cols)| {
-        vecmat_cols(x, b, n, j0, y_cols)
+        vecmat_leaf(fma, x, b, n, j0, y_cols)
     });
 }

@@ -116,6 +116,19 @@ fn factor_panel(w: &mut [f64], n: usize, j0: usize, j1: usize, threads: usize) {
 /// `a[i,j] == a[j,i]` exactly, and [`LinalgError::NotPositiveDefinite`] at
 /// the first row whose pivot is not a positive finite number.
 pub fn cholesky_with(a: &[f64], n: usize, threads: usize) -> Result<Vec<f64>, LinalgError> {
+    cholesky_impl(a, n, threads, false)
+}
+
+/// [`cholesky_with`] with the trailing updates (nearly all the work) on the
+/// fused kernel: relaxed numerics without a vendor library. The errors are
+/// the same kinds, decided on the same tests (the pivots are rounded
+/// differently, so a matrix within rounding error of not being positive
+/// definite may go either way).
+pub fn cholesky_fused_with(a: &[f64], n: usize, threads: usize) -> Result<Vec<f64>, LinalgError> {
+    cholesky_impl(a, n, threads, crate::fma_available())
+}
+
+fn cholesky_impl(a: &[f64], n: usize, threads: usize, fma: bool) -> Result<Vec<f64>, LinalgError> {
     assert_eq!(a.len(), n * n, "cholesky: shape mismatch");
     if n <= SMALL {
         // The plain loops are the definition, and at this size the fastest.
@@ -148,7 +161,7 @@ pub fn cholesky_with(a: &[f64], n: usize, threads: usize) -> Result<Vec<f64>, Li
                 rest,
                 rest,
                 nb,
-                Op::subtract(0),
+                Op::subtract(0).fused(fma),
                 threads,
             );
         }

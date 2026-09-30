@@ -106,22 +106,38 @@
 // loops are written with indices because that is how the arithmetic reads.
 #![allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 
+#[cfg(target_os = "macos")]
+mod accelerate;
 mod chol;
 mod dot;
 mod gemm;
 mod inverse;
 mod lu;
 mod micro;
+mod numerics;
+mod reassoc;
 pub mod reference;
+mod relaxed;
 mod threads;
 mod tri;
 pub mod tuning;
 
-pub use chol::{cholesky, cholesky_solve, cholesky_solve_with, cholesky_with, is_symmetric};
+pub use chol::{
+    cholesky, cholesky_fused_with, cholesky_solve, cholesky_solve_with, cholesky_with, is_symmetric,
+};
 pub use dot::{dot, sum_squares, sum_squares_scaled, LANES};
-pub use gemm::{gemm, gemm_into_with, gemm_with, syrk, syrk_with};
+pub use gemm::{
+    gemm, gemm_into_fused_with, gemm_into_with, gemm_with, syrk, syrk_fused_with, syrk_with,
+};
 pub use inverse::{inverse, inverse_with};
-pub use lu::{lu, lu_with, solve, Lu};
+pub use lu::{lu, lu_fused_with, lu_with, solve, Lu};
+pub use numerics::{fma_available, numerics, set_numerics, vendor, Numerics};
+pub use reassoc::{dot_relaxed, dot_relaxed_with, sum_squares_relaxed};
+pub use relaxed::{
+    cholesky_relaxed, cholesky_relaxed_with, cholesky_solve_relaxed, cholesky_solve_relaxed_with,
+    gemm_relaxed, gemm_relaxed_with, gemm_vendor, solve_relaxed, solve_relaxed_with,
+    solve_right_relaxed, solve_right_relaxed_with, syrk_relaxed, syrk_relaxed_with,
+};
 pub use threads::{default_threads, set_threads, MAX_THREADS};
 pub use tuning::register;
 

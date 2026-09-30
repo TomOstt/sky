@@ -80,6 +80,7 @@ sky check --emit-ir file.sky  # print the program's IR (SIR text) on stdout; --e
 sky run file.sky              # check, then run; only a clean file runs. print() writes to stdout
 sky repl                      # expressions echo their value; blocks (def, if, while, for) continue on `...` lines until an empty line
 sky run --engine=sir file.sky # pick the engine: ast (tree-walker, the default), sir (lower to SIR, run it), auto
+sky run --engine=sir --threads=4 file.sky  # SIR runs big elementwise kernels and independent pure calls on 4 threads (SKY_THREADS; 1 is sequential); the output never depends on it
 sky repl                      # one line at a time; expressions echo their value
 sky hw                        # what this machine can do (SIMD, cores, caches, memory) and what Sky uses each for
 sky tune                      # measure kernel parameters (block sizes, unroll factors) here and remember the winners
@@ -194,6 +195,8 @@ cargo run --release -p sky-bench -- --quick                   # tiny sizes, a sm
 ```
 
 Always use `--release`: debug timings mean nothing. Each engine runs `--reps` times, interleaved, and the table shows the median with the range as a percentage of it; the JSON keeps every sample (integer nanoseconds, schema version 1) so runs can be compared over time. On a busy machine the median drifts upward; the minimum is the steadier number. Set `SKY_BENCH_REV` to record a commit in the JSON.
+
+`sky-bench par` measures automatic parallelism instead (`cargo run --release -p sky-bench -- par [--threads 1,2,4,8] [--reps N] [--quick]`): the speedup of a fused kernel, an elementwise `add` and two or four independent calls over threads and sizes, and the break-even sizes the default thresholds (`sky_ir::parallel::Config`) are set from.
 
 The workloads are `scalar_loop` (10^6 iterations of arithmetic with units), `recursion` (`fib(25)`), `math_calls` (`for` over `range` with math functions), `array_chain` (elementwise vector chains), `matmul` (`@` on small matrices), `chain_order` (`A @ B @ C @ v` with 500×500 matrices, which the compiler associates as `A @ (B @ (C @ v))`) against `chain_order_forced` (the same with `((A @ B) @ C) @ v`, forced by parentheses), `cholesky` (`K⁻¹ @ f` on a PositiveDefinite literal), `derivative` (`derivative(f, t)(x)` in a loop) and `gradient` (`grad(U)(p)` of a spring-network potential of a position vector, by reverse mode, in a loop). To add one, put a `.sky` file in `benches/programs/` whose first line is `# bench: N=<full> quick=<small>` and which sets its size with a line `N = <full>`, then list it in `crates/sky-bench/src/bench.rs` (a test fails if a file is not listed).
 

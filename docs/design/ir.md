@@ -318,6 +318,7 @@ Each transfer rule is an inequality with a short derivation in its comment. The 
 
 Not a change of meaning: `sky run` still computes `f64`, one rounding per operation. Not interval arithmetic on the inputs: an input is an exact value (the range says which, not how uncertain). Not a proof of the whole program's correctness: a budget is proven for the *runs that produce a number* (overflow and domain errors are not analysed) and under the library assumption.
 
+<<<<<<< HEAD
 ## The cost model
 
 `sky_ir::cost` gives every function a **cost**: flops, bytes read, bytes written, allocations and bytes allocated, each an `Amount`: a lower and an upper bound (`lo <= actual <= hi`, for every run and every size from 1 up) as polynomials in the symbolic shape sizes (`sky_types::poly::Poly`: exact rational coefficients over monomials in named sizes, capped in terms and degree, every operation checked, `None` on overflow). It is a static analysis over L1, one rule per operation (`cost/ops.rs`, with the weights in the module documentation and the spec's "Performance contracts"), computed on the module after the default pipeline, since the contract is about the program that runs (fusion removes allocations, the Cholesky rewrite changes a solve's flops).
@@ -328,6 +329,58 @@ Not a change of meaning: `sky run` still computes `f64`, one rounding per operat
 - **Sites**: every costly operation, call and loop keeps its contribution (loops around it included), which is how `sky check` says which operation dominates a refuted contract and where the hot spots are.
 
 `sky check` (`sky-cli/src/cost.rs`) proves a `cost` line when `hi` is at most the bound for all sizes from 1 up (sound, not complete), refutes it with a witness point where `lo` exceeds the bound in exact arithmetic, and otherwise warns. The unit of cost is the model's, not a machine's: it counts what the reference implementation does. Making a machine-specific estimate (idea 87) means replacing the weights with a hardware description, not changing the analysis.
+=======
+## Automatic parallelism
+
+The SIR interpreter runs some work on several threads without changing anything a program can observe: the same stdout bytes, the same error (message, spans, labels, notes) and the same exit status on 1 thread and on 64. The analysis is `sky_ir::parallel`; the machinery is in `sky-ir-interp` (`rayon`, one shared pool per thread count). The tree-walker stays sequential, so `--threads` matters for `--engine=sir` and `--engine=auto`.
+
+### The rule for errors
+
+Sky's behaviour on failure is "the first failure in program order wins, after everything printed before it". Work may run concurrently only if it has no `io` and one of two things holds:
+
+* it **cannot fail** (an elementwise kernel whose operations the exactness analysis proves in range; most kernels cannot be proven, so this is the rarer case), or
+* its failures are **resolved deterministically after the fact**: run everything in parallel, and if anything failed, report the failure the sequential order would have met first. Across elements that is the lowest index; across operations, the earliest in program order.
+
+Anything that prints stays where it is: a `print` after a call that might fail must not run before the call is known to have succeeded, so an operation with `io` ends a window of concurrent calls, and `print` never runs on a worker.
+
+### What runs in parallel
+
+* **`fused` kernels** with at least `fused_work` element-operations (elements times body operations). Elements are cut into contiguous chunks, each a function of the element count and the thread count only. Each chunk runs the same loop as the sequential interpreter on a value table of its own and ends with its data and its failure, if any, as *(index of the failing body operation, error at the lowest failing element)*. The kernel's error is the smallest operation index, and among equal indices the lowest chunk: exactly the element the sequential loop meets first (`fused` reports the first failing operation in body order; see "Fusion"). Chunking cannot change a value: elements are independent and each is the same `f64` computation.
+* **Elementwise array operations** (`add`, `sub`, `mul`, `div`, `neg` on arrays) with at least `array_elements` entries. The only failure left is one overflow for the whole operation, which is found after the entries are computed and is the same error whichever thread found it. Cases that fail *before* the entries are computed (mismatched shapes or dimensions, a zero divisor) go through the sequential code, which produces the error.
+* **Independent pure calls.** A window of operations in one block that starts at a call to a function with no `io` (transitively), no recursion and enough estimated cost. The expensive calls that do not read the result of another are started on the pool, the operations between them that do not wait for a result run in place, and the operations that do (`total + f(a)`) are deferred until the calls are done. When the started calls are done the window is replayed in program order (a call gives its result or its error, a deferred operation runs), so the first failure in program order is the error, and a failing in-place operation is reported only if nothing before it failed. A callee runs on a worker with the caller's call depth; its output goes nowhere because it has none.
+
+Loops are not parallelized: the values a `while` carries from one iteration to the next make its iterations a chain (the work inside an iteration is what the three kinds above cover).
+
+### The stack
+
+The one resource a worker changes is the stack: a worker starts on an empty one, and `sky run` stops with "the program nests too deeply" at a byte budget. A callee is started elsewhere only if its whole call tree is a shallow chain of calls and regions with no recursion (`MAX_STACK_WEIGHT`), and only while the caller has used at most half of the budget. A run that would have hit the limit therefore hits it whether or not a call was moved.
+
+### Thresholds
+
+Measured with `cargo run --release -p sky-bench -- par` (see the "Benchmarks" section of the README); the defaults live in `sky_ir::parallel::Config`:
+
+| threshold | default | what it is |
+|---|---|---|
+| `fused_work` | 4096 element-operations | a 4-operation kernel is split from 1024 elements |
+| `array_elements` | 2097152 | a plain `add` of two arrays is memory-bound: it starts to win only when the arrays are big |
+| `call_cost` | 400 | estimated interpreted operations (a loop counts 100 iterations) a callee must cost |
+| `chunk_min` | 512 | fewest elements in a chunk; at most 4 chunks per thread |
+
+`Config::eager` sets every threshold to its minimum; the determinism tests use it so that small programs exercise every parallel path.
+
+### Controls
+
+`sky run --threads=N` and `sky check --threads=N` (or `SKY_THREADS=N`; the default is the number of cores) set the number of threads; 1 is sequential, exactly the interpreter without this analysis. `sky check --explain` says what would run in parallel and, for what would not, why:
+
+```text
+note: [PAR-001] this elementwise kernel over 1e6 elements runs on 8 threads
+note: [PAR-002] these 2 calls are independent (pure): run concurrently on up to 8 threads
+note: [PAR-003] this elementwise kernel over 3 elements is not parallelized: it may fail and is small
+note: [PAR-003] the call to `noisy` is not run concurrently with the calls after it
+```
+
+The notes depend on the thread count only through the number they print; what is parallel does not.
+>>>>>>> 5ebdb8d (docs: automatic parallelism)
 
 ## Reference semantics and testing
 
@@ -363,11 +416,15 @@ It is parsed by a small hand-written parser that never panics, limits nesting to
 
 | Crate | Contents | Depends on |
 |---|---|---|
+<<<<<<< HEAD
 | `sky-ir` | data model, operation table, verifier, effect inference, exactness analysis, roundoff analysis, static cost model, text printer and parser, pass manager | sky-units, sky-types (types only), sky-ast (reads the unit text of `show`), sky-diag |
+=======
+| `sky-ir` | data model, operation table, verifier, effect inference, exactness analysis, parallelism analysis, text printer and parser, pass manager | sky-units, sky-types (types only), sky-ast (reads the unit text of `show`), sky-diag |
+>>>>>>> 5ebdb8d (docs: automatic parallelism)
 | `sky-lower` | checked AST to L1 | sky-ast, sky-types, sky-ir |
 | `sky-opt` | passes: fold, dce, fuse, cholesky, the exact algorithm rewrites (transposes, structure, powers), and the default pipeline (which includes `sky-egraph`'s pass); later autodiff | sky-ir, sky-egraph |
 | `sky-egraph` | identity-aware e-graph rewriting (`egg`) as a pass | sky-ir |
-| `sky-ir-interp` | reference interpreter | sky-ir, sky-units |
+| `sky-ir-interp` | reference interpreter, and its parallel runtime (`rayon`) | sky-ir, sky-units |
 
 ## Phase 1 milestones
 1. `sky-ir` data model, operation table, verifier, and text print/parse round-trip. Done.

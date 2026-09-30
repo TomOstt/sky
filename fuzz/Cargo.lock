@@ -87,6 +87,7 @@ version = "0.0.1"
 dependencies = [
  "sky-diag",
  "sky-ir",
+ "sky-types",
  "sky-units",
 ]
 

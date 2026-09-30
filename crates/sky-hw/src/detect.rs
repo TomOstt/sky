@@ -158,14 +158,14 @@ fn detect_linux(info: &mut HardwareInfo, cpuinfo: Option<&str>) {
         let cpu = cpu_dir.join(format!("cpu{n}"));
         let topo = cpu.join("topology");
         let (Some(pkg), Some(core)) = (
-            read(&topo.join("physical_package_id")),
-            read(&topo.join("core_id")),
+            read(topo.join("physical_package_id")),
+            read(topo.join("core_id")),
         ) else {
             continue;
         };
         logical += 1;
         cores.insert((pkg.trim().to_string(), core.trim().to_string()));
-        if let Some(c) = read(&cpu.join("cpu_capacity"))
+        if let Some(c) = read(cpu.join("cpu_capacity"))
             .as_deref()
             .and_then(parse::positive)
         {
@@ -199,14 +199,14 @@ fn detect_linux(info: &mut HardwareInfo, cpuinfo: Option<&str>) {
         indexes.sort();
         for index in indexes {
             if let (Some(level), Some(kind), Some(size)) = (
-                read(&index.join("level")),
-                read(&index.join("type")),
-                read(&index.join("size")),
+                read(index.join("level")),
+                read(index.join("type")),
+                read(index.join("size")),
             ) {
                 entries.push((level, kind, size));
             }
             if info.cache_line_bytes.is_none() {
-                info.cache_line_bytes = read(&index.join("coherency_line_size"))
+                info.cache_line_bytes = read(index.join("coherency_line_size"))
                     .as_deref()
                     .and_then(parse::positive);
             }

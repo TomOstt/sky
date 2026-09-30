@@ -802,6 +802,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sky-tune"
+version = "0.0.1"
+dependencies = [
+ "sky-hw",
+]
+
+[[package]]
 name = "sky-types"
 version = "0.0.1"
 dependencies = [

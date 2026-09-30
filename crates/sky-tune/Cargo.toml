@@ -1,0 +1,11 @@
+[package]
+name = "sky-tune"
+description = "Autotuning with a local, data-only performance database (Phase 4)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+sky-hw = { path = "../sky-hw" }

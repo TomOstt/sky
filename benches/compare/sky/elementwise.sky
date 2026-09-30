@@ -1,7 +1,7 @@
 # The elementwise chain x = sqrt(x*x + y*y) * c + d on {{M}} x {{K}} = {{LEN}}
 # elements, {{R}} times (each pass feeds the next), written the way it is in
-# every other language. Sky v0.1 has no elementwise product and no math
-# functions on arrays, so this is expected not to check.
+# every other language: `*` between arrays of one shape and `sqrt` of an array
+# work entry by entry, and the optimizer fuses the chain into one kernel.
 X = {{COL:0:M}} @ {{ROW:1:K}}
 Y = {{COL:2:M}} @ {{ROW:3:K}}
 D = 0.25 * ({{COL:ones:M}} @ {{ROW:ones:K}})

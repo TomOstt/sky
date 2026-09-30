@@ -449,7 +449,7 @@ fn loss_reason(kind: Kind) -> &'static str {
         Kind::Calls => "function-call-heavy code: every call is interpreted (argument passing, a frame, an overflow/finiteness check on each add), while C and Rust compile the recursion to a few instructions and LLVM rewrites part of it into a loop",
         Kind::Scalar => "scalar-heavy loops: each operation is dispatched by an interpreter and its result checked to be finite (Sky never produces a silent inf or NaN), while a compiled loop keeps the values in registers; reproducible mode also forbids the fused multiply-add and reassociation that `-O3 -march=native`, and `-ffast-math` even more, are free to use",
         Kind::SmallVector => "2 and 3-element vectors in a loop: each vector operation allocates a small array and checks every element, where C and Rust keep the components in registers and unroll",
-        Kind::ArrayChain => "elementwise chains: arrays are immutable, so each operation allocates a new array and makes its own pass over memory (finiteness-checked), where C makes one fused pass; fused kernels are Phase 4 work and only count here once the run shows them",
+        Kind::ArrayChain => "elementwise chains: arrays are immutable, so an unfused operation allocates a new array and makes its own pass over memory (finiteness-checked), where C makes one fused pass; the `fuse` pass turns a chain into one kernel, but Sky's time here also includes building the inputs from outer products (`@`) and the front end's work on the large literals, which the C and Rust programs do not pay",
         Kind::Matmul => "dense matmul: Sky's `@` is a plain loop inside the interpreter's runtime, not a cache-blocked SIMD kernel, so it trails vectorised C and is far behind a vendor BLAS",
         Kind::Cholesky => "Cholesky: an unblocked factorisation with finiteness checks, against a blocked LAPACK `dpotrf` on the library side",
     }
@@ -676,7 +676,7 @@ pub fn interpretation(run: &Run) -> Vec<String> {
     // 6. What this does not show.
     out.push("**Assembly was not measured.** No hand-written assembly is part of this run; the vendor BLAS/LAPACK rows are the nearest measured proxy for hand-tuned code, and only for matmul and Cholesky. Nothing here supports or refutes a claim about assembly.".to_string());
     out.push("**Different guarantees.** Sky results are finite-checked, unit-checked and bit-reproducible (no fused multiply-add, no reassociation); the C and Rust rows give none of that, and the `-ffast-math` row deliberately gives up more. Faster or slower here is not the same contract.".to_string());
-    out.push("**One machine, one run.** Medians of a handful of runs on a laptop-class machine; the spreads above say how noisy each cell was, and differences inside the spread mean nothing. Workload inputs are built from outer products so Sky can express them (arrays are immutable and have no elementwise product or math functions yet), which makes them dense but structured.".to_string());
+    out.push("**One machine, one run.** Medians of a handful of runs on a laptop-class machine; the spreads above say how noisy each cell was, and differences inside the spread mean nothing. Workload inputs are built from outer products (`COL @ ROW`, since arrays are immutable and Sky has no array constructor beyond literals, `zeros` and `identity`), which makes them dense but structured.".to_string());
     out
 }
 

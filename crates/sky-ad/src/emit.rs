@@ -34,6 +34,10 @@ pub(crate) struct Diff<'m> {
     pub tan: Vec<Option<ValueId>>,
     /// Derivative functions this one calls.
     pub needs: Vec<Task>,
+    /// Inside the scalar body of a `fused` kernel: no `if` and no array
+    /// operation may be emitted there, so a rule that needs one refuses or
+    /// uses branch-free arithmetic.
+    pub in_body: bool,
 }
 
 /// What seeds the tangent of the parameter differentiated against.
@@ -135,6 +139,7 @@ pub(crate) fn build(
         map: vec![None; f.values.len()],
         tan: vec![None; f.values.len()],
         needs: Vec::new(),
+        in_body: false,
     };
     let mut results = f.results.clone();
     for res_ty in &f.results {
@@ -323,8 +328,62 @@ impl Diff<'_> {
             .op1(OpKind::ConstFloat { bits: x.to_bits() }, vec![], ty, span)
     }
 
+    /// Emits an operation. For the elementwise operations the rules state
+    /// the dimension they know and may state a scalar shape where an operand
+    /// is an array (a number operand broadcasts): the result takes the
+    /// array's shape, and for `add`/`sub` a number operand is first spread
+    /// over the array (`s * ones`), since those take equal shapes only.
     pub fn emit(&mut self, kind: OpKind, operands: Vec<ValueId>, ty: Type, span: Span) -> ValueId {
+        let (operands, ty) = self.conform(&kind, operands, ty, span);
         self.b.op1(kind, operands, ty, span)
+    }
+
+    fn conform(
+        &mut self,
+        kind: &OpKind,
+        mut operands: Vec<ValueId>,
+        ty: Type,
+        span: Span,
+    ) -> (Vec<ValueId>, Type) {
+        let elementwise = matches!(
+            kind,
+            OpKind::Add | OpKind::Sub | OpKind::Mul | OpKind::Div | OpKind::Neg | OpKind::Math(_)
+        );
+        let Type::Number(mut n) = ty else {
+            return (operands, ty);
+        };
+        if !elementwise || n.shape.rank() != 0 {
+            return (operands, Type::Number(n));
+        }
+        let shape_of_new =
+            |d: &Self, v: ValueId| d.b.func().ty(v).as_number().map(|x| x.shape.clone());
+        let Some(array) = operands
+            .iter()
+            .copied()
+            .find(|v| shape_of_new(self, *v).is_some_and(|s| s.rank() > 0))
+        else {
+            return (operands, Type::Number(n));
+        };
+        n.shape = shape_of_new(self, array).expect("an array operand");
+        if matches!(kind, OpKind::Add | OpKind::Sub) {
+            for slot in operands.iter_mut() {
+                let v = *slot;
+                if shape_of_new(self, v).is_none_or(|s| s.rank() != 0) {
+                    continue;
+                }
+                let Ok(ones) = self.ones_like(array, span) else {
+                    continue;
+                };
+                if let Type::Number(sn) = self.b.func().ty(v).clone() {
+                    let spread = Type::Number(NumberType {
+                        shape: n.shape.clone(),
+                        ..sn
+                    });
+                    *slot = self.b.op1(OpKind::Mul, vec![v, ones], spread, span);
+                }
+            }
+        }
+        (operands, Type::Number(n))
     }
 
     /// The tangent of `v`, materializing a zero of the right type if it is
@@ -701,7 +760,10 @@ impl Diff<'_> {
             self.tan[args[j].index()] = Some(new_args[args.len() + k]);
         }
         self.b.set_insertion_block(blk);
-        let term = src.op(self.process_ops(body)?);
+        self.in_body = true;
+        let term = self.process_ops(body);
+        self.in_body = false;
+        let term = src.op(term?);
         let [y] = term.operands[..] else {
             return Err(self.malformed("the body of `fused` yields one value"));
         };

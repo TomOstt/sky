@@ -1,0 +1,26 @@
+# Which matrix tags survive entry-by-entry operations (see the spec, "Arrays:
+# entry by entry"): Symmetric when both operands are, Diagonal for `*` when
+# either operand is and for `/` when the numerator is; never PositiveDefinite
+# or Orthogonal. A function of a matrix keeps Symmetric only.
+S: Symmetric Matrix[3, 3]
+D: Diagonal Matrix[3, 3]
+P: PositiveDefinite Matrix[3, 3]
+Q: Orthogonal Matrix[3, 3]
+GM: Matrix[3, 3]
+ss = S * S
+sd = S * D
+dg = GM * D
+dgg = D * GM
+pp = P * P
+qq = Q * Q
+sp = S * P
+dq = D / GM
+gd = GM / D
+ssq = S / S
+sqrtS = sqrt(S)
+sqrtD = sqrt(D)
+sqrtP = sqrt(P)
+sq = sqrt(Q)
+hy = hypot(S, S)
+hg = hypot(S, GM)
+mx = max(S, 1)

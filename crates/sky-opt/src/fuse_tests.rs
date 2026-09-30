@@ -13,7 +13,7 @@ use sky_ir::{
     ValueId,
 };
 use sky_types::{Shape, TagSet};
-use sky_units::Dimension;
+use sky_units::{Dimension, MathFn};
 
 use crate::rewrite::Rewrite;
 use crate::{fuse, FusePass};
@@ -538,6 +538,273 @@ fn negating_zero_gives_positive_zero_as_the_array_operation_does() {
     assert!(!unfused.unwrap().contains("-0.0"));
 }
 
+// ----- math functions and products of arrays -----
+
+#[test]
+fn a_physics_chain_over_arrays_becomes_one_kernel() {
+    // sqrt(x*x + y*y) * s, with a broadcast scalar: five operations.
+    let (m, records) = fused(
+        "  %x2 = mul %a, %a : num[1; (3)] @ 1..2
+  %y2 = mul %b, %b : num[1; (3)] @ 3..4
+  %q = add %x2, %y2 : num[1; (3)] @ 5..6
+  %r = math.sqrt %q : num[1; (3)] @ 7..8
+  %c = mul %r, %s : num[1; (3)] @ 9..10
+  return %c",
+    );
+    assert_eq!(top_level(&m), ["fused", "return"]);
+    assert_eq!(
+        body_of_first(&m),
+        ["mul", "mul", "add", "math.sqrt", "mul", "yield"]
+    );
+    assert_eq!(records.len(), 1);
+    let r = &records[0];
+    assert_eq!(r.before, "sqrt(a * a + b * b) * s");
+    assert_eq!(r.after, "fused(a, b, s)");
+    assert_eq!(
+        r.because[0],
+        "fused 5 elementwise operations into one kernel; saves 4 temporary arrays of 3 elements"
+    );
+    assert_eq!(
+        r.because[3],
+        "5 of the operations can fail (`mul`, `add`, `math.sqrt`); the kernel reports the \
+         failure of the first of them in program order that fails at any element, which is \
+         the error the separate operations gave"
+    );
+}
+
+#[test]
+fn math_functions_of_arrays_and_numbers_are_candidates_in_every_layout() {
+    // One array, two arrays, an array and a number in either order; and a
+    // quotient and a product of two arrays.
+    let (m, records) = fused(
+        "  %t1 = math.exp %a : num[1; (3)] @ 1..2
+  %t2 = math.atan2 %t1, %b : num[1; (3)] @ 3..4
+  %t3 = math.max %t2, %s : num[1; (3)] @ 5..6
+  %t4 = math.hypot %s, %t3 : num[1; (3)] @ 7..8
+  %t5 = div %t4, %d : num[1; (3)] @ 9..10
+  %c = mul %t5, %v : num[1; (3)] @ 11..12
+  return %c",
+    );
+    assert_eq!(top_level(&m), ["fused", "return"]);
+    assert_eq!(
+        body_of_first(&m),
+        [
+            "math.exp",
+            "math.atan2",
+            "math.max",
+            "math.hypot",
+            "div",
+            "mul",
+            "yield"
+        ]
+    );
+    assert_eq!(
+        records[0].before,
+        "hypot(s, max(atan2(exp(a), b), s)) / d * v"
+    );
+}
+
+#[test]
+fn a_math_function_of_scalars_is_not_a_candidate() {
+    let (m, records) = fused(
+        "  %x = math.sqrt %s : num[1; ()] @ 1..2
+  %y = math.exp %x : num[1; ()] @ 3..4
+  %c = math.abs %a : num[1; (3)] @ 5..6
+  return %c",
+    );
+    assert!(records.is_empty());
+    assert_eq!(
+        top_level(&m),
+        ["math.sqrt", "math.exp", "math.abs", "return"]
+    );
+}
+
+#[test]
+fn a_math_result_with_two_uses_is_not_absorbed() {
+    let (m, records) = fused(
+        "  %t = math.exp %a : num[1; (3)] @ 1..2
+  %u = mul %t, %b : num[1; (3)] @ 3..4
+  %c = sub %u, %t : num[1; (3)] @ 5..6
+  return %c",
+    );
+    assert_eq!(top_level(&m), ["math.exp", "fused", "return"]);
+    assert_eq!(body_of_first(&m), ["mul", "sub", "yield"]);
+    assert_eq!(records.len(), 1);
+}
+
+#[test]
+fn a_failing_math_function_is_not_moved_past_another_effect_but_a_pure_one_is() {
+    // `sqrt` can fail (a negative entry), so it stays before the print.
+    let (_, records) = fused(
+        "  %t = math.sqrt %a : num[1; (3)] @ 1..2
+  print %s @ 3..4
+  %c = mul %t, %b : num[1; (3)] @ 7..8
+  return %c",
+    );
+    assert!(records.is_empty());
+    // `abs` and `sign` cannot fail, so they may be computed later.
+    let (m, records) = fused(
+        "  %t = math.abs %a : num[1; (3)] @ 1..2
+  print %s @ 3..4
+  %c = math.min %t, %b : num[1; (3)] @ 7..8
+  return %c",
+    );
+    assert_eq!(records.len(), 1);
+    assert_eq!(top_level(&m), ["print", "fused", "return"]);
+    let (_, records) = fused(
+        "  %t = math.sign %a : num[1; (3)] @ 1..2
+  print %s @ 3..4
+  %c = mul %t, %b : num[1; (3)] @ 7..8
+  return %c",
+    );
+    assert_eq!(records.len(), 1);
+}
+
+#[test]
+fn a_math_chain_fused_twice_changes_nothing_and_round_trips() {
+    let (mut m, _) = fused(
+        "  %t1 = math.sin %a : num[1; (3)] @ 1..2
+  %t2 = mul %t1, %b : num[1; (3)] @ 3..4
+  %c = math.floor %t2 : num[1; (3)] @ 5..6
+  return %c",
+    );
+    let once = m.clone();
+    assert!(fuse(&mut m).is_empty());
+    assert_eq!(m, once);
+    let text = print(&m);
+    let back = parse(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    verify(&back).unwrap();
+    assert_eq!(print(&back), text);
+}
+
+/// `fn @f(%a, %b, %z: Vector[3]; %s: scalar)` with `body`, before and
+/// after `fuse`, run on `args`: both must agree (and `fuse` must fuse).
+fn same_before_and_after(
+    body: &str,
+    args: impl Fn() -> Vec<sky_ir_interp::Value>,
+) -> Result<String, (String, Span)> {
+    let text = format!(
+        "{HEAD}\nfn @f(%a: num[1; (3)], %b: num[1; (3)], %z: num[1; (3)], %s: num[1; ()]) -> \
+         (num[1; (3)]) effects(fail) {{\n{body}\n}}\n"
+    );
+    let before = parse(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    verify(&before).unwrap_or_else(|e| panic!("{e:#?}\n{text}"));
+    let mut after = before.clone();
+    assert_eq!(fuse(&mut after).len(), 1, "{text}");
+    verify(&after).unwrap();
+    let unfused = call_f(&before, args());
+    assert_eq!(call_f(&after, args()), unfused, "{text}");
+    unfused
+}
+
+fn args4(a: &[f64], b: &[f64], z: &[f64], s: f64) -> Vec<sky_ir_interp::Value> {
+    vec![
+        vector(a),
+        vector(b),
+        vector(z),
+        sky_ir_interp::Value::scalar(s),
+    ]
+}
+
+#[test]
+fn math_failures_keep_the_unfused_order_and_wording() {
+    // The earlier operation (sqrt, span 10..11) fails at the last element;
+    // the later (log, 20..21) at the first: sqrt's error wins.
+    let r = same_before_and_after(
+        "  %t1 = math.sqrt %a : num[1; (3)] @ 10..11
+  %t2 = math.log %b : num[1; (3)] @ 20..21
+  %c = add %t1, %t2 : num[1; (3)] @ 30..31
+  return %c",
+        || args4(&[1.0, 4.0, -1.0], &[0.0, 1.0, 1.0], &[0.0; 3], 1.0),
+    );
+    let e = r.unwrap_err();
+    assert_eq!(e.1, Span::new(10, 11));
+    assert!(e.0.contains("`sqrt` of a negative number"), "{}", e.0);
+    // Within one operation the lowest element decides (log of zero at 0,
+    // of a negative at 2).
+    let log_body = "  %t = math.log %a : num[1; (3)] @ 10..11
+  %c = mul %t, %b : num[1; (3)] @ 20..21
+  return %c";
+    let r = same_before_and_after(log_body, || {
+        args4(&[0.0, 1.0, -2.0], &[1.0; 3], &[0.0; 3], 1.0)
+    });
+    assert!(r.unwrap_err().0.contains("`log` of zero"));
+    let r = same_before_and_after(log_body, || {
+        args4(&[2.0, 1.0, -2.0], &[1.0; 3], &[0.0; 3], 1.0)
+    });
+    assert!(r.unwrap_err().0.contains("`log` of a negative number"));
+    // atan2 of two zeros, exp overflow.
+    let r = same_before_and_after(
+        "  %t = math.atan2 %a, %b : num[1; (3)] @ 10..11
+  %c = mul %t, %s : num[1; (3)] @ 20..21
+  return %c",
+        || args4(&[1.0, 0.0, 1.0], &[1.0, 0.0, 1.0], &[0.0; 3], 1.0),
+    );
+    assert!(r.unwrap_err().0.contains("`atan2` of the zero vector"));
+    let r = same_before_and_after(
+        "  %t = math.exp %a : num[1; (3)] @ 10..11
+  %c = math.max %t, %s : num[1; (3)] @ 20..21
+  return %c",
+        || args4(&[1.0, 1000.0, 1.0], &[0.0; 3], &[0.0; 3], 1.0),
+    );
+    assert_eq!(
+        r,
+        Err(("arithmetic overflow".to_string(), Span::new(10, 11)))
+    );
+}
+
+#[test]
+fn a_divisor_that_another_operation_made_zero_is_a_division_by_zero() {
+    // b - b is zero everywhere: the div fails (span 30..31).
+    let r = same_before_and_after(
+        "  %zero = sub %b, %b : num[1; (3)] @ 10..11
+  %t = div %a, %zero : num[1; (3)] @ 30..31
+  %c = math.sqrt %t : num[1; (3)] @ 40..41
+  return %c",
+        || args4(&[1.0, 2.0, 3.0], &[5.0; 3], &[0.0; 3], 1.0),
+    );
+    assert_eq!(fused_span(&r), Some(Span::new(30, 31)));
+    // The overflow of the subtraction (span 10..11) comes first, even
+    // though the division by zero happens at an earlier element.
+    let r = same_before_and_after(
+        "  %zero = sub %b, %z : num[1; (3)] @ 10..11
+  %t = div %a, %zero : num[1; (3)] @ 30..31
+  %c = math.abs %t : num[1; (3)] @ 40..41
+  return %c",
+        || {
+            args4(
+                &[1.0, 2.0, 3.0],
+                &[1.0, 1.0, 1e308],
+                &[1.0, 1.0, -1e308],
+                1.0,
+            )
+        },
+    );
+    assert_eq!(fused_span(&r), Some(Span::new(10, 11)));
+}
+
+#[test]
+fn signed_zeros_and_rounding_functions_agree_before_and_after() {
+    let r = same_before_and_after(
+        "  %t1 = math.floor %a : num[1; (3)] @ 1..2
+  %t2 = math.round %b : num[1; (3)] @ 3..4
+  %t3 = math.min %t1, %t2 : num[1; (3)] @ 5..6
+  %t4 = math.max %t3, %z : num[1; (3)] @ 7..8
+  %t5 = math.sign %t4 : num[1; (3)] @ 9..10
+  %c = mul %t5, %s : num[1; (3)] @ 11..12
+  return %c",
+        || {
+            args4(
+                &[-0.0, -0.4, 2.5],
+                &[-0.4, -0.0, -2.5],
+                &[-0.0, 0.0, -0.0],
+                -1.0,
+            )
+        },
+    );
+    assert!(r.is_ok());
+}
+
 // ----- a differential property test -----
 
 const FLOATS: [f64; 12] = [
@@ -549,8 +816,11 @@ enum Step {
     /// A vector of 3, a vector of 1, or a 2x2 matrix, of dimension 1 or L.
     Array(u8, bool, Vec<usize>),
     Scalar(usize, bool),
-    /// `add`, `sub`, `mul`, `div` or `neg` on arrays and scalars of the pool.
-    Elementwise(u8, usize, usize),
+    /// `add`, `sub`, `mul`, `div` or `neg` on arrays and scalars of the
+    /// pool (kinds 0 to 4); `mul` or `div` of two arrays (5, 6); a math
+    /// function of one array (7), of two arrays (8) or of an array and a
+    /// scalar (9). The last field picks the function.
+    Elementwise(u8, usize, usize, usize),
     /// A scalar `add`, `sub`, `mul` or `div`: it can fail, too.
     ScalarOp(u8, usize, usize),
     /// `v[k]` on a vector: fails when `k` is out of range.
@@ -565,7 +835,8 @@ fn program() -> impl Strategy<Value = Vec<Step>> {
         3 => (0u8..3, any::<bool>(), proptest::collection::vec(float_ix.clone(), 4))
             .prop_map(|(s, l, e)| Step::Array(s, l, e)),
         2 => (float_ix, any::<bool>()).prop_map(|(x, l)| Step::Scalar(x, l)),
-        10 => (0u8..5, idx.clone(), idx.clone()).prop_map(|(o, a, b)| Step::Elementwise(o, a, b)),
+        16 => (0u8..10, idx.clone(), idx.clone(), 0usize..64)
+            .prop_map(|(o, a, b, f)| Step::Elementwise(o, a, b, f)),
         2 => (0u8..4, idx.clone(), idx.clone()).prop_map(|(o, a, b)| Step::ScalarOp(o, a, b)),
         2 => (idx.clone(), 0u8..5).prop_map(|(a, k)| Step::Index(a, k)),
         2 => idx.prop_map(Step::Print),
@@ -659,11 +930,17 @@ impl Gen {
                 let v = self.constant(FLOATS[*x], dim);
                 self.scalars.push((v, dim));
             }
-            Step::Elementwise(o, i, j) => {
+            Step::Elementwise(o, i, j, fi) => {
                 if self.arrays.is_empty() {
                     return;
                 }
-                let a = self.arrays[i % self.arrays.len()];
+                // Half the time the newest array, so trees grow deep.
+                let at = if i % 2 == 0 {
+                    self.arrays.len() - 1
+                } else {
+                    i % self.arrays.len()
+                };
+                let a = self.arrays[at];
                 let (kind, args, dim) = match o {
                     0 | 1 => {
                         let same: Vec<Arr> = self
@@ -696,7 +973,66 @@ impl Gen {
                             _ => return,
                         }
                     }
-                    _ => (OpKind::Neg, vec![a.v], a.dim),
+                    4 => (OpKind::Neg, vec![a.v], a.dim),
+                    5 | 6 => {
+                        let same: Vec<Arr> = self
+                            .arrays
+                            .iter()
+                            .filter(|x| x.shape == a.shape)
+                            .copied()
+                            .collect();
+                        let b = same[j % same.len()];
+                        let (kind, dim) = if *o == 5 {
+                            (OpKind::Mul, a.dim.checked_mul(b.dim))
+                        } else {
+                            (OpKind::Div, a.dim.checked_div(b.dim))
+                        };
+                        match dim {
+                            Ok(d) if allowed(d) => (kind, vec![a.v, b.v], d),
+                            _ => return,
+                        }
+                    }
+                    7 => {
+                        let f = MathFn::ALL[fi % MathFn::ALL.len()];
+                        if f.arity() != 1 {
+                            return;
+                        }
+                        match f.result_dim(&[a.dim]) {
+                            Ok(d) if allowed(d) => (OpKind::Math(f), vec![a.v], d),
+                            _ => return,
+                        }
+                    }
+                    _ => {
+                        let f = MathFn::ALL[fi % MathFn::ALL.len()];
+                        if f.arity() != 2 {
+                            return;
+                        }
+                        let (b, bd) = if *o == 8 {
+                            let same: Vec<Arr> = self
+                                .arrays
+                                .iter()
+                                .filter(|x| x.shape == a.shape && x.dim == a.dim)
+                                .copied()
+                                .collect();
+                            let b = same[j % same.len()];
+                            (b.v, b.dim)
+                        } else {
+                            if self.scalars.is_empty() {
+                                return;
+                            }
+                            self.scalars[j % self.scalars.len()]
+                        };
+                        // A number may be either argument.
+                        let args = if j % 2 == 0 {
+                            vec![a.v, b]
+                        } else {
+                            vec![b, a.v]
+                        };
+                        match f.result_dim(&[a.dim, bd]) {
+                            Ok(d) if allowed(d) => (OpKind::Math(f), args, d),
+                            _ => return,
+                        }
+                    }
                 };
                 let (shape, ..) = shape_of(a.shape);
                 let v = self.op1(kind, args, ty(dim, shape));
@@ -811,7 +1147,7 @@ fn outcome(m: &Module) -> Outcome {
 
 /// Fuses `steps`' program and compares the runs. Returns whether anything
 /// was fused.
-fn check(steps: &[Step]) -> Result<bool, TestCaseError> {
+fn check(steps: &[Step]) -> Result<(bool, bool), TestCaseError> {
     let before = build(steps);
     verify(&before).map_err(|e| TestCaseError::fail(format!("{e:#?}\n{}", print(&before))))?;
     let mut after = before.clone();
@@ -830,7 +1166,9 @@ fn check(steps: &[Step]) -> Result<bool, TestCaseError> {
     let text = print(&after);
     let back = parse(&text).map_err(|e| TestCaseError::fail(format!("{e}\n{text}")))?;
     prop_assert_eq!(print(&back), text);
-    Ok(!records.is_empty())
+    // Whether it fused, and whether a kernel holds a math function.
+    let math_kernel = fused_math(&after);
+    Ok((!records.is_empty(), math_kernel))
 }
 
 #[test]
@@ -839,7 +1177,7 @@ fn fusing_random_elementwise_programs_changes_nothing_observable() {
     // random seed per run they hovered at the floor (292 fused, one run).
     let mut runner = TestRunner::new_with_rng(
         Config {
-            cases: 1500,
+            cases: 2000,
             ..Config::default()
         },
         proptest::test_runner::TestRng::deterministic_rng(
@@ -847,18 +1185,41 @@ fn fusing_random_elementwise_programs_changes_nothing_observable() {
         ),
     );
     let (fused_cases, failing_cases) = (Cell::new(0), Cell::new(0));
+    let (math_cases, math_failing) = (Cell::new(0), Cell::new(0));
     runner
         .run(&program(), |steps| {
-            fused_cases.set(fused_cases.get() + usize::from(check(&steps)?));
-            failing_cases
-                .set(failing_cases.get() + usize::from(outcome(&build(&steps)).1.is_err()));
+            let (fused, math) = check(&steps)?;
+            let fails = outcome(&build(&steps)).1.is_err();
+            fused_cases.set(fused_cases.get() + usize::from(fused));
+            failing_cases.set(failing_cases.get() + usize::from(fails));
+            math_cases.set(math_cases.get() + usize::from(math));
+            math_failing.set(math_failing.get() + usize::from(math && fails));
             Ok(())
         })
         .unwrap();
-    // The property is only worth something if it fused, and failed, often.
+    // The property is only worth something if it fused, and failed, often,
+    // and if the new operations (a math function, a product of two arrays)
+    // were in the kernels.
     let (fused_cases, failing_cases) = (fused_cases.get(), failing_cases.get());
     assert!(fused_cases >= 300, "only {fused_cases} programs fused");
     assert!(failing_cases >= 100, "only {failing_cases} programs failed");
+    let (math_cases, math_failing) = (math_cases.get(), math_failing.get());
+    assert!(math_cases >= 150, "only {math_cases} kernels had new ops");
+    assert!(math_failing >= 80, "only {math_failing} of them failed");
+}
+
+/// Whether a `fused` body holds a math function.
+fn fused_math(m: &Module) -> bool {
+    let f = &m.functions[0];
+    f.ops.iter().any(|op| {
+        op.kind == OpKind::Fused
+            && f.region(op.regions[0]).blocks.iter().any(|b| {
+                f.block(*b)
+                    .ops
+                    .iter()
+                    .any(|o| matches!(f.op(*o).kind, OpKind::Math(_)))
+            })
+    })
 }
 
 // ----- operand spans -----

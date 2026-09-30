@@ -1,0 +1,20 @@
+# Math functions of arrays apply to every entry; the dimension rule of each
+# function applies to the entries. Two-argument functions take arrays of one
+# shape or an array and a number.
+x: Vector[3] m
+y: Vector[3] m
+a: Vector[3]
+area: Vector[3] m^2
+r = sqrt(area)
+cb = cbrt(area * x)
+e = exp(a)
+s = sin(a) * cos(a)
+hy = hypot(x, y)
+th = atan2(y, x)
+lo = min(x, 2 m)
+hi = max(3 m, x)
+big = abs(x - y)
+sg = sign(x)
+k = floor(a)
+W: Matrix[2, 2]
+W2 = sqrt(W) + exp(W)

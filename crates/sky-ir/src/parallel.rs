@@ -547,6 +547,7 @@ impl<'m> Graph<'m> {
             | OpKind::Mul
             | OpKind::Div
             | OpKind::Neg
+            | OpKind::Math(_)
             | OpKind::Inverse
             | OpKind::Solve { .. } => match op.results.first().and_then(|&r| shaped(f, r)) {
                 Some(n) => n.unwrap_or(UNKNOWN_ELEMENTS),

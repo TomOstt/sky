@@ -1,4 +1,0 @@
-# Elementwise math on arrays is not available yet.
-v: Vector[3] m
-a = sqrt(v)
-b = max(v, 1 m)

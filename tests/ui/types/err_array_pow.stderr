@@ -1,0 +1,24 @@
+tests/ui/types/err_array_pow.sky:5:16: error: cannot raise a vector to a power
+  |
+5 | k = 0.5 * m * v^2
+  |                ^^
+  |               - this is Vector[3] [L·T⁻¹]
+  = note: `^` needs a scalar base: on an array it could mean the square of every entry or the squared length
+  = help: for the squared magnitude write `v @ v`
+  = help: for the square of every entry write `v * v`
+
+tests/ui/types/err_array_pow.sky:6:6: error: cannot raise a vector to a power
+  |
+6 | w = v^3
+  |      ^^
+  |     - this is Vector[3] [L·T⁻¹]
+  = note: `^` needs a scalar base: on an array it could mean the square of every entry or the squared length
+  = help: for a higher power write the entry-by-entry product, `v * v * v`
+
+tests/ui/types/err_array_pow.sky:8:6: error: cannot raise a matrix to a power
+  |
+8 | B = A^2
+  |      ^^
+  |     - this is Matrix[2,2] [1]
+  = note: `^` needs a scalar base: on an array it could mean the square of every entry or the squared length
+  = help: use `@` for matrix products, or `*` for entry by entry

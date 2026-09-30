@@ -959,27 +959,41 @@ impl<'a> FnVerifier<'a> {
         self.expect_exact(o, op, &Type::Str);
     }
 
-    /// `math.*`: scalar operands (the checker rejects arrays), and the result
+    /// `math.*`: number operands, or arrays of one shape (the function is
+    /// applied to each entry; a number broadcasts), and the result
     /// dimension from the one rule table, `MathFn::result_dim`.
     fn check_math(&mut self, o: OpId, op: &OpData, f: crate::op::MathFn) {
         let mut dims = Vec::with_capacity(op.operands.len());
+        let mut shape: Option<Shape> = None;
         for i in 0..op.operands.len() {
             match self.operand_num(o, op, i) {
-                Some(Slot::Num(n)) if n.shape.rank() == 0 => dims.push(n.dim),
                 Some(Slot::Num(n)) => {
-                    let (name, shape) = (f.name(), n.shape.clone());
-                    self.err_op(
-                        o,
-                        format!("`{name}` takes scalars, operand {i} has shape {shape:?}"),
-                    );
-                    return;
+                    dims.push(n.dim);
+                    if n.shape.rank() != 0 {
+                        match &shape {
+                            None => shape = Some(n.shape.clone()),
+                            Some(s) if *s != n.shape => {
+                                let name = f.name();
+                                let s = s.clone();
+                                self.err_op(
+                                    o,
+                                    format!(
+                                        "the array operands of `{name}` have different shapes: {s} and {}",
+                                        n.shape
+                                    ),
+                                );
+                                return;
+                            }
+                            Some(_) => {}
+                        }
+                    }
                 }
                 // Unknown operand, or already reported.
                 _ => return self.expect_result_loose(o, op),
             }
         }
         match f.result_dim(&dims) {
-            Ok(d) => self.expect_result(o, op, Some(d), Some(Shape::scalar())),
+            Ok(d) => self.expect_result(o, op, Some(d), Some(shape.unwrap_or_else(Shape::scalar))),
             Err(e) => self.err_op(
                 o,
                 format!("`{}`: {e:?} for operand dimensions {dims:?}", f.name()),
@@ -1163,14 +1177,21 @@ impl<'a> FnVerifier<'a> {
             (true, true) => Some(Shape::scalar()),
             (true, false) if mul => Some(b.shape.clone()),
             (false, true) => Some(a.shape.clone()),
+            // Two arrays of one shape: entry by entry.
+            (false, false) => {
+                let (ta, tb) = (
+                    TensorType::untagged(a.shape.clone()),
+                    TensorType::untagged(b.shape.clone()),
+                );
+                self.with_rules(o, |u| rules::elementwise(u, &ta, &tb))
+                    .map(|_| a.shape.clone())
+            }
             _ => {
                 self.err_op(
                     o,
                     format!(
-                        "`{name}` needs a scalar {}, found {} and {}",
-                        if mul { "operand" } else { "divisor" },
-                        a.shape,
-                        b.shape
+                        "`{name}` needs a scalar divisor for an array, found {} over {}",
+                        a.shape, b.shape
                     ),
                 );
                 None

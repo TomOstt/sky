@@ -100,7 +100,7 @@ fn scale(arr: Operand<'_>, out: Dimension, f: impl Fn(f64) -> f64, whole: Span) 
 ///
 /// * `+` and `-`: two arrays of the same shape and dimension, elementwise.
 /// * `*`, `/`: an array and a number, scaling every entry (a number cannot
-///   be divided by an array, and two arrays have no elementwise product).
+///   be divided by an array); or two arrays of one shape, entry by entry.
 pub fn arith_owned(
     op: ArithOp,
     l: Operand<'_>,
@@ -206,18 +206,71 @@ pub fn arith_owned(
             whole,
         )
         .with_help("for the matrix inverse write `A⁻¹`")),
-        (ArithOp::Mul | ArithOp::Div, Value::Array { .. }, Value::Array { .. }) => {
-            let verb = if op == ArithOp::Mul {
-                "multiply"
-            } else {
-                "divide"
-            };
+        // Two arrays of one shape, entry by entry (the matrix product is `@`).
+        (
+            ArithOp::Mul | ArithOp::Div,
+            Value::Array {
+                dims: d1, dim: da, ..
+            },
+            Value::Array {
+                dims: d2, dim: db, ..
+            },
+        ) => {
             let sym = if op == ArithOp::Mul { "*" } else { "/" };
-            Err(
-                RuntimeError::new(format!("cannot {verb} two arrays with `{sym}`"), whole)
-                    .with_note("v0.1 has no elementwise `*` or `/` between arrays")
-                    .with_help("use `@` for the matrix product"),
-            )
+            if d1 != d2 {
+                let mut e = RuntimeError::new(
+                    format!(
+                        "cannot apply `{sym}` to {} and {}",
+                        shape_text(d1),
+                        shape_text(d2)
+                    ),
+                    whole,
+                )
+                .with_label("mismatched shapes")
+                .with_secondary(lspan, shape_text(d1))
+                .with_secondary(rspan, shape_text(d2))
+                .with_note(format!(
+                    "`{sym}` on two arrays works entry by entry, so both need one shape"
+                ));
+                if op == ArithOp::Mul {
+                    e = e.with_help("for the matrix product use `@`");
+                }
+                return Err(e);
+            }
+            let out = if op == ArithOp::Mul {
+                da.checked_mul(*db)
+            } else {
+                da.checked_div(*db)
+            }
+            .map_err(|_| exponent_overflow(whole))?;
+            // Each entry is the scalar operation, in order; the error is the
+            // lowest failing entry's. An owned operand holds the result.
+            match (l, r) {
+                (Operand::Owned(Value::Array { dims, mut data, .. }), other) => {
+                    for (x, &y) in data.iter_mut().zip(entries(other.get())) {
+                        *x = entry(op, *x, y, whole, rspan)?;
+                    }
+                    Ok(Value::array(dims, data, out))
+                }
+                (other, Operand::Owned(Value::Array { dims, mut data, .. })) => {
+                    for (y, &x) in data.iter_mut().zip(entries(other.get())) {
+                        *y = entry(op, x, *y, whole, rspan)?;
+                    }
+                    Ok(Value::array(dims, data, out))
+                }
+                (l, r) => {
+                    let (a, b) = (entries(l.get()), entries(r.get()));
+                    let mut data = Vec::with_capacity(a.len());
+                    for (&x, &y) in a.iter().zip(b) {
+                        data.push(entry(op, x, y, whole, rspan)?);
+                    }
+                    let dims = match l.get() {
+                        Value::Array { dims, .. } => dims.clone(),
+                        _ => Vec::new(),
+                    };
+                    Ok(Value::array(dims, data, out))
+                }
+            }
         }
         (op, l, r) => {
             let (verb, prep) = match op {
@@ -233,6 +286,24 @@ pub fn arith_owned(
                 whole,
             ))
         }
+    }
+}
+
+/// One entry of `a * b` or `a / b` of two arrays: the scalar operation, so a
+/// zero divisor is [`div_zero`] and a result that is not finite an overflow.
+/// The error of an array operation is that of the lowest entry that fails, and
+/// no wording names the entry (like an overflow in `+`); a fused kernel
+/// reports the same error for the same operation.
+fn entry(op: ArithOp, x: f64, y: f64, whole: Span, rspan: Span) -> R<f64> {
+    let z = match op {
+        ArithOp::Div if y == 0.0 => return Err(div_zero(whole, rspan)),
+        ArithOp::Div => x / y,
+        _ => x * y,
+    };
+    if z.is_finite() {
+        Ok(z)
+    } else {
+        Err(overflow(whole))
     }
 }
 

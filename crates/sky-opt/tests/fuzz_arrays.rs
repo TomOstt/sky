@@ -106,7 +106,7 @@ impl Gen {
         if depth == 0 {
             return self.vec().to_string();
         }
-        match self.rng.below(16) {
+        match self.rng.below(24) {
             0 | 1 => self.vec().to_string(),
             2 => format!("{} + {}", self.vector(depth - 1), self.vector(depth - 1)),
             3 => format!("{} - {}", self.vector(depth - 1), self.vec()),
@@ -131,6 +131,27 @@ impl Gen {
                 format!("add2({v}, {v})")
             }
             14 => format!("[{}, {}, {}]", self.scalar(), self.scalar(), self.scalar()),
+            // Entry by entry: products, quotients and math functions of
+            // arrays, with operands that alias each other and the target.
+            15 => format!("{} * {}", self.vector(depth - 1), self.vec()),
+            16 => {
+                let v = self.vec();
+                format!("{v} * {v}")
+            }
+            17 => format!(
+                "{} / hypot({}, {})",
+                self.vector(depth - 1),
+                self.vec(),
+                self.vec()
+            ),
+            18 => format!("sqrt(abs({}))", self.vector(depth - 1)),
+            19 => format!("max({}, {})", self.vector(depth - 1), self.vec()),
+            20 => format!("hypot({}, {})", self.vec(), self.vector(depth - 1)),
+            21 => format!("atan2({}, {}) * {}", self.vec(), self.vec(), self.scalar()),
+            22 => {
+                let v = self.vec();
+                format!("min({v}, {}) / hypot({v}, {v})", self.scalar())
+            }
             _ => format!("{} - {}", self.vec(), self.vector(depth - 1)),
         }
     }
@@ -140,7 +161,7 @@ impl Gen {
         if depth == 0 {
             return self.mat().to_string();
         }
-        match self.rng.below(9) {
+        match self.rng.below(12) {
             0 | 1 => self.mat().to_string(),
             2 => format!("{} + {}", self.matrix(depth - 1), self.mat()),
             3 => format!("{} - {}", self.mat(), self.matrix(depth - 1)),
@@ -151,6 +172,12 @@ impl Gen {
                 let m = self.mat();
                 format!("{m} + {m}")
             }
+            8 => format!("{} * {}", self.matrix(depth - 1), self.mat()),
+            9 => {
+                let m = self.mat();
+                format!("{m} * {m}")
+            }
+            10 => format!("sqrt(abs({}))", self.matrix(depth - 1)),
             _ => format!("-{}", self.mat()),
         }
     }

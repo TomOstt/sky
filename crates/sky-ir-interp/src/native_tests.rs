@@ -212,6 +212,155 @@ fn the_ops_the_fuse_pass_makes_run_natively_at_every_length() {
     }
 }
 
+/// Bodies made of the entry-by-entry operations a user writes over arrays:
+/// products and quotients of two arrays' entries, and math functions of
+/// arrays and of an array and a number.
+const ENTRYWISE_BODIES: [&str; 7] = [
+    // sqrt(x*x + y*y) * s + x
+    "      %xx = mul %x, %x : num[1; ()] @ 10..15 (10..11, 12..13)
+      %yy = mul %y, %y : num[1; ()] @ 20..25 (20..21, 22..23)
+      %q = add %xx, %yy : num[1; ()] @ 30..35 (10..15, 20..25)
+      %rt = math.sqrt %q : num[1; ()] @ 40..45 (30..35)
+      %c = mul %rt, %s : num[1; ()] @ 50..55 (40..45, 52..53)
+      %d = add %c, %x : num[1; ()] @ 60..65 (50..55, 62..63)
+      yield %d",
+    "      %t = math.atan2 %y, %x : num[1; ()] @ 10..15 (10..11, 12..13)
+      %u = math.hypot %t, %s : num[1; ()] @ 20..25 (20..21, 22..23)
+      yield %u",
+    "      %t = math.min %x, %s : num[1; ()] @ 10..15
+      %u = math.max %y, %t : num[1; ()] @ 20..25
+      %v = mul %u, %y : num[1; ()] @ 30..35 (30..31, 32..33)
+      yield %v",
+    "      %t = math.floor %x : num[1; ()] @ 10..15
+      %u = math.round %y : num[1; ()] @ 20..25
+      %v = math.sign %u : num[1; ()] @ 30..35
+      %w = sub %t, %v : num[1; ()] @ 40..45 (40..41, 42..43)
+      yield %w",
+    "      %t = math.exp %x : num[1; ()] @ 10..15 (10..11)
+      %u = math.log %y : num[1; ()] @ 20..25 (20..21)
+      %v = div %t, %u : num[1; ()] @ 30..35 (30..31, 32..33)
+      yield %v",
+    "      %z = sub %y, %y : num[1; ()] @ 10..15 (10..11, 12..13)
+      %t = div %x, %z : num[1; ()] @ 20..25 (20..21, 22..23)
+      %u = math.abs %t : num[1; ()] @ 30..35
+      yield %u",
+    "      %t = math.sqrt %x : num[1; ()] @ 10..15 (10..11)
+      %u = math.log %y : num[1; ()] @ 20..25 (20..21)
+      %v = add %t, %u : num[1; ()] @ 30..35 (30..31, 32..33)
+      yield %v",
+];
+
+#[test]
+fn entrywise_bodies_run_natively_at_long_lengths_with_a_bad_entry_anywhere() {
+    let before = NATIVE_RUNS.load(Ordering::Relaxed);
+    let bad = [1e200, 0.0, -1.0, 1000.0, 1e308];
+    let mut failing = 0;
+    let mut total = 0;
+    for (k, body) in ENTRYWISE_BODIES.iter().enumerate() {
+        let m = module(false, body);
+        for n in [1usize, 9, 513, 1025, 4099] {
+            let clean_x: Vec<f64> = (0..n).map(|i| 0.25 + (i % 17) as f64 * 0.5).collect();
+            let clean_y: Vec<f64> = (0..n).map(|i| 1.5 + (i % 11) as f64 * 0.75).collect();
+            // No bad entry, then one planted at the first, last, second to
+            // last and middle positions, in either array.
+            let mut cases = vec![(clean_x.clone(), clean_y.clone())];
+            for p in [0, n - 1, n / 2] {
+                for (j, b) in bad.iter().enumerate() {
+                    let (mut xs, mut ys) = (clean_x.clone(), clean_y.clone());
+                    if (j + p + k) % 2 == 0 {
+                        xs[p] = *b;
+                    } else {
+                        ys[p] = *b;
+                    }
+                    cases.push((xs, ys));
+                }
+            }
+            for (xs, ys) in cases {
+                for s in [0.5, 0.0] {
+                    let args = [
+                        array(&xs, Dimension::DIMENSIONLESS),
+                        array(&ys, Dimension::DIMENSIONLESS),
+                        Value::scalar(s),
+                    ];
+                    let want = run(&m, &args, JitOptions::OFF);
+                    assert_eq!(run(&m, &args, JitOptions::ALWAYS), want, "body {k} n={n}");
+                    total += 1;
+                    failing += usize::from(want.is_err());
+                }
+            }
+        }
+    }
+    let native = NATIVE_RUNS.load(Ordering::Relaxed) - before;
+    assert!(
+        native >= total / 2,
+        "only {native} of {total} runs were native"
+    );
+    assert!(
+        failing >= total / 10,
+        "only {failing} of {total} runs failed"
+    );
+}
+
+#[test]
+fn the_earliest_failing_operation_wins_over_the_lowest_element_with_math() {
+    // sqrt (span 10..15) fails only at the last element, log (20..25) at the
+    // first: sqrt's error is the unfused chain's, natively too.
+    let m = module(false, ENTRYWISE_BODIES[6]);
+    for n in [3, 9, 512, 1001, 4100] {
+        let mut xs = vec![4.0; n];
+        let mut ys = vec![1.0; n];
+        xs[n - 1] = -1.0;
+        ys[0] = 0.0;
+        let args = [
+            array(&xs, Dimension::DIMENSIONLESS),
+            array(&ys, Dimension::DIMENSIONLESS),
+            Value::scalar(1.0),
+        ];
+        let want = run(&m, &args, JitOptions::OFF);
+        let e = want.as_ref().unwrap_err();
+        assert!(e.message.contains("`sqrt` of a negative number"), "{e}");
+        assert_eq!((e.span.start, e.span.end), (10, 15));
+        assert_eq!(run(&m, &args, JitOptions::ALWAYS), want, "n={n}");
+        // Only the later operation fails: its lowest element decides.
+        xs[n - 1] = 4.0;
+        ys[n / 2] = -1.0;
+        let args = [
+            array(&xs, Dimension::DIMENSIONLESS),
+            array(&ys, Dimension::DIMENSIONLESS),
+            Value::scalar(1.0),
+        ];
+        let want = run(&m, &args, JitOptions::OFF);
+        assert!(want.as_ref().unwrap_err().message.contains("`log` of zero"));
+        assert_eq!(run(&m, &args, JitOptions::ALWAYS), want, "n={n}");
+    }
+}
+
+#[test]
+fn a_dimensioned_product_and_root_of_arrays_run_natively() {
+    // sqrt(x*x + y*y) over lengths is a length; x * y is an area.
+    let text = "sir edition 2026\n\nfn @f(%a: num[L; (3)], %b: num[L; (3)]) -> (num[L; (3)]) effects(fail) {
+  %r = fused %a, %b : num[L; (3)] {
+    ^1(%x: num[L; ()], %y: num[L; ()]):
+      %xx = mul %x, %x : num[L²; ()] @ 10..15
+      %yy = mul %y, %y : num[L²; ()] @ 20..25
+      %q = add %xx, %yy : num[L²; ()] @ 30..35
+      %rt = math.sqrt %q : num[L; ()] @ 40..45
+      yield %rt
+  }
+  return %r
+}
+";
+    let m = parse(text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    for n in [3, 1000, 4097] {
+        let xs: Vec<f64> = (0..n).map(|i| 3.0 + i as f64).collect();
+        let ys: Vec<f64> = (0..n).map(|i| 4.0 + 2.0 * i as f64).collect();
+        let args = [array(&xs, Dimension::LENGTH), array(&ys, Dimension::LENGTH)];
+        let want = run(&m, &args, JitOptions::OFF);
+        assert!(want.is_ok());
+        assert_eq!(run(&m, &args, JitOptions::ALWAYS), want, "n={n}");
+    }
+}
+
 #[test]
 fn a_run_below_the_threshold_or_with_the_jit_off_never_compiles() {
     let m = module(false, "      %t = add %x, %y : num[1; ()]\n      yield %t");

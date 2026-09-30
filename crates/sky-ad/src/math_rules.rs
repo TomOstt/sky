@@ -73,16 +73,32 @@ impl Diff<'_> {
                     return Ok(None);
                 };
                 let pa = self.primal(a)?;
-                let zero = self.konst(0.0, self.value_ty(a)?, span);
-                let negative = self.compare(CmpOp::Lt, pa, zero, span);
-                let sign_ty = self.dimensionless_ty(r);
-                let sign = self.select(
-                    negative,
-                    sign_ty,
-                    span,
-                    |d| Ok(d.dimensionless(-1.0, r, span)),
-                    |d| Ok(d.dimensionless(1.0, r, span)),
-                )?;
+                let sign = if self.shape_of(a).rank() == 0 && !self.in_body {
+                    let zero = self.konst(0.0, self.value_ty(a)?, span);
+                    let negative = self.compare(CmpOp::Lt, pa, zero, span);
+                    let sign_ty = self.dimensionless_ty(r);
+                    self.select(
+                        negative,
+                        sign_ty,
+                        span,
+                        |d| Ok(d.dimensionless(-1.0, r, span)),
+                        |d| Ok(d.dimensionless(1.0, r, span)),
+                    )?
+                } else {
+                    // An array, or the scalar body of a kernel, where an
+                    // `if` cannot go: `s + (1 - s*s)` for `s = sign(a)`,
+                    // which is -1 or 1 exactly and 1 at a = 0 (`s = 0`).
+                    let dimless = self.dimensionless_ty(r);
+                    let s = self.emit(OpKind::Math(MathFn::Sign), vec![pa], dimless.clone(), span);
+                    let ss = self.emit(OpKind::Mul, vec![s, s], dimless.clone(), span);
+                    let one = if self.in_body {
+                        self.dimensionless(1.0, r, span)
+                    } else {
+                        self.ones_like(s, span)?
+                    };
+                    let gap = self.emit(OpKind::Sub, vec![one, ss], dimless.clone(), span);
+                    self.emit(OpKind::Add, vec![s, gap], dimless, span)
+                };
                 Some(self.emit(OpKind::Mul, vec![sign, ta], ty, span))
             }
             // exp(a)' = exp(a) = r.
@@ -210,6 +226,16 @@ impl Diff<'_> {
             // first operand's.
             MathFn::Min | MathFn::Max => {
                 let [a, b] = self.operands(op)?;
+                // Choosing an operand per entry needs an `if` per entry, and
+                // the comparison could only be done exactly with one (a
+                // difference of two finite entries can overflow).
+                if self.shape_of(r).rank() != 0 || self.in_body {
+                    return Err(self.unsupported(
+                        f.mnemonic(),
+                        "the derivative of `min` or `max` of arrays is not supported yet \
+                         (it needs a choice per entry)",
+                    ));
+                }
                 let (pa, pb) = (self.primal(a)?, self.primal(b)?);
                 let first = if f == MathFn::Min {
                     CmpOp::Le

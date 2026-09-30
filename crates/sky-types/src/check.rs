@@ -1782,13 +1782,23 @@ impl<'s> Checker<'s> {
                     power_span,
                 )
                 .with_secondary(base.span, label)
-                .with_note("`^` needs a scalar base in v0.1");
+                .with_note(
+                    "`^` needs a scalar base: on an array it could mean the square of every entry or the squared length",
+                );
                 if rank == 1 && constant == Some(Rational::integer(2)) {
-                    d = d.with_help(format!(
-                        "for the squared magnitude write `{base_text} @ {base_text}`"
-                    ));
+                    d = d
+                        .with_help(format!(
+                            "for the squared magnitude write `{base_text} @ {base_text}`"
+                        ))
+                        .with_help(format!(
+                            "for the square of every entry write `{base_text} * {base_text}`"
+                        ));
                 } else if rank == 2 {
-                    d = d.with_help("use `@` for matrix products");
+                    d = d.with_help("use `@` for matrix products, or `*` for entry by entry");
+                } else {
+                    d = d.with_help(format!(
+                        "for a higher power write the entry-by-entry product, `{base_text} * {base_text} * {base_text}`"
+                    ));
                 }
                 d
             };
@@ -2061,26 +2071,9 @@ impl<'s> Checker<'s> {
                 self.error(d);
                 Ty::Unknown
             }
-            (false, false) => {
-                let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
-                let verb = if op == BinaryOp::Mul {
-                    "multiply"
-                } else {
-                    "divide"
-                };
-                let mut d = Diagnostic::error(
-                    format!("cannot {verb} two arrays with `{}`", op.symbol()),
-                    op_span,
-                )
-                .with_secondary(le.span, ll)
-                .with_secondary(re.span, rl)
-                .with_note("v0.1 has no elementwise `*` or `/` between arrays");
-                if op == BinaryOp::Mul {
-                    d = d.with_help("use `@` for the matrix product");
-                }
-                self.error(d);
-                Ty::Unknown
-            }
+            // `a * b`, `a / b`: entry by entry, for arrays of one shape (the
+            // matrix product is `@`).
+            (false, false) => self.entrywise_product(op, op_span, (le, &lv), (re, &rv), dim),
         }
     }
 }

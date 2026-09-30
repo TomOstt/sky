@@ -1,0 +1,5 @@
+# The dimension rule of each function applies to the entries.
+u: Vector[3] m
+a = exp(u)
+b = sin(u)
+d = floor(u)

@@ -934,8 +934,7 @@ mod tests {
 
     /// Every Sky template, rendered at the quick size, runs on the
     /// tree-walker and prints what the C program prints (when a C compiler is
-    /// there). A template Sky cannot check yet (the `sqrt` chain) is skipped:
-    /// it is expected to fail until arrays get elementwise math.
+    /// there).
     #[test]
     fn smoke_sky_templates_agree_with_c() {
         let dir = default_dir();
@@ -950,14 +949,7 @@ mod tests {
             let src = case.render_sky(&template, true).expect("renders");
             let sky_out = match run_ast(&src) {
                 Ok(o) => o,
-                Err(e) => {
-                    assert!(
-                        case.id.starts_with("elementwise"),
-                        "{}: Sky failed: {e}",
-                        case.id
-                    );
-                    continue;
-                }
+                Err(e) => panic!("{}: Sky failed: {e}", case.id),
             };
             let sky_values = parse_result(&sky_out).expect("Sky prints numbers");
             ran += 1;

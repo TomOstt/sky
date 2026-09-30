@@ -1,0 +1,9 @@
+# No broadcasting between arrays of different shapes; a number still scales.
+u: Vector[3] m
+v: Vector[4] m
+M: Matrix[3, 3]
+a = u * v
+b = u / v
+q = u * M
+d = M / u
+e = 2 * u

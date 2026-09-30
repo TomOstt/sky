@@ -118,8 +118,12 @@ fn elementwise_and_scaling() {
     );
     assert_eq!(err("[1, 2] + 1"), "cannot add a vector and a number");
     assert_eq!(
-        err("[1, 2] * [1, 2]"),
-        "cannot multiply two arrays with `*`"
+        err("[1, 2] * [1, 2, 3]"),
+        "cannot apply `*` to Vector[2] and Vector[3]"
+    );
+    assert_eq!(
+        err("[1, 2] / [[1, 2]]"),
+        "cannot apply `/` to Vector[2] and Matrix[1,2]"
     );
     assert_eq!(err("1 / [1, 2]"), "cannot divide a number by a vector");
     assert_eq!(err("[1, 2] / 0"), "division by zero");
@@ -586,4 +590,85 @@ fn matrix_products_keep_the_naive_order_at_every_size() {
         .iter()
         .zip(&naive)
         .all(|(g, w)| g.to_bits() == w.to_bits()));
+}
+
+#[test]
+fn products_and_quotients_of_arrays_are_entry_by_entry() {
+    assert_eq!(show("[1, 2, 3] * [4, 5, 6]"), "[4, 10, 18]");
+    assert_eq!(show("[1 m, 2 m] * [3 s, 4 s]"), "[3 m*s, 8 m*s]");
+    assert_eq!(show("[6 m, 8 m] / [2 s, 4 s]"), "[3 m/s, 2 m/s]");
+    assert_eq!(
+        show("[[1, 2], [3, 4]] * [[5, 6], [7, 8]]"),
+        "[[5, 12], [21, 32]]"
+    );
+    assert_eq!(
+        show("[[1, 2], [3, 4]] / [[1, 2], [3, 4]]"),
+        "[[1, 1], [1, 1]]"
+    );
+    // `@` is still the matrix product.
+    assert_eq!(
+        show("[[1, 2], [3, 4]] @ [[5, 6], [7, 8]]"),
+        "[[19, 22], [43, 50]]"
+    );
+    // A length-1 vector is not a number: the shapes must agree.
+    assert_eq!(
+        err("[[1, 2, 3], [4, 5, 6]] * [[1, 2], [3, 4], [5, 6]]"),
+        "cannot apply `*` to Matrix[2,3] and Matrix[3,2]"
+    );
+}
+
+#[test]
+fn entry_errors_are_the_scalar_errors() {
+    assert_eq!(err("[1, 2] / [1, 0]"), "division by zero");
+    assert_eq!(err("[1e200, 1] * [1e200, 1]"), "arithmetic overflow");
+    assert_eq!(err("[1e300, 1] / [1e-300, 1]"), "arithmetic overflow");
+    // The lowest failing entry decides: an overflow at entry 0 comes before a
+    // zero divisor at entry 1, and the other way round.
+    assert_eq!(err("[1e300, 1] / [1e-300, 0]"), "arithmetic overflow");
+    assert_eq!(err("[1, 1e300] / [0, 1e-300]"), "division by zero");
+}
+
+#[test]
+fn math_functions_apply_to_every_entry() {
+    assert_eq!(show("sqrt([4 m^2, 9 m^2])"), "[2 m, 3 m]");
+    assert_eq!(show("sqrt([[1, 4], [9, 16]])"), "[[1, 2], [3, 4]]");
+    assert_eq!(show("abs([-1 m, 2 m])"), "[1 m, 2 m]");
+    assert_eq!(show("floor([1.5, -1.5])"), "[1, -2]");
+    assert_eq!(show("max([1 m, 5 m], [3 m, 2 m])"), "[3 m, 5 m]");
+    // A number is every entry.
+    assert_eq!(show("min([1 m, 5 m], 3 m)"), "[1 m, 3 m]");
+    assert_eq!(show("min(3 m, [1 m, 5 m])"), "[1 m, 3 m]");
+    assert_eq!(show("hypot([3 m, 5 m], [4 m, 12 m])"), "[5 m, 13 m]");
+    assert_eq!(show("sign([-2 m, 0 m, 3 m])"), "[-1, 0, 1]");
+    assert_eq!(show("exp([0, 0])"), "[1, 1]");
+    // Each entry is the scalar call, bit for bit.
+    let v = run("atan2([1, 2, 3], [4, 5, 6])").expect("runs");
+    let want: Vec<f64> = [(1.0f64, 4.0f64), (2.0, 5.0), (3.0, 6.0)]
+        .iter()
+        .map(|&(y, x)| y.atan2(x))
+        .collect();
+    assert_eq!(data(&v), want);
+}
+
+#[test]
+fn math_errors_are_the_scalar_errors() {
+    assert_eq!(
+        err("sqrt([1, -1])"),
+        "`sqrt` of a negative number has no real value"
+    );
+    assert_eq!(err("exp([1, 1000])"), "arithmetic overflow");
+    assert_eq!(err("log([1, 0])"), "`log` of zero has no real value");
+    // The lowest failing entry decides the wording.
+    assert_eq!(
+        err("log([-1, 0])"),
+        "`log` of a negative number has no real value"
+    );
+    assert_eq!(
+        err("atan2([1, 2], [1, 2, 3])"),
+        "cannot apply `atan2` to Vector[2] and Vector[3]"
+    );
+    assert_eq!(
+        err("exp([1 m])"),
+        "the argument of `exp` must be dimensionless, found length"
+    );
 }

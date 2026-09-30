@@ -260,3 +260,91 @@ fn nested_literals_at_the_depth_limit_do_not_overflow_the_stack() {
     let c = check(&src);
     assert!(!c.diagnostics.is_empty()); // "at most two levels", not a crash
 }
+
+#[test]
+fn entry_by_entry_products_and_quotients_are_typed_per_entry() {
+    let c = check(
+        "x = [3 m, 4 m]\nt = [1 s, 2 s]\nv = x / t\na = x * x\nM = [[1, 2], [3, 4]]\nP = M * M\nQ = M @ M\n",
+    );
+    assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
+    assert_eq!(ty(&c, "v"), "Vector[2] [L·T⁻¹]");
+    assert_eq!(ty(&c, "a"), "Vector[2] [L²]");
+    assert_eq!(ty(&c, "P"), "Matrix[2,2] [1]");
+    assert_eq!(ty(&c, "Q"), "Matrix[2,2] [1]");
+}
+
+#[test]
+fn entry_by_entry_shapes_must_agree_and_a_size_variable_is_solved() {
+    let c = check("u = [1, 2, 3]\nw = [1, 2]\na = u * w\n");
+    assert_eq!(
+        messages(&c),
+        ["cannot apply `*` to Vector[3] and Vector[2]"]
+    );
+    // `*` on shapes `@` accepts points at `@`; `/` does not.
+    let c = check("A = [[1, 2, 3]]\nB = [[1], [2], [3]]\na = A * B\nb = A / B\n");
+    assert_eq!(c.diagnostics.len(), 2, "{:#?}", c.diagnostics);
+    assert!(c.diagnostics[0]
+        .help
+        .iter()
+        .any(|h| h == "for the matrix product use `@`"));
+    assert!(c.diagnostics[1].help.iter().all(|h| !h.contains("`@`")));
+    // Sizes that unify are one size: the result has the solved shape.
+    let c = check(
+        "def f(a: Vector[N], b: Vector[N]) -> Vector[N]:\n    return a * b / a\nr = f([1, 2], [3, 4])\n",
+    );
+    assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
+    assert_eq!(ty(&c, "r"), "Vector[2] [1]");
+}
+
+#[test]
+fn a_number_still_scales_and_is_still_not_divided_by_an_array() {
+    let c = check("v = [1 m, 2 m]\na = 2 * v\nb = v / 2 s\nw = 1 / v\n");
+    assert_eq!(messages(&c), ["cannot divide a scalar by a vector"]);
+    assert_eq!(ty(&c, "a"), "Vector[2] [L]");
+    assert_eq!(ty(&c, "b"), "Vector[2] [L·T⁻¹]");
+}
+
+#[test]
+fn math_functions_of_arrays_are_arrays() {
+    let c = check(
+        "a = [4 m^2, 9 m^2]\nr = sqrt(a)\nz = [0.5, 0.25]\ne = exp(z)\nhy = hypot(r, [3 m, 4 m])\nm = min(r, 3 m)\nn = max(2 m, r)\nq = atan2(r, r)\nk = floor(z)\ns = sign(a)\n",
+    );
+    assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
+    assert_eq!(ty(&c, "r"), "Vector[2] [L]");
+    assert_eq!(ty(&c, "e"), "Vector[2] [1]");
+    assert_eq!(ty(&c, "hy"), "Vector[2] [L]");
+    assert_eq!(ty(&c, "m"), "Vector[2] [L]");
+    assert_eq!(ty(&c, "n"), "Vector[2] [L]");
+    assert_eq!(ty(&c, "q"), "Vector[2] [1]");
+    assert_eq!(ty(&c, "k"), "Vector[2] [1]");
+    assert_eq!(ty(&c, "s"), "Vector[2] [1]");
+    // Scalars keep working as before.
+    let c = check("x = sqrt(9 m^2)\ny = max(1 m, 2 m)\n");
+    assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
+    assert_eq!(ty(&c, "x"), "Scalar [L]");
+}
+
+#[test]
+fn entry_by_entry_tags_are_conservative() {
+    let c = check(
+        "S: Symmetric Matrix[2, 2]\nD: Diagonal Matrix[2, 2]\nP: PositiveDefinite Matrix[2, 2]\nG: Matrix[2, 2]\na = S * S\nb = G * D\nc = D / G\nd = G / D\ne = P * P\nf = sqrt(D)\ng = atan2(S, G)\n",
+    );
+    // `G` is the gravitational constant: only a warning.
+    let sym = "Matrix[2,2] {Symmetric} [1]";
+    let diag = "Matrix[2,2] {Symmetric, Diagonal} [1]";
+    assert_eq!(ty(&c, "a"), sym);
+    assert_eq!(ty(&c, "b"), diag);
+    assert_eq!(ty(&c, "c"), diag);
+    assert_eq!(ty(&c, "d"), "Matrix[2,2] [1]");
+    assert_eq!(ty(&c, "e"), sym);
+    assert_eq!(ty(&c, "f"), sym);
+    assert_eq!(ty(&c, "g"), "Matrix[2,2] [1]");
+}
+
+#[test]
+fn a_bad_entry_by_entry_operand_reports_once() {
+    // An operand that failed to type makes the result unknown, so one
+    // mistake is one error.
+    let c = check("u = [1 m, 2 s]\nw = u * u\nz = sqrt(u)\n");
+    assert_eq!(c.diagnostics.len(), 1, "{:#?}", c.diagnostics);
+}

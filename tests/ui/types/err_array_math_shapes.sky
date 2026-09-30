@@ -1,0 +1,7 @@
+# The arrays of one math call must share a shape.
+u: Vector[3] m
+v: Vector[4] m
+a = atan2(u, v)
+b = hypot(u, v)
+q = min(u, 2 m)
+d = max(u, 2 s)

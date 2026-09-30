@@ -1,0 +1,44 @@
+tests/ui/types/err_array_entrywise_shapes.sky:5:7: error: cannot apply `*` to Vector[3] and Vector[4]
+  |
+5 | a = u * v
+  |       ^ axis 0 differs: 3 vs 4
+  |     - this is Vector[3] [L]
+  |         - this is Vector[4] [L]
+  = note: axis     0
+  = note: left     3
+  = note: right    4
+  = note: differs  ^
+  = note: `*` on two arrays works entry by entry, so both need one shape
+
+tests/ui/types/err_array_entrywise_shapes.sky:6:7: error: cannot apply `/` to Vector[3] and Vector[4]
+  |
+6 | b = u / v
+  |       ^ axis 0 differs: 3 vs 4
+  |     - this is Vector[3] [L]
+  |         - this is Vector[4] [L]
+  = note: axis     0
+  = note: left     3
+  = note: right    4
+  = note: differs  ^
+  = note: `/` on two arrays works entry by entry, so both need one shape
+
+tests/ui/types/err_array_entrywise_shapes.sky:7:7: error: cannot apply `*` to a vector and a matrix
+  |
+7 | q = u * M
+  |       ^ rank 1 vs rank 2
+  |     - this is Vector[3] [L]
+  |         - this is Matrix[3,3] [1]
+  = note: left: [3] has 1 axis, right: [3, 3] has 2 axes
+  = note: axes are numbered from 0 and have no names yet; only shapes of the same rank can be compared axis by axis
+  = note: `*` on two arrays works entry by entry, so both need one shape
+  = help: for the matrix product use `@`
+
+tests/ui/types/err_array_entrywise_shapes.sky:8:7: error: cannot apply `/` to a matrix and a vector
+  |
+8 | d = M / u
+  |       ^ rank 2 vs rank 1
+  |     - this is Matrix[3,3] [1]
+  |         - this is Vector[3] [L]
+  = note: left: [3, 3] has 2 axes, right: [3] has 1 axis
+  = note: axes are numbered from 0 and have no names yet; only shapes of the same rank can be compared axis by axis
+  = note: `/` on two arrays works entry by entry, so both need one shape

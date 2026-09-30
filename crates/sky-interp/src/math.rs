@@ -43,18 +43,41 @@ pub fn apply(f: MathFn, args: &[Value], whole: Span, spans: &[Span]) -> R<Value>
     }
     let name = f.name();
     // At most two arguments (the arity was checked above): on the stack, so
-    // a call in a loop allocates nothing.
-    let mut nums = [0.0_f64; 2];
+    // a call on numbers in a loop allocates nothing.
     let mut dims = [Dimension::DIMENSIONLESS; 2];
+    // The shape of the array arguments (they share one; numbers broadcast).
+    let mut shape: Option<(usize, &Vec<usize>)> = None;
     for (i, v) in args.iter().enumerate() {
-        let Value::Number { value, dim } = v else {
-            return Err(RuntimeError::new(
-                format!("`{name}` needs a number, found {}", v.kind()),
-                spans.get(i).copied().unwrap_or(whole),
-            ));
-        };
-        nums[i] = *value;
-        dims[i] = *dim;
+        match v {
+            Value::Number { dim, .. } => dims[i] = *dim,
+            Value::Array { dims: d, dim, .. } => {
+                match shape {
+                    Some((first, s)) if s != d => {
+                        let at = |k: usize| spans.get(k).copied().unwrap_or(whole);
+                        return Err(RuntimeError::new(
+                            format!(
+                                "cannot apply `{name}` to {} and {}",
+                                crate::array::shape_text(s),
+                                crate::array::shape_text(d)
+                            ),
+                            whole,
+                        )
+                        .with_label("mismatched shapes")
+                        .with_secondary(at(first), crate::array::shape_text(s))
+                        .with_secondary(at(i), crate::array::shape_text(d)));
+                    }
+                    Some(_) => {}
+                    None => shape = Some((i, d)),
+                }
+                dims[i] = *dim;
+            }
+            _ => {
+                return Err(RuntimeError::new(
+                    format!("`{name}` needs a number, found {}", v.kind()),
+                    spans.get(i).copied().unwrap_or(whole),
+                ))
+            }
+        }
     }
     let span_of = |i: usize| spans.get(i).copied().unwrap_or(whole);
     let dim = f.result_dim(&dims[..args.len()]).map_err(|e| match e {
@@ -76,16 +99,30 @@ pub fn apply(f: MathFn, args: &[Value], whole: Span, spans: &[Span]) -> R<Value>
         ),
         MathDimError::Overflow => RuntimeError::new("dimension exponent too large", whole),
     })?;
-    Ok(Value::number(
-        apply_f64(
-            f,
-            nums[0],
-            nums.get(1).copied().unwrap_or(0.0),
-            whole,
-            span_of(0),
-        )?,
-        dim,
-    ))
+    // Entry `k` of argument `i`: a number is every entry.
+    let entry = |i: usize, k: usize| match &args[i] {
+        Value::Number { value, .. } => *value,
+        Value::Array { data, .. } => data[k],
+        _ => unreachable!("checked above"),
+    };
+    let y_of = |k: usize| if args.len() > 1 { entry(1, k) } else { 0.0 };
+    match shape {
+        None => Ok(Value::number(
+            apply_f64(f, entry(0, 0), y_of(0), whole, span_of(0))?,
+            dim,
+        )),
+        // A function of an array: entry by entry, each the scalar call (the
+        // same domain errors, finiteness check and `-0` normalisation); the
+        // error is the lowest entry's, and words the call, not the entry.
+        Some((_, dims)) => {
+            let count: usize = dims.iter().product();
+            let mut data = Vec::with_capacity(count);
+            for k in 0..count {
+                data.push(apply_f64(f, entry(0, k), y_of(k), whole, span_of(0))?);
+            }
+            Ok(Value::array(dims.clone(), data, dim))
+        }
+    }
 }
 
 /// `f(x)`, or `f(x, y)` for the two-argument functions (`y` is ignored by

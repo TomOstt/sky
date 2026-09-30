@@ -250,8 +250,15 @@ pub enum OpKind {
     // ----- arithmetic on numbers -----
     /// `a + b`, `a - b`, `a * b`, `a / b`: two operands, one result.
     /// Operands of `add`/`sub` have equal dimensions and shapes (the
-    /// checker guarantees it). Elementwise on arrays of equal shape; a
-    /// scalar operand of `mul`/`div` scales an array.
+    /// checker guarantees it). Elementwise on arrays of equal shape, and
+    /// so are `mul` and `div` (the dimensions of the entries multiply or
+    /// divide, as for numbers: the Hadamard product, not `matmul`); a
+    /// scalar operand of `mul`/`div` scales an array (`a * s`, `s * a`,
+    /// `a / s`; there is no `s / a`). Each entry is the scalar operation:
+    /// an entry whose result is not finite is an overflow, and a zero
+    /// divisor entry is a division by zero; the error is that of the lowest
+    /// failing entry, at the operation's span, which no message names an
+    /// entry in.
     Add,
     Sub,
     Mul,
@@ -271,7 +278,13 @@ pub enum OpKind {
     /// (dimension inverted) or a square matrix's inverse.
     Inverse,
     /// A mathematical function: `arity()` operands (see [`MathFn`] for the
-    /// operands, dimension rule and failures of each), one result.
+    /// operands, dimension rule and failures of each), one result. An
+    /// operand may be an array: the function is applied to each entry
+    /// (`sky_interp::math::apply`, whose scalar core is `apply_f64`), the
+    /// arrays of one call share one shape, and a number operand is every
+    /// entry. The result is an array of that shape, and the failure is the
+    /// scalar call's (same message, span and labels) at the lowest entry
+    /// that fails.
     Math(MathFn),
     /// `A @ B`: two operands, one result.
     MatMul,

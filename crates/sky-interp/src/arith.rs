@@ -79,16 +79,27 @@ impl StackMeter {
         // Direction-agnostic: the stack grows down on every target Sky
         // supports, but `abs_diff` doesn't need to know.
         if self.base.abs_diff(stack_position()) > STACK_BUDGET {
-            return Err(RuntimeError::new(
-                "the program nests too deeply for the interpreter",
-                span,
-            )
-            .with_label("stopped here")
-            .with_note("`sky run` stops before it runs out of stack")
-            .with_help("reduce the recursion depth, or use a `while` loop"));
+            return Err(stack_exhausted(span));
         }
         Ok(())
     }
+}
+
+/// The error for a run that has used up [`STACK_BUDGET`] (what
+/// [`StackMeter::check`] reports, and what native code reports when its own
+/// stack check trips).
+pub fn stack_exhausted(span: Span) -> RuntimeError {
+    RuntimeError::new("the program nests too deeply for the interpreter", span)
+        .with_label("stopped here")
+        .with_note("`sky run` stops before it runs out of stack")
+        .with_help("reduce the recursion depth, or use a `while` loop")
+}
+
+/// The address of a local: where the stack is now, for a caller that measures
+/// its own stack use against [`STACK_BUDGET`] (native code does). Only ever
+/// compared with another such address.
+pub fn stack_address() -> usize {
+    stack_position()
 }
 
 /// The error for calling a user function [`MAX_CALL_DEPTH`] calls deep.

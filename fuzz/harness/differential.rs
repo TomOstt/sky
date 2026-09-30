@@ -2263,6 +2263,12 @@ impl Gen<'_> {
 
 /// The generated program for `data`.
 pub fn generate(data: &[u8]) -> String {
+    // About one input in five makes a program of arrays and the
+    // entry-by-entry operations on them instead (`generate_arrays`); the
+    // others are read as before, so their programs do not change.
+    if data.first().is_some_and(|b| b % 5 == 0) {
+        return generate_arrays(data);
+    }
     let mut c = Choices::new(data);
     let risk = *c.pick(&[0, 0, 2, 5, 10, 25]);
     let shadow_consts = c.chance(15);
@@ -3132,6 +3138,753 @@ pub fn generate_vectors(data: &[u8]) -> String {
     let shown: Vec<String> = g.vecs.iter().take(6).map(|v| v.name.clone()).collect();
     if !shown.is_empty() {
         g.line(&format!("print({})", shown.join(", ")));
+    }
+    g.out
+}
+
+// ---------------------------------------------------------------------------
+// The array generator
+// ---------------------------------------------------------------------------
+//
+// Programs made of arrays and the entry-by-entry operations on them: `+`,
+// `-`, `*` and `/` of arrays of one shape, scaling by numbers, unary minus,
+// the math functions of one array (or of an array and a number), and the
+// reductions back to numbers (`norm`, `dot`, `@`, indexing). Shapes are a few
+// fixed ones, dimensions are tracked (a small palette of `m` and `s`
+// exponents, so `*`, `/`, `sqrt` and `cbrt` move them around), and every
+// program type-checks by construction. Some programs are risky on purpose:
+// zeros, negatives, and entries near the ends of the `f64` range make
+// overflow, division by zero and math domain errors happen at some entries.
+// Bindings are reused (so the optimizer fuses the single-use trees and
+// leaves the shared ones), a `for` loop feeds an array back into itself, and
+// a function or two of arrays are defined and called. About one program in
+// four has a vector of several hundred entries, long enough for the native
+// kernels.
+
+/// Exponents of `m` and `s`.
+type AD = (i8, i8);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum AShape {
+    V3,
+    V5,
+    M23,
+    /// A vector of `Ar::long` entries.
+    Long,
+}
+
+impl AShape {
+    fn is_vector(self) -> bool {
+        self != AShape::M23
+    }
+}
+
+#[derive(Clone, Debug)]
+struct AVar {
+    name: String,
+    shape: AShape,
+    ad: AD,
+}
+
+#[derive(Clone, Debug)]
+struct SVar {
+    name: String,
+    ad: AD,
+}
+
+#[derive(Clone, Debug)]
+struct AFn {
+    name: String,
+    params: Vec<(AShape, AD)>,
+    ret: (AShape, AD),
+}
+
+struct Ar<'a> {
+    c: Choices<'a>,
+    out: String,
+    ind: usize,
+    vars: Vec<AVar>,
+    svars: Vec<SVar>,
+    fns: Vec<AFn>,
+    /// Percent of numbers that are risky (huge, tiny, zero).
+    risk: usize,
+    counter: usize,
+    /// The length of `AShape::Long`, or 0 when the program has none.
+    long: usize,
+    /// Inside a function body: the module's bindings are not visible.
+    in_fn: bool,
+}
+
+/// Dimensions that have a plain spelling in an annotation.
+const NICE: &[AD] = &[(0, 0), (1, 0), (2, 0), (0, 1), (1, -1), (0, 2), (1, 1)];
+/// Every dimension an expression may have.
+const EXP_LIMIT: i8 = 6;
+
+fn ad_add(a: AD, b: AD) -> AD {
+    (a.0 + b.0, a.1 + b.1)
+}
+
+fn ad_sub(a: AD, b: AD) -> AD {
+    (a.0 - b.0, a.1 - b.1)
+}
+
+fn ad_in_range(a: AD) -> bool {
+    a.0.abs() <= EXP_LIMIT && a.1.abs() <= EXP_LIMIT
+}
+
+fn ad_is_zero(a: AD) -> bool {
+    a == (0, 0)
+}
+
+/// The unit as a literal writes it: `m^2*s^-1`.
+fn ad_unit(a: AD) -> String {
+    let part = |name: &str, e: i8| match e {
+        0 => None,
+        1 => Some(name.to_string()),
+        e => Some(format!("{name}^{e}")),
+    };
+    [part("m", a.0), part("s", a.1)]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("*")
+}
+
+/// The unit as an annotation writes it (only for the `NICE` dimensions).
+fn ad_annotation(a: AD) -> String {
+    match a {
+        (0, 0) => String::new(),
+        (1, 0) => " m".into(),
+        (2, 0) => " m^2".into(),
+        (0, 1) => " s".into(),
+        (1, -1) => " m/s".into(),
+        (0, 2) => " s^2".into(),
+        (1, 1) => " m*s".into(),
+        _ => unreachable!("not a nice dimension"),
+    }
+}
+
+impl Ar<'_> {
+    fn line(&mut self, s: &str) {
+        for _ in 0..self.ind {
+            self.out.push_str("    ");
+        }
+        self.out.push_str(s);
+        self.out.push('\n');
+    }
+
+    fn fresh(&mut self, prefix: &str) -> String {
+        self.counter += 1;
+        format!("{prefix}{}", self.counter)
+    }
+
+    fn shape_text(&self, s: AShape) -> String {
+        match s {
+            AShape::V3 => "Vector[3]".into(),
+            AShape::V5 => "Vector[5]".into(),
+            AShape::M23 => "Matrix[2, 3]".into(),
+            AShape::Long => format!("Vector[{}]", self.long),
+        }
+    }
+
+    fn any_shape(&mut self) -> AShape {
+        if self.long > 0 && self.c.chance(35) {
+            return AShape::Long;
+        }
+        *self.c.pick(&[AShape::V3, AShape::V5, AShape::M23])
+    }
+
+    fn any_ad(&mut self) -> AD {
+        NICE[self.c.weighted(&[40, 25, 10, 10, 8, 4, 3])]
+    }
+
+    // ----- numbers -----
+
+    /// A number with the unit of `ad`, as source text (not parenthesized).
+    fn number(&mut self, ad: AD) -> String {
+        let n = match self.c.weighted(&[40, 8, 20, 8, 4]) {
+            0 => {
+                if self.c.chance(self.risk / 2 + 2) {
+                    "0".to_string()
+                } else {
+                    (1 + self.c.below(9)).to_string()
+                }
+            }
+            1 => self.c.pick(&["10", "12", "100", "255", "1000"]).to_string(),
+            2 => self
+                .c
+                .pick(&[
+                    "0.5", "2.5", "0.25", "1.5", "3.14", "0.1", "9.81", "0.75", "2.0", "0.3", "1.0",
+                ])
+                .to_string(),
+            3 => self
+                .c
+                .pick(&["1e3", "2.5e-2", "1e-3", "1e15", "1e-5"])
+                .to_string(),
+            _ => {
+                if self.c.chance(self.risk) {
+                    self.c
+                        .pick(&[
+                            "1e150", "1e200", "1e300", "1e-300", "1e-200", "1e100", "1e154",
+                        ])
+                        .to_string()
+                } else {
+                    (1 + self.c.below(5)).to_string()
+                }
+            }
+        };
+        let n = if self.c.chance(if self.risk == 0 { 10 } else { 30 }) {
+            format!("-{n}")
+        } else {
+            n
+        };
+        if ad_is_zero(ad) {
+            n
+        } else {
+            format!("{n} {}", ad_unit(ad))
+        }
+    }
+
+    /// An array literal of shape `s` with the unit of `ad`.
+    fn literal(&mut self, s: AShape, ad: AD) -> String {
+        match s {
+            AShape::V3 | AShape::V5 => {
+                let n = if s == AShape::V3 { 3 } else { 5 };
+                let es: Vec<String> = (0..n).map(|_| self.number(ad)).collect();
+                format!("[{}]", es.join(", "))
+            }
+            AShape::M23 => {
+                let rows: Vec<String> = (0..2)
+                    .map(|_| {
+                        let es: Vec<String> = (0..3).map(|_| self.number(ad)).collect();
+                        format!("[{}]", es.join(", "))
+                    })
+                    .collect();
+                format!("[{}]", rows.join(", "))
+            }
+            AShape::Long => {
+                // A few numbers, cycled: a long literal without a long stream.
+                let base: Vec<String> = (0..7).map(|_| self.number(ad)).collect();
+                let es: Vec<&str> = (0..self.long).map(|i| base[i * 5 % 7].as_str()).collect();
+                format!("[{}]", es.join(", "))
+            }
+        }
+    }
+
+    /// A number expression of dimension `ad`.
+    fn scalar(&mut self, ad: AD, depth: u32) -> String {
+        let pool: Vec<String> = self
+            .svars
+            .iter()
+            .filter(|v| v.ad == ad)
+            .map(|v| v.name.clone())
+            .collect();
+        let pool = if self.in_fn { Vec::new() } else { pool };
+        match self.c.weighted(&[45, 30, if depth > 0 { 25 } else { 0 }]) {
+            0 if !pool.is_empty() => self.c.pick(&pool).clone(),
+            0 | 1 => {
+                let n = self.number(ad);
+                if ad_is_zero(ad) && !n.starts_with('-') {
+                    n
+                } else {
+                    format!("({n})")
+                }
+            }
+            _ => self.reduction(ad, depth - 1),
+        }
+    }
+
+    /// A number computed from arrays: `norm`, `dot`, `@`, an entry.
+    fn reduction(&mut self, ad: AD, depth: u32) -> String {
+        match self.c.weighted(&[3, 3, 2, 3]) {
+            0 => {
+                let s = self.any_shape();
+                format!("norm({})", self.array(s, ad, depth))
+            }
+            1 | 2 => {
+                // `dot` and `@` of two vectors of one length, dimensions
+                // adding up to `ad`.
+                let s = self.vector_shape();
+                let d1 = self.any_ad();
+                let d2 = ad_sub(ad, d1);
+                if !ad_in_range(d2) {
+                    return self.number_parenthesized(ad);
+                }
+                let (a, b) = (self.array(s, d1, depth), self.array(s, d2, depth));
+                if self.c.chance(50) {
+                    format!("dot({a}, {b})")
+                } else {
+                    format!("({a} @ {b})")
+                }
+            }
+            _ => {
+                let s = self.any_shape();
+                let e = self.array(s, ad, depth);
+                let index = match s {
+                    AShape::V3 => format!("[{}]", self.c.below(3)),
+                    AShape::V5 => format!("[{}]", self.c.below(5)),
+                    AShape::M23 => format!("[{}, {}]", self.c.below(2), self.c.below(3)),
+                    AShape::Long => format!("[{}]", self.c.below(self.long)),
+                };
+                format!("({e}){index}")
+            }
+        }
+    }
+
+    fn number_parenthesized(&mut self, ad: AD) -> String {
+        let n = self.number(ad);
+        format!("({n})")
+    }
+
+    fn vector_shape(&mut self) -> AShape {
+        if self.long > 0 && self.c.chance(30) {
+            return AShape::Long;
+        }
+        *self.c.pick(&[AShape::V3, AShape::V5])
+    }
+
+    // ----- array expressions -----
+
+    fn leaf(&mut self, s: AShape, ad: AD) -> String {
+        let pool: Vec<String> = self
+            .vars
+            .iter()
+            .filter(|v| v.shape == s && v.ad == ad)
+            .map(|v| v.name.clone())
+            .collect();
+        if !pool.is_empty() && self.c.chance(85) {
+            return self.c.pick(&pool).clone();
+        }
+        // A call of a function that returns this type.
+        let calls: Vec<AFn> = self
+            .fns
+            .iter()
+            .filter(|f| f.ret == (s, ad))
+            .cloned()
+            .collect();
+        if !calls.is_empty() && self.c.chance(50) {
+            let f = self.c.pick(&calls).clone();
+            let args: Vec<String> = f
+                .params
+                .iter()
+                .map(|&(ps, pad)| self.leaf_or_literal(ps, pad))
+                .collect();
+            return format!("{}({})", f.name, args.join(", "));
+        }
+        self.literal(s, ad)
+    }
+
+    fn leaf_or_literal(&mut self, s: AShape, ad: AD) -> String {
+        let pool: Vec<String> = self
+            .vars
+            .iter()
+            .filter(|v| v.shape == s && v.ad == ad)
+            .map(|v| v.name.clone())
+            .collect();
+        if !pool.is_empty() && self.c.chance(80) {
+            self.c.pick(&pool).clone()
+        } else {
+            self.literal(s, ad)
+        }
+    }
+
+    /// An array expression of shape `s` and dimension `ad`.
+    fn array(&mut self, s: AShape, ad: AD, depth: u32) -> String {
+        self.array_e(s, ad, depth).s_or_paren()
+    }
+
+    fn array_e(&mut self, s: AShape, ad: AD, depth: u32) -> E {
+        if depth == 0 || self.c.chance(12) {
+            return atom(self.leaf(s, ad));
+        }
+        let d = depth - 1;
+        match self.c.weighted(&[3, 3, 4, 3, 4, 1, 6, 5]) {
+            // `a + b`, `a - b`
+            0 => {
+                let sym = if self.c.chance(50) { "+" } else { "-" };
+                let (a, b) = (self.array_e(s, ad, d), self.array_e(s, ad, d));
+                E {
+                    s: format!("{} {sym} {}", at(a, 5), at(b, 6)),
+                    p: 5,
+                }
+            }
+            // `a * b`: dimensions add up
+            1 | 2 => {
+                let d1 = self.any_ad();
+                let d2 = ad_sub(ad, d1);
+                if !ad_in_range(d2) {
+                    return atom(self.leaf(s, ad));
+                }
+                let (a, b) = (self.array_e(s, d1, d), self.array_e(s, d2, d));
+                E {
+                    s: format!("{} * {}", at(a, 6), at(b, 7)),
+                    p: 6,
+                }
+            }
+            // `a / b`
+            3 => {
+                let d2 = self.any_ad();
+                let d1 = ad_add(ad, d2);
+                if !ad_in_range(d1) {
+                    return atom(self.leaf(s, ad));
+                }
+                let (a, b) = (self.array_e(s, d1, d), self.array_e(s, d2, d));
+                E {
+                    s: format!("{} / {}", at(a, 6), at(b, 7)),
+                    p: 6,
+                }
+            }
+            // a number scales an array
+            4 => {
+                let k = self.any_ad();
+                match self.c.below(3) {
+                    0 => {
+                        let kd = ad_sub(ad, k);
+                        if !ad_in_range(kd) {
+                            return atom(self.leaf(s, ad));
+                        }
+                        let (x, a) = (self.scalar(kd, d), self.array_e(s, k, d));
+                        E {
+                            s: format!("{x} * {}", at(a, 7)),
+                            p: 6,
+                        }
+                    }
+                    1 => {
+                        let kd = ad_sub(ad, k);
+                        if !ad_in_range(kd) {
+                            return atom(self.leaf(s, ad));
+                        }
+                        let (a, x) = (self.array_e(s, k, d), self.scalar(kd, d));
+                        E {
+                            s: format!("{} * {x}", at(a, 6)),
+                            p: 6,
+                        }
+                    }
+                    _ => {
+                        let ka = ad_add(ad, k);
+                        if !ad_in_range(ka) {
+                            return atom(self.leaf(s, ad));
+                        }
+                        let (a, x) = (self.array_e(s, ka, d), self.scalar(k, d));
+                        E {
+                            s: format!("{} / {x}", at(a, 6)),
+                            p: 6,
+                        }
+                    }
+                }
+            }
+            // `-a`
+            5 => {
+                let a = self.array_e(s, ad, d);
+                E {
+                    s: format!("-{}", at(a, 7)),
+                    p: 7,
+                }
+            }
+            // a function of one array
+            6 => self.math1(s, ad, d),
+            // a function of two
+            _ => self.math2(s, ad, d),
+        }
+    }
+
+    fn guarded(&mut self, s: AShape, ad: AD, d: u32, guard: &str) -> String {
+        let a = self.array(s, ad, d);
+        if self.c.chance(100 - self.risk.min(60)) {
+            format!("{guard}({a})")
+        } else {
+            a
+        }
+    }
+
+    fn math1(&mut self, s: AShape, ad: AD, d: u32) -> E {
+        // The functions whose result has dimension `ad`.
+        let mut options: Vec<&str> = vec!["abs"];
+        if ad_in_range((ad.0 * 2, ad.1 * 2)) {
+            options.push("sqrt");
+        }
+        if ad_in_range((ad.0 * 3, ad.1 * 3)) {
+            options.push("cbrt");
+        }
+        if ad_is_zero(ad) {
+            options.extend([
+                "sign", "exp", "log", "log10", "log2", "sin", "cos", "tan", "asin", "acos", "atan",
+                "floor", "ceil", "round", "expm1", "log1p", "sinh", "cosh", "tanh", "asinh",
+                "acosh", "atanh", "erf",
+            ]);
+        }
+        let f = *self.c.pick(&options);
+        let text = match f {
+            "abs" => {
+                let a = self.array(s, ad, d);
+                format!("abs({a})")
+            }
+            "sqrt" => {
+                let arg = self.guarded(s, (ad.0 * 2, ad.1 * 2), d, "abs");
+                format!("sqrt({arg})")
+            }
+            "cbrt" => {
+                let a = self.array(s, (ad.0 * 3, ad.1 * 3), d);
+                format!("cbrt({a})")
+            }
+            // Any dimension in, a plain number out.
+            "sign" => {
+                let k = self.any_ad();
+                let a = self.array(s, k, d);
+                format!("sign({a})")
+            }
+            "log" | "log10" | "log2" | "log1p" => {
+                let arg = self.guarded(s, ad, d, "abs");
+                format!("{f}({arg})")
+            }
+            "asin" | "acos" | "atanh" => {
+                let arg = self.guarded(s, ad, d, "tanh");
+                format!("{f}({arg})")
+            }
+            "acosh" => {
+                let a = self.array(s, ad, d);
+                if self.c.chance(90) {
+                    format!("acosh(cosh(tanh({a})))")
+                } else {
+                    format!("acosh({a})")
+                }
+            }
+            "exp" | "expm1" | "sinh" | "cosh" => {
+                let arg = self.guarded(s, ad, d, "tanh");
+                format!("{f}({arg})")
+            }
+            _ => {
+                let a = self.array(s, ad, d);
+                format!("{f}({a})")
+            }
+        };
+        atom(text)
+    }
+
+    fn math2(&mut self, s: AShape, ad: AD, d: u32) -> E {
+        let f = if ad_is_zero(ad) {
+            *self.c.pick(&["atan2", "hypot", "min", "max"])
+        } else {
+            *self.c.pick(&["hypot", "min", "max"])
+        };
+        // `atan2` takes any common dimension and gives a plain number; the
+        // others keep the dimension.
+        let common = if f == "atan2" { self.any_ad() } else { ad };
+        // At least one argument is an array; the other may be a number.
+        let (a, b) = match self.c.weighted(&[6, 2, 2]) {
+            0 => (self.array(s, common, d), self.array(s, common, d)),
+            1 => (self.array(s, common, d), self.scalar(common, d)),
+            _ => (self.scalar(common, d), self.array(s, common, d)),
+        };
+        atom(format!("{f}({a}, {b})"))
+    }
+
+    // ----- statements -----
+
+    fn print_line(&mut self) {
+        let mut parts = Vec::new();
+        for _ in 0..1 + self.c.below(3) {
+            if self.c.chance(75) && !self.vars.is_empty() {
+                let i = self.c.below(self.vars.len());
+                let v = &self.vars[i];
+                // A long vector prints as its length-independent summary.
+                if v.shape == AShape::Long && self.c.chance(80) {
+                    parts.push(format!("{}[{}]", v.name, 1));
+                } else {
+                    parts.push(v.name.clone());
+                }
+            } else {
+                let s = self.any_shape();
+                let ad = self.any_ad();
+                let e = self.array(s, ad, 2);
+                if s == AShape::Long {
+                    parts.push(format!("norm({e})"));
+                } else {
+                    parts.push(e);
+                }
+            }
+        }
+        let text = format!("print({})", parts.join(", "));
+        self.line(&text);
+    }
+
+    fn bind_array(&mut self) {
+        let s = self.any_shape();
+        let ad = self.any_ad();
+        let depth = 1 + self.c.below(4) as u32;
+        let e = self.array(s, ad, depth);
+        let name = self.fresh("a");
+        self.line(&format!("{name} = {e}"));
+        self.vars.push(AVar { name, shape: s, ad });
+    }
+
+    fn bind_scalar(&mut self) {
+        let ad = self.any_ad();
+        let e = self.scalar(ad, 2);
+        let name = self.fresh("k");
+        self.line(&format!("{name} = {e}"));
+        self.svars.push(SVar {
+            name: name.clone(),
+            ad,
+        });
+        if self.c.chance(50) {
+            self.line(&format!("print({name})"));
+        }
+    }
+
+    /// A loop that feeds an array back into itself.
+    fn loop_stmt(&mut self) {
+        if self.vars.is_empty() {
+            return;
+        }
+        let i = self.c.below(self.vars.len());
+        let (name, s, ad) = (
+            self.vars[i].name.clone(),
+            self.vars[i].shape,
+            self.vars[i].ad,
+        );
+        let n = 1 + self.c.below(5);
+        let counter = self.fresh("i");
+        self.line(&format!("for {counter} in range({n}):"));
+        self.ind += 1;
+        for _ in 0..1 + self.c.below(2) {
+            let depth = 2 + self.c.below(2) as u32;
+            let e = self.array(s, ad, depth);
+            self.line(&format!("{name} = {e}"));
+        }
+        if self.c.chance(30) {
+            self.line(&format!("print({name}[0])"));
+        }
+        self.ind -= 1;
+    }
+
+    /// `def f(p0: Vector[3] m, ...) -> Vector[3] m: return <expression>`.
+    fn function(&mut self) {
+        let nparams = 1 + self.c.below(3);
+        let mut params = Vec::new();
+        for _ in 0..nparams {
+            let s = self.any_shape();
+            let ad = *self.c.pick(NICE);
+            params.push((s, ad));
+        }
+        let ret = (params[0].0, *self.c.pick(NICE));
+        let name = self.fresh("f");
+        let text: Vec<String> = params
+            .iter()
+            .enumerate()
+            .map(|(i, &(s, ad))| format!("p{i}: {}{}", self.shape_text(s), ad_annotation(ad)))
+            .collect();
+        self.line(&format!(
+            "def {name}({}) -> {}{}:",
+            text.join(", "),
+            self.shape_text(ret.0),
+            ad_annotation(ret.1)
+        ));
+        // The body sees its parameters and the functions defined before.
+        let saved = std::mem::take(&mut self.vars);
+        let saved_scalars = std::mem::take(&mut self.svars);
+        self.in_fn = true;
+        for (i, &(s, ad)) in params.iter().enumerate() {
+            self.vars.push(AVar {
+                name: format!("p{i}"),
+                shape: s,
+                ad,
+            });
+        }
+        self.ind += 1;
+        let depth = 2 + self.c.below(3) as u32;
+        let e = self.array(ret.0, ret.1, depth);
+        self.line(&format!("return {e}"));
+        self.ind -= 1;
+        self.in_fn = false;
+        self.vars = saved;
+        self.svars = saved_scalars;
+        self.fns.push(AFn { name, params, ret });
+    }
+}
+
+impl E {
+    /// The text, parenthesized unless it is an atom: for places that take a
+    /// whole expression but where the caller does not track binding
+    /// strength (function arguments and statements never need it, but
+    /// operands do).
+    fn s_or_paren(self) -> String {
+        if self.p >= 9 {
+            self.s
+        } else {
+            format!("({})", self.s)
+        }
+    }
+}
+
+/// A program of arrays and the entry-by-entry operations on them, from
+/// `data` (see the section comment above).
+pub fn generate_arrays(data: &[u8]) -> String {
+    let mut c = Choices::new(data);
+    let risk = *c.pick(&[0, 0, 0, 3, 8, 20, 45]);
+    let long = if c.chance(28) { 520 + c.below(180) } else { 0 };
+    let mut g = Ar {
+        c,
+        out: String::new(),
+        ind: 0,
+        vars: Vec::new(),
+        svars: Vec::new(),
+        fns: Vec::new(),
+        risk,
+        counter: 0,
+        long,
+        in_fn: false,
+    };
+    // Some scalars first, then the arrays the expressions start from.
+    for _ in 0..g.c.below(3) {
+        g.bind_scalar();
+    }
+    for _ in 0..2 + g.c.below(4) {
+        let s = g.any_shape();
+        let ad = g.any_ad();
+        let lit = g.literal(s, ad);
+        let name = g.fresh("a");
+        g.line(&format!("{name} = {lit}"));
+        g.vars.push(AVar { name, shape: s, ad });
+    }
+    if g.long > 0 && !g.vars.iter().any(|v| v.shape == AShape::Long) {
+        let ad = g.any_ad();
+        let lit = g.literal(AShape::Long, ad);
+        let name = g.fresh("a");
+        g.line(&format!("{name} = {lit}"));
+        g.vars.push(AVar {
+            name,
+            shape: AShape::Long,
+            ad,
+        });
+    }
+    let mut budget = 3 + g.c.below(12) as i32;
+    while budget > 0 && !g.c.exhausted() {
+        budget -= 1;
+        match g.c.weighted(&[40, 8, 12, 6, 6]) {
+            0 => g.bind_array(),
+            1 => g.bind_scalar(),
+            2 => g.print_line(),
+            3 => g.loop_stmt(),
+            _ => g.function(),
+        }
+    }
+    // The final state.
+    let last: Vec<String> = g
+        .vars
+        .iter()
+        .rev()
+        .take(4)
+        .map(|v| {
+            if v.shape == AShape::Long {
+                format!("norm({})", v.name)
+            } else {
+                v.name.clone()
+            }
+        })
+        .collect();
+    if !last.is_empty() {
+        g.line(&format!("print({})", last.join(", ")));
     }
     g.out
 }

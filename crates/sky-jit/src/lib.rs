@@ -57,6 +57,7 @@ pub mod kernel;
 pub mod kernel_rt;
 mod module;
 mod runtime;
+pub mod tuning;
 /// A JIT builder for `isa` whose code and data live in **one** region of
 /// `reserve` bytes, reserved up front (untouched pages cost no memory).
 ///

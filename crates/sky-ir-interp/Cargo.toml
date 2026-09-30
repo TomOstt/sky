@@ -12,10 +12,12 @@ sky-diag = { path = "../sky-diag" }
 sky-interp = { path = "../sky-interp" }
 sky-jit = { path = "../sky-jit" }
 sky-ir = { path = "../sky-ir" }
+sky-tune = { path = "../sky-tune" }
 sky-units = { path = "../sky-units" }
 rayon = "1"
 
 [dev-dependencies]
+sky-hw = { path = "../sky-hw" }
 sky-derive = { path = "../sky-derive" }
 sky-opt = { path = "../sky-opt" }
 proptest = { version = "1", default-features = false, features = ["std"] }

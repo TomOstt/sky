@@ -1220,8 +1220,11 @@ pub(crate) struct KernelEntry {
 
 /// Elements a `fused` operation runs interpreted before its body is
 /// compiled: compiling costs about what interpreting this many does (the
-/// SIR interpreter's threshold, `JitOptions::DEFAULT_THRESHOLD`).
-const KERNEL_THRESHOLD: usize = 512;
+/// SIR interpreter's threshold, `JitOptions::DEFAULT_THRESHOLD`; 512 unless
+/// `sky tune` found another, see [`crate::tuning`]).
+fn kernel_threshold() -> usize {
+    crate::tuning::kernel_threshold()
+}
 
 /// A compiled kernel for `op` if one pays, run on the operands: its result
 /// and error are the loop's below (see `crate::kernel`). `None`: run the loop.
@@ -1257,7 +1260,7 @@ fn fused_native(
     let entry = kernels.entry(op as *const OpData as usize).or_default();
     if entry.sigs != sigs {
         entry.interpreted = entry.interpreted.saturating_add(count);
-        if entry.interpreted < KERNEL_THRESHOLD {
+        if entry.interpreted < kernel_threshold() {
             return None;
         }
         entry.kernel = compile_kernel(func, op, &sigs).ok();

@@ -324,7 +324,7 @@ fn the_environment_turns_native_kernels_off_and_sets_the_threshold() {
         default,
         JitOptions {
             enabled: true,
-            min_elements: JitOptions::DEFAULT_THRESHOLD
+            min_elements: sky_jit::tuning::kernel_threshold()
         }
     );
     for off in ["off", "OFF", " 0 ", "false", "no"] {
@@ -337,6 +337,6 @@ fn the_environment_turns_native_kernels_off_and_sets_the_threshold() {
     assert_eq!(JitOptions::from_vars(None, Some(" 77 ")).min_elements, 77);
     assert_eq!(
         JitOptions::from_vars(None, Some("many")).min_elements,
-        JitOptions::DEFAULT_THRESHOLD
+        sky_jit::tuning::kernel_threshold()
     );
 }

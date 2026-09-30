@@ -467,12 +467,24 @@ pub(crate) fn call_par(
     out: &mut dyn Write,
     cfg: &Config,
 ) -> R<Vec<Value>> {
+    call_par_jit(module, name, args, out, cfg, JitOptions::default())
+}
+
+/// [`call_par`] with the native-kernel options chosen.
+pub(crate) fn call_par_jit(
+    module: &Module,
+    name: &str,
+    args: Vec<Value>,
+    out: &mut dyn Write,
+    cfg: &Config,
+    jit: JitOptions,
+) -> R<Vec<Value>> {
     let rt = ParRt::new(module, cfg);
     let mut m = Machine::new(
         module,
         out,
         StackMeter::new(),
-        JitOptions::default(),
+        jit,
         rt.as_ref(),
         life_table(module),
     );

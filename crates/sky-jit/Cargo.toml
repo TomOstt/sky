@@ -13,6 +13,7 @@ sky-ir = { path = "../sky-ir" }
 sky-interp = { path = "../sky-interp" }
 sky-types = { path = "../sky-types" }
 sky-units = { path = "../sky-units" }
+sky-tune = { path = "../sky-tune" }
 # `x86` and `arm64` are code generators for targets other than the host:
 # `sky build --target=...` writes objects for either from any machine.
 cranelift-codegen = { version = "0.121.2", features = ["x86", "arm64"] }

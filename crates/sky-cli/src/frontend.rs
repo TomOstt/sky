@@ -55,7 +55,7 @@ impl FrontEnd {
 /// first edition-dependent rule has one place to read it, and no phase can
 /// forget to ask.
 pub fn analyze(src: &str, env: Env, explain: bool, edition: Edition) -> FrontEnd {
-    analyze_ir(src, env, explain, false, edition)
+    analyze_ir(src, env, explain, false, false, edition)
 }
 
 /// [`analyze`], and with `explain` or `emit_ir`, also lowers a program the
@@ -64,11 +64,16 @@ pub fn analyze(src: &str, env: Env, explain: bool, edition: Edition) -> FrontEnd
 /// notes in source order; with `emit_ir`, [`FrontEnd::ir`] keeps the text of
 /// every stage. A program that cannot be lowered is not an error here:
 /// [`FrontEnd::ir`] says why.
+///
+/// With `budgets` (`sky check`), the `accuracy` statements are checked by the
+/// roundoff analysis (see [`crate::accuracy`]), and with `explain` too the
+/// accuracy of printed values.
 pub fn analyze_ir(
     src: &str,
     env: Env,
     explain: bool,
     emit_ir: bool,
+    budgets: bool,
     _edition: Edition,
 ) -> FrontEnd {
     let mut ir_out = None;
@@ -98,6 +103,15 @@ pub fn analyze_ir(
                     ir_out = Some(outcome);
                 }
                 diagnostics.extend(checked.diagnostics.iter().cloned());
+                if budgets && !checked.has_errors() {
+                    diagnostics.extend(crate::accuracy::diagnostics(
+                        &module,
+                        src,
+                        &checked,
+                        &checked.diagnostics,
+                        explain,
+                    ));
+                }
                 if explain {
                     diagnostics.extend(checked.ode_notes.iter().cloned());
                     diagnostics.extend(checked.rewrites.iter().map(|r| r.to_diagnostic(src)));

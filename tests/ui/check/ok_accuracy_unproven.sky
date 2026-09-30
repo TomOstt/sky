@@ -1,0 +1,6 @@
+# log(1 + x) for a tiny x: the sum rounds away most of x, and the analysis
+# cannot say how much accuracy is left.
+x = 1e-10
+z = log(1 + x)
+accuracy z within 1e-12
+print(z)

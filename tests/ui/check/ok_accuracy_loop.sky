@@ -1,0 +1,9 @@
+# A loop whose trip count depends on an input: nothing bounds the error.
+def total(n: Scalar) -> Scalar:
+    s = 0.1
+    i = 0
+    while i < n:
+        s = s + 0.1
+        i = i + 1
+    accuracy s within 1e-9
+    return s

@@ -28,6 +28,12 @@ tests/ir/exact.sky:11:9: note: [ALG-010] `sqrt(5) / sqrt(5)` is rewritten to `1`
    = note: applied by the `egraph` pass
    = note: because x / x is exactly 1 in IEEE arithmetic for every finite nonzero x; the exactness analysis proved x is not zero, and x itself cannot fail, since the rewrite stops evaluating it
 
+tests/ir/exact.sky:13:1: note: printed value of `0.1 + 0.2` is accurate to within 9.3e-17 relative
+   |
+13 | print(1/3 + 1/6, 0.1 + 0.2)
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: a proven bound on the rounding error against the exact real result (roundoff analysis)
+
 tests/ir/exact.sky:13:7: note: [FOLD-FLOAT-001] `1 / 3` is rewritten to `0.3333333333333333`
    |
 13 | print(1/3 + 1/6, 0.1 + 0.2)

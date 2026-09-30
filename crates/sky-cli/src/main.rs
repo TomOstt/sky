@@ -6,6 +6,7 @@ use sky_diag::{display_safe, SourceFile};
 use sky_project::{Project, SystemIdentity};
 use sky_syntax::Edition;
 
+mod accuracy;
 mod frontend;
 mod ir;
 mod repl;
@@ -255,6 +256,7 @@ fn check_source(
         sky_types::Env::with_prelude(),
         opts.explain,
         opts.emit_ir.is_some(),
+        true,
         edition,
     );
     // Pass the source unchanged: spans are byte offsets into it, and the

@@ -1,0 +1,6 @@
+tests/ui/check/err_accuracy_within.sky:5:12: error: expected `within` after `accuracy x`, found float literal `1e-6`
+  |
+5 | accuracy x 1e-6
+  |            ^^^^
+  | -------- this declares an accuracy budget
+  = help: write `accuracy x within 1e-12` (a relative error) or `accuracy x within 2 mm` (an absolute one)

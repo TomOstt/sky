@@ -1,0 +1,5 @@
+# `accuracy` and `within` are contextual: both are ordinary names elsewhere.
+accuracy = 2
+within = accuracy + 1
+x = within * 3
+accuracy x 1e-6

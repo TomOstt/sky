@@ -1,0 +1,5 @@
+# The flagship cancellation: for a large x the subtraction leaves nothing.
+x = 1e8
+y = sqrt(x^2 + 1) - x
+accuracy y within 1e-12
+print(y)

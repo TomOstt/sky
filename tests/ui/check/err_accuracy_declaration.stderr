@@ -1,0 +1,34 @@
+tests/ui/check/err_accuracy_declaration.sky:5:10: error: cannot find `nothing` in this scope
+  |
+5 | accuracy nothing within 1e-6
+  |          ^^^^^^^ not defined
+
+tests/ui/check/err_accuracy_declaration.sky:6:10: error: `accuracy` applies to a number, but `v` is a vector
+  |
+6 | accuracy v within 1e-6
+  |          ^ not a single number
+  = note: v0.1 states an error budget for one number at a time; declare it for an entry (`accuracy x0 within 1e-12` after `x0 = v[0]`)
+
+tests/ui/check/err_accuracy_declaration.sky:7:10: error: `accuracy` applies to a number, but `flag` is a Bool
+  |
+7 | accuracy flag within 1e-6
+  |          ^^^^ this is a Bool
+
+tests/ui/check/err_accuracy_declaration.sky:9:19: error: the tolerance is a length, but `t` is a time
+  |
+9 | accuracy t within 2 m
+  |                   ^^^ this is length
+  |          - this is time
+  = help: an absolute error is in the unit of the value; write a plain number for a relative one
+
+tests/ui/check/err_accuracy_declaration.sky:10:19: error: the tolerance must be positive
+   |
+10 | accuracy t within 0
+   |                   ^ zero or negative
+   = note: a budget of zero asks for an exact result, which floating point does not promise
+
+tests/ui/check/err_accuracy_declaration.sky:11:19: error: the tolerance must be a number literal
+   |
+11 | accuracy t within v
+   |                   ^ not a number literal
+   = help: write a relative error as `1e-12`, or an absolute one with a unit, `2 mm`

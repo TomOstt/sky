@@ -719,6 +719,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "sky-hw"
+version = "0.0.1"
+
+[[package]]
 name = "sky-interp"
 version = "0.0.1"
 dependencies = [
@@ -737,6 +741,7 @@ dependencies = [
  "sky-ast",
  "sky-diag",
  "sky-syntax",
+ "sky-tune",
  "sky-types",
  "sky-units",
 ]
@@ -750,6 +755,7 @@ dependencies = [
  "sky-interp",
  "sky-ir",
  "sky-jit",
+ "sky-tune",
  "sky-units",
 ]
 
@@ -766,6 +772,7 @@ dependencies = [
  "sky-diag",
  "sky-interp",
  "sky-ir",
+ "sky-tune",
  "sky-types",
  "sky-units",
  "target-lexicon",
@@ -776,6 +783,7 @@ name = "sky-linalg"
 version = "0.0.1"
 dependencies = [
  "rayon",
+ "sky-tune",
 ]
 
 [[package]]
@@ -826,6 +834,13 @@ version = "0.0.1"
 dependencies = [
  "sky-diag",
  "unicode-ident",
+]
+
+[[package]]
+name = "sky-tune"
+version = "0.0.1"
+dependencies = [
+ "sky-hw",
 ]
 
 [[package]]

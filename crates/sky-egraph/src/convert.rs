@@ -66,8 +66,7 @@ pub(crate) fn rewrite_function(
     // values but never changes what an existing value is, so the table
     // stays valid for every segment.
     let facts = exact::analyze(func);
-    for b in 0..func.blocks.len() {
-        let block = BlockId(b as u32);
+    for block in reachable_blocks(func) {
         // A `fused` body is opaque: its `neg` means `0 - x` (see `OpKind::Fused`).
         let owner = func.block(block).parent.and_then(|r| func.region(r).parent);
         if owner.is_some_and(|o| func.op(o).kind == OpKind::Fused) {
@@ -88,10 +87,35 @@ pub(crate) fn rewrite_function(
     (rewrites, reports)
 }
 
+/// The blocks of `func` that its body reaches, in arena order. The arena also
+/// holds blocks no region owns any more: `fold` inlines the taken arm of an
+/// `if` by moving its operations into the parent block, and leaves the arm's
+/// block behind still listing them. Rewriting such a block would rewrite the
+/// live operations through a list nobody reads, and leave the values it made
+/// undefined.
+fn reachable_blocks(func: &Function) -> Vec<BlockId> {
+    let mut seen = vec![false; func.blocks.len()];
+    let mut stack = vec![func.body];
+    while let Some(r) = stack.pop() {
+        for &b in &func.region(r).blocks {
+            if std::mem::replace(&mut seen[b.index()], true) {
+                continue;
+            }
+            for &o in &func.block(b).ops {
+                stack.extend(func.op(o).regions.iter().copied());
+            }
+        }
+    }
+    (0..func.blocks.len())
+        .filter(|&i| seen[i])
+        .map(|i| BlockId(i as u32))
+        .collect()
+}
+
 fn use_counts(func: &Function) -> Vec<u32> {
     let mut uses = vec![0u32; func.values.len()];
-    for block in &func.blocks {
-        for op in &block.ops {
+    for block in reachable_blocks(func) {
+        for op in &func.block(block).ops {
             for v in &func.op(*op).operands {
                 if let Some(n) = uses.get_mut(v.index()) {
                     *n += 1;

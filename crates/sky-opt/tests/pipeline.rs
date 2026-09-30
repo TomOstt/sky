@@ -365,6 +365,31 @@ fn a_result_the_checker_could_not_type_is_not_folded_to_a_constant() {
     }
 }
 
+/// `fold` inlines the taken arm of an `if` on a constant, leaving the arm's
+/// block in the arena, still listing the operations that moved. The e-graph
+/// pass rewrote every block of the arena, that one too: it made the new
+/// values for the operations through the list nobody reads, and redirected
+/// the live uses to them, undefined.
+#[test]
+fn the_egraph_leaves_alone_the_block_of_an_if_that_fold_inlined() {
+    let src = [
+        "val2 = 1_0.5 hm^3*t/day^3/K / (abs(k_B) + 0.5 cm^2*g/min^2/kK) * (k_B * 4 s^3*K/m^3) * ((m_e + 3 kg) * 6 mg^-2)",
+        "ω3 = 12 h + 1 s + 6 s / (abs(val2) + 0.5) - 1 m^4*kg^2/s^3/K^2 / (abs(k_B) + 3.14 m^2*kg/s^2/K) / (abs(m_e * 6 m^2/s^2/K) + 3.14 mm^2*kg/h^2/mK)",
+        "def f4(p5: Scalar, π: mg, p6: Scalar):",
+        "    x7 = -4.35e-320 cm*kg^2/cs^2 / (abs(-6 mN) + 1 nm*μg/cs^2)",
+        "    (abs(9) + 3.14)^-(1/2) >= 0",
+        "    x7 = m_e + x7 - (abs(5 Mg^3) + 5 cg^3)^(1/3)",
+        "    if k_B ≤ 100 μm^2*kg/cs^2/kK:",
+        "        x8 = (ω3 - ω3 >= 0 ns or (x7 if 3 mN >= 4e0 hm*μg/yr^2 else 5e-324 cg) ≥ (abs(0.3 kg^(3/2)) + 5 kg^(3/2))^(2/3)) or not (false or 3.14 km/h^2 >= 3 m/s^2)",
+        "f4(1, 2 mg, 3)",
+        "",
+    ]
+    .join("\n");
+    let src = src.as_str();
+    let (o, _) = same_before_and_after(src);
+    assert_eq!(o.error, None);
+}
+
 // ----- exactness: what the analysis lets the passes do -----
 
 const EXACT_SRC: &str = "def halve(x: m) -> m:\n    spare = x / 2\n    return x * 0.5\n\

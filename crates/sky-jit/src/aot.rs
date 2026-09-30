@@ -298,6 +298,9 @@ impl Image {
                 sites,
                 // `sky build` compiles reproducible numerics only.
                 relaxed: false,
+                // An executable runs on one thread: what it was built to do
+                // never depends on the machine it runs on.
+                par: sky_ir::parallel::Config::sequential(),
             }),
             extra,
         })

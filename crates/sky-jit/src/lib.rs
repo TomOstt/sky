@@ -10,6 +10,11 @@
 //!   --engine=native`, and `--emit=clif`.
 //! * `kernel.rs`: compiled `fused` elementwise kernels, callable on their
 //!   own (the SIR interpreter uses them for large arrays) and from `module`.
+//! * `par.rs`: threads for native code: the pool, and the elementwise array
+//!   operations that run on it. A big `fused` kernel runs in deterministic
+//!   chunks (`kernel::Kernel::run_par`) and so does a big elementwise array
+//!   operation, under the same [`sky_ir::parallel::Config`] and with the same
+//!   results and errors as on one thread.
 //! * `runtime.rs`: the `extern "C"` functions native code calls (math
 //!   functions through `sky_interp::math::apply`, array operations, errors),
 //!   so native results are bit-identical to the interpreters'. They are
@@ -56,6 +61,7 @@ mod icache;
 pub mod kernel;
 pub mod kernel_rt;
 mod module;
+pub mod par;
 mod runtime;
 pub mod tuning;
 /// A JIT builder for `isa` whose code and data live in **one** region of
@@ -87,7 +93,7 @@ pub(crate) const KERNEL_ARENA_BYTES: usize = 16 << 20;
 pub mod smoke;
 
 pub use module::{
-    compile, compile_with, compile_with_slp, emit_clif, emit_clif_with, emit_clif_with_slp,
-    fused_sums, CompileError, Compiled, RunFailure, SkipWriter, Slp,
+    compile, compile_par, compile_with, compile_with_slp, emit_clif, emit_clif_with,
+    emit_clif_with_slp, fused_sums, CompileError, Compiled, RunFailure, SkipWriter, Slp,
 };
 pub use sky_interp::linalg::Numerics;

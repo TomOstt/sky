@@ -74,6 +74,36 @@
 //!   a cache line, and a `Vec<f64>` is only guaranteed 8-byte alignment.
 //! * Calls of math functions are scalar calls, lane by lane.
 //!
+//! # Threads
+//!
+//! [`Kernel::run_par`] and [`Kernel::run_alloc_par`] split a big array into
+//! the deterministic chunks of `sky_ir::parallel::Config::chunks` and run the
+//! compiled loop on each chunk on the rayon pool, for the same kernels the SIR
+//! interpreter splits ([`Kernel::splits`]). Why that is sound, and why it
+//! cannot change a result:
+//!
+//! * **The compiled function is safe to call from several threads at once.**
+//!   It is pure: it has no global or static data, no state that outlives a
+//!   call, reads only the pointers it is given, writes only through the
+//!   output pointer it is given, and the only function it calls,
+//!   `kernel_rt::math`, is a pure function of its arguments. Its code is
+//!   finalized, executable and never written again. Chunks write disjoint
+//!   ranges of the output and only read the inputs, so there is no data race
+//!   (`unsafe impl Sync for Kernel` argues the rest).
+//! * **Chunking cannot change a value.** An element is computed from the same
+//!   elements of the inputs whichever chunk it falls in (there are no
+//!   reductions), by the same IEEE instructions (a chunk's tail runs the
+//!   scalar loop, which computes what a lane does), so the bits are those of a
+//!   sequential run.
+//! * **Chunking cannot change an error.** Each chunk collects the same
+//!   "non-finite" bit; a chunk that set it runs the reference path on its own
+//!   elements, which reports its failing operation with the lowest index and
+//!   that operation's error at its lowest failing element. The kernel's error
+//!   is the smallest operation index, and among equal indices the lowest chunk:
+//!   exactly the element and operation one reference run over all the
+//!   elements reports (see `Kernel::run_alloc_par`), so it is the same error
+//!   on every thread count, whichever chunk finishes first.
+//!
 //! # Unsafe code
 //!
 //! This is the module that calls the compiled code (the only `unsafe` in the
@@ -93,9 +123,11 @@ use cranelift_codegen::isa::OwnedTargetIsa;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
 use cranelift_module::{Linkage, Module};
+use rayon::prelude::*;
 use sky_diag::Span;
 use sky_interp::arith::{arith, ArithOp};
 use sky_interp::{RuntimeError, Value};
+use sky_ir::parallel::Config;
 use sky_ir::{Function, OpData, OpKind, Type, ValueId};
 use sky_units::{Dimension, MathFn};
 
@@ -166,6 +198,18 @@ impl Default for Options {
         }
     }
 }
+
+/// A pointer the chunks of a parallel run write through, each to its own
+/// range.
+struct SendPtr(*mut f64);
+
+// SAFETY: the pointer is only used by `Kernel::run_chunks`, which gives each
+// chunk a disjoint range of what it points to and waits for all of them
+// before the pointer's owner can use the memory again.
+unsafe impl Send for SendPtr {}
+// SAFETY: as above: sharing the pointer between the chunks' closures only
+// lets each compute the address of its own range.
+unsafe impl Sync for SendPtr {}
 
 /// One operand's data for [`Kernel::run`].
 #[derive(Clone, Copy, Debug)]
@@ -1056,6 +1100,27 @@ pub struct Kernel {
     options: Options,
 }
 
+// SAFETY: a `&Kernel` is used from several threads at once by
+// [`Kernel::run_par`], and that is sound because everything a shared
+// reference can reach is either immutable data or read-only code:
+//
+// * `entry` is a function pointer into finalized, executable, never
+//   modified memory. The compiled function is pure: it reads only the input
+//   pointers it is given and the `n` elements it is told to, writes only
+//   through the output pointer it is given, keeps no state between calls
+//   (no global, no static, no stack slot outlives the call), and calls
+//   only `kernel_rt::math`, which is a pure function of its arguments
+//   (`sky_interp::math::apply` builds its values on the caller's stack and
+//   reads no thread-local or global state). Two calls on disjoint output
+//   ranges therefore cannot interfere, and calls may run on any thread.
+// * `reference` (the body for the error path) and `options`, `out_dim` are
+//   plain data, only ever read through `&self`; the reference path builds
+//   its own value table per call.
+// * `module`, the one field that is not plain data (it owns the code's
+//   memory and is not `Sync`), is only touched by `Drop`, which has `&mut
+//   self`, so no other reference exists then.
+unsafe impl Sync for Kernel {}
+
 impl fmt::Debug for Kernel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Kernel")
@@ -1176,6 +1241,197 @@ impl Kernel {
         Ok(out)
     }
 
+    /// Whether [`Kernel::run_par`] splits `n` elements under `cfg`: the run
+    /// has more than one thread, and the work (the elements times the
+    /// operations of the body) reaches [`Config::fused_work`]. The same test
+    /// the SIR interpreter makes (`Machine::fused_op`), so both engines split
+    /// the same kernels.
+    pub fn splits(&self, n: usize, cfg: &Config) -> bool {
+        cfg.is_parallel() && n >= 2 && n.saturating_mul(self.reference.ops.len()) >= cfg.fused_work
+    }
+
+    /// [`Kernel::run`], in chunks on the pool when [`Kernel::splits`] says
+    /// so; the result and the error are the same either way, and for every
+    /// thread count (see [`Kernel::run_alloc_par`]).
+    pub fn run_par(
+        &self,
+        inputs: &[Input<'_>],
+        out: &mut [f64],
+        cfg: &Config,
+    ) -> Result<(), RuntimeError> {
+        if !self.splits(out.len(), cfg) {
+            return self.run(inputs, out);
+        }
+        // SAFETY: `out` is a live unique slice, so it is valid for
+        // `out.len()` writes, and (by the borrow rules the caller's inputs
+        // obey) it does not overlap an input.
+        unsafe { self.run_chunks(inputs, out.len(), out.as_mut_ptr(), cfg) }
+    }
+
+    /// [`Kernel::run_alloc`], in chunks on the pool when [`Kernel::splits`]
+    /// says so.
+    ///
+    /// # Chunks
+    ///
+    /// The `n` elements are cut into `cfg.chunks(n)` contiguous ranges, a
+    /// function of `n` and the configuration only (the ranges the SIR
+    /// interpreter uses). Each range runs the compiled loop, which is a pure
+    /// function of its input and output ranges, on the rayon pool; then
+    ///
+    /// * if no range saw a non-finite value, the output is complete: each
+    ///   element is the same machine computation it is in a whole-array run,
+    ///   and no element depends on another, so the bits cannot depend on the
+    ///   cut;
+    /// * otherwise each range that did runs the reference path on its own
+    ///   elements, which gives its failing body operation with the lowest
+    ///   index and that operation's error at the range's lowest failing
+    ///   element (or, if the alarm was false, its data). The kernel's error is
+    ///   the smallest operation index, and among ranges that fail the same
+    ///   operation the lowest range: the failure a single reference run over
+    ///   all the elements reports (the earliest failing operation in body
+    ///   order, at its lowest failing element), whatever the cut and
+    ///   whichever thread finished first.
+    pub fn run_alloc_par(
+        &self,
+        inputs: &[Input<'_>],
+        n: usize,
+        cfg: &Config,
+    ) -> Result<Vec<f64>, RuntimeError> {
+        if !self.splits(n, cfg) {
+            return self.run_alloc(inputs, n);
+        }
+        let mut out: Vec<f64> = Vec::with_capacity(n);
+        // SAFETY: `out` has capacity for `n` elements, so `as_mut_ptr` is
+        // valid for `n` writes of `f64`, and nothing else uses it meanwhile.
+        unsafe { self.run_chunks(inputs, n, out.as_mut_ptr(), cfg)? };
+        // SAFETY: on success every chunk wrote all of its elements (the
+        // compiled loop, or the copy of the reference path's data), so all
+        // `n` are initialized (every bit pattern is a valid `f64`).
+        unsafe { out.set_len(n) };
+        Ok(out)
+    }
+
+    /// The chunked run behind [`Kernel::run_par`] and
+    /// [`Kernel::run_alloc_par`]. On `Ok` all `n` elements at `out` are
+    /// written.
+    ///
+    /// # Safety
+    ///
+    /// `out` must be valid for writes of `n` `f64`s and not overlap an input,
+    /// and nothing else may use it until this returns.
+    unsafe fn run_chunks(
+        &self,
+        inputs: &[Input<'_>],
+        n: usize,
+        out: *mut f64,
+        cfg: &Config,
+    ) -> Result<(), RuntimeError> {
+        // The operands are checked whole, so that a chunk's slice of an
+        // input cannot be out of range (and a malformed call is reported
+        // as the sequential run reports it).
+        self.check_inputs(inputs, n)?;
+        let Some(pool) = crate::par::pool_for(cfg.threads) else {
+            // No threads could be started: the whole array, here.
+            // SAFETY: the caller's contract.
+            if unsafe { self.fast(inputs, n, out)? } {
+                let data = self.reference.run(inputs, n)?;
+                // SAFETY: `data` has `n` elements and `out` is valid for
+                // `n` writes; a `Vec` does not overlap the caller's buffer.
+                unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), out, n) };
+            }
+            return Ok(());
+        };
+        let len = crate::par::chunk_len(cfg, n);
+        let chunks = n.div_ceil(len);
+        let dest = SendPtr(out);
+        let dest = &dest;
+        let results: Vec<Result<Option<(usize, RuntimeError)>, RuntimeError>> =
+            pool.install(|| {
+                (0..chunks)
+                    .into_par_iter()
+                    .map(|c| {
+                        let (lo, hi) = (c * len, ((c + 1) * len).min(n));
+                        let part: Vec<Input<'_>> = inputs
+                            .iter()
+                            .map(|input| match input {
+                                Input::Array(a) => Input::Array(&a[lo..hi]),
+                                Input::Scalar(x) => Input::Scalar(*x),
+                            })
+                            .collect();
+                        // SAFETY: the chunks' ranges `lo..hi` are disjoint and
+                        // inside `0..n`, so this chunk is the only user of
+                        // `out[lo..hi]`, which is valid for writes by the
+                        // caller's contract and does not overlap the inputs.
+                        let here = unsafe { dest.0.add(lo) };
+                        // SAFETY: as above; `here` is valid for `hi - lo`
+                        // writes.
+                        let failed = unsafe { self.fast(&part, hi - lo, here)? };
+                        if !failed {
+                            return Ok(None);
+                        }
+                        match self.reference.run_indexed(&part, hi - lo) {
+                            Ok(data) => {
+                                // A false alarm: the data is the result.
+                                // SAFETY: `data` has `hi - lo` elements, and
+                                // `here` is valid for that many writes (a
+                                // `Vec` of our own cannot overlap it).
+                                unsafe {
+                                    std::ptr::copy_nonoverlapping(data.as_ptr(), here, hi - lo)
+                                };
+                                Ok(None)
+                            }
+                            Err(failure) => Ok(Some(failure)),
+                        }
+                    })
+                    .collect()
+            });
+        // A chunk's own error (a malformed call) is the lowest chunk's.
+        let mut failures = Vec::new();
+        for r in results {
+            failures.push(r?);
+        }
+        // Smallest failing operation, then lowest chunk: the tuple order.
+        let first = failures
+            .iter()
+            .enumerate()
+            .filter_map(|(c, f)| f.as_ref().map(|(k, _)| (*k, c)))
+            .min();
+        match first.and_then(|(_, c)| failures.swap_remove(c)) {
+            Some((_, e)) => Err(e),
+            None => Ok(()),
+        }
+    }
+
+    /// The checks [`Kernel::fast`] makes of its operands, for `n` elements,
+    /// without running anything.
+    fn check_inputs(&self, inputs: &[Input<'_>], n: usize) -> Result<(), RuntimeError> {
+        let span = self.reference.span;
+        let sigs = &self.reference.sigs;
+        if inputs.len() != sigs.len() {
+            return Err(RuntimeError::new(
+                format!(
+                    "malformed IR: a kernel for {} operands was run on {}",
+                    sigs.len(),
+                    inputs.len()
+                ),
+                span,
+            ));
+        }
+        for (input, sig) in inputs.iter().zip(sigs) {
+            match input {
+                Input::Array(a) if sig.array && a.len() >= n => {}
+                Input::Scalar(_) if !sig.array => {}
+                _ => {
+                    return Err(RuntimeError::new(
+                        "malformed IR: a kernel was run on operands of another shape",
+                        span,
+                    ))
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The compiled loop alone: `true` if it saw a non-finite value, which
     /// means an element fails (then `out` is not the result), `false` if
     /// `out` is the result.
@@ -1262,11 +1518,29 @@ impl Reference {
     /// on `Value`s: the result, or the error of the earliest failing
     /// operation.
     fn run(&self, inputs: &[Input<'_>], n: usize) -> Result<Vec<f64>, RuntimeError> {
-        let malformed = |what: &str| RuntimeError::new(format!("malformed IR: {what}"), self.span);
+        self.run_indexed(inputs, n).map_err(|(_, e)| e)
+    }
+
+    /// [`Reference::run`], and on a failure the index of the failing body
+    /// operation with the error: what a chunk of a parallel run reports, so
+    /// that the chunks' failures can be merged (`Kernel::run_chunks`). An
+    /// error that is not an operation's failure (a malformed body) has the
+    /// largest index, so a failing operation is always reported instead.
+    fn run_indexed(
+        &self,
+        inputs: &[Input<'_>],
+        n: usize,
+    ) -> Result<Vec<f64>, (usize, RuntimeError)> {
+        let malformed = |what: &str| {
+            (
+                usize::MAX,
+                RuntimeError::new(format!("malformed IR: {what}"), self.span),
+            )
+        };
         let mut vals: Vec<Option<Value>> = vec![None; self.values];
         let mut data = Vec::with_capacity(n);
         let mut limit = self.ops.len();
-        let mut failure: Option<RuntimeError> = None;
+        let mut failure: Option<(usize, RuntimeError)> = None;
         for i in 0..n {
             for ((arg, input), sig) in self.args.iter().zip(inputs).zip(&self.sigs) {
                 let x = match input {
@@ -1278,7 +1552,7 @@ impl Reference {
             let mut failed = false;
             for (k, (op, dim)) in self.ops[..limit].iter().enumerate() {
                 if let Err(e) = step(&mut vals, op, *dim, self.span) {
-                    (limit, failure, failed) = (k, Some(e), true);
+                    (limit, failure, failed) = (k, Some((k, e)), true);
                     break;
                 }
             }

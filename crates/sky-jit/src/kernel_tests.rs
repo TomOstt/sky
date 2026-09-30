@@ -840,3 +840,150 @@ fn a_product_rescued_by_its_addend_is_accepted_when_contracting() {
     assert_eq!(got[0], 2e154_f64.mul_add(1e154, -1.7e308));
     assert!(got[0] > 2.9e307 && got[0] < 3.1e307, "{}", got[0]);
 }
+
+// ----- chunks on the pool -----
+
+/// The configurations a parallel run must agree with the sequential one
+/// under: every thread count, the smallest chunks, odd chunk sizes, the
+/// defaults.
+fn par_configs() -> Vec<Config> {
+    let mut all = Vec::new();
+    for t in [2, 3, 4, 8] {
+        all.push(Config::eager(t));
+        all.push(Config::with_threads(t));
+        all.push(Config {
+            chunk_min: 3,
+            ..Config::eager(t)
+        });
+        all.push(Config {
+            chunk_min: 7,
+            ..Config::eager(t)
+        });
+    }
+    all
+}
+
+/// The bits of a result, or the whole diagnostic of the error.
+fn outcome(r: Result<Vec<f64>, RuntimeError>) -> Result<Vec<u64>, String> {
+    r.map(|d| d.iter().map(|x| x.to_bits()).collect())
+        .map_err(|e| format!("{:?}", e.to_diagnostic()))
+}
+
+#[test]
+fn chunks_give_the_sequential_bits_and_error_on_random_bodies() {
+    let (mut ok, mut failed) = (0, 0);
+    for seed in 1..=120u64 {
+        let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        let body = random_body(&mut rng);
+        let m = module(&body);
+        let (f, op) = fused_of(&m);
+        let Ok(kernel) = compile_kernel_with(f, op, &SIGS, Options::default()) else {
+            continue;
+        };
+        // Lengths around chunk boundaries; some data fails in several chunks.
+        for n in [2, 9, 64, 257, 1000] {
+            let (xs, ys, s) = data(&mut rng, n);
+            let inputs = [Input::Array(&xs), Input::Array(&ys), Input::Scalar(s)];
+            let want = outcome(kernel.run_alloc(&inputs, n));
+            if want.is_ok() {
+                ok += 1;
+            } else {
+                failed += 1;
+            }
+            for cfg in par_configs() {
+                let got = outcome(kernel.run_alloc_par(&inputs, n, &cfg));
+                assert_eq!(got, want, "seed {seed}, n {n}, {cfg:?}\n{body}");
+                // The slice entry point is the same computation.
+                let mut out = vec![f64::NAN; n];
+                let got = kernel
+                    .run_par(&inputs, &mut out, &cfg)
+                    .map(|()| out.iter().map(|x| x.to_bits()).collect::<Vec<_>>())
+                    .map_err(|e| format!("{:?}", e.to_diagnostic()));
+                assert_eq!(got, want, "run_par: seed {seed}, n {n}, {cfg:?}\n{body}");
+            }
+        }
+    }
+    assert!(ok > 50 && failed > 50, "{ok} succeeded, {failed} failed");
+}
+
+#[test]
+fn the_failing_operation_first_in_the_body_wins_across_chunks() {
+    // The `mul` (span 10..15) comes before the `div` (20..25) in the body.
+    // The division fails at element 0, in the first chunk; the product only
+    // at the last element, in the last chunk. The body's first failing
+    // operation is reported (the `mul`), as in a sequential run.
+    let kernel = compile(
+        "      %t = mul %x, %y : num[1; ()] @ 10..15
+      %u = div %t, %s : num[1; ()] @ 20..25 (20..21, 22..23)
+      yield %u",
+        Options::default(),
+    );
+    let n = 640;
+    let mut xs = vec![1.0; n];
+    let mut ys = vec![1.0; n];
+    // Element 0: the product is finite, the division by `s = 0` fails.
+    xs[0] = 2.0;
+    // The last element: the product overflows.
+    xs[n - 1] = 1e200;
+    ys[n - 1] = 1e200;
+    let inputs = [Input::Array(&xs), Input::Array(&ys), Input::Scalar(0.0)];
+    let want = kernel.run_alloc(&inputs, n).unwrap_err().to_diagnostic();
+    assert_eq!(want.primary.span, Span::new(10, 15));
+    for cfg in par_configs() {
+        let got = kernel
+            .run_alloc_par(&inputs, n, &cfg)
+            .unwrap_err()
+            .to_diagnostic();
+        assert_eq!(got, want, "{cfg:?}");
+    }
+    // Without the overflow the division is the failure, at every thread
+    // count.
+    xs[n - 1] = 1.0;
+    ys[n - 1] = 1.0;
+    let inputs = [Input::Array(&xs), Input::Array(&ys), Input::Scalar(0.0)];
+    let want = kernel.run_alloc(&inputs, n).unwrap_err().to_diagnostic();
+    assert_eq!(want.message, "division by zero");
+    for cfg in par_configs() {
+        let got = kernel
+            .run_alloc_par(&inputs, n, &cfg)
+            .unwrap_err()
+            .to_diagnostic();
+        assert_eq!(got, want, "{cfg:?}");
+    }
+}
+
+#[test]
+fn a_run_under_the_threshold_or_on_one_thread_is_not_split() {
+    let kernel = compile(
+        "      %t = add %x, %y : num[1; ()]\n      yield %t",
+        Options::default(),
+    );
+    assert!(!kernel.splits(1_000_000, &Config::sequential()));
+    assert!(!kernel.splits(1, &Config::eager(4)));
+    assert!(!kernel.splits(100, &Config::with_threads(4)));
+    assert!(kernel.splits(4096, &Config::with_threads(4)));
+    assert!(kernel.splits(2, &Config::eager(2)));
+}
+
+#[test]
+fn a_chunked_run_on_the_wrong_operands_is_an_error_not_a_crash() {
+    let kernel = compile(
+        "      %t = add %x, %y : num[1; ()]\n      yield %t",
+        Options::default(),
+    );
+    let xs = vec![1.0; 100];
+    let short = vec![1.0; 10];
+    let cfg = Config::eager(4);
+    let e = kernel
+        .run_alloc_par(
+            &[Input::Array(&xs), Input::Array(&short), Input::Scalar(0.0)],
+            100,
+            &cfg,
+        )
+        .unwrap_err();
+    assert!(e.message.contains("malformed IR"), "{}", e.message);
+    let e = kernel
+        .run_alloc_par(&[Input::Array(&xs)], 100, &cfg)
+        .unwrap_err();
+    assert!(e.message.contains("malformed IR"), "{}", e.message);
+}

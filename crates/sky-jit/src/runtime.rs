@@ -69,6 +69,7 @@ use sky_interp::array::{self, Ix};
 use sky_interp::contract;
 use sky_interp::solve;
 use sky_interp::{RuntimeError, Value};
+use sky_ir::parallel::Config;
 use sky_ir::{BlockData, CmpOp, Function, Module, OpData, OpKind, RangePart, SliceAxis, Type};
 use sky_units::{Dimension, MathFn, Rational};
 
@@ -86,6 +87,9 @@ pub(crate) struct Program {
     pub sites: Vec<Site>,
     /// Relaxed numerics: kernels compiled while running fuse multiply-adds.
     pub relaxed: bool,
+    /// How many threads the run may use and from what sizes (see
+    /// `sky_ir::parallel`). One thread: everything runs on the caller's.
+    pub par: Config,
 }
 
 /// One entry of [`Program::sites`]: an operation of a function, or (`op ==
@@ -209,6 +213,7 @@ pub(crate) fn begin(program: Arc<Program>, out: &mut dyn Write) -> RunGuard {
         ))
     };
     let relaxed = program.relaxed;
+    let par = program.par.clone();
     STATE.with(|s| {
         *s.borrow_mut() = Some(State {
             program,
@@ -226,6 +231,7 @@ pub(crate) fn begin(program: Arc<Program>, out: &mut dyn Write) -> RunGuard {
             kernels: Kernels {
                 entries: HashMap::new(),
                 contract: relaxed,
+                par,
             },
             out,
         });
@@ -1037,6 +1043,20 @@ fn eval_op(
         })
     };
     let (l, r) = (op.operand_span(0), op.operand_span(1));
+    // A big elementwise operation runs in chunks on the pool, when the run
+    // has threads (`crate::par::elementwise`: the interpreters' cases, bits
+    // and error).
+    if kernels.par.is_parallel()
+        && matches!(
+            op.kind,
+            OpKind::Add | OpKind::Sub | OpKind::Mul | OpKind::Div | OpKind::Neg
+        )
+    {
+        let operands: Vec<&Value> = a.iter().map(Arg::get).collect();
+        if let Some(done) = crate::par::elementwise(&op.kind, &operands, s, &kernels.par) {
+            return done;
+        }
+    }
     match &op.kind {
         OpKind::Add => arith(ArithOp::Add, arg(0)?, arg(1)?, s, l, r),
         OpKind::Sub => arith(ArithOp::Sub, arg(0)?, arg(1)?, s, l, r),
@@ -1218,11 +1238,22 @@ fn slice(op: &OpData, a: &[Arg], axes: &[SliceAxis]) -> R<Value> {
 /// entry point a compiled kernel replaces.
 /// The kernels of a run: one entry per `fused` operation that ran often
 /// enough to be compiled.
-#[derive(Default)]
 pub(crate) struct Kernels {
     entries: HashMap<usize, KernelEntry>,
     /// Compile kernels with fused multiply-adds (relaxed numerics).
     contract: bool,
+    /// The threads a big kernel or elementwise operation may use.
+    par: Config,
+}
+
+impl Default for Kernels {
+    fn default() -> Self {
+        Kernels {
+            entries: HashMap::new(),
+            contract: false,
+            par: Config::sequential(),
+        }
+    }
 }
 
 /// What the run knows of one `fused` operation: the operand kinds its kernel
@@ -1250,9 +1281,11 @@ fn fused_native(
     func: &Function,
     a: &[Arg],
     count: usize,
+    body_len: usize,
     kernels: &mut Kernels,
 ) -> Option<R<(Vec<f64>, Dimension)>> {
     use crate::kernel::{compile_kernel_with, Input, InputSig, Options};
+    let par = kernels.par.clone();
     let mut sigs = Vec::with_capacity(a.len());
     let mut args = Vec::with_capacity(a.len());
     for input in a {
@@ -1280,7 +1313,11 @@ fn fused_native(
         .or_default();
     if entry.sigs != sigs {
         entry.interpreted = entry.interpreted.saturating_add(count);
-        if entry.interpreted < kernel_threshold() {
+        // A kernel big enough to be split across threads is compiled at
+        // once: interpreting that much work costs more than compiling.
+        let big =
+            par.is_parallel() && count >= 2 && count.saturating_mul(body_len) >= par.fused_work;
+        if entry.interpreted < kernel_threshold() && !big {
             return None;
         }
         let options = Options {
@@ -1293,7 +1330,7 @@ fn fused_native(
     let kernel = entry.kernel.as_ref()?;
     Some(
         kernel
-            .run_alloc(&args, count)
+            .run_alloc_par(&args, count, &par)
             .map(|data| (data, kernel.output_dim())),
     )
 }
@@ -1358,7 +1395,7 @@ fn fused(
         return Err(malformed("`fused` needs an array operand", s));
     };
     let count: usize = dims.iter().product();
-    if let Some(done) = fused_native(op, func, a, count, kernels) {
+    if let Some(done) = fused_native(op, func, a, count, body.len(), kernels) {
         let (data, dim) = done?;
         return Ok(Value::array(dims.clone(), data, dim));
     }

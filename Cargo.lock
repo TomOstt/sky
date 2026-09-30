@@ -1502,6 +1502,7 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "cranelift-object",
+ "rayon",
  "sky-diag",
  "sky-interp",
  "sky-ir",

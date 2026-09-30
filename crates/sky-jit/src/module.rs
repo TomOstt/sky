@@ -156,6 +156,7 @@ use sky_interp::arith::{ArithOp, MAX_CALL_DEPTH, STACK_BUDGET};
 use sky_interp::linalg::Numerics;
 use sky_interp::RuntimeError;
 use sky_ir::exact::{self, Analysis};
+use sky_ir::parallel::Config;
 use sky_ir::{
     BlockId, CmpOp, Function, MathFn, Module as SirModule, OpData, OpId, OpKind, Type, ValueId,
 };
@@ -368,7 +369,21 @@ pub fn compile_with_slp(
     numerics: Numerics,
     slp: Slp,
 ) -> Result<Compiled, CompileError> {
-    let built = build(module, false, numerics == Numerics::Relaxed, slp)?;
+    compile_par(module, numerics, slp, &Config::sequential())
+}
+
+/// [`compile_with_slp`] for a run that may use the threads `par` allows
+/// (`--threads=N`; see "Threads" below): big `fused` kernels and big
+/// elementwise array operations run in chunks on the pool, exactly as the
+/// SIR interpreter's do. With one thread (`par.threads == 1`) this is
+/// [`compile_with_slp`].
+pub fn compile_par(
+    module: &SirModule,
+    numerics: Numerics,
+    slp: Slp,
+    par: &Config,
+) -> Result<Compiled, CompileError> {
+    let built = build(module, false, numerics == Numerics::Relaxed, slp, par)?;
     let jit = built.jit;
     match (jit, built.main) {
         (Some(jit), Some(main)) => Ok(Compiled {
@@ -397,7 +412,14 @@ pub fn emit_clif_with_slp(
     numerics: Numerics,
     slp: Slp,
 ) -> Result<String, CompileError> {
-    Ok(build(module, true, numerics == Numerics::Relaxed, slp)?.clif)
+    Ok(build(
+        module,
+        true,
+        numerics == Numerics::Relaxed,
+        slp,
+        &Config::sequential(),
+    )?
+    .clif)
 }
 
 /// What [`build`] made.
@@ -500,7 +522,7 @@ pub(crate) struct Shared<'m> {
     slp: Slp,
 }
 
-fn build(module: &SirModule, emit: bool, relaxed: bool, slp: Slp) -> Res<Built> {
+fn build(module: &SirModule, emit: bool, relaxed: bool, slp: Slp, par: &Config) -> Res<Built> {
     precheck(module)?;
     let isa = crate::host_isa().map_err(|e| CompileError {
         message: format!("no code generator for this machine ({e})"),
@@ -528,6 +550,7 @@ fn build(module: &SirModule, emit: bool, relaxed: bool, slp: Slp) -> Res<Built> 
                 dims: Vec::new(),
                 sites: Vec::new(),
                 relaxed: false,
+                par: Config::sequential(),
             },
             main: None,
             clif,
@@ -551,6 +574,7 @@ fn build(module: &SirModule, emit: bool, relaxed: bool, slp: Slp) -> Res<Built> 
             dims: sh.dims,
             sites: sh.sites,
             relaxed,
+            par: par.clone(),
         },
         main: Some(main),
         clif,

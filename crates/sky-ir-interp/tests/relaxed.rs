@@ -20,6 +20,11 @@ fn render(d: &Diagnostic, src: &str) -> String {
     d.render_to_string(&SourceFile::new("test.sky", src))
 }
 
+/// The program as lowered, before any pass.
+fn lower_plain(src: &str) -> Module {
+    sky_lower::lower_source(src).unwrap_or_else(|e| panic!("does not lower:\n{src}\n{e}"))
+}
+
 fn lower(src: &str) -> Module {
     let mut ir =
         sky_lower::lower_source(src).unwrap_or_else(|e| panic!("does not lower:\n{src}\n{e}"));
@@ -65,6 +70,9 @@ fn host_fuses() -> bool {
 
 /// A loop-carried value keeps the optimizer from folding the arithmetic
 /// away (constants are folded with the interpreter's unfused operations).
+// Tested on the lowered SIR, before the optimizer: value numbering merges the
+// two equal products `e * (i + 1)` into one value with two uses, which is
+// then fused into neither sum.
 const FUSED_DIFFERS: &str = "\
 e = 1 / 1073741824
 t = 0
@@ -102,7 +110,7 @@ fn relaxed_native_code_fuses_a_product_into_its_sum() {
     if !host_fuses() {
         return;
     }
-    let m = lower(FUSED_DIFFERS);
+    let m = lower_plain(FUSED_DIFFERS);
     let clif = emit_clif_with(&m, Numerics::Relaxed).unwrap();
     assert!(clif.contains("fma"), "{clif}");
     // `e * k + 1`, `1 - e * k` and `a * b - 1`.
@@ -148,13 +156,13 @@ print(v)
 fn errors_are_the_same_kind_at_the_same_place() {
     let programs = [
         // The product overflows.
-        "x = 1e200\nprint(1)\nfor i in range(2):\n    y = x * x + i\n    print(y)\n",
+        "x = 1e200\nprint(1)\nfor i in range(2):\n    y = x * (x + i) + i\n    print(y)\n",
         // The sum overflows.
         "x = 1e308\nprint(1)\nfor i in range(2):\n    y = x * (i + 1) + x\n    print(y)\n",
         // Division by zero after a fusable pair.
         "x = 3\nfor i in range(2):\n    y = x * i + 1\n    print(y)\n    print(1 / (i - 1))\n",
         // Dimensions: a product of lengths is an area, added to an area.
-        "x = 1e200 m\nprint(1)\nfor i in range(2):\n    y = x * x + 1 m^2\n    print(y)\n",
+        "x = 1e200 m\nprint(1)\nfor i in range(2):\n    y = x * (x + i * 1 m) + 1 m^2\n    print(y)\n",
     ];
     for src in programs {
         let ir = lower(src);
@@ -195,4 +203,24 @@ for i in range(1):
     assert!(relaxed.failure.is_none(), "{relaxed:?}");
     let y: f64 = relaxed.stdout.trim().parse().unwrap();
     assert!(y > 2.9e307 && y < 3.1e307, "{y}");
+}
+
+/// Relaxed numerics and SLP together: a sum that fuses a deferred product is
+/// never paired into vector lanes (SLP would read the product before it is
+/// emitted: "used before it is defined"). With SLP forced on, the program
+/// still compiles, on the lowered and on the optimized SIR.
+#[test]
+fn fused_sums_and_vector_lanes_do_not_collide() {
+    for m in [lower_plain(FUSED_DIFFERS), lower(FUSED_DIFFERS)] {
+        for slp in [sky_jit::Slp::Off, sky_jit::Slp::Always] {
+            sky_jit::emit_clif_with_slp(&m, Numerics::Relaxed, slp)
+                .unwrap_or_else(|e| panic!("{slp:?}: {e}"));
+            // Compiled and dropped on the deep-stack thread (the code is not
+            // `Send`).
+            sky_ast::with_deep_stack(|| {
+                let compiled = sky_jit::compile_with_slp(&m, Numerics::Relaxed, slp);
+                assert!(compiled.is_ok(), "{slp:?}: {:?}", compiled.err());
+            });
+        }
+    }
 }

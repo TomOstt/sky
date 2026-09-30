@@ -1413,7 +1413,18 @@ impl<'a, 'm, M: ClModule> FnTx<'a, 'm, M> {
                 i += 1;
                 continue;
             }
-            if i + 1 < body.len() && self.scalar_pair(body[i], body[i + 1])? {
+            // A sum that reads a deferred product must be the fused one, so
+            // it is never offered to SLP (which would read the product as a
+            // value that was never emitted).
+            let reads_pending = |id: OpId| {
+                f.op(id)
+                    .operands
+                    .iter()
+                    .any(|v| self.pending.contains_key(v))
+            };
+            let pairable =
+                i + 1 < body.len() && !reads_pending(body[i]) && !reads_pending(body[i + 1]);
+            if pairable && self.scalar_pair(body[i], body[i + 1])? {
                 i += 2;
             } else {
                 self.op(body[i])?;

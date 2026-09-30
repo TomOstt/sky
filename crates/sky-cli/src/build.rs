@@ -338,7 +338,9 @@ fn linker_flags(target: &TargetInfo, host: &TargetInfo) -> Result<LinkerFlags, S
             pre.extend(["-Wl,-dead_strip", "-Wl,-x"].map(String::from));
             Ok(LinkerFlags {
                 pre,
-                post: Vec::new(),
+                // The runtime's relaxed-numerics kernels call Accelerate
+                // (BLAS/LAPACK), which every macOS has.
+                post: ["-framework", "Accelerate"].map(String::from).to_vec(),
             })
         }
         ("linux", "linux") if !cross_arch => Ok(LinkerFlags {

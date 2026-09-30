@@ -1,0 +1,47 @@
+tests/ir/powers.sky:6:10: note: [POW-CHAIN-001] `x^2` is rewritten to `x · x`
+  |
+6 |     p2 = x ^ 2
+  |          ^^^^^
+  = note: applied by the `powers` pass
+  = note: because the exponent 2 is a constant integer: x^2 = x · x
+  = note: because 1 multiplication, the fewest for 2: no shorter chain exists for an exponent up to 14
+  = note: because exact: these are the multiplications the interpreter's `powi` performs, in the same order, so every bit and the overflow error are the same
+
+tests/ir/powers.sky:7:10: note: [POW-CHAIN-001] `x^5` is rewritten to `x · x^4`
+  |
+7 |     p5 = x ^ 5
+  |          ^^^^^
+  = note: applied by the `powers` pass
+  = note: because the exponent 5 is a constant integer: x^2 = x · x, x^4 = x^2 · x^2, x^5 = x · x^4
+  = note: because 3 multiplications, the fewest for 5: no shorter chain exists for an exponent up to 14
+  = note: because exact: these are the multiplications the interpreter's `powi` performs, in the same order, so every bit and the overflow error are the same
+
+tests/ir/powers.sky:8:11: note: [POW-CHAIN-001] `x^14` is rewritten to `x^6 · x^8`
+  |
+8 |     p14 = x ^ 14
+  |           ^^^^^^
+  = note: applied by the `powers` pass
+  = note: because the exponent 14 is a constant integer: x^2 = x · x, x^4 = x^2 · x^2, x^6 = x^2 · x^4, x^8 = x^4 · x^4, x^14 = x^6 · x^8
+  = note: because 5 multiplications, the fewest for 14: no shorter chain exists for an exponent up to 14
+  = note: because exact: these are the multiplications the interpreter's `powi` performs, in the same order, so every bit and the overflow error are the same
+
+tests/ir/powers.sky:15:12: note: [POW-CHAIN-001] `l^3` is rewritten to `l · l^2`
+   |
+15 |     return l ^ 3
+   |            ^^^^^
+   = note: applied by the `powers` pass
+   = note: because the exponent 3 is a constant integer: l^2 = l · l, l^3 = l · l^2
+   = note: because 2 multiplications, the fewest for 3: no shorter chain exists for an exponent up to 14
+   = note: because exact: these are the multiplications the interpreter's `powi` performs, in the same order, so every bit and the overflow error are the same
+
+tests/ir/powers.sky:17:1: note: printed value of `powers(2)` is accurate to within 4.1e-15 relative
+   |
+17 | print(powers(2))
+   | ^^^^^^^^^^^^^^^^
+   = note: a proven bound on the rounding error against the exact real result (roundoff analysis)
+
+tests/ir/powers.sky:18:1: note: printed value of `volume(3 m)` is accurate to within 1.1e-15 relative
+   |
+18 | print(volume(3 m))
+   | ^^^^^^^^^^^^^^^^^^
+   = note: a proven bound on the rounding error against the exact real result (roundoff analysis)

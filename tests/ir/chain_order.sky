@@ -1,0 +1,11 @@
+# An unparenthesized `@` chain has no fixed association: the checker picks the
+# cheapest one from the shapes (here O(n^2) instead of O(n^3)), and `--explain`
+# says what it saved. Parentheses the user wrote are respected: `y` is
+# written in the O(n^3) order on purpose, so nothing is rewritten there.
+A: Matrix[500, 500]
+B: Matrix[500, 500]
+C: Matrix[500, 500]
+v: Vector[500]
+x = A @ B @ C @ v
+y = ((A @ B) @ C) @ v
+print(x, y)

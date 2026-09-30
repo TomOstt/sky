@@ -1,0 +1,75 @@
+tests/ir/solves.sky:12:6: note: [LA-CHAIN-001] `A⁻¹ @ b` is rewritten to `solve[lu](A, b)`
+   |
+12 | lu = A⁻¹ @ b
+   |      ^^^^^^^
+   = note: applied by the checker: the tree-walker and SIR both follow this choice
+   = note: A⁻¹ is Matrix[100,100], b is Vector[100]
+   = note: A is a general square matrix: LU with partial pivoting (A = P·L·U), then two triangular solves; A⁻¹ is never formed
+   = note: estimated cost: 4,020,000 flops as written, 686,667 flops after the rewrite, about 5.9x fewer
+   = note: not bit-identical to the written form: solving rounds differently from forming the inverse and multiplying, and is at least as accurate (spec, "Algorithm choice")
+
+tests/ir/solves.sky:13:9: note: [LA-CHAIN-001] `b @ inv(A)` is rewritten to `solve.right[lu](b, A)`
+   |
+13 | right = b @ inv(A)
+   |         ^^^^^^^^^^
+   = note: applied by the checker: the tree-walker and SIR both follow this choice
+   = note: b is Vector[100], A⁻¹ is Matrix[100,100]
+   = note: A is a general square matrix: LU with partial pivoting (A = P·L·U), then two triangular solves, applied transposed for `x @ A⁻¹`; A⁻¹ is never formed
+   = note: estimated cost: 4,020,000 flops as written, 686,667 flops after the rewrite, about 5.9x fewer
+   = note: not bit-identical to the written form: solving rounds differently from forming the inverse and multiplying, and is at least as accurate (spec, "Algorithm choice")
+
+tests/ir/solves.sky:14:8: note: [LA-CHAIN-001] `D⁻¹ @ b` is rewritten to `solve[diagonal](D, b)`
+   |
+14 | diag = D⁻¹ @ b
+   |        ^^^^^^^
+   = note: applied by the checker: the tree-walker and SIR both follow this choice
+   = note: D⁻¹ is Matrix[100,100], b is Vector[100]
+   = note: D is Diagonal: x = b / diag(D), one division per entry; D⁻¹ is never formed
+   = note: estimated cost: 4,020,000 flops as written, 100 flops after the rewrite, about 40,200x fewer
+   = note: not bit-identical to the written form: solving rounds differently from forming the inverse and multiplying, and is at least as accurate (spec, "Algorithm choice")
+
+tests/ir/solves.sky:15:8: note: [LA-CHAIN-001] `Q⁻¹ @ b` is rewritten to `Qᵀ @ b`
+   |
+15 | orth = Q⁻¹ @ b
+   |        ^^^^^^^
+   = note: applied by the checker: the tree-walker and SIR both follow this choice
+   = note: Q⁻¹ is Matrix[100,100], b is Vector[100]
+   = note: Q is Orthogonal (Qᵀ·Q = Q·Qᵀ = I), so Q⁻¹ is Qᵀ, exactly by the definition of the tag; the transpose is not materialized
+   = note: estimated cost: 4,020,000 flops as written, 20,000 flops after the rewrite, about 201x fewer
+   = note: not bit-identical to the written form: the transpose is exact, where a computed inverse carries rounding error, so the last digits can differ (spec, "Algorithm choice")
+
+tests/ir/solves.sky:15:8: note: [LA-TRANSPOSE-001] `Qᵀ @ b` is rewritten to `matmul[ta](Q, b)`
+   |
+15 | orth = Q⁻¹ @ b
+   |        ^^^^^^^
+   = note: applied by the `transposes` pass
+   = note: because the transposed operand is a matrix: `matmul[ta]` reads it transposed, so the 100·100 element copy that `transpose` makes is never made
+   = note: because exact: `matmul[ta]` is defined as the transpose followed by the product, so every bit and every error is the same; a kernel may read the operand with swapped strides
+   = note: because the flops are unchanged: 20,000
+
+tests/ir/solves.sky:16:8: note: `P⁻¹ @ b` is rewritten to a Cholesky solve
+   |
+16 | chol = P⁻¹ @ b
+   |        ^^^^^^^
+   |        - positive definite
+   = note: rewrite `P⁻¹ @ b` to a Cholesky solve: P is Matrix[100,100] and PositiveDefinite, b is Vector[100]. Factor P = L·Lᵀ (L lower-triangular), solve L·y = b, then Lᵀ·x = y. x = P⁻¹·b is Vector[100], and P⁻¹ is never formed.
+
+tests/ir/solves.sky:17:8: note: [LA-CHAIN-001] `A⁻¹ @ B⁻¹` is rewritten to `(B @ A)⁻¹`
+   |
+17 | pair = A⁻¹ @ B⁻¹
+   |        ^^^^^^^^^
+   = note: applied by the checker: the tree-walker and SIR both follow this choice
+   = note: A⁻¹ is Matrix[100,100], B⁻¹ is Matrix[100,100]
+   = note: A⁻¹ @ B⁻¹ is (B @ A)⁻¹: one product and one inverse instead of two inverses and a product
+   = note: estimated cost: 10,000,000 flops as written, 6,000,000 flops after the rewrite, about 1.7x fewer
+   = note: not bit-identical to the written form: one inverse of a product rounds differently from two inverses and a product (spec, "Algorithm choice")
+
+tests/ir/solves.sky:18:8: note: [LA-CHAIN-001] `A⁻¹ @ B` is rewritten to `solve[lu](A, B)`
+   |
+18 | many = A⁻¹ @ B
+   |        ^^^^^^^
+   = note: applied by the checker: the tree-walker and SIR both follow this choice
+   = note: A⁻¹ is Matrix[100,100], B is Matrix[100,100]
+   = note: A is a general square matrix: LU with partial pivoting (A = P·L·U), then two triangular solves; A⁻¹ is never formed
+   = note: estimated cost: 6,000,000 flops as written, 2,666,667 flops after the rewrite, about 2.2x fewer
+   = note: not bit-identical to the written form: solving rounds differently from forming the inverse and multiplying, and is at least as accurate (spec, "Algorithm choice")

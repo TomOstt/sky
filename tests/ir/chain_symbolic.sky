@@ -1,0 +1,13 @@
+# Symbolic shapes: the order is chosen only if it is provably no more expensive
+# for every N (arrays are never empty). Here `A @ (B @ v)` is 4·N² against
+# 2·N³ + 2·N², so it wins for every N. The second chain compares N·N·M against
+# N·M·K, which depends on N, M and K: it is left as written.
+A: Matrix[N, N]
+B: Matrix[N, N]
+v: Vector[N]
+x = A @ B @ v
+P: Matrix[N, M]
+Q: Matrix[M, K]
+R: Matrix[K, K]
+y = A @ P @ Q
+print(x, y)

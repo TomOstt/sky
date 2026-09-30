@@ -170,8 +170,13 @@ fn replay_a_source_file() {
             let one = match pass {
                 "fold" => PassManager::new().with(sky_opt::FoldPass::default()),
                 "egraph" => PassManager::new().with(sky_egraph::EgraphPass::default()),
+                "contracts" => PassManager::new().with(sky_opt::ContractsPass),
                 "dce" => PassManager::new().with(sky_opt::DcePass),
+                "powers" => PassManager::new().with(sky_opt::PowersPass),
                 "fuse" => PassManager::new().with(sky_opt::FusePass),
+                "transposes" => PassManager::new().with(sky_opt::TransposesPass),
+                "structure" => PassManager::new().with(sky_opt::StructurePass),
+                "algorithms" => PassManager::new().with(sky_opt::AlgorithmPass::default()),
                 _ => PassManager::new().with(sky_opt::CholeskyPass),
             };
             let _ = one.verify_each(false).run(&mut ir);

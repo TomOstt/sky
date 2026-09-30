@@ -1,0 +1,9 @@
+tests/ir/chain_symbolic.sky:8:5: note: [LA-CHAIN-001] `A @ B @ v` is rewritten to `A @ (B @ v)`
+  |
+8 | x = A @ B @ v
+  |     ^^^^^^^^^
+  = note: applied by the checker: the tree-walker and SIR both follow this choice
+  = note: A is Matrix[N,N], B is Matrix[N,N], v is Vector[N]
+  = note: an unparenthesized `@` chain has no fixed association: the compiler picks the cheapest (spec, "Algorithm choice"); write parentheses to force an order
+  = note: estimated cost: 2·N³ + 2·N² flops as written, 4·N² flops after the rewrite
+  = note: not bit-identical to the written form: products in another order round differently, within the error bound of any association (spec, "Algorithm choice")

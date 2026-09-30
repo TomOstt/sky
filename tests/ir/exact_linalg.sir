@@ -1,0 +1,15 @@
+sir edition 2026
+
+fn @<main>() -> () effects(io, fail) @ 0..503 {
+  %A = input "A" : num[1; (40, 30)] @ 278..295
+  %B = input "B" : num[1; (40, 20)] @ 296..313
+  %D = input "D" : num[1; (40, 40); {Symmetric, Diagonal}] @ 314..340
+  %E = input "E" : num[1; (20, 20); {Symmetric, Diagonal}] @ 341..367
+  %x = matmul[ta] %A, %B : num[1; (30, 20)] @ 372..380
+  %gram = matmul[ta,alg=syrk] %A, %A : num[1; (30, 30); {Symmetric}] @ 388..396
+  %outer = matmul[tb,alg=syrk] %A, %A : num[1; (40, 40); {Symmetric}] @ 405..413
+  %rows = diag.mul[left] %D, %B : num[1; (40, 20)] @ 444..449 (444..445, 448..449)
+  %cols = diag.mul[right] %B, %E : num[1; (40, 20)] @ 457..462 (457..458, 461..462)
+  print %x, %gram, %outer, %gram, %rows, %cols @ 463..502
+  return @ 0..503
+}

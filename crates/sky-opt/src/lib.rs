@@ -17,21 +17,37 @@
 //!   operation (one kernel, no temporary arrays).
 //! * [`cholesky`]: `A⁻¹ @ b` with a PositiveDefinite `A` becomes
 //!   `solve[cholesky](A, b)`.
+//! * [`powers`]: `x^n` for a constant integer `2 <= n <= 14` becomes the
+//!   multiplications the interpreter's `powi` performs, bit for bit.
+//! * [`transposes`], [`structure`] (module `linalg`): transposes that are
+//!   not materialized (`matmul[ta]`), Gram products, Diagonal scaling and
+//!   Symmetric transposes. All exact.
+//! * [`algorithms`]: records the algorithm class a policy chooses for each
+//!   `matmul`; the hook the kernel and tuning agents plug into.
 //! * [`default_pipeline`]: `fold`, then the e-graph (`sky-egraph`, under the
-//!   `Reproducible` contract), then `contracts`, then `dce`, then `fuse`,
-//!   then `cholesky`.
+//!   `Reproducible` contract), then `contracts`, then `dce`, then `powers`,
+//!   then `fuse`, then `cholesky`, then `transposes`, `structure` and
+//!   `algorithms`.
+//!
+//! The algorithm-choosing rewrites that change rounding (the order of an
+//! `@` chain, a solve instead of an inverse) are made by the checker
+//! (`sky_types::chain`), not here, so that the tree-walker follows the same
+//! choice. Everything in this crate is exact.
 //!
 //! The rule for all of them: the optimized program behaves exactly like the
 //! original under `sky_ir_interp`, including which error is reported where.
 
 #![forbid(unsafe_code)]
 
+pub mod algorithm;
 mod cholesky;
 mod contracts;
 mod dce;
 mod fold;
 mod fuse;
+mod linalg;
 pub mod pipeline;
+pub mod powers;
 mod rewrite;
 mod util;
 
@@ -52,13 +68,18 @@ mod tests;
 #[cfg(test)]
 mod testutil;
 
+pub use algorithm::{
+    algorithms, default_policy, MatMulPolicy, MatMulShape, ShapeClass, ALGORITHM_RULE,
+};
 pub use cholesky::{cholesky, cholesky_text, CHOLESKY_RULE};
 pub use contracts::{contract_headline, contract_rule, contracts};
 pub use dce::dce;
 pub use fold::{fold, fold_with, FoldMode};
 pub use fuse::{fuse, FUSE_RULE};
+pub use linalg::{structure, transposes, DIAGONAL_RULE, GRAM_RULE, SYMMETRIC_RULE, TRANSPOSE_RULE};
 pub use pipeline::{
-    default_passes, default_pipeline, CholeskyPass, ContractsPass, DcePass, FoldPass, FusePass,
-    DEFAULT_PASSES,
+    default_passes, default_pipeline, AlgorithmPass, CholeskyPass, ContractsPass, DcePass,
+    FoldPass, FusePass, PowersPass, StructurePass, TransposesPass, DEFAULT_PASSES,
 };
+pub use powers::{powers, POWER_RULE};
 pub use rewrite::Rewrite;

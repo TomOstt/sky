@@ -1,0 +1,17 @@
+tests/ir/transpose.sky:3:8: note: [LA-TRANSPOSE-001] `Aᵀ @ A` is rewritten to `matmul[ta](A, A)`
+  |
+3 | gram = Aᵀ @ A
+  |        ^^^^^^
+  = note: applied by the `transposes` pass
+  = note: because the transposed operand is a matrix: `matmul[ta]` reads it transposed, so the 2·3 element copy that `transpose` makes is never made
+  = note: because exact: `matmul[ta]` is defined as the transpose followed by the product, so every bit and every error is the same; a kernel may read the operand with swapped strides
+  = note: because the flops are unchanged: 36
+
+tests/ir/transpose.sky:3:8: note: [LA-GRAM-001] `Aᵀ @ A` is rewritten to `matmul[ta,alg=syrk](A, A)`
+  |
+3 | gram = Aᵀ @ A
+  |        ^^^^^^
+  = note: applied by the `structure` pass
+  = note: because A is multiplied by its own transpose: entries (i, j) and (j, i) sum the same products (`aₚᵢ·aₚⱼ` and `aₚⱼ·aₚᵢ`, and multiplication commutes) in the same order
+  = note: because one triangle is computed and mirrored: 24 flops instead of 36
+  = note: because exact: the result is bit for bit the general product's, and bitwise symmetric (its type gains the Symmetric tag)

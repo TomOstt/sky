@@ -1,0 +1,18 @@
+# `x^n` for a constant integer n from 2 to 14 becomes the multiplications
+# that `powi` performs, bit for bit (and the fewest possible). 15, negative
+# exponents and fractional ones are left as they are. A base with a unit
+# keeps its dimension through the chain: a length cubed is a volume.
+def powers(x: Scalar):
+    p2 = x ^ 2
+    p5 = x ^ 5
+    p14 = x ^ 14
+    p15 = x ^ 15
+    inverse_cube = x ^ -3
+    root = x ^ 0.5
+    return p2 + p5 + p14 + p15 + inverse_cube + root
+
+def volume(l: m):
+    return l ^ 3
+
+print(powers(2))
+print(volume(3 m))

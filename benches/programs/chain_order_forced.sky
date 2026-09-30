@@ -1,0 +1,12 @@
+# bench: N=500 quick=20
+# `chain_order` with the written association forced by parentheses:
+# `((A @ B) @ C) @ v` is two matrix-matrix products, O(n^3). Parentheses are
+# respected, so the compiler does not reorder it. Compare with `chain_order`.
+# The lines that build the matrices end in `# N` (see `chain_order`).
+N = 500
+A = identity(500) + identity(500)  # N
+B = identity(500) + identity(500)  # N
+C = identity(500) + identity(500)  # N
+v = A[0]
+w = ((A @ B) @ C) @ v
+print(w[0])

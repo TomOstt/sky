@@ -50,6 +50,14 @@ const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../benches/programs/matmul.sky"),
     ),
     (
+        "chain_order",
+        include_str!("../../../benches/programs/chain_order.sky"),
+    ),
+    (
+        "chain_order_forced",
+        include_str!("../../../benches/programs/chain_order_forced.sky"),
+    ),
+    (
         "cholesky",
         include_str!("../../../benches/programs/cholesky.sky"),
     ),
@@ -108,8 +116,17 @@ impl Program {
         let from = format!("N = {}", self.full);
         let to = format!("N = {}", self.quick);
         let mut out = String::with_capacity(self.source.len());
+        // An array's size must be a literal (`identity(500)`), so a line that
+        // ends in `# N` has its `(<full>)` swapped for `(<quick>)` as well.
+        let (paren_from, paren_to) = (format!("({})", self.full), format!("({})", self.quick));
         for line in self.source.lines() {
-            out.push_str(if line == from { &to } else { line });
+            if line == from {
+                out.push_str(&to);
+            } else if line.ends_with("# N") {
+                out.push_str(&line.replace(&paren_from, &paren_to));
+            } else {
+                out.push_str(line);
+            }
             out.push('\n');
         }
         out

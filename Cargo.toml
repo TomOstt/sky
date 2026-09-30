@@ -10,3 +10,22 @@ license = "Apache-2.0"
 # path-only dependencies between workspace crates.
 publish = false
 repository = "https://github.com/TomOstt/sky"
+
+# Cranelift compiles every program the native engine runs, in the tests too:
+# build it optimised even in dev and test builds (it is a dependency, so
+# debug info and assertions of the workspace crates are unaffected), or the
+# fuzz and differential tests spend minutes in the code generator.
+[profile.dev.package.cranelift-codegen]
+opt-level = 3
+[profile.dev.package.cranelift-frontend]
+opt-level = 3
+[profile.dev.package.cranelift-entity]
+opt-level = 3
+[profile.dev.package.cranelift-bforest]
+opt-level = 3
+[profile.dev.package.cranelift-jit]
+opt-level = 3
+[profile.dev.package.cranelift-module]
+opt-level = 3
+[profile.dev.package.regalloc2]
+opt-level = 3

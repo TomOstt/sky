@@ -14,6 +14,11 @@
 //!   functions through `sky_interp::math::apply`, array operations, errors),
 //!   so native results are bit-identical to the interpreters'.
 //!
+//! The whole-module engine's entry points are [`compile`] (a SIR module to
+//! machine code), [`Compiled::run`] and [`Compiled::run_or_rerun`], and
+//! [`emit_clif`] (the Cranelift IR as text). It behaves exactly like the SIR
+//! interpreter; `module.rs` says how.
+//!
 //! [`host_isa`] and [`smoke`] exist so every part starts from a toolchain
 //! known to work on the host.
 
@@ -38,4 +43,8 @@ pub fn host_isa() -> Result<OwnedTargetIsa, String> {
 mod icache;
 pub mod kernel;
 pub mod kernel_rt;
+mod module;
+mod runtime;
 pub mod smoke;
+
+pub use module::{compile, emit_clif, CompileError, Compiled, RunFailure, SkipWriter};

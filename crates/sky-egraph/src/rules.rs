@@ -16,6 +16,10 @@
 //! * [`RuleClass::Conditional`]: bit-identical *given a proven fact* the
 //!   matcher checks against the analysis (a tag, a sign, "cannot fail").
 //!   Always enabled; without the fact it does not fire.
+//! * [`RuleClass::Relaxed`]: equal over the reals and failing on the same
+//!   inputs up to overflow, but rounding differently (re-association,
+//!   distribution). Enabled under [`RewriteContract::Relaxed`] and
+//!   [`RewriteContract::Fast`], never by default.
 //! * [`RuleClass::RealOnly`]: equal over the reals, not in floating point
 //!   (rounding differs) and/or it removes an operation that could have
 //!   failed (`exp(log x)` with `x <= 0`, an overflow, a singular matrix).
@@ -49,7 +53,25 @@ use crate::RewriteContract;
 pub enum RuleClass {
     Exact,
     Conditional,
+    /// Changes only how floating point rounds; see [`RewriteContract::Relaxed`].
+    Relaxed,
     RealOnly,
+}
+
+impl RuleClass {
+    /// Whether a contract enables rules of this class.
+    pub fn enabled_by(self, contract: RewriteContract) -> bool {
+        match self {
+            RuleClass::Exact | RuleClass::Conditional => true,
+            RuleClass::Relaxed => contract != RewriteContract::Reproducible,
+            RuleClass::RealOnly => contract == RewriteContract::Fast,
+        }
+    }
+}
+
+/// The class of the rule with this id.
+pub(crate) fn class_of(id: &str) -> Option<RuleClass> {
+    RULES.iter().find(|r| r.info.id == id).map(|r| r.info.class)
 }
 
 /// A rule's public description.
@@ -86,7 +108,7 @@ pub(crate) fn rewrites(
 ) -> Vec<Rewrite<SkyNode, SkyAnalysis>> {
     RULES
         .iter()
-        .filter(|r| contract == RewriteContract::Fast || r.info.class != RuleClass::RealOnly)
+        .filter(|r| r.info.class.enabled_by(contract))
         .filter(|r| only.is_none_or(|ids| ids.iter().any(|i| i == r.info.id)))
         .map(|r| {
             Rewrite::new(
@@ -202,8 +224,8 @@ impl Applier<SkyNode, SkyAnalysis> for RuleApplier {
 // Matching helpers
 // ---------------------------------------------------------------------
 
-fn nodes(eg: &Graph, id: Id) -> Vec<SkyNode> {
-    eg[id].nodes.clone()
+fn nodes(eg: &Graph, id: Id) -> &[SkyNode] {
+    &eg[id].nodes
 }
 
 fn value(eg: &Graph, id: Id) -> Option<f64> {

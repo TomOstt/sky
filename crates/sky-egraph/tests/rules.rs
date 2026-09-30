@@ -18,9 +18,14 @@ fn repro() -> RewriteConfig {
     RewriteConfig::default()
 }
 
-/// The rules that fired, in order.
+/// The rules that fired, in order (the cost explanations, which say why an
+/// extracted form was chosen, are not rules and are checked on their own).
 fn fired(f: &mut Function, cfg: &RewriteConfig) -> Vec<&'static str> {
-    rewrite_function(f, cfg).iter().map(|r| r.rule).collect()
+    rewrite_function(f, cfg)
+        .iter()
+        .map(|r| r.rule)
+        .filter(|r| *r != sky_egraph::COST_RULE)
+        .collect()
 }
 
 /// The value a function returns for `args`, which must succeed.
@@ -462,8 +467,10 @@ fn la_001_transpose_of_symmetric() {
         t.op(OpKind::Transpose, &[a], matrix(TagSet::of(Tag::Symmetric)))
     });
     let rw = rewrite_function(&mut f, &repro());
-    assert_eq!(rw.len(), 1);
+    assert_eq!(rw.len(), 2);
     assert_eq!(rw[0].rule, "LA-001");
+    // The array result also gets the explanation of the cheaper choice.
+    assert_eq!(rw[1].rule, "EG-COST-001");
     assert_eq!(kinds(&f), ["return"]);
 
     // PositiveDefinite implies Symmetric (tags are closed).

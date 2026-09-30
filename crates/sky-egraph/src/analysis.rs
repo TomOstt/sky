@@ -248,7 +248,7 @@ impl Analysis<SkyNode> for SkyAnalysis {
     }
 }
 
-fn derive_ty(op: Op, kids: &[&Info]) -> Option<NumberType> {
+pub(crate) fn derive_ty(op: Op, kids: &[&Info]) -> Option<NumberType> {
     let t = |i: usize| kids.get(i).and_then(|k| k.ty.as_ref());
     let bare = |dim: Dimension, shape: Shape, tags: TagSet| NumberType {
         dim,
@@ -259,7 +259,8 @@ fn derive_ty(op: Op, kids: &[&Info]) -> Option<NumberType> {
     let scalar = |x: &NumberType| x.shape.rank() == 0;
     match op {
         Op::Lit(l) => Some(NumberType::scalar(l.dim())),
-        Op::Leaf(_) | Op::Roots | Op::MatMul => None,
+        Op::Leaf(_) | Op::Roots => None,
+        Op::MatMul => crate::cost::matmul_ty(t(0)?, t(1)?),
         Op::Add | Op::Sub => {
             let (a, b) = (t(0)?, t(1)?);
             (a.dim == b.dim).then(|| bare(a.dim, a.shape.clone(), TagSet::EMPTY))
@@ -415,15 +416,22 @@ fn derive_sign(op: Op, kids: &[&Info], value: Option<f64>) -> Sign {
 /// A term rendered in Sky-like infix from the first-inserted node of each
 /// class, so it reads like the program. Deep terms are cut with `…`.
 pub fn render(eg: &Graph, id: Id) -> String {
-    render_at(eg, id, 0, 5)
+    render_with(eg, id, &|c| eg[c].data.orig.1.clone())
 }
 
-fn render_at(eg: &Graph, id: Id, ctx: u8, depth: u32) -> String {
-    let node = &eg[id].data.orig.1;
+/// [`render`] of the term in which `choose(id)` is the node of `id`: a class
+/// of the e-graph (the extracted term: the best node of the class) or an
+/// index of a `RecExpr` (the program's own term), as the caller's ids mean.
+pub fn render_with(eg: &Graph, id: Id, choose: &dyn Fn(Id) -> SkyNode) -> String {
+    render_at(eg, choose, id, 0, 5)
+}
+
+fn render_at(eg: &Graph, choose: &dyn Fn(Id) -> SkyNode, id: Id, ctx: u8, depth: u32) -> String {
+    let node = &choose(id);
     if depth == 0 && !node.args.is_empty() {
         return "…".into();
     }
-    let arg = |i: usize, p: u8| render_at(eg, node.args[i], p, depth - 1);
+    let arg = |i: usize, p: u8| render_at(eg, choose, node.args[i], p, depth - 1);
     let (text, prec) = match node.op {
         Op::Lit(l) => {
             let n = match l.val {
@@ -453,7 +461,9 @@ fn render_at(eg: &Graph, id: Id, ctx: u8, depth: u32) -> String {
         Op::Neg => (format!("-{}", arg(0, 3)), 3),
         Op::PowC | Op::Pow => (format!("{}^{}", arg(0, 5), arg(1, 5)), 4),
         Op::Inv => (format!("{}⁻¹", arg(0, 5)), 4),
-        Op::MatMul => (format!("{} @ {}", arg(0, 2), arg(1, 3)), 2),
+        // Always parenthesized when nested, so `(A @ B) @ v` and `A @ (B @ v)`
+        // are told apart (an unparenthesized chain is planned by the checker).
+        Op::MatMul => (format!("{} @ {}", arg(0, 3), arg(1, 3)), 2),
         Op::Transpose => (format!("{}ᵀ", arg(0, 5)), 4),
         Op::Math(_) => {
             let name = node.op.math_fn().map_or("?", |f| f.name());
@@ -466,99 +476,6 @@ fn render_at(eg: &Graph, id: Id, ctx: u8, depth: u32) -> String {
         format!("({text})")
     } else {
         text
-    }
-}
-
-// ---------------------------------------------------------------------
-// The cost model
-// ---------------------------------------------------------------------
-
-/// The extraction cost: the operation count with weights, over the tree of
-/// the extracted term (a subterm used twice is counted twice).
-///
-/// | operation | weight |
-/// |---|---|
-/// | constant, leaf, `roots` | 0 |
-/// | add, sub, neg, abs, min, max, floor, ceil, round, transpose | 1 |
-/// | mul | 2 |
-/// | `x^n`, integer `n` | 2 per multiplication of square-and-multiply, plus 8 if `n < 0` |
-/// | `x^r`, other `r` | 30 |
-/// | div | 8 |
-/// | sqrt | 6 |
-/// | hypot | 10 |
-/// | cbrt | 20 |
-/// | exp, log, log2, log10, sin, cos, tan, asin, acos, atan | 24 |
-/// | atan2 | 28 |
-/// | `pow` (computed exponent) | 32 |
-/// | inverse (scalar reciprocal or matrix inverse) | 8 |
-/// | matmul | 16 |
-///
-/// The ordering is what matters: a transcendental costs more than a
-/// division, which costs more than a multiplication, which costs more than
-/// an addition; and a leaf or constant is never worse than an operation, so
-/// `x * 1` never beats `x`. Ties are broken by the e-graph's node order,
-/// which is deterministic.
-pub struct CostModel {
-    pub exponents: HashMap<Id, Rational>,
-}
-
-impl CostModel {
-    pub fn new(eg: &Graph) -> Self {
-        let exponents = eg
-            .classes()
-            .filter_map(|c| c.data.rat.map(|q| (c.id, q)))
-            .collect();
-        CostModel { exponents }
-    }
-}
-
-fn pow_int_cost(n: i64) -> u64 {
-    let m = n.unsigned_abs();
-    if m <= 1 {
-        return if n < 0 { 8 } else { 0 };
-    }
-    let squarings = u64::from(63 - m.leading_zeros());
-    let extra = u64::from(m.count_ones()) - 1;
-    2 * (squarings + extra) + if n < 0 { 8 } else { 0 }
-}
-
-impl egg::CostFunction<SkyNode> for CostModel {
-    type Cost = u64;
-
-    fn cost<C>(&mut self, node: &SkyNode, mut costs: C) -> u64
-    where
-        C: FnMut(Id) -> u64,
-    {
-        let own = match node.op {
-            Op::Lit(_) | Op::Leaf(_) | Op::Roots => 0,
-            Op::Add | Op::Sub | Op::Neg | Op::Transpose => 1,
-            Op::Mul => 2,
-            Op::Div | Op::Inv => 8,
-            Op::MatMul => 16,
-            Op::Pow => 32,
-            Op::PowC => match node.args.get(1).and_then(|e| self.exponents.get(e)) {
-                Some(q) if q.is_integer() => pow_int_cost(q.numer()),
-                _ => 30,
-            },
-            Op::Math(_) => match node.op.math_fn() {
-                Some(
-                    MathFn::Abs
-                    | MathFn::Min
-                    | MathFn::Max
-                    | MathFn::Floor
-                    | MathFn::Ceil
-                    | MathFn::Round,
-                ) => 1,
-                Some(MathFn::Sqrt) => 6,
-                Some(MathFn::Hypot) => 10,
-                Some(MathFn::Cbrt) => 20,
-                Some(MathFn::Atan2) => 28,
-                _ => 24,
-            },
-        };
-        node.args
-            .iter()
-            .fold(own, |acc, c| acc.saturating_add(costs(*c)))
     }
 }
 

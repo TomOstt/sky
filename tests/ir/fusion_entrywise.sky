@@ -1,0 +1,12 @@
+# `*`, `/` and math functions of arrays are elementwise, so they fuse like
+# `+` and `-`: `r` is one kernel of five operations (the `sqrt` included), and
+# `q` of two. `s` is used twice and stays an array of its own.
+x = [3 m, 6 m, 9 m]
+y = [4 m, 8 m, 12 m]
+k = 0.5
+d = [1 m, 1 m, 1 m]
+r = sqrt(x * x + y * y) * k + d
+q = atan2(y, x) / [2, 2, 2]
+s = hypot(x, y)
+z = s * s / s + s
+print(r, q, z)

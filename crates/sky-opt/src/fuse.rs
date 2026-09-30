@@ -6,11 +6,14 @@
 //!
 //! # What is fused
 //!
-//! An operation is a *candidate* when it is `add`, `sub`, `mul`, `div` or
-//! `neg` on arrays: numbers of known type, a result of rank 1 or more, and
-//! operands laid out as the checker allows (`add`/`sub`: two arrays of the
-//! result's shape; `mul`: one such array and one scalar; `div`: such an
-//! array over a scalar; `neg`: one array). A candidate `P` is *absorbed*
+//! An operation is a *candidate* when it is `add`, `sub`, `mul`, `div`,
+//! `neg` or a math function (`sqrt`, `exp`, `atan2`, ...) on arrays:
+//! numbers of known type, a result of rank 1 or more, and operands laid out
+//! as the checker allows (`add`/`sub`: two arrays of the result's shape;
+//! `mul`: two such arrays, or one and a scalar; `div`: two such arrays, or
+//! one over a scalar; `neg`: one array; a math function: as many operands as
+//! it takes, each an array of the result's shape or a scalar). A candidate
+//! `P` is *absorbed*
 //! into its consumer `C` when
 //!
 //! * `P`'s result has exactly one use (so nothing else needs the
@@ -154,13 +157,16 @@ fn is_candidate(f: &Function, id: OpId) -> bool {
             return false;
         }
     }
-    matches!(
-        (&op.kind, &kinds[..]),
+    match (&op.kind, &kinds[..]) {
         (OpKind::Add | OpKind::Sub, [true, true])
-            | (OpKind::Mul, [true, false] | [false, true])
-            | (OpKind::Div, [true, false])
-            | (OpKind::Neg, [true])
-    )
+        | (OpKind::Mul, [true, true] | [true, false] | [false, true])
+        | (OpKind::Div, [true, true] | [true, false])
+        | (OpKind::Neg, [true]) => true,
+        // A function of arrays and numbers: every operand is present and,
+        // the result being an array, at least one is an array.
+        (OpKind::Math(f), kinds) => kinds.len() == f.arity(),
+        _ => false,
+    }
 }
 
 /// The effects of an operation, counting what is inside its regions. A
@@ -466,6 +472,14 @@ impl Expr<'_> {
             OpKind::Sub => "-",
             OpKind::Mul => "*",
             OpKind::Div => "/",
+            OpKind::Math(f) => {
+                let args: Vec<String> = op
+                    .operands
+                    .iter()
+                    .map(|&a| self.text(a, depth + 1).0)
+                    .collect();
+                return (format!("{}({})", f.name(), args.join(", ")), ATOM);
+            }
             _ => {
                 let (x, p) = self.text(op.operands[0], depth + 1);
                 let x = if p <= NEGATION { format!("({x})") } else { x };

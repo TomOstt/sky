@@ -1,0 +1,44 @@
+tests/ir/fusion_entrywise.sky:8:5: note: [FUSE-001] `sqrt(x * x + y * y) * k + d` is rewritten to `fused(x, y, k, d)`
+  |
+8 | r = sqrt(x * x + y * y) * k + d
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: applied by the `fuse` pass
+  = note: because fused 6 elementwise operations into one kernel; saves 5 temporary arrays of 3 elements
+  = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[3]
+  = note: because 6 of the operations can fail (`mul`, `add`, `math.sqrt`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
+
+tests/ir/fusion_entrywise.sky:8:5: note: [PAR-003] this elementwise kernel over 3 elements is not parallelized: it may fail and is small
+  |
+8 | r = sqrt(x * x + y * y) * k + d
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: because 3 elements is under the threshold of 683: splitting it across threads costs more than it saves
+
+tests/ir/fusion_entrywise.sky:9:5: note: [FUSE-001] `atan2(y, x) / %23` is rewritten to `fused(y, x, %23)`
+  |
+9 | q = atan2(y, x) / [2, 2, 2]
+  |     ^^^^^^^^^^^^^^^^^^^^^^^
+  = note: applied by the `fuse` pass
+  = note: because fused 2 elementwise operations into one kernel; saves 1 temporary array of 3 elements
+  = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[3]
+  = note: because 2 of the operations can fail (`math.atan2`, `div`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
+
+tests/ir/fusion_entrywise.sky:9:5: note: [PAR-003] this elementwise kernel over 3 elements is not parallelized: it may fail and is small
+  |
+9 | q = atan2(y, x) / [2, 2, 2]
+  |     ^^^^^^^^^^^^^^^^^^^^^^^
+  = note: because 3 elements is under the threshold of 2048: splitting it across threads costs more than it saves
+
+tests/ir/fusion_entrywise.sky:11:5: note: [FUSE-001] `s * s / s + s` is rewritten to `fused(s)`
+   |
+11 | z = s * s / s + s
+   |     ^^^^^^^^^^^^^
+   = note: applied by the `fuse` pass
+   = note: because fused 3 elementwise operations into one kernel; saves 2 temporary arrays of 3 elements
+   = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[3]
+   = note: because 3 of the operations can fail (`mul`, `div`, `add`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
+
+tests/ir/fusion_entrywise.sky:11:5: note: [PAR-003] this elementwise kernel over 3 elements is not parallelized: it may fail and is small
+   |
+11 | z = s * s / s + s
+   |     ^^^^^^^^^^^^^
+   = note: because 3 elements is under the threshold of 1366: splitting it across threads costs more than it saves

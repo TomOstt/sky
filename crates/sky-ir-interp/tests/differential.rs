@@ -2397,3 +2397,332 @@ print(Bᵀ @ B)
     assert_eq!(o.error, None, "{}", o.stdout);
     assert_eq!(o.stdout.lines().count(), 4, "{}", o.stdout);
 }
+
+// ----- small arrays: scalar replacement in native code -----
+//
+// Vectors and matrices of known shape and at most 16 entries are held as
+// separate `f64`s by the native engine (`sky_jit`, "Small arrays"). These
+// programs reach every operation it inlines, the places a small array must
+// become a handle and back, and every way such an operation fails; each is
+// checked three ways (tree-walker, SIR, native on lowered and on optimized
+// SIR), whole diagnostics included.
+
+#[test]
+fn small_vector_arithmetic_and_reductions() {
+    let o = assert_same(
+        "a = [1 m, 2 m, 3 m]\nb = [0.5 m, -4 m, 10 m]\n\
+         print(a + b, a - b, -a, a * 2, 0.5 * a, a / 4)\n\
+         print(a[0], a[2], b[1] / 1 m)\n\
+         print(dot(a, b), norm(a), norm(b), a @ b)\n\
+         print(dot(a, a), norm([3, 4]), norm([0, 0, 0]))\n\
+         print(a * (2 s), (a + b) * (a[1] / 2 m))\n\
+         print(-[0, 0], 0 * [1, 2], [0, 0] - [0, 0])\n",
+    );
+    assert_eq!(o.error, None, "{}", o.stdout);
+    assert_eq!(o.stdout.lines().count(), 6);
+}
+
+#[test]
+fn small_matrices_products_and_transposes() {
+    let o = assert_same(
+        "A = [[1, 2, 3], [4, 5, 6], [7, 8, 10]]\nv = [1, -1, 2]\nB = [[2, 0, 1], [1, 3, 2], [0, 1, 4]]\n\
+         print(A @ v)\nprint(v @ A)\nprint(A @ B)\nprint(Aᵀ, transpose(B))\n\
+         print(Aᵀ @ B, A @ Bᵀ, Aᵀ @ Bᵀ)\nprint(A[1], A[2, 0], A[0, 2], A[1][1])\n\
+         print(A + B, A - B, -A, A * 3, A / 2)\nprint(norm(A), len(A), len(v))\n\
+         R = [[1, 2], [3, 4], [5, 6]]\nprint(R @ [1, 1], [1, 1, 1] @ R, Rᵀ @ R, R @ Rᵀ)\n\
+         print(identity(3) @ A, zeros(2, 3), zeros(4), identity(2))\n\
+         K = [[2 N/m, 1 N/m], [1 N/m, 3 N/m]]\nx = [1 m, 2 m]\nprint(K @ x, K[0, 1], x @ K @ x)\n",
+    );
+    assert_eq!(o.error, None, "{}", o.stdout);
+}
+
+/// The sums of 8 or more terms use eight interleaved partial sums; the
+/// entries are chosen so that any other order changes the bits.
+#[test]
+fn reductions_of_eight_or_more_terms_keep_their_order() {
+    for n in [7, 8, 9, 12, 15, 16] {
+        let a: Vec<String> = (0..n)
+            .map(|i| match i % 4 {
+                0 => "1e16".to_string(),
+                1 => format!("{}", 1.0 + i as f64 / 7.0),
+                2 => "-1e16".to_string(),
+                _ => format!("{}", 0.1 * (i as f64 + 1.0)),
+            })
+            .collect();
+        let b: Vec<String> = (0..n)
+            .map(|i| format!("{}", 1.0 / (i as f64 + 1.0) + 0.3))
+            .collect();
+        let src = format!(
+            "a = [{}]\nb = [{}]\nprint(dot(a, b), a @ b, norm(a), norm(b))\nprint(dot(b, b), norm(a / 1e20))\n",
+            a.join(", "),
+            b.join(", ")
+        );
+        let o = assert_same(&src);
+        assert_eq!(o.error, None, "n = {n}: {}", o.stdout);
+    }
+    // A 4 by 4 product (16 entries) and its naive sums.
+    let o = assert_same(
+        "M = [[1e16, 1, -1e16, 0.1], [0.3, 0.7, 1e-3, 4], [5, 1e9, 2, 1e-9], [7, 0.5, 0.25, 9]]\n\
+         N = [[1, 0.1, 0.2, 0.3], [1e-16, 2, 1e16, 5], [3, 1e-7, 1, 1], [0.5, 8, 1e8, 1e-8]]\n\
+         print(M @ N)\nprint(Mᵀ @ N, M @ Nᵀ)\nprint(M @ [1, 2, 3, 4], [1, 2, 3, 4] @ N)\n",
+    );
+    assert_eq!(o.error, None, "{}", o.stdout);
+}
+
+#[test]
+fn norm_of_extreme_entries_uses_the_scaled_sum() {
+    let o = assert_same(
+        "print(norm([1e200, 1e200, 1e200]))\nprint(norm([1e-200, 3e-200]))\nprint(norm([1e100, 1]))\n\
+         print(norm([1e99, 1e99]))\nprint(norm([1e-100, 1e-101]))\nprint(norm([1e-99, 0]))\n\
+         print(norm([[1e150, 2e150], [3e150, 4e150]]))\n",
+    );
+    assert_eq!(o.error, None, "{}", o.stdout);
+    // The scaled result of the largest entries can itself overflow.
+    let o = assert_same("print(1)\nprint(norm([1.7e308, 1.7e308, 1.7e308]))\nprint(2)\n");
+    assert!(o.error.is_some());
+}
+
+#[test]
+fn an_overflow_in_one_entry_fails_with_the_operations_diagnostic() {
+    for src in [
+        "a = [1, 1e308, 1]\nprint(a + a)\n",
+        "a = [1, 1e308, 1]\nb = [1, 1e308, -1]\nprint(a - (-b))\n",
+        "print(1)\na = [1, 2, 1e308]\nprint(a * 10)\nprint(2)\n",
+        "a = [1, 1e308]\nprint(10 * a)\n",
+        "a = [1e-308, 1e308]\nprint(a / 1e-10)\n",
+        "a = [1, 1e308]\nprint(a / 0)\n",
+        "a = [1, 1e308]\nz = 1 - 1\nprint(a / z)\n",
+        "a = [1 m, 2 m]\nz = 0 s\nprint(a / z)\n",
+        "a = [1e200, 1e200, 1e200]\nprint(dot(a, a))\n",
+        "a = [1e200, 1e200, 1e200]\nprint(a @ a)\n",
+        "a = [1e200, 1e200]\nb = [1e200, 1]\nprint(dot(a, b), 1)\n",
+        "A = [[1e200, 1], [1, 1]]\nprint(A @ A)\n",
+        "A = [[1e200, 1], [1, 1]]\nprint(A @ [1e200, 1])\n",
+        "A = [[1, 1e300], [1, 1]]\nprint([1e10, 1] @ A)\n",
+        "A = [[1e308, 1e308], [1, 1]]\nprint(A + A)\n",
+        "A = [[1e308, 1e308], [1, 1]]\nprint(A * 2)\n",
+        "a = [1e308, 1e308]\nprint(norm(a) * 2)\n",
+        // the first failing operation decides, and no entry is skipped
+        "a = [1, 2, 3]\nb = [1e308, 1, 2]\nprint(a * 5, b * 5, b * 5e300)\n",
+        "a = [1e300, 1e300]\nb = [1, 2]\nprint(b + b)\nprint((a + a) + a * 1e10)\n",
+    ] {
+        let o = assert_same(src);
+        assert!(
+            o.error.is_some(),
+            "expected a failure:\n{src}\n{}",
+            o.stdout
+        );
+    }
+}
+
+#[test]
+fn a_fused_body_reports_the_first_failing_operation_over_all_entries() {
+    // Chains fuse; the failure is that of the earliest body operation that
+    // fails at any entry, and the first entry among them.
+    for src in [
+        "a = [1e200, 1, 1e200]\nb = [1, 1e200, 1]\nprint(a * 1e200 + b * 1e200)\n",
+        "a = [1, 1e200, 1]\nb = [1e200, 1, 1e200]\nprint(a * 1e200 + b * 1e200)\n",
+        "a = [1, 1e200, 3]\nb = [1, 2, 3]\ns = 1e200\nprint((a + b) * s - (b * s) * s)\n",
+        "a = [1e308, 1, 1e308]\nb = [1e308, 1, 1]\nprint(a + b - b - a - a)\n",
+        "a = [1, 2, 3]\nz = 1 - 1\nprint(a * 2 + a / z - a)\n",
+        "a = [1e308, 2, 3]\nz = 1 - 1\nprint(a * 2 + a / z - a)\n",
+        "a = [1e300, 2, 1e300]\nb = [2, 1e300, 3]\nprint(a * 1e10 - b / 1e-300 + a)\n",
+        "a = [1 m, 2 m, 3 m]\nb = [1 m, 2 m, 3 m]\nc = 2 s\nprint(((a + b) * c - a * c) / c)\n",
+        "a = [1, 2, 3]\nb = [4, 5, 6]\nprint(-(a + b) * 2 - -a, a + b * 0.5 - 2 * a)\n",
+        "a = [[1, 2], [3, 4]]\nb = [[5, 6], [7, 8]]\nprint(a * 2 + b * 3 - a)\n",
+        "a = [[1e300, 2], [3, 4]]\nb = [[5, 6], [7, 8]]\nprint(a * 2 + b * 3 - a * 1e10)\n",
+    ] {
+        assert_same(src);
+    }
+}
+
+#[test]
+fn indexes_are_checked_like_the_interpreters_do() {
+    for (i, bad) in [
+        ("3", true),
+        ("2", false),
+        ("-1", true),
+        ("1.5", true),
+        ("7", true),
+        ("0", false),
+        ("1e300", true),
+        ("2.0", false),
+        ("-0.0", false),
+    ] {
+        let src = format!("v = [10 m, 20 m, 30 m]\ni = {i}\nprint(1)\nprint(v[i])\nprint(2)\n");
+        let o = assert_same(&src);
+        assert_eq!(o.error.is_some(), bad, "{src}\n{}", o.stdout);
+    }
+    for src in [
+        "A = [[1, 2, 3], [4, 5, 6]]\ni = 2\nprint(A[i])\n",
+        "A = [[1, 2, 3], [4, 5, 6]]\ni = 1\nj = 3\nprint(A[i, j])\n",
+        "A = [[1, 2, 3], [4, 5, 6]]\ni = 1\nj = 2\nprint(A[i, j], A[j - 1, i + 1], A[i], A[0, j])\n",
+        "A = [[1, 2, 3], [4, 5, 6]]\ni = 1.5\nj = 2\nprint(A[i, j])\n",
+        "A = [[1, 2, 3], [4, 5, 6]]\ni = 0\nj = -1\nprint(A[i, j])\n",
+        "A = [[1, 2, 3], [4, 5, 6]]\ni = 2\nj = 0\nprint(A[i, j])\n",
+        "v = [1, 2, 3]\ns = 0\ni = 0\nwhile i < 4:\n    s += v[i]\n    i += 1\nprint(s)\n",
+        "v = [1 m, 2 m, 3 m]\nfor i in range(3):\n    print(v[i] * i)\n",
+    ] {
+        assert_same(src);
+    }
+}
+
+#[test]
+fn small_arrays_cross_loops_and_calls() {
+    let o = assert_same(
+        "def step(x: Vector[3], v: Vector[3], dt: Scalar) -> Vector[3]:\n    return x + v * dt\n\
+         def accel(x: Vector[3]) -> Vector[3]:\n    return x * (-1 / (1 + dot(x, x)))\n\
+         def rot(A: Matrix[3, 3], x: Vector[3]) -> Vector[3]:\n    return A @ x\n\
+         def both(x: Vector[3]) -> Matrix[3, 3]:\n    return [[x[0], 0, 0], [0, x[1], 0], [0, 0, x[2]]]\n\
+         x = [1, 0, 0]\nv = [0, 1, 0]\nA = [[0, -1, 0], [1, 0, 0], [0, 0, 1]]\n\
+         a = x\nfor i in range(50):\n    a = accel(x)\n    v = v + a * 0.01\n    x = step(x, v, 0.01)\n    x = rot(A, x) * 0.99\n\
+         print(x, v)\nprint(both(x), both(v) @ x)\n\
+         i = 0\nw = [1, 1, 1]\nwhile i < 5:\n    if i < 2:\n        w = w * 2\n    else:\n        w = w + x\n    i += 1\nprint(w)\n",
+    );
+    assert_eq!(o.error, None, "{}", o.stdout);
+    // Recursion, results that are vectors, an `if` that picks one, units.
+    let o = assert_same(
+        "def go(p: Vector[2] m, n: Scalar) -> Vector[2] m:\n    r = p\n    if n > 0:\n        r = go(p + [1 m, 2 m] * n, n - 1)\n    return r\n\
+         print(go([0 m, 0 m], 6))\n\
+         def pick(c: Scalar, a: Vector[2], b: Vector[2]) -> Vector[2]:\n    r = b\n    if c > 0:\n        r = a\n    return r\n\
+         print(pick(1, [1, 2], [3, 4]), pick(-1, [1, 2], [3, 4]))\n\
+         def norms(a: Vector[3], b: Vector[3]) -> Scalar:\n    return norm(a) + norm(b) + dot(a, b)\n\
+         print(norms([1, 2, 3], [4, 5, 6]))\n",
+    );
+    assert_eq!(o.error, None, "{}", o.stdout);
+}
+
+#[test]
+fn a_failure_inside_a_call_or_a_loop_is_the_interpreters() {
+    for src in [
+        "def grow(x: Vector[2]) -> Vector[2]:\n    return x * 1e100\nx = [1, 2]\nprint(1)\nfor i in range(5):\n    x = grow(x)\nprint(x)\n",
+        "def f(a: Vector[3], k: Scalar) -> Vector[3]:\n    return a / k\nprint(f([1, 2, 3], 2))\nprint(f([1, 2, 3], 0))\n",
+        "def f(a: Vector[3], i: Scalar) -> Scalar:\n    return a[i]\nprint(f([1, 2, 3], 2))\nprint(f([1, 2, 3], 3))\n",
+        "def f(a: Vector[3]) -> Vector[3]:\n    return a * 1e200\nprint(f(f([1, 2, 3])))\n",
+        "def f(a: Vector[2]) -> Vector[2]:\n    return f(a * 2)\nprint(f([1, 2]))\n",
+        "def f(a: Vector[3]) -> Matrix[3, 3]:\n    return [[1e300, 0, 0], [0, 1, 0], [0, 0, 1]] * a[0]\nprint(1)\nprint(f([1e10, 1, 1]))\n",
+    ] {
+        let o = assert_same(src);
+        assert!(o.error.is_some(), "expected a failure:\n{src}");
+    }
+}
+
+#[test]
+fn small_arrays_meet_values_of_unknown_type() {
+    // Untyped parameters and results are `unknown`: the vectors are boxed on
+    // the way in, unpacked (and checked) on the way out.
+    let o = assert_same(
+        "def f(x):\n    return x * 2\ndef g(x, y):\n    return x + y\n\
+         a = [1, 2, 3]\nb = f(a)\nc: Vector[3] = g(a, b)\nprint(b, c, c[1], dot(c, c), norm(g(a, a)))\n\
+         def h(x) -> Vector[3]:\n    return x * 3\nprint(h(a) + a)\n\
+         def k(x: Vector[3]) -> Vector[3]:\n    return x + x\nprint(k(g(a, a)))\n",
+    );
+    assert_eq!(o.error, None, "{}", o.stdout);
+    // What unknown operands do wrong is the interpreters' error, too.
+    for src in [
+        "def g(x, y):\n    return x + y\nprint(g([1, 2, 3], [1 m, 2 m, 3 m]))\n",
+        "def g(x, y):\n    return x + y\nprint(g([1, 2, 3], [1, 2]))\n",
+        "def g(x, y):\n    return x @ y\nprint(g([1, 2, 3], [1, 2, 3, 4]))\n",
+        "def g(x):\n    return x[5]\nprint(g([1, 2, 3]))\n",
+        "def g(x):\n    return x * 1e300\nprint(g([1, 2, 3]) + [1, 1, 1])\n",
+    ] {
+        assert_same(src);
+    }
+}
+
+/// A value of unknown type that is not a vector of the declared shape stops
+/// native code, which is rerun on the SIR interpreter (a deoptimization):
+/// the output and the error are still the interpreter's.
+#[test]
+fn a_wrong_shape_where_a_small_array_is_declared_deoptimizes_exactly() {
+    let src = "def f(x):\n    return x\ndef g(v: Vector[3]) -> Scalar:\n    return v[0]\n\
+               print(1)\nprint(g(f([1, 2, 3])))\nprint(g(f([1, 2, 3, 4])))\nprint(3)\n";
+    let expected = run_tree_walker(src);
+    let ir = sky_lower::lower_source(src).expect("lowers");
+    for m in [ir.clone(), optimized(&ir)] {
+        sky_ast::with_deep_stack(|| {
+            let compiled = sky_jit::compile(&m).expect("compiles");
+            let mut out = Vec::new();
+            let (result, _) =
+                compiled.run_or_rerun(&mut out, |w| sky_ir_interp::run(&m, &mut { w }));
+            let got = Outcome {
+                stdout: String::from_utf8(out).unwrap(),
+                error: result.as_ref().err().map(|e| e.message.clone()),
+                diagnostic: result.err().map(|e| rendered(&e.to_diagnostic(), src)),
+            };
+            assert_eq!(normalized(got), normalized(expected.clone()));
+        });
+    }
+}
+
+#[test]
+fn small_arrays_are_printed_asserted_and_shown() {
+    for src in [
+        "v = [1 m, 2 m, 3 m]\nprint(v)\nprint(v, 1, v * 2)\nprint(v as km)\n",
+        "A = [[1 kg, 2 kg], [3 kg, 4 kg]]\nprint(A, Aᵀ)\nx = 3\nprint(A * x, x)\n",
+        "v = [1, 2, 3]\nassert dot(v, v) > 1, \"long enough\"\nassert norm(v) > 100, \"too short\"\n",
+        "def f(v: Vector[3]) -> Scalar:\n    requires norm(v) > 10\n    return v[0]\nprint(f([1, 2, 3]))\n",
+        "def f(v: Vector[2]) -> Vector[2]:\n    ensures norm(v) < 1\n    return v * 2\nprint(f([1, 2]))\n",
+        "print([[1, 2], [3, 4]]⁻¹, inv([[2, 0], [0, 4]]))\n",
+        "A = [[1, 2], [3, 4]]\nb = [1, 2]\nprint(A⁻¹ @ b, b @ A⁻¹)\n",
+        "A = [[1, 2], [2, 4]]\nprint(A⁻¹)\n",
+        "v = [1, 2, 3]\nprint(v[0:2], v[1:])\n",
+        "A = [[1, 2, 3], [4, 5, 6]]\nprint(A[0, 1:], A[:, 1])\n",
+    ] {
+        assert_same(src);
+    }
+}
+
+/// 16 entries are held as scalars, 17 as a handle: the two agree, and so do
+/// programs that mix them through calls and arithmetic.
+#[test]
+fn arrays_on_both_sides_of_the_size_limit_agree() {
+    for n in [15, 16, 17, 20] {
+        let entries: Vec<String> = (0..n)
+            .map(|i| format!("{}", i as f64 * 0.7 - 3.0))
+            .collect();
+        let lit = format!("[{}]", entries.join(", "));
+        let src = format!(
+            "a = {lit}\nb = a * 2 - a\nprint(b, dot(a, b), norm(a), a[{}], -a + b)\n\
+             def f(x: Vector[{n}]) -> Vector[{n}]:\n    return x + x * 0.5\nprint(f(a))\n\
+             m = a\ni = 0\nwhile i < 3:\n    m = m + a\n    i += 1\nprint(m)\n",
+            n - 1
+        );
+        let o = assert_same(&src);
+        assert_eq!(o.error, None, "n = {n}\n{}", o.stdout);
+    }
+    // Matrices: 4 by 4 is small, 4 by 5 is not.
+    for (r, c) in [(4, 4), (4, 5), (5, 3), (2, 8), (1, 16), (16, 1)] {
+        let rows: Vec<String> = (0..r)
+            .map(|i| {
+                let cells: Vec<String> =
+                    (0..c).map(|j| format!("{}", (i * 3 + j * 5) % 7)).collect();
+                format!("[{}]", cells.join(", "))
+            })
+            .collect();
+        let src = format!(
+            "A = [{}]\nprint(A @ Aᵀ, Aᵀ @ A)\nprint(A[{}, {}], A[{}], A * 2 + A)\n",
+            rows.join(", "),
+            r - 1,
+            c - 1,
+            0
+        );
+        let o = assert_same(&src);
+        assert_eq!(o.error, None, "{r}x{c}\n{}", o.stdout);
+    }
+}
+
+#[test]
+fn a_vector_of_one_entry_and_other_corners() {
+    for src in [
+        "v = [5 m]\nprint(v, v * 2, v[0], dot(v, v), norm(v), -v, v + v, v @ v)\n",
+        "A = [[1, 2, 3]]\nprint(A, Aᵀ, A @ Aᵀ, Aᵀ @ A, A[0], A[0, 2], A @ [1, 1, 1])\n",
+        "A = [[1], [2], [3]]\nprint(A, Aᵀ, A @ Aᵀ, [1, 2, 3] @ A, A[2, 0])\n",
+        "def f(v: Vector[1]) -> Vector[1]:\n    return v * 2\nprint(f([3]))\n",
+        "v = [0, 0, 0]\nprint(-v, v * -1, v - v, v / -3, v * -0.0)\n",
+        "v = [1, 2, 3]\nw = [3, 2, 1]\nprint(dot(v, w) == w @ v, norm(v) == norm(w), v[0] < w[0])\n",
+        "print(zeros(3) + [1, 2, 3], identity(3) @ [1, 2, 3], zeros(2, 2) @ [1, 2])\n",
+    ] {
+        assert_same(src);
+    }
+}

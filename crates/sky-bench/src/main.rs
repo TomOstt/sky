@@ -5,10 +5,15 @@
 //!                                     [--reps N] [--warmup N] [--quick] [--list]
 //! ```
 //!
+//! `sky-bench par [--threads 1,2,4,8] [--reps N] [--quick]` measures automatic
+//! parallelism instead (speedups over threads, and the break-even sizes the
+//! default thresholds come from): see `par.rs`.
+//!
 //! See the "Benchmarks" section of the README. Not shipped: nothing depends
 //! on this crate, and it uses only `std` for timing.
 
 mod bench;
+mod par;
 mod report;
 mod stats;
 
@@ -24,6 +29,8 @@ const USAGE: &str = "usage: sky-bench [--filter <substring>] [--json <file>] [--
                      --warmup   untimed runs of each engine first (default 1)\n\
                      --quick    tiny sizes, for a smoke run\n\
                      --list     print the workload names and exit\n\n\
+                     sky-bench par [--threads 1,2,4,8] [--reps <n>] [--quick]\n\
+                     \x20          measure automatic parallelism (speedups, break-even sizes)\n\n\
                      Run it with `cargo run --release -p sky-bench`: debug timings mean nothing.";
 
 struct Args {
@@ -76,6 +83,18 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("par") {
+        return match par::parse_args(&args[1..]) {
+            Ok(o) => {
+                par::main(&o);
+                ExitCode::SUCCESS
+            }
+            Err(msg) => {
+                eprintln!("error: {msg}\n\n{USAGE}");
+                ExitCode::from(2)
+            }
+        };
+    }
     let args = match parse_args(&args) {
         Ok(a) => a,
         Err(msg) => {

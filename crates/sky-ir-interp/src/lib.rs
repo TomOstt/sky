@@ -56,9 +56,12 @@
 
 mod machine;
 mod math;
+mod native;
 
 #[cfg(test)]
 mod fused_tests;
+#[cfg(test)]
+mod native_tests;
 #[cfg(test)]
 mod tests;
 
@@ -70,6 +73,8 @@ use sky_diag::{Diagnostic, Span};
 use sky_interp::RuntimeError;
 pub use sky_interp::Value;
 use sky_ir::Module;
+
+pub use native::JitOptions;
 
 /// A failure while running SIR, located at the failing operation.
 ///
@@ -155,4 +160,24 @@ pub fn call_metered(
     call: Span,
 ) -> Result<Vec<Value>, IrRuntimeError> {
     machine::call_metered(module, name, args, out, stack, Some(call))
+}
+
+/// [`call`] with the native-kernel options chosen: see [`JitOptions`]. The
+/// results and errors are the same for every choice.
+pub fn call_with_jit(
+    module: &Module,
+    name: &str,
+    args: Vec<Value>,
+    out: &mut dyn Write,
+    jit: JitOptions,
+) -> Result<Vec<Value>, IrRuntimeError> {
+    machine::call_with_jit(
+        module,
+        name,
+        args,
+        out,
+        sky_interp::arith::StackMeter::new(),
+        None,
+        jit,
+    )
 }

@@ -725,6 +725,7 @@ dependencies = [
  "sky-diag",
  "sky-interp",
  "sky-ir",
+ "sky-jit",
  "sky-lower",
  "sky-syntax",
  "sky-types",

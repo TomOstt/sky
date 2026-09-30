@@ -25,6 +25,7 @@ use sky_ir::{
 };
 use sky_units::{Dimension, Rational};
 
+use crate::native::{Jit, JitOptions, Native};
 use crate::IrRuntimeError;
 
 type R<T> = Result<T, IrRuntimeError>;
@@ -205,6 +206,8 @@ struct Machine<'m, 'w> {
     /// User-function calls active now; see [`MAX_CALL_DEPTH`].
     depth: usize,
     stack: StackMeter,
+    /// Native kernels for long `fused` operations (see `crate::native`).
+    jit: Jit,
     /// Ops left to run, in tests only: random malformed IR (a `while` whose
     /// condition is always true) must not hang the suite. Production has no
     /// step limit.
@@ -232,11 +235,25 @@ pub(crate) fn call_metered(
     stack: StackMeter,
     call: Option<Span>,
 ) -> R<Vec<Value>> {
+    call_with_jit(module, name, args, out, stack, call, JitOptions::default())
+}
+
+/// [`call_metered`] with the native-kernel options chosen.
+pub(crate) fn call_with_jit(
+    module: &Module,
+    name: &str,
+    args: Vec<Value>,
+    out: &mut dyn Write,
+    stack: StackMeter,
+    call: Option<Span>,
+    jit: JitOptions,
+) -> R<Vec<Value>> {
     let mut m = Machine {
         module,
         out,
         depth: 0,
         stack,
+        jit: Jit::new(jit),
         #[cfg(test)]
         fuel: u64::MAX,
     };
@@ -257,6 +274,7 @@ pub(crate) fn call_with_fuel(
         out,
         depth: 0,
         stack: StackMeter::new(),
+        jit: Jit::new(JitOptions::default()),
         fuel,
     };
     m.entry(name, args, Span::point(0), None)
@@ -388,7 +406,7 @@ impl<'m> Machine<'m, '_> {
                 act.define(op, results)
             }
             OpKind::Print => self.print(act, op),
-            OpKind::Fused => fused_op(act, op),
+            OpKind::Fused => fused_op(act, op, &mut self.jit),
             _ => pure_op(act, op),
         }
     }
@@ -746,7 +764,7 @@ fn assert_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
 /// element replaces it. The error left at the end is the earliest failing
 /// operation's, which is the unfused chain's. (An error names its operation's
 /// message and span, never an element.)
-fn fused_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
+fn fused_op(act: &mut Act<'_>, op: &OpData, jit: &mut Jit) -> R<()> {
     let s = op.span;
     let [region] = regions(op)?;
     let entry = act.entry_of(region, s)?;
@@ -801,6 +819,16 @@ fn fused_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
         ));
     };
     let count: usize = dims.iter().product();
+    // A long array: a native kernel, whose result and error are this
+    // loop's (see `crate::native`).
+    match jit.run(act.func, op, &inputs, count) {
+        Native::Done(data, dim) => {
+            let dims = dims.clone();
+            return act.define(op, vec![Value::array(dims, data, dim)]);
+        }
+        Native::Failed(e) => return Err(e),
+        Native::Declined => {}
+    }
     let mut data = Vec::with_capacity(count);
     let mut out_dim = None;
     let mut limit = body.len();

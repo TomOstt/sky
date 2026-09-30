@@ -748,3 +748,35 @@ fn norm_and_dot_keep_their_operand_labels_through_every_pass() {
         .expect("fails")
         .contains("`norm` needs a vector"));
 }
+
+// ----- a decided `if` and a variable only one arm assigns -----
+
+/// `t` is assigned by the arm that is never taken, and read after the `if`
+/// that returns from the other two. The variable's type is `unknown` (one arm
+/// assigns it, the other leaves it unassigned); a pass that decides the `if`
+/// and lets the read see the unassigned arm's `nothing` builds a `tan(t)` or
+/// `t > 0` the verifier rejects, on a path that never runs.
+const UNASSIGNED_WHEN_DECIDED: [&str; 3] = [
+    // `fold` decides `if false`.
+    "def f(p, q):\n    if false:\n        t = p\n    elif q:\n        return 1\n    else:\n        return 2\n    \
+     if t > 0:\n        print(1)\n    return 3\nprint(f(1, true))\nprint(f(1, false))\nprint(f(1, 0))\n",
+    // `specialize` decides it: `y` is negative at the call, so `max(1, y)` is 1.
+    "k = 0\nwhile k < 3:\n    k = k + 1\ny = -(abs(k) + 1)\ndef f(p, q):\n    \
+     if 3 == max(1, y) and p != 1:\n        t = q\n    elif p >= 2:\n        return -q\n    else:\n        return 5\n    \
+     return tan(t)\nprint(f(k, 3))\nprint(f(1, 3))\nprint(f(k, 1e308 m))\n",
+    // The same, failing after the decided `if`.
+    "k = 0\nwhile k < 3:\n    k = k + 1\ny = -(abs(k) + 1)\ndef f(p, q):\n    \
+     if 3 == max(1, y) and p != 1:\n        t = q\n    elif p >= 2:\n        return -q / (p - 3)\n    else:\n        return 5\n    \
+     return tan(t)\nprint(f(1, 3))\nprint(f(k, 3))\nprint(4)\n",
+];
+
+#[test]
+fn a_decided_branch_leaves_a_variable_the_other_arm_assigned_typed_as_it_was() {
+    for src in UNASSIGNED_WHEN_DECIDED {
+        // With `specialize` (which runs `fold` on its clones) and without
+        // (`fold` alone): both verified after every pass, both the same as
+        // the program before.
+        same_before_and_after(src);
+        same_before_and_after_generic(src);
+    }
+}

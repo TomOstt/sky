@@ -125,6 +125,13 @@ impl Checker<'_> {
                     .with_help("call it to get a value"),
                 );
             }
+            Ty::Ode(o) => {
+                let found = o.describe();
+                self.error(
+                    Diagnostic::error(format!("`{what}` needs a number, found {found}"), e.span)
+                        .with_label(format!("this is {found}")),
+                );
+            }
             Ty::Value(_) | Ty::Unknown => {}
         }
     }

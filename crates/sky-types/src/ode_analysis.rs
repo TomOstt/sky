@@ -179,6 +179,10 @@ pub fn free_names(src: &str, e: &Expr) -> BTreeSet<String> {
                 stack.push(else_);
             }
             ExprKind::As { value, .. } => stack.push(value),
+            ExprKind::PlusMinus { value, sigma, .. } => {
+                stack.push(value);
+                stack.push(sigma);
+            }
         }
     }
     out

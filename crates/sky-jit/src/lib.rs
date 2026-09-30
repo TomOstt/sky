@@ -26,9 +26,7 @@ use cranelift_codegen::settings::{self, Configurable};
 /// optimisation on (`opt_level = speed`).
 pub fn host_isa() -> Result<OwnedTargetIsa, String> {
     let mut flags = settings::builder();
-    flags
-        .set("opt_level", "speed")
-        .map_err(|e| e.to_string())?;
+    flags.set("opt_level", "speed").map_err(|e| e.to_string())?;
     // Code is placed wherever the JIT's allocator puts it.
     flags.set("is_pic", "false").map_err(|e| e.to_string())?;
     let isa_builder = cranelift_native::builder().map_err(|e| e.to_string())?;

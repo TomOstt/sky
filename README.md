@@ -88,6 +88,19 @@ sky> derivative(area, w)(3 m, 4 m)
 4 m
 ```
 
+The derivative of a function of a vector is its gradient, with the unit of the result over the unit of the vector: the gradient of a potential of a position is a force, and `-grad(U)(p)` points down the potential.
+
+```
+M = 5.972e24 kg
+mass = 1000 kg
+
+def U(p: Vector[3] m) -> J:
+    return -G * M * mass / sqrt(p @ p)      # G is the constant of gravitation
+
+p = [7000 km, 0 km, 0 km]
+print(-grad(U)(p))                          # [-8134.473387755101 N, 0 N, 0 N]: toward the origin
+```
+
 A line that ends in `:`, or leaves a `(` or `[` open, continues on a `...` line; a block ends at an empty line. A failing input changes nothing, however many lines it has. `:help` and `:quit` (or Ctrl-D) are the only commands.
 
 `as` is only for showing: `v as km/h` is a display value that `print` and the REPL write, not a number to compute with, so `(v as km/h) + 1` is an error. To compute with kilometres per hour, divide by the unit: `v / (1 km/h)`. See "Showing values in a unit" in `spec/v0.1.md`.
@@ -161,7 +174,7 @@ cargo run --release -p sky-bench -- --quick                   # tiny sizes, a sm
 
 Always use `--release`: debug timings mean nothing. Each engine runs `--reps` times, interleaved, and the table shows the median with the range as a percentage of it; the JSON keeps every sample (integer nanoseconds, schema version 1) so runs can be compared over time. On a busy machine the median drifts upward; the minimum is the steadier number. Set `SKY_BENCH_REV` to record a commit in the JSON.
 
-The workloads are `scalar_loop` (10^6 iterations of arithmetic with units), `recursion` (`fib(25)`), `math_calls` (`for` over `range` with math functions), `array_chain` (elementwise vector chains), `matmul` (`@` on small matrices), `cholesky` (`K⁻¹ @ f` on a PositiveDefinite literal) and `derivative` (`derivative(f, t)(x)` in a loop). To add one, put a `.sky` file in `benches/programs/` whose first line is `# bench: N=<full> quick=<small>` and which sets its size with a line `N = <full>`, then list it in `crates/sky-bench/src/bench.rs` (a test fails if a file is not listed).
+The workloads are `scalar_loop` (10^6 iterations of arithmetic with units), `recursion` (`fib(25)`), `math_calls` (`for` over `range` with math functions), `array_chain` (elementwise vector chains), `matmul` (`@` on small matrices), `cholesky` (`K⁻¹ @ f` on a PositiveDefinite literal), `derivative` (`derivative(f, t)(x)` in a loop) and `gradient` (`grad(U)(p)` of a spring-network potential of a position vector, by reverse mode, in a loop). To add one, put a `.sky` file in `benches/programs/` whose first line is `# bench: N=<full> quick=<small>` and which sets its size with a line `N = <full>`, then list it in `crates/sky-bench/src/bench.rs` (a test fails if a file is not listed).
 
 The `bench` workflow (`.github/workflows/bench.yml`) runs the suite in release mode weekly and on manual dispatch, never on pull requests, and uploads the JSON as an artifact.
 

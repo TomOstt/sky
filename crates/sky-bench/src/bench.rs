@@ -57,6 +57,10 @@ const SOURCES: &[(&str, &str)] = &[
         "derivative",
         include_str!("../../../benches/programs/derivative.sky"),
     ),
+    (
+        "gradient",
+        include_str!("../../../benches/programs/gradient.sky"),
+    ),
 ];
 
 /// One workload.

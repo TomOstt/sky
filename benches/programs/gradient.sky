@@ -1,0 +1,18 @@
+# bench: N=20000 quick=20
+# The gradient of a potential of a position vector in a loop: reverse-mode AD
+# through a spring network (`@` with a stiffness matrix, a dot product and a
+# scaling), evaluated as a force at a moving point.
+N = 20000
+K = [[300, -100, 0], [-100, 200, -50], [0, -50, 100]] * 1 N/m
+p0 = [0.5 m, 0 m, 0.25 m]
+
+def U(p: Vector[3] m) -> J:
+    d = p - p0
+    return 0.5 * (d @ (K @ d))
+
+total = 0 N
+for i in range(N):
+    p = [0.001 m * i, 0.1 m, 0.2 m]
+    F = -grad(U)(p)
+    total = total + F @ [1, 1, 1]
+print(total)

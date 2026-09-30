@@ -899,6 +899,8 @@ fn unused_pure_array_literals_go_but_operations_that_can_fail_stay() {
     );
     b.op1(OpKind::Zeros, vec![i], vector(5), sp());
     b.op1(OpKind::Identity, vec![i], matrix(TagSet::EMPTY, 5), sp());
+    // `len` of a typed array cannot fail (the exactness analysis proves it),
+    // so an unused one goes too.
     b.op1(OpKind::Len, vec![v], num(), sp());
     // A literal nobody reads is pure and vanishes.
     let (x, y) = (rat(&mut b, 3, 1), rat(&mut b, 4, 1));
@@ -922,7 +924,6 @@ fn unused_pure_array_literals_go_but_operations_that_can_fail_stay() {
             "slice",
             "zeros",
             "identity",
-            "len",
             "return"
         ]
     );

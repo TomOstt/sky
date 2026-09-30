@@ -349,7 +349,8 @@ impl<'m> Machine<'m, '_> {
     fn call_named(&mut self, name: &str, args: Vec<Value>, span: Span) -> R<Vec<Value>> {
         let func = self.resolve(name, args.len(), span)?;
         if self.depth >= MAX_CALL_DEPTH {
-            return Err(recursion_too_deep(name, span).into());
+            // A specialization `f[N=3]` is still `f` to the user.
+            return Err(recursion_too_deep(sky_ir::source_name(name), span).into());
         }
         self.depth += 1;
         let result = self.activate(func, args, Some(span));

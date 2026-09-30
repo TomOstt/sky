@@ -40,6 +40,7 @@ pub mod verify;
 
 pub use builder::FunctionBuilder;
 pub use canon::canonicalize;
+pub use ir::source_name;
 pub use ir::{
     BlockData, BlockId, Edition, Effect, EffectSet, Function, Module, NumberType, OpData, OpId,
     RegionData, RegionId, Repr, Type, ValueData, ValueDef, ValueId,

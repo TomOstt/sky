@@ -14,6 +14,13 @@ tests/ir/licm.sky:13:9: note: [PAR-003] this elementwise `add` over 2 elements i
    |         ^^^^^^^^^^^^^^^^^
    = note: because 2 elements is under the threshold of 262144: splitting it across threads costs more than it saves
 
+tests/ir/licm.sky:13:9: note: [MEM-001] `Kinv @ u + Aᵀ @ u` reuses `Kinv @ u`'s buffer: no allocation in this loop
+   |
+13 |     u = Kinv @ u + Aᵀ @ u
+   |         ^^^^^^^^^^^^^^^^^
+   = note: `Kinv @ u` is not used again after this on any path, and has the shape of the result
+   = note: applied by the `lifetimes` analysis of the SIR interpreter
+
 tests/ir/licm.sky:13:20: note: [LICM-001] `Aᵀ` is computed once before the loop (line 11)
    |
 13 |     u = Kinv @ u + Aᵀ @ u

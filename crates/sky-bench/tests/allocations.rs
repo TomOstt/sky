@@ -205,11 +205,12 @@ fn mixed_loop_allocates_only_what_it_must_on_sir() {
     println!("mixed: allocations per iteration: tree-walker {tree}, SIR {raw}, SIR+opt {opt}");
     assert_eq!(tree_out, raw_out);
     assert_eq!(tree_out, opt_out);
-    // `a = -k * x` is one new array (`x` is still needed after it): the
-    // entries and the shape. Nothing else allocates: the `if`, the math
-    // calls, `v[0]` and the scalar arithmetic are free, and `x` and `v`
-    // are updated in place.
-    assert_eq!(opt, 2.0, "the optimized loop's allocations changed");
+    // `a = -k * x` used to be one new array (`x` is still needed after it):
+    // the entries and the shape. After `gvn` and `licm` it fuses into the
+    // update of `v`, and nothing allocates but that kernel's result: the
+    // `if`, the math calls, `v[0]` and the scalar arithmetic are free, and
+    // `x` and `v` are updated in place.
+    assert_eq!(opt, 1.0, "the optimized loop's allocations changed");
 }
 
 #[test]

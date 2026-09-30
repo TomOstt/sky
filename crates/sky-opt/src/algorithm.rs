@@ -33,7 +33,7 @@ use sky_types::shape::ShapeDim;
 use sky_types::Algorithm;
 
 use crate::rewrite::Rewrite;
-use crate::util::{reachable_ops, value_text};
+use crate::util::reachable_ops;
 
 pub const ALGORITHM_RULE: &str = "ALG-MATMUL-001";
 
@@ -184,7 +184,11 @@ fn choose(f: &mut Function, id: OpId, policy: MatMulPolicy) -> Option<Rewrite> {
         algorithm: chosen,
     };
     let flops = Flops::matmul(&shape.m, &shape.k, &shape.n);
-    let (an, bn) = (value_text(f, a), value_text(f, b));
+    let named = |v| f.value(v).name.clone();
+    let (an, bn) = (
+        named(a).unwrap_or_else(|| "A".to_string()),
+        named(b).unwrap_or_else(|| "B".to_string()),
+    );
     Some(Rewrite {
         pass: "algorithms",
         rule: ALGORITHM_RULE,

@@ -620,7 +620,9 @@ pub extern "C" fn sky_rt_fail_depth(site: i32) {
             )) => callee.clone(),
             _ => String::new(),
         };
-        st.fail(recursion_too_deep(&callee, span));
+        // The user's name, as the interpreters say it: not the clone's
+        // (`f[n:Scalar]`, `f[N=3]`).
+        st.fail(recursion_too_deep(sky_ir::source_name(&callee), span));
     });
 }
 

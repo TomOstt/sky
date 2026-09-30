@@ -1,0 +1,19 @@
+def f(x: m, result: m) -> m:
+    requires x >= 0
+    requires x
+    ensures result > 0 m
+    return x
+
+def g(x: m) -> m:
+    requires result > 0 m
+    ensures result > 0 s
+    ensures y > 0 m
+    y = x
+    return x
+
+def h(x: m):
+    ensures result > 0 m
+    pass
+
+assert 3 m
+assert undefined_name > 0

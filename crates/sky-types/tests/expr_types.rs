@@ -173,6 +173,7 @@ impl Walk<'_> {
                     self.expr(v, false);
                 }
             }
+            StmtKind::Assert { cond, .. } => self.expr(cond, false),
             StmtKind::Pass | StmtKind::Break | StmtKind::Continue => {}
             StmtKind::Equation(eq) => {
                 for item in &eq.items {

@@ -1,0 +1,61 @@
+tests/ui/check/err_contracts.sky:1:13: error: `result` is the returned value in `ensures`
+  |
+1 | def f(x: m, result: m) -> m:
+  |             ^^^^^^ this parameter has the same name
+  = help: rename the parameter, so `ensures` can refer to both
+
+tests/ui/check/err_contracts.sky:2:16: error: cannot compare length and dimensionless
+  |
+2 |     requires x >= 0
+  |                ^^ mismatched dimensions
+  |              - length
+  |                   - dimensionless
+  = note: both operands of `>=` must have the same dimension
+  = note: `x` is a length because it is the parameter `x: m` (line 1)
+  = help: these differ by a factor of length: `x` is `0` times a length
+
+tests/ui/check/err_contracts.sky:3:14: error: `requires` needs a Bool condition, found Scalar [L]
+  |
+3 |     requires x
+  |              ^ not a Bool
+  = note: v0.1 has no truthiness
+  = help: compare it instead, e.g. `x != 0 m`
+
+tests/ui/check/err_contracts.sky:8:14: error: `result` is not available in `requires`
+  |
+8 |     requires result > 0 m
+  |              ^^^^^^^^^^^^ `result` is only the returned value inside `ensures`
+  = help: state what the result must satisfy in an `ensures` line
+
+tests/ui/check/err_contracts.sky:9:20: error: cannot compare length and time
+  |
+9 |     ensures result > 0 s
+  |                    ^ mismatched dimensions
+  |             ------ length
+  |                      --- time
+  = note: both operands of `>` must have the same dimension
+  = help: convert one side, or fix the unit
+
+tests/ui/check/err_contracts.sky:10:13: error: cannot find `y` in this scope
+   |
+10 |     ensures y > 0 m
+   |             ^ not defined
+   = help: an `ensures` sees the parameters as passed and `result`, not the function's locals
+
+tests/ui/check/err_contracts.sky:15:13: error: `h` returns no value, so there is no `result`
+   |
+15 |     ensures result > 0 m
+   |             ^^^^^^^^^^^^ `result` is the returned value
+   = help: return a value, or state the postcondition about the arguments
+
+tests/ui/check/err_contracts.sky:18:8: error: `assert` needs a Bool condition, found Scalar [L]
+   |
+18 | assert 3 m
+   |        ^^^ not a Bool
+   = note: v0.1 has no truthiness
+   = help: compare it instead, e.g. `3 m != 0 m`
+
+tests/ui/check/err_contracts.sky:19:8: error: cannot find `undefined_name` in this scope
+   |
+19 | assert undefined_name > 0
+   |        ^^^^^^^^^^^^^^ not defined

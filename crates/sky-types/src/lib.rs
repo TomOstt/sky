@@ -42,6 +42,7 @@ mod builtins;
 mod cancellation;
 pub mod check;
 pub mod constant;
+mod contracts;
 mod derivative;
 mod display;
 mod flow;

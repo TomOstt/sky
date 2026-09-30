@@ -632,15 +632,21 @@ impl Checker<'_> {
             }
         }
         self.diverged = false;
+        let entry = self.begin_contracts(params, body);
         self.block(body);
         let ends_diverged = self.diverged;
         let ctx = self.fns.pop();
         self.loops = saved_loops;
 
+        let has_value = ctx
+            .as_ref()
+            .is_some_and(|c| c.declared.is_some() || c.returns.iter().any(|r| r.value.is_some()));
         let ret_ty = match ctx {
             Some(ctx) => self.finish_returns(name, &ctx, ends_diverged),
             None => Ty::Unknown,
         };
+        let result = has_value.then(|| self.env.resolve(&ret_ty));
+        self.finish_contracts(name.span, &fname, params, body, entry, result);
         // Signature with what the body taught us about its size variables.
         let params: Vec<ParamSig> = psigs
             .into_iter()
@@ -994,6 +1000,9 @@ impl Checker<'_> {
                 continue;
             };
             self.check_argument(&fname, &param.name, pt, ann, arg, t, &fresh);
+        }
+        if sig.derivative.is_none() {
+            self.warn_call_breaks_contract(sig.def_span, &sig.name, args, span);
         }
         match &sig.ret {
             Ty::Value(v) => {

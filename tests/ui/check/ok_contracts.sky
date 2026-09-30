@@ -1,0 +1,25 @@
+def fall_time(h: m) -> s:
+    requires h >= 0 m
+    ensures result > 0 s
+    return sqrt(2 * h / g_n)
+
+def kinetic(m: kg, v: m/s) -> J:
+    requires m > 0 kg, "a mass is positive"
+    requires v >= 0 m/s
+    ensures result >= 0 J and result <= 1 GJ
+    return 0.5 * m * v^2
+
+def clamp(x, lo, hi):
+    requires lo <= hi
+    ensures result >= lo and result <= hi
+    if x < lo:
+        return lo
+    if x > hi:
+        return hi
+    return x
+
+t = fall_time(20 m)
+E = kinetic(2 kg, 3 m/s)
+assert E > 0 J
+assert t < 10 s, "a short fall"
+assert clamp(5 m, 1 m, 3 m) == 3 m

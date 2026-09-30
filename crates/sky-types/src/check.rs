@@ -425,6 +425,7 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         num: NumState::default(),
         unc: crate::uncertain::UncertainState::default(),
         shown_ok: None,
+        contract_defs: HashMap::new(),
     };
     for stmt in &module.stmts {
         c.stmt(stmt);
@@ -492,6 +493,9 @@ pub(crate) struct Checker<'s> {
     /// the argument of `print` or the expression statement being checked
     /// (see [`crate::display`]).
     pub(crate) shown_ok: Option<Span>,
+    /// The `requires` lines of the functions checked so far, by the span of
+    /// the `def`'s name (see [`crate::contracts`]).
+    pub(crate) contract_defs: HashMap<Span, Arc<crate::contracts::ContractDef>>,
 }
 
 /// Human wording for a dimension in error text: its name if it has one
@@ -812,6 +816,7 @@ impl<'s> Checker<'s> {
                 body,
             } => self.def_stmt(name, params, ret.as_ref(), body),
             StmtKind::Return(value) => self.return_stmt(stmt.span, value.as_ref()),
+            StmtKind::Assert { kind, cond, .. } => self.assert_stmt(*kind, cond),
             StmtKind::Pass => {}
             StmtKind::Break => self.break_stmt(stmt.span),
             StmtKind::Continue => self.continue_stmt(stmt.span),

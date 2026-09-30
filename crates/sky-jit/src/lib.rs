@@ -23,7 +23,9 @@
 //!   build`; see [`aot`].
 //!
 //! The whole-module engine's entry points are [`compile`] (a SIR module to
-//! machine code), [`Compiled::run`] and [`Compiled::run_or_rerun`], and
+//! machine code; [`compile_par`] for a run with threads: big kernels in
+//! chunks and independent pure calls on workers, see `module.rs`,
+//! "Threads"), [`Compiled::run`] and [`Compiled::run_or_rerun`], and
 //! [`emit_clif`] (the Cranelift IR as text). It behaves exactly like the SIR
 //! interpreter; `module.rs` says how.
 //!

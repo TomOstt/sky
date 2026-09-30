@@ -3,9 +3,11 @@
 //! dependency graph").
 //!
 //! This is an analysis. It changes nothing in the module: the interpreter
-//! (`sky-ir-interp`) asks it which operations to run concurrently, and
-//! `sky check --explain` asks it for the notes ([`explain`]). Three kinds of
-//! work qualify.
+//! (`sky-ir-interp`) and native code (`sky-jit`, with [`Config::for_native`]:
+//! the same rules, where native code is so much faster that only bigger work
+//! pays) ask it which operations to run concurrently, and `sky check
+//! --explain` asks it for the notes ([`explain`]). Three kinds of work
+//! qualify.
 //!
 //! # 1. Elementwise kernels
 //!

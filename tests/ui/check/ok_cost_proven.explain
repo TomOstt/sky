@@ -72,6 +72,7 @@ tests/ui/check/ok_cost_proven.sky:10:12: note: [PAR-001] this elementwise kernel
    = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
    = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
    = note: because 2 of its operations can fail (`mul`, `add`): if chunks fail, the failing operation that comes first in program order is reported, at its lowest failing element, which is the error a sequential run gives
+   = note: because native code runs it on 8 threads too from 262144 elements (a compiled kernel computes an element so fast that splitting pays only from there), in the same chunks, and resolves a failure by the same rule, so its result and error are the same
 
 tests/ui/check/ok_cost_proven.sky:10:12: note: [MEM-001] `v + 2 * w` reuses `w`'s buffer: no allocation for this result
    |
@@ -139,6 +140,7 @@ tests/ui/check/ok_cost_proven.sky:24:13: note: [PAR-001] this elementwise `mul` 
    = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
    = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
    = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
+   = note: because native code runs it on 8 threads too from 262144 elements (a compiled kernel computes an element so fast that splitting pays only from there), in the same chunks, and resolves a failure by the same rule, so its result and error are the same
 
 tests/ui/check/ok_cost_proven.sky:24:13: note: [MEM-001] `v * 2` reuses `v`'s buffer: no allocation in this loop
    |
@@ -180,6 +182,7 @@ tests/ui/check/ok_cost_proven.sky:31:13: note: [PAR-001] this elementwise kernel
    = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
    = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
    = note: because 2 of its operations can fail (`mul`, `add`): if chunks fail, the failing operation that comes first in program order is reported, at its lowest failing element, which is the error a sequential run gives
+   = note: because native code runs it on 8 threads too from 262144 elements (a compiled kernel computes an element so fast that splitting pays only from there), in the same chunks, and resolves a failure by the same rule, so its result and error are the same
 
 tests/ui/check/ok_cost_proven.sky:31:13: note: [MEM-001] `v * 2 + w` reuses `v`'s buffer: no allocation for this result
    |

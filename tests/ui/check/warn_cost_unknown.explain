@@ -20,6 +20,7 @@ tests/ui/check/warn_cost_unknown.sky:5:13: note: [PAR-001] this elementwise `mul
   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
   = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
+  = note: because native code runs it on 8 threads too from 262144 elements (a compiled kernel computes an element so fast that splitting pays only from there), in the same chunks, and resolves a failure by the same rule, so its result and error are the same
 
 tests/ui/check/warn_cost_unknown.sky:5:13: note: [MEM-001] `v * 2` reuses `v`'s buffer: no allocation in this loop
   |
@@ -78,6 +79,7 @@ tests/ui/check/warn_cost_unknown.sky:19:13: note: [PAR-001] this elementwise `mu
    = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
    = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
    = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
+   = note: because native code runs it on 8 threads too from 262144 elements (a compiled kernel computes an element so fast that splitting pays only from there), in the same chunks, and resolves a failure by the same rule, so its result and error are the same
 
 tests/ui/check/warn_cost_unknown.sky:19:13: note: [MEM-001] `v * 2` reuses `v`'s buffer: no allocation in this loop
    |

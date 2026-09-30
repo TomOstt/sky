@@ -3,11 +3,8 @@
 //! its tolerance and conserved quantity, and Sky picks and explains the
 //! integrator").
 //!
-//! Accuracy is asserted against a bound that depends on which solver ran:
-//! loose while `Method::Auto` is v0's fixed-step RK4 (its explanation says
-//! "not available yet"), and tied to the tolerance the script asked for
-//! (see [`bound`]) once the real solvers arrive, so these tests tighten
-//! without being edited.
+//! Accuracy is asserted against the tolerance the script asked for (see
+//! [`bound`]).
 
 use std::fs;
 use std::path::PathBuf;
@@ -73,14 +70,16 @@ fn numbers(text: &str) -> Vec<f64> {
         .collect()
 }
 
-/// `loose` while the solver is v0's fixed-step RK4; `tight` once the real
-/// solvers are in (`explanation` is what `explain(sol)` printed).
-fn bound(explanation: &str, loose: f64, tight: f64) -> f64 {
-    if explanation.contains("not available yet") {
-        loose
-    } else {
-        tight
-    }
+/// The error a test accepts, `tight` (usually a multiple of the tolerance the
+/// program asked for). `loose` was the bound for the v0 fixed-step solver;
+/// the real solvers are in, so an explanation saying v0 ran is a failure.
+fn bound(explanation: &str, _loose: f64, tight: f64) -> f64 {
+    assert!(
+        !explanation.contains("not available yet"),
+        "the v0 solver ran:
+{explanation}"
+    );
+    tight
 }
 
 /// The lines of `text` after the first `n`, the explanation.
@@ -376,4 +375,25 @@ print(s.n)
     assert_eq!(err(&o), "");
     let n = numbers(&out(&o))[0];
     assert!((n - (-1.0f64).exp()).abs() < 1e-6, "{}", out(&o));
+}
+
+#[test]
+fn an_uncertain_value_in_solve_says_how_to_proceed() {
+    let o = sky(
+        "uncertain",
+        "run",
+        &[],
+        "k = 2 ± 0.1 Hz\nequation decay(t: s):\n    x: m\n    x' = -k * x\nsol = solve decay from 0 s to 1 s with x = 1 m:\n    tolerance 1e-8\nprint(sol.x)\n",
+    );
+    assert_eq!(o.status.code(), Some(1));
+    let e = err(&o);
+    assert!(
+        e.contains("`x'` must be a number, found an uncertain number"),
+        "{e}"
+    );
+    assert!(
+        e.contains("`solve` does not propagate uncertainties"),
+        "{e}"
+    );
+    assert!(e.contains("nominal(v)"), "{e}");
 }

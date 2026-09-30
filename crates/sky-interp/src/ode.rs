@@ -149,7 +149,8 @@ impl Conserve {
                     other.kind()
                 ),
                 self.expr.span,
-            )),
+            )
+            .explain_uncertain(&other)),
         }
     }
 }
@@ -217,10 +218,27 @@ fn write_derivative(s: &Slot, v: &Value, span: Span, dydt: &mut [f64]) -> R<()> 
                 format!("`{}'` must be {want}, found {found}", s.name),
                 span,
             )
-            .with_label(format!("this is {found}")));
+            .with_label(format!("this is {found}"))
+            .explain_uncertain(other));
         }
     }
     Ok(())
+}
+
+/// Adds why an uncertain value cannot enter `solve`, and the way out, when
+/// `v` is the uncertain value an error found.
+trait ExplainUncertain {
+    fn explain_uncertain(self, v: &Value) -> Self;
+}
+
+impl ExplainUncertain for RuntimeError {
+    fn explain_uncertain(self, v: &Value) -> Self {
+        if !matches!(v, Value::Uncertain(_)) {
+            return self;
+        }
+        self.with_note("`solve` does not propagate uncertainties (`±`) yet")
+            .with_help("pass `nominal(v)` for each uncertain value `v`, and solve again with `nominal(v) + uncertainty(v)` to see how far the result moves")
+    }
 }
 
 impl System for OdeSystem<'_, '_> {
@@ -335,7 +353,8 @@ impl Interp<'_> {
                             other.kind()
                         ),
                         *vspan,
-                    ));
+                    )
+                    .explain_uncertain(other));
                 }
             };
             let len = dims.iter().product::<usize>().max(1);
@@ -536,7 +555,8 @@ impl Interp<'_> {
             other => Err(RuntimeError::new(
                 format!("{what} must be a number, found {}", other.kind()),
                 e.span,
-            )),
+            )
+            .explain_uncertain(&other)),
         }
     }
 

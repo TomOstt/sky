@@ -40,15 +40,16 @@ fn numbers(text: &str) -> Vec<f64> {
         .collect()
 }
 
-/// The error a test may accept: `loose` for the v0 solver, `tight` (usually
-/// a multiple of the tolerance the program asked for) once `Method::Auto`
-/// picks real methods.
-fn bound(explanation: &str, loose: f64, tight: f64) -> f64 {
-    if explanation.contains("not available yet") {
-        loose
-    } else {
-        tight
-    }
+/// The error a test accepts, `tight` (usually a multiple of the tolerance the
+/// program asked for). `loose` was the bound for the v0 fixed-step solver;
+/// the real solvers are in, so an explanation saying v0 ran is a failure.
+fn bound(explanation: &str, _loose: f64, tight: f64) -> f64 {
+    assert!(
+        !explanation.contains("not available yet"),
+        "the v0 solver ran:
+{explanation}"
+    );
+    tight
 }
 
 #[test]

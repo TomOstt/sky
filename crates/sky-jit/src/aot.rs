@@ -154,6 +154,8 @@ pub fn compile_object(
         false,
         false,
         crate::Slp::from_env(),
+        // An executable runs on one thread: no windows of calls.
+        None,
     )?;
     let main_index = module
         .functions

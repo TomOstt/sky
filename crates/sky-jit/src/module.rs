@@ -110,6 +110,73 @@
 //! effect and programs are deterministic, so the result is the SIR
 //! interpreter's exactly.
 //!
+//! # Threads
+//!
+//! [`compile_par`] takes the thread configuration of `sky run` (`--threads`,
+//! `SKY_THREADS`: `sky_ir::parallel::Config`); with one thread it is
+//! [`compile_with_slp`], and with more, native code runs three kinds of work
+//! on the rayon pool, the three the SIR interpreter does, with the same
+//! results, the same bytes and the same errors on every thread count (the
+//! rule and the reasons are the module documentation of `sky_ir::parallel`).
+//!
+//! * **Big `fused` kernels** run as the deterministic chunks of
+//!   [`crate::kernel::Kernel::run_par`]: the compiled loop on each chunk, the
+//!   failure of the lowest failing element of the first failing operation in
+//!   body order.
+//! * **Big elementwise array operations** run in chunks ([`crate::par`]); the
+//!   one failure left is an overflow of the whole operation.
+//! * **Independent pure calls** are the windows of `sky_ir::parallel`
+//!   (`CallGroup`): a call the analysis marks `Start` is *spawned* instead of
+//!   called, and the window's operations are otherwise translated in program
+//!   order. The spawn packs the arguments in memory and hands the callee's
+//!   *thunk* (a function generated per started callee, `define_thunk`: it
+//!   unpacks the arguments, makes the ordinary native call, stores the
+//!   results) to a worker. A started call's results are defined at the next
+//!   *join*: before the first operation that reads one (`Role::Deferred`) and at
+//!   the end of the window. Only callees whose parameters and results are
+//!   numbers, Bools and small arrays are started (a handle is an index into one
+//!   thread's runtime state); any other call of a window is called in place, in
+//!   its place in program order.
+//!
+//! **Why native code can run on several threads.** The generated code has no
+//! global or static data and no state that outlives a call: a function's frame
+//! is its own, constants are immediates, and every other effect goes through
+//! the runtime. The runtime's state is per thread (`runtime::STATE`: handles,
+//! pending error, kernel cache), and a worker makes one of its own for each
+//! started call, sharing with the caller only the program's plain data
+//! (`Arc<Program>`: the SIR module, the tables, the configuration) and the
+//! arguments it was given by value. So two calls cannot reach each other's
+//! values. The code is finalized and never written again; the thunk and the
+//! callee are ordinary reentrant functions. `Compiled` is not `Send` and
+//! `Compiled::run` does not return before every started call has ended (every
+//! path out of a window joins it, and the runtime waits for strays when the
+//! run ends), so no worker runs native code whose memory is freed.
+//!
+//! **Why the output cannot depend on the thread count.** A window has no
+//! `print` and its callees have no `io` (and no recursion), so the only thing a
+//! call does that anyone can see is fail (or deoptimize), and the window is
+//! resolved exactly as a replay in program order would: the operations run in
+//! program order, a call that is started does not change what the operations
+//! between it and its join compute (they do not read its results), and any
+//! failure of the window (an in-place operation, a join) first waits for the
+//! calls started so far and installs the outcome of the earliest one that did
+//! not succeed, which precedes the failing operation in program order. A call
+//! that fails is an `Err` outcome in the worker's own runtime state, carried
+//! back whole (message, spans, labels, notes): it is the error the call gives
+//! anywhere. Calls get the call depth the sequential run gives them (the
+//! depth check of a call is made before the spawn, at the same operation), so
+//! "recursion is too deep" arises at the same call; a started call runs on a
+//! stack of half the run's budget and, if it runs out of it, is run again
+//! on the calling thread at the join, where its outcome is the sequential
+//! run's; and a call is started only while the caller has used at most half
+//! the budget (otherwise it is called in place), as in the interpreter.
+//!
+//! What is worth starting differs from the interpreter: native code runs an
+//! operation about `NATIVE_CALL_COST_SCALE` times faster, so a call must cost
+//! that many times the estimate to be worth a thread (`Config::for_native`).
+//! Native code is compiled for one thread configuration, which decides the
+//! windows (`sky build` executables have none).
+//!
 //! # Limits
 //!
 //! Calls nest at most [`MAX_CALL_DEPTH`] deep, counted as the SIR interpreter
@@ -156,7 +223,7 @@ use sky_interp::arith::{ArithOp, MAX_CALL_DEPTH, STACK_BUDGET};
 use sky_interp::linalg::Numerics;
 use sky_interp::RuntimeError;
 use sky_ir::exact::{self, Analysis};
-use sky_ir::parallel::Config;
+use sky_ir::parallel::{CallGroup, Config, Plan, Role};
 use sky_ir::{
     BlockId, CmpOp, Function, MathFn, Module as SirModule, OpData, OpId, OpKind, Type, ValueId,
 };
@@ -520,6 +587,10 @@ pub(crate) struct Shared<'m> {
     contract: bool,
     /// Pack pairs of `f64` operations into vector lanes (see [`Slp`]).
     slp: Slp,
+    /// The calls that may run concurrently (see "Threads"); `None`: none do.
+    plan: Option<&'m Plan>,
+    /// The thunk of each function a window starts (see "Threads").
+    thunks: Vec<Option<FuncId>>,
 }
 
 fn build(module: &SirModule, emit: bool, relaxed: bool, slp: Slp, par: &Config) -> Res<Built> {
@@ -540,8 +611,22 @@ fn build(module: &SirModule, emit: bool, relaxed: bool, slp: Slp, par: &Config) 
     }
     let mut jit = JITModule::new(builder);
 
-    let done = translate_module(module, &mut jit, call_conv, emit, contract, slp)?;
+    // Windows of independent calls, for a run with threads. Native code runs
+    // a call in a fraction of the time the interpreter does, so a call must
+    // be that much bigger to be worth starting elsewhere.
+    let plan =
+        (par.is_parallel() && !emit).then(|| sky_ir::parallel::analyze(module, &par.for_native()));
+    let done = translate_module(
+        module,
+        &mut jit,
+        call_conv,
+        emit,
+        contract,
+        slp,
+        plan.as_ref(),
+    )?;
     let (sh, code_sizes, clif) = (done.sh, done.code_sizes, done.clif);
+    let thunk_code = done.thunk_code;
     if emit {
         return Ok(Built {
             jit: None,
@@ -559,6 +644,9 @@ fn build(module: &SirModule, emit: bool, relaxed: bool, slp: Slp, par: &Config) 
     jit.finalize_definitions()
         .map_err(|e| internal("the module", &e))?;
     for (id, size) in sh.fn_ids.iter().zip(&code_sizes) {
+        crate::icache::flush(jit.get_finalized_function(*id), *size);
+    }
+    for (id, size) in &thunk_code {
         crate::icache::flush(jit.get_finalized_function(*id), *size);
     }
     let main_index = module
@@ -617,6 +705,8 @@ pub(crate) struct Translated<'m> {
     /// The size of each function's machine code, to flush the instruction
     /// cache.
     pub code_sizes: Vec<usize>,
+    /// The thunks (see "Threads"), with the size of each one's machine code.
+    pub thunk_code: Vec<(FuncId, usize)>,
     pub clif: String,
 }
 
@@ -631,6 +721,7 @@ pub(crate) fn translate_module<'m, M: ClModule>(
     emit: bool,
     contract: bool,
     slp: Slp,
+    plan: Option<&'m Plan>,
 ) -> Res<Translated<'m>> {
     let mut sh = Shared {
         m: module,
@@ -641,6 +732,8 @@ pub(crate) fn translate_module<'m, M: ClModule>(
         sites: Vec::new(),
         contract,
         slp,
+        plan,
+        thunks: vec![None; module.functions.len()],
     };
     for rt in Rt::ALL {
         let (params, ret) = rt.signature();
@@ -662,6 +755,17 @@ pub(crate) fn translate_module<'m, M: ClModule>(
             .map_err(|e| internal(&f.name, &e))?;
         sh.fn_ids.push(id);
     }
+    // A thunk for each function a window of the plan starts.
+    let started = started_callees(module, plan);
+    for (i, f) in module.functions.iter().enumerate() {
+        if started[i] {
+            let name = symbol_name(i, &f.name).replacen("sky_f", "sky_t", 1);
+            let id = jit
+                .declare_function(&name, Linkage::Local, &thunk_signature(call_conv))
+                .map_err(|e| internal(&f.name, &e))?;
+            sh.thunks[i] = Some(id);
+        }
+    }
 
     let mut clif = String::new();
     let mut code_sizes = Vec::new();
@@ -680,11 +784,135 @@ pub(crate) fn translate_module<'m, M: ClModule>(
         }
         jit.clear_context(&mut ctx);
     }
+    let mut thunk_code = Vec::new();
+    for i in 0..module.functions.len() {
+        if let Some(id) = sh.thunks[i] {
+            define_thunk(jit, &sh, i, call_conv, &mut fctx, &mut ctx)?;
+            thunk_code.push((id, ctx.compiled_code().map_or(0, |c| c.code_buffer().len())));
+            jit.clear_context(&mut ctx);
+        }
+    }
     Ok(Translated {
         sh,
         code_sizes,
+        thunk_code,
         clif,
     })
+}
+
+// ----- threads -----
+
+/// Whether a call of `g` may be started on another thread: its parameters
+/// and results are numbers, Bools and small arrays, which are plain words. A
+/// handle is an index into the runtime state of one thread (see
+/// `runtime::tasks`) and cannot cross.
+fn startable(g: &Function) -> bool {
+    g.params
+        .iter()
+        .chain(&g.results)
+        .all(|t| rep_of(t) != Rep::Ref)
+}
+
+/// Which functions some window of `plan` starts a call of, and can: the ones
+/// that get a thunk.
+fn started_callees(module: &SirModule, plan: Option<&Plan>) -> Vec<bool> {
+    let mut started = vec![false; module.functions.len()];
+    let Some(plan) = plan else {
+        return started;
+    };
+    for f in &module.functions {
+        let Some(fp) = plan.function(&f.name) else {
+            continue;
+        };
+        for group in &fp.groups {
+            for (&id, &role) in group.ops.iter().zip(&group.roles) {
+                if role != Role::Start {
+                    continue;
+                }
+                let Some(op) = f.ops.get(id.index()) else {
+                    continue;
+                };
+                if let OpKind::Call { callee } = &op.kind {
+                    if let Some(ci) = module.functions.iter().position(|g| &g.name == callee) {
+                        if startable(&module.functions[ci]) {
+                            started[ci] = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    started
+}
+
+/// `(depth: i32, stack limit: i64, call site: i32, args: i64, results: i64)
+/// -> status: i32`: the signature of a thunk.
+fn thunk_signature(call_conv: cranelift_codegen::isa::CallConv) -> Signature {
+    let mut sig = Signature::new(call_conv);
+    sig.params.push(AbiParam::new(types::I32));
+    sig.params.push(AbiParam::new(types::I64));
+    sig.params.push(AbiParam::new(types::I32));
+    sig.params.push(AbiParam::new(types::I64));
+    sig.params.push(AbiParam::new(types::I64));
+    sig.returns.push(AbiParam::new(types::I32));
+    sig
+}
+
+/// Defines the thunk of function `ci`: what a started call runs on a worker
+/// (see "Threads"). It reads the callee's parameters, each one 8-byte word
+/// (an `f64`, a Bool in the low byte, or the entries of a small array one word
+/// each, in the order of the callee's native parameters) from `args`, makes
+/// the ordinary call with the depth, stack limit and call site it was given,
+/// and writes the results in the same way to `results` (a function that
+/// returns through memory gets `results` as its result area, which has the
+/// same layout). It returns the callee's status.
+fn define_thunk<M: ClModule>(
+    jit: &mut M,
+    sh: &Shared<'_>,
+    ci: usize,
+    call_conv: cranelift_codegen::isa::CallConv,
+    fctx: &mut FunctionBuilderContext,
+    ctx: &mut cranelift_codegen::Context,
+) -> Res<()> {
+    let g = &sh.m.functions[ci];
+    let Some(id) = sh.thunks[ci] else {
+        return Ok(());
+    };
+    ctx.func.signature = thunk_signature(call_conv);
+    ctx.func.name = UserFuncName::testcase(symbol_name(ci, &g.name).replacen("sky_f", "sky_t", 1));
+    {
+        let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        let p = b.block_params(entry).to_vec();
+        let mut args = vec![p[0], p[1], p[2]];
+        let mut at: i32 = 0;
+        for t in &g.params {
+            for ty in rep_tys(rep_of(t)) {
+                let v = b.ins().load(ty, MemFlags::trusted(), p[3], 8 * at);
+                args.push(v);
+                at += 1;
+            }
+        }
+        let in_memory = results_in_memory(g);
+        if in_memory {
+            args.push(p[4]);
+        }
+        let callee = jit.declare_func_in_func(sh.fn_ids[ci], b.func);
+        let call = b.ins().call(callee, &args);
+        let results = b.inst_results(call).to_vec();
+        if !in_memory {
+            for (i, v) in results[1..].iter().enumerate() {
+                b.ins().store(MemFlags::trusted(), *v, p[4], (8 * i) as i32);
+            }
+        }
+        b.ins().return_(&[results[0]]);
+        b.seal_all_blocks();
+        b.finalize();
+    }
+    jit.define_function(id, ctx)
+        .map_err(|e| internal(&g.name, &e))
 }
 
 fn describe(f: &Function) -> String {
@@ -861,6 +1089,29 @@ struct FnTx<'a, 'm, M: ClModule> {
     uses: Vec<u32>,
     /// Products whose emission waits for the sum that fuses them.
     pending: HashMap<ValueId, Pending>,
+    /// The windows of independent calls being translated, innermost last
+    /// (see "Threads").
+    wins: Vec<Win>,
+}
+
+/// A window of independent calls being translated (see "Threads").
+struct Win {
+    /// The runtime group: an `i64` handle.
+    gid: Cv,
+    /// The failure exit the function had before the window opened.
+    outer_err: Block,
+    /// The failure exit inside the window: waits for the calls started so
+    /// far (which installs the error of the earliest failing one as the
+    /// pending error, see `runtime::tasks`), ends the group, and goes on to
+    /// `outer_err`.
+    err: Block,
+    /// What each operation of the window does (see `sky_ir::parallel`).
+    roles: HashMap<OpId, Role>,
+    /// Calls started since the last join, in order: the call's position in
+    /// the group, its operation and its callee.
+    pending: Vec<(i32, OpId, usize)>,
+    /// How many calls the window has started.
+    spawned: i32,
 }
 
 /// A product `x * y` (the operation `site`) not yet emitted: the sum that
@@ -914,6 +1165,7 @@ impl<'a, 'm, M: ClModule> FnTx<'a, 'm, M> {
                 Vec::new()
             },
             pending: HashMap::new(),
+            wins: Vec::new(),
         };
         let limit = params[1];
         let pack = tx.sh.slp == Slp::Auto && !slp::body_latency_bound(f);
@@ -1427,8 +1679,41 @@ impl<'a, 'm, M: ClModule> FnTx<'a, 'm, M> {
         let Some((term, body)) = block.ops.split_last() else {
             return refuse("a block has no terminator", Some(f.span));
         };
+        // Windows of independent calls (see "Threads"): open before their
+        // first operation, closed after their last.
+        let windows = self.windows_in(bid, body);
+        let mut next_window = 0;
+        let mut open_end: Option<usize> = None;
         let mut i = 0;
-        while i < body.len() {
+        loop {
+            if open_end == Some(i) {
+                self.close_window()?;
+                open_end = None;
+            }
+            if i >= body.len() {
+                break;
+            }
+            if open_end.is_none() {
+                if let Some(&(start, end, group)) = windows.get(next_window) {
+                    if start == i {
+                        self.open_window(group);
+                        open_end = Some(end);
+                        next_window += 1;
+                    }
+                }
+            }
+            if open_end.is_some() {
+                match self.role_of(body[i]) {
+                    // Reads a result that is not there yet: wait for the calls.
+                    Some(Role::Deferred) => self.join_window()?,
+                    Some(Role::Start) if self.can_start(body[i]) => {
+                        self.spawn_op(body[i])?;
+                        i += 1;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
             // Relaxed numerics: a product that fuses into its sum is left for
             // the sum. Otherwise pairs of independent operations may share
             // vector lanes (SLP), and the rest are translated one by one.
@@ -1446,8 +1731,21 @@ impl<'a, 'm, M: ClModule> FnTx<'a, 'm, M> {
                     .iter()
                     .any(|v| self.pending.contains_key(v))
             };
-            let pairable =
-                i + 1 < body.len() && !reads_pending(body[i]) && !reads_pending(body[i + 1]);
+            // In a window, only two operations that both run in place are
+            // paired: one that waits for a started call must not move before
+            // the join, and none may straddle the end of the window.
+            let in_zone = match open_end {
+                None => true,
+                Some(end) => {
+                    i + 1 < end
+                        && self.role_of(body[i]) == Some(Role::InPlace)
+                        && self.role_of(body[i + 1]) == Some(Role::InPlace)
+                }
+            };
+            let pairable = i + 1 < body.len()
+                && in_zone
+                && !reads_pending(body[i])
+                && !reads_pending(body[i + 1]);
             if pairable && self.scalar_pair(body[i], body[i + 1])? {
                 i += 2;
             } else {
@@ -1456,6 +1754,232 @@ impl<'a, 'm, M: ClModule> FnTx<'a, 'm, M> {
             }
         }
         Ok(f.op(*term))
+    }
+
+    // ----- threads -----
+    //
+    // A *window* is a run of operations of a block that `sky_ir::parallel`
+    // found to hold independent pure calls (a `CallGroup`). Its operations are
+    // translated in program order, but the calls marked `Role::Start` are
+    // *spawned* (`runtime::tasks`: their arguments are packed in memory and
+    // the callee's thunk runs on the pool) instead of called, and their
+    // results are defined at the next *join*: before the first operation that
+    // reads one (`Role::Deferred`), and at the end of the window. A failure
+    // anywhere in the window goes to the window's own exit, which joins first:
+    // the earliest failing call, which is earlier in program order than
+    // the operation that failed (the calls started before it, and none after
+    // it, are the window's calls so far), replaces the failure. So the
+    // failure reported is the sequential run's.
+
+    /// The role `id` has in the innermost open window.
+    fn role_of(&self, id: OpId) -> Option<Role> {
+        self.wins.last().and_then(|w| w.roles.get(&id).copied())
+    }
+
+    /// Whether the call `id` has a thunk, so that it can be started.
+    fn can_start(&self, id: OpId) -> bool {
+        let OpKind::Call { callee } = &self.f.op(id).kind else {
+            return false;
+        };
+        self.sh
+            .m
+            .functions
+            .iter()
+            .position(|g| &g.name == callee)
+            .is_some_and(|ci| self.sh.thunks[ci].is_some())
+    }
+
+    /// The windows of the plan in block `bid`: where each starts and ends in
+    /// `body` (the block without its terminator) and its group, in order. A
+    /// window is only opened if it starts some call natively.
+    fn windows_in(&self, bid: BlockId, body: &[OpId]) -> Vec<(usize, usize, &'m CallGroup)> {
+        let Some(plan) = self.sh.plan else {
+            return Vec::new();
+        };
+        let Some(fp) = plan.function(&self.f.name) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for g in &fp.groups {
+            if g.block != bid {
+                continue;
+            }
+            let Some(start) = g.ops.first().and_then(|o| body.iter().position(|b| b == o)) else {
+                continue;
+            };
+            let end = start + g.ops.len();
+            if body.get(start..end) != Some(&g.ops[..]) {
+                continue;
+            }
+            let starts_one = g
+                .ops
+                .iter()
+                .zip(&g.roles)
+                .any(|(&o, &r)| r == Role::Start && self.can_start(o));
+            if starts_one {
+                out.push((start, end, g));
+            }
+        }
+        out.sort_by_key(|w| w.0);
+        out
+    }
+
+    /// Opens a window: a new group, and a failure exit of its own.
+    fn open_window(&mut self, group: &CallGroup) {
+        let gid = self.call1(Rt::GroupBegin, &[]);
+        let err = self.b.create_block();
+        let outer_err = std::mem::replace(&mut self.err, err);
+        self.wins.push(Win {
+            gid,
+            outer_err,
+            err,
+            roles: group
+                .ops
+                .iter()
+                .copied()
+                .zip(group.roles.iter().copied())
+                .collect(),
+            pending: Vec::new(),
+            spawned: 0,
+        });
+    }
+
+    /// Closes the innermost window: waits for its calls, ends the group, and
+    /// writes the window's failure exit.
+    fn close_window(&mut self) -> Res<()> {
+        self.join_window()?;
+        let Some(win) = self.wins.pop() else {
+            return Ok(());
+        };
+        self.call(Rt::GroupEnd, &[win.gid]);
+        let after = self.b.create_block();
+        self.b.ins().jump(after, &[]);
+        // The failure exit: join (which replaces the pending error by an
+        // earlier call's), end the group, and fail as the function does.
+        self.b.switch_to_block(win.err);
+        self.b.set_cold_block(win.err);
+        self.call(Rt::Join, &[win.gid]);
+        self.call(Rt::GroupEnd, &[win.gid]);
+        self.b.ins().jump(win.outer_err, &[]);
+        self.b.switch_to_block(after);
+        self.err = win.outer_err;
+        Ok(())
+    }
+
+    /// Waits for the calls the innermost window has started since the last
+    /// join, fails if one failed, and defines their results.
+    fn join_window(&mut self) -> Res<()> {
+        let Some(win) = self.wins.last_mut() else {
+            return Ok(());
+        };
+        if win.pending.is_empty() {
+            return Ok(());
+        }
+        let gid = win.gid;
+        let pending = std::mem::take(&mut win.pending);
+        let status = self.call1(Rt::Join, &[gid]);
+        self.status_fail(status);
+        let m = self.sh.m;
+        let f = self.f;
+        for (k, id, ci) in pending {
+            let op = f.op(id);
+            let g = &m.functions[ci];
+            let kv = self.c32(k);
+            let ptr = self.call1(Rt::TaskResult, &[gid, kv]);
+            let tys: Vec<ir::Type> = g.results.iter().flat_map(|r| rep_tys(rep_of(r))).collect();
+            // Position 0 stands for the status, which `bind_call_results`
+            // skips.
+            let mut results = vec![status];
+            for (i, t) in tys.into_iter().enumerate() {
+                let v = self
+                    .b
+                    .ins()
+                    .load(t, MemFlags::trusted(), ptr, (8 * i) as i32);
+                results.push(v);
+            }
+            self.bind_call_results(op, g, &results)?;
+        }
+        Ok(())
+    }
+
+    /// Starts the call `id` of a window: the depth check of a call, the
+    /// arguments packed in memory, and a spawn of the callee's thunk.
+    fn spawn_op(&mut self, id: OpId) -> Res<()> {
+        let f = self.f;
+        let m = self.sh.m;
+        let op = f.op(id);
+        let OpKind::Call { callee } = &op.kind else {
+            return refuse(
+                "a window starts something that is not a call",
+                Some(op.span),
+            );
+        };
+        let Some(ci) = m.functions.iter().position(|g| &g.name == callee) else {
+            return refuse(
+                format!("a call to unknown function `{callee}`"),
+                Some(op.span),
+            );
+        };
+        let g = &m.functions[ci];
+        let Some(thunk) = self.sh.thunks[ci] else {
+            return self.call_op(id, op, callee);
+        };
+        if op.operands.len() != g.params.len() || op.results.len() != g.results.len() {
+            return refuse(
+                format!("a call to `{callee}` does not match its signature"),
+                Some(op.span),
+            );
+        }
+        let site = self.site(id);
+        let site_v = self.c32(site);
+        let limit = self.c32(MAX_CALL_DEPTH as i32);
+        let bad = self
+            .b
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThanOrEqual, self.depth, limit);
+        self.fail_with(bad, Rt::FailDepth, &[site_v]);
+        let depth = self.b.ins().iadd_imm(self.depth, 1);
+        let mut words = Vec::new();
+        for (i, &v) in op.operands.iter().enumerate() {
+            words.extend(self.transfer(
+                op,
+                v,
+                &g.params[i],
+                &format!("argument {i} of a call to `{callee}`"),
+            )?);
+        }
+        let slot = self.b.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            8 * words.len().max(1) as u32,
+            3,
+        ));
+        let addr = self.b.ins().stack_addr(types::I64, slot, 0);
+        for (k, w) in words.iter().enumerate() {
+            self.b
+                .ins()
+                .store(MemFlags::trusted(), *w, addr, (8 * k) as i32);
+        }
+        let nres: usize = g.results.iter().map(|r| rep_tys(rep_of(r)).len()).sum();
+        let tref = self.jit.declare_func_in_func(thunk, self.b.func);
+        let taddr = self.b.ins().func_addr(types::I64, tref);
+        let (gid, k) = match self.wins.last_mut() {
+            Some(w) => {
+                let k = w.spawned;
+                w.spawned += 1;
+                w.pending.push((k, id, ci));
+                (w.gid, k)
+            }
+            None => return refuse("a call is started outside a window", Some(op.span)),
+        };
+        let _ = k;
+        let nargs = self.c32(words.len() as i32);
+        let nres = self.c32(nres as i32);
+        let stack_limit = self.stack_limit;
+        self.call(
+            Rt::Spawn,
+            &[gid, taddr, depth, stack_limit, site_v, addr, nargs, nres],
+        );
+        Ok(())
     }
 
     // ----- relaxed numerics: contraction -----
@@ -2474,6 +2998,12 @@ impl<'a, 'm, M: ClModule> FnTx<'a, 'm, M> {
                 results.push(v);
             }
         }
+        self.bind_call_results(op, g, &results)
+    }
+
+    /// Defines the results of the call `op` of `g` from `results`: the
+    /// callee's status (skipped) and then its results, flat, as native values.
+    fn bind_call_results(&mut self, op: &OpData, g: &Function, results: &[Cv]) -> Res<()> {
         let mut at = 1;
         for (i, ty) in g.results.iter().enumerate() {
             let v = results[at];

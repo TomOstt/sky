@@ -12,6 +12,7 @@
 //! kernels (`add`, `sub`, `mul`, `div`, `neg` on arrays).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use rayon::prelude::*;
@@ -21,6 +22,54 @@ use sky_interp::{RuntimeError, Value};
 use sky_ir::parallel::Config;
 use sky_ir::OpKind;
 
+/// What the parallel paths of this process have done so far, for tests and
+/// for `sky-bench`: a test that claims to exercise the parallel paths can
+/// check that they ran. Counting changes nothing a program observes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stats {
+    /// Compiled kernels that were split into chunks on the pool.
+    pub kernels_split: u64,
+    /// Elementwise array operations that ran in chunks on the pool.
+    pub elementwise_split: u64,
+    /// Calls of a window that ran on a pool worker.
+    pub calls_on_workers: u64,
+    /// Calls of a window that ran on the calling thread (the stack was deep,
+    /// or the caller was a worker).
+    pub calls_in_place: u64,
+}
+
+static KERNELS_SPLIT: AtomicU64 = AtomicU64::new(0);
+static ELEMENTWISE_SPLIT: AtomicU64 = AtomicU64::new(0);
+static CALLS_ON_WORKERS: AtomicU64 = AtomicU64::new(0);
+static CALLS_IN_PLACE: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn count_kernel() {
+    KERNELS_SPLIT.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn count_elementwise() {
+    ELEMENTWISE_SPLIT.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn count_call(on_worker: bool) {
+    let what = if on_worker {
+        &CALLS_ON_WORKERS
+    } else {
+        &CALLS_IN_PLACE
+    };
+    what.fetch_add(1, Ordering::Relaxed);
+}
+
+/// The counts so far (see [`Stats`]).
+pub fn stats() -> Stats {
+    Stats {
+        kernels_split: KERNELS_SPLIT.load(Ordering::Relaxed),
+        elementwise_split: ELEMENTWISE_SPLIT.load(Ordering::Relaxed),
+        calls_on_workers: CALLS_ON_WORKERS.load(Ordering::Relaxed),
+        calls_in_place: CALLS_IN_PLACE.load(Ordering::Relaxed),
+    }
+}
+
 /// A worker's stack. Workers run the whole call tree of a started call (in
 /// the SIR interpreter, interpreter frames; in native code, native frames),
 /// so they get room like `with_deep_stack` does, plus some for the work other
@@ -28,13 +77,58 @@ use sky_ir::OpKind;
 /// ever committed.
 pub const WORKER_STACK_BYTES: usize = 32 * 1024 * 1024;
 
-/// The pool for `threads` workers: created on first use and kept for the
-/// life of the process, so a test suite or a benchmark that runs many
-/// programs does not start threads for each. `None` if no threads could be
-/// started, in which case everything runs sequentially.
+/// The pool for `threads` workers that runs the chunks of kernels and
+/// elementwise operations (and the SIR interpreter's parallel work): created
+/// on first use and kept for the life of the process, so a test suite or a
+/// benchmark that runs many programs does not start threads for each. `None`
+/// if no threads could be started, in which case everything runs
+/// sequentially.
+///
+/// Work on this pool is leaf work: pure loops over slices that wait for
+/// nothing, so it cannot deadlock however it nests.
 pub fn pool_for(threads: usize) -> Option<Arc<ThreadPool>> {
     static POOLS: OnceLock<Mutex<HashMap<usize, Option<Arc<ThreadPool>>>>> = OnceLock::new();
-    let mut pools = POOLS
+    pool_in(&POOLS, threads, "sky-par")
+}
+
+/// The pool for `threads` workers that runs the calls native code starts
+/// (`runtime::tasks`), kept apart from [`pool_for`]'s so that the chunks of a
+/// kernel the main thread runs while calls are out are not queued behind them.
+///
+/// A started call runs native code with a runtime state of its own (per
+/// thread), so a worker of this pool must never run another started call
+/// *inside* one, which is what a rayon worker does while it waits for a join
+/// (of its own pool's jobs or, waiting for another pool, of its own pool's). A
+/// worker of this pool therefore never waits inside rayon: it is marked
+/// ([`on_call_worker`]), and what it runs does not start calls or split
+/// kernels and elementwise operations, it runs them on the worker.
+pub fn call_pool_for(threads: usize) -> Option<Arc<ThreadPool>> {
+    static POOLS: OnceLock<Mutex<HashMap<usize, Option<Arc<ThreadPool>>>>> = OnceLock::new();
+    pool_in(&POOLS, threads, "sky-call")
+}
+
+thread_local! {
+    static CALL_WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Marks the current thread as a worker of [`call_pool_for`]'s pool, for the
+/// rest of its life: it only ever runs started calls.
+pub(crate) fn mark_call_worker() {
+    CALL_WORKER.with(|c| c.set(true));
+}
+
+/// Whether the current thread is running a call native code started on a
+/// worker (see [`call_pool_for`]).
+pub(crate) fn on_call_worker() -> bool {
+    CALL_WORKER.with(std::cell::Cell::get)
+}
+
+fn pool_in(
+    pools: &'static OnceLock<Mutex<HashMap<usize, Option<Arc<ThreadPool>>>>>,
+    threads: usize,
+    name: &'static str,
+) -> Option<Arc<ThreadPool>> {
+    let mut pools = pools
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
@@ -44,7 +138,7 @@ pub fn pool_for(threads: usize) -> Option<Arc<ThreadPool>> {
             ThreadPoolBuilder::new()
                 .num_threads(threads)
                 .stack_size(WORKER_STACK_BYTES)
-                .thread_name(|i| format!("sky-par-{i}"))
+                .thread_name(move |i| format!("{name}-{i}"))
                 .build()
                 .ok()
                 .map(Arc::new)
@@ -133,7 +227,7 @@ pub fn elementwise(
     span: Span,
     cfg: &Config,
 ) -> Option<Result<Value, RuntimeError>> {
-    if !cfg.is_parallel() {
+    if !cfg.is_parallel() || on_call_worker() {
         return None;
     }
     let min = cfg.array_elements.max(2);
@@ -147,6 +241,7 @@ pub fn elementwise(
         let pool = pool_for(cfg.threads)?;
         // `0 - x`, as `sky_interp::array::negate`: a zero stays `+0`.
         let (out, _) = map1(&pool, cfg, data, |x| 0.0 - x);
+        count_elementwise();
         return Some(Ok(Value::array(dims.clone(), out, *dim)));
     }
     let [l, r] = operands else {
@@ -229,6 +324,7 @@ pub fn elementwise(
         _ => return None,
     };
     let (out, finite) = mapped;
+    count_elementwise();
     if !finite {
         return Some(Err(sky_interp::arith::overflow(span)));
     }

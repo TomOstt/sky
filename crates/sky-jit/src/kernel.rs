@@ -1245,9 +1245,14 @@ impl Kernel {
     /// has more than one thread, and the work (the elements times the
     /// operations of the body) reaches [`Config::fused_work`]. The same test
     /// the SIR interpreter makes (`Machine::fused_op`), so both engines split
-    /// the same kernels.
+    /// the same kernels. (Not on a worker that runs a call native code
+    /// started: that call is already a piece of the parallel run, see
+    /// `par::call_pool_for`.)
     pub fn splits(&self, n: usize, cfg: &Config) -> bool {
-        cfg.is_parallel() && n >= 2 && n.saturating_mul(self.reference.ops.len()) >= cfg.fused_work
+        cfg.is_parallel()
+            && !crate::par::on_call_worker()
+            && n >= 2
+            && n.saturating_mul(self.reference.ops.len()) >= cfg.fused_work
     }
 
     /// [`Kernel::run`], in chunks on the pool when [`Kernel::splits`] says
@@ -1341,6 +1346,7 @@ impl Kernel {
             }
             return Ok(());
         };
+        crate::par::count_kernel();
         let len = crate::par::chunk_len(cfg, n);
         let chunks = n.div_ceil(len);
         let dest = SendPtr(out);

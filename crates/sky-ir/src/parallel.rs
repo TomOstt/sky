@@ -117,6 +117,12 @@ const MAX_WINDOW: usize = 512;
 /// The cost of an array operation whose size is not known statically.
 const UNKNOWN_ELEMENTS: u64 = 256;
 
+/// How many times more estimated operations a call must cost to be started on
+/// another thread in native code than in the interpreter: native code runs an
+/// operation about this many times faster (`sky-bench par` measures it, see
+/// `docs/design/ir.md`).
+pub const NATIVE_CALL_COST_SCALE: u64 = 64;
+
 /// The most threads `--threads` accepts.
 pub const MAX_THREADS: usize = 1024;
 
@@ -179,6 +185,18 @@ impl Config {
             array_elements: 262_144,
             call_cost: 400,
             chunk_min: 512,
+        }
+    }
+
+    /// This configuration for native code: the same, with the least cost of a
+    /// started call multiplied by [`NATIVE_CALL_COST_SCALE`]. The cost is
+    /// counted in interpreted operations; native code runs an operation in
+    /// about that fraction of the time, while starting a call elsewhere costs
+    /// the same microseconds, so a call must be that much bigger to pay.
+    pub fn for_native(&self) -> Config {
+        Config {
+            call_cost: self.call_cost.saturating_mul(NATIVE_CALL_COST_SCALE),
+            ..self.clone()
         }
     }
 

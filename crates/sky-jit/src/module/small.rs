@@ -38,12 +38,17 @@ use sky_units::Dimension;
 
 use super::{dim_of_type, number_dim, refuse, rep_of, Comp, FnTx, Rep, Res, Rt, Slot};
 
-/// The most entries a small array has. Chosen by measuring `nbody`, an RK4
-/// step and a 4-by-4 product with the limit at 8, 16 and 32 (see the commit
-/// that introduced this module): a limit of 16 covers 2, 3 and 4-vectors and
-/// matrices up to 4 by 4, and a matrix product of two 4 by 4 matrices (64
-/// multiplications, 48 additions) is still worth unrolling. Above it the
-/// generated code grows faster than the allocation it saves is worth.
+/// The most entries a small array has. Chosen by measuring (Apple M2 Pro,
+/// release) a loop of 200 000 steps of `M = A @ M` on 4 by 4 matrices and on
+/// 5 by 5 ones, with the limit at 8, 16 and 32: 4 by 4 (16 entries) takes 0.20 s
+/// as handles and 0.01 s as scalars, 5 by 5 (25 entries) the same 0.20 s as
+/// handles and 0.01 s as scalars. But unrolling costs compile time, roughly
+/// 3 ms per 4 by 4 product and 6.6 ms per 5 by 5 one (80 products in
+/// straight-line code: 0.23 s and 0.53 s to compile, against 0.01 s as
+/// handles), which a loop body run a few thousand times repays and a large
+/// straight-line program does not. 16 covers 2, 3 and 4-vectors and matrices
+/// up to 4 by 4 (the sizes of physics code), where the saving is
+/// 20 times and the compile cost stays small.
 pub(super) const MAX_SMALL: usize = 16;
 
 /// The shape of a small array.

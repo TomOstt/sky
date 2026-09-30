@@ -54,10 +54,13 @@ print(step([1, 2], [3, 4]))
 fn a_run_ignores_cost_lines_on_both_engines() {
     let ast = sky("run-ast", &["run", "--engine=ast"], STEP);
     let sir = sky("run-sir", &["run", "--engine=sir"], STEP);
+    let native = sky("run-native", &["run", "--engine=native"], STEP);
     assert_eq!(ast.status.code(), Some(0), "{}", err(&ast));
     assert_eq!(out(&ast), "[7, 10]\n");
     assert_eq!(out(&sir), out(&ast));
     assert_eq!(err(&sir), err(&ast));
+    assert_eq!(out(&native), out(&ast));
+    assert_eq!(err(&native), err(&ast));
     // A refuted contract does not stop a run, only a check.
     let wrong = STEP.replace("2 * N", "N");
     let o = sky("run-wrong", &["run"], &wrong);

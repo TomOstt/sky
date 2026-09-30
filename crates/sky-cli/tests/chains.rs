@@ -57,12 +57,15 @@ print(inv(Q) @ v)
 fn both_engines_print_the_same_bytes() {
     let ast = sky("ast", &["run", "--engine=ast"], PROGRAM);
     let sir = sky("sir", &["run", "--engine=sir"], PROGRAM);
+    let native = sky("native", &["run", "--engine=native"], PROGRAM);
     let auto = sky("auto", &["run"], PROGRAM);
     assert!(ast.status.success(), "{}", err(&ast));
     assert_eq!(out(&ast).lines().count(), 5);
     assert_eq!(out(&sir), out(&ast));
+    assert_eq!(out(&native), out(&ast));
     assert_eq!(out(&auto), out(&ast));
     assert_eq!(err(&sir), err(&ast));
+    assert_eq!(err(&native), err(&ast));
 }
 
 #[test]
@@ -70,10 +73,13 @@ fn both_engines_fail_with_the_same_diagnostic() {
     let src = "A = [[1, 2], [2, 4]]\nprint(1)\nprint(inv(A) @ [1, 2])\n";
     let ast = sky("fail-ast", &["run", "--engine=ast"], src);
     let sir = sky("fail-sir", &["run", "--engine=sir"], src);
+    let native = sky("fail-native", &["run", "--engine=native"], src);
     assert!(!ast.status.success());
     assert_eq!(out(&ast), "1\n");
     assert_eq!(out(&sir), out(&ast));
     assert_eq!(err(&sir), err(&ast));
+    assert_eq!(out(&native), out(&ast));
+    assert_eq!(err(&native), err(&ast));
     assert!(
         err(&ast).contains("the matrix is singular"),
         "{}",

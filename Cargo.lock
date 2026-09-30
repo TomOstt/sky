@@ -1396,6 +1396,7 @@ dependencies = [
  "sky-lower",
  "sky-opt",
  "sky-project",
+ "sky-rt",
  "sky-syntax",
  "sky-tune",
  "sky-types",
@@ -1502,6 +1503,7 @@ dependencies = [
  "sky-ir",
  "sky-types",
  "sky-units",
+ "target-lexicon",
 ]
 
 [[package]]
@@ -1562,6 +1564,15 @@ dependencies = [
  "libc",
  "sky-diag",
  "sky-syntax",
+]
+
+[[package]]
+name = "sky-rt"
+version = "0.0.1"
+dependencies = [
+ "sky-diag",
+ "sky-ir-interp",
+ "sky-jit",
 ]
 
 [[package]]

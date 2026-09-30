@@ -19,6 +19,10 @@
 //!    must end in the resource-limit error in both engines. Run-time
 //!    failures (division by zero, overflow, math domain errors) are
 //!    generated on purpose: how often depends on a per-program "risk".
+//!    Contracts are generated too (`assert` statements, and `requires` and
+//!    `ensures` lines on functions), mostly conditions that hold so the
+//!    program goes on, sometimes one that fails, whose message (the values of
+//!    its names) and span the engines must agree on.
 //!
 //! 2. [`check_source`] is the oracle. It lexes, parses and checks the source
 //!    (all must succeed: a rejection is a generator bug), lowers it, verifies
@@ -1316,6 +1320,7 @@ impl Gen<'_> {
             }, // 11 probe
             // 12 an input declaration: the run ends there, so it is rare
             if self.ind == 0 && !self.in_fn { 1 } else { 0 },
+            2, // 13 an assertion
         ];
         match self.c.weighted(&w) {
             0 => {
@@ -1356,9 +1361,116 @@ impl Gen<'_> {
                 self.input_declaration();
                 Exit::Falls
             }
+            13 => {
+                self.assert_stmt();
+                Exit::Falls
+            }
             _ => {
                 self.poly_probe();
                 Exit::Falls
+            }
+        }
+    }
+
+    /// A condition for `assert`, `requires` or `ensures`. Mostly one that
+    /// holds whatever the values are (`v == v`), so the program goes on;
+    /// often a comparison of the constants the `contracts` pass can decide;
+    /// sometimes a random Bool expression, which may fail (or fail to
+    /// compute); rarely one that is false. A quarter of them go through the
+    /// identity function, so the checker cannot type the condition and the
+    /// engines must check it at run time.
+    fn contract_cond(&mut self, depth: u32) -> String {
+        let vars: Vec<(String, Ty)> = self.vars.iter().map(|v| (v.name.clone(), v.ty)).collect();
+        let cond = match self.c.weighted(&[40, 16, 14 + self.risk, 2]) {
+            0 if !vars.is_empty() => {
+                let (n, ty) = self.c.pick(&vars).clone();
+                match ty {
+                    Ty::Num(_) => {
+                        let form = *self.c.pick(&[
+                            "{0} == {0}",
+                            "{0} <= {0}",
+                            "{0} >= {0}",
+                            "not {0} != {0}",
+                        ]);
+                        form.replace("{0}", &n)
+                    }
+                    Ty::Bool | Ty::Str => format!("{n} == {n}"),
+                }
+            }
+            0 | 1 => {
+                let d = self.rand_dim();
+                let (a, b) = (self.positive_literal(d).s, self.positive_literal(d).s);
+                // The same literal twice is equal; two may or may not be ordered.
+                match self.c.below(4) {
+                    0 => format!("{a} == {a}"),
+                    1 => format!("{a} <= {a}"),
+                    2 => "true".to_string(),
+                    _ => format!("{a} != {b} or {a} == {b}"),
+                }
+            }
+            2 => self.boolean(depth).s,
+            _ => "1 > 2".to_string(),
+        };
+        match &self.unknown {
+            Some(u) if self.c.chance(25) => {
+                if self.c.chance(8) {
+                    // Not a Bool: the same run-time error in both engines.
+                    format!("{u}(1)")
+                } else {
+                    format!("{u}({cond})")
+                }
+            }
+            _ => cond,
+        }
+    }
+
+    /// `, "message"` for a contract, one time in three.
+    fn contract_message(&mut self) -> String {
+        if self.c.chance(33) {
+            let m = *self.c.pick(&[
+                "\"invariant\"",
+                "\"energy must be positive\"",
+                "\"a longer message, with: punctuation (and parentheses)\"",
+                "\"say \\\"hi\\\"\"",
+            ]);
+            format!(", {m}")
+        } else {
+            String::new()
+        }
+    }
+
+    /// `assert cond`, with a message sometimes.
+    fn assert_stmt(&mut self) {
+        let cond = self.contract_cond(2);
+        let message = self.contract_message();
+        self.line(&format!("assert {cond}{message}"));
+    }
+
+    /// The `requires` and `ensures` lines of the function being generated,
+    /// right after its `def` line: the parameters and the module's names are
+    /// in scope, and `result` (the returned value) in an `ensures`.
+    fn function_contracts(&mut self, ret: Option<Ty>) {
+        for _ in 0..1 + self.c.below(3) {
+            if self.c.chance(55) {
+                let cond = self.contract_cond(1);
+                let message = self.contract_message();
+                self.line(&format!("requires {cond}{message}"));
+            } else {
+                let had = self.vars.len();
+                if let Some(ty) = ret {
+                    self.vars.push(Var {
+                        name: "result".to_string(),
+                        ty,
+                        assign: false,
+                        update: false,
+                        module: false,
+                        retype: false,
+                    });
+                }
+                let cond = self.contract_cond(1);
+                let message = self.contract_message();
+                self.vars.truncate(had);
+                self.line(&format!("ensures {cond}{message}"));
             }
         }
     }
@@ -1869,6 +1981,11 @@ impl Gen<'_> {
         self.mult = 1;
         self.weight = 0;
         self.ind = 1;
+        // A contract cannot call the function it belongs to (`rec` is not
+        // set yet, and `cur` keeps the others from it).
+        if self.c.chance(15) {
+            self.function_contracts(ret);
+        }
         if recursive {
             self.rec = Some(Rec {
                 idx,
@@ -2125,6 +2242,36 @@ fn normalized(r: &Result<(), Failure>) -> Result<(), String> {
     })
 }
 
+/// Whether `msg` is the failure of a contract (spec "Contracts"): a false
+/// condition, or one that is not a Bool.
+fn is_contract_failure(msg: &str) -> bool {
+    msg.starts_with("assertion failed")
+        || msg.starts_with("precondition of ")
+        || msg.starts_with("postcondition of ")
+        || ["assert", "requires", "ensures"]
+            .iter()
+            .any(|k| msg.starts_with(&format!("`{k}` needs a Bool condition")))
+}
+
+/// Where the engines stop is part of the failure of a contract: both point
+/// at the condition. (The other errors' spans are the tests' business.)
+fn check_contract_span(ast: &sky_ast::Module, src: &str, m: &sky_ir::Module) -> Result<(), String> {
+    let mut env = sky_interp::RuntimeEnv::with_prelude();
+    let walker = sky_interp::run_module(ast, src, &mut env, &mut Vec::new())
+        .err()
+        .map(|e| (e.message.clone(), e.span));
+    let sir = sky_ir_interp::run(m, &mut Vec::new())
+        .err()
+        .map(|e| (e.message.clone(), e.span));
+    if walker != sir {
+        return Err(format!(
+            "a contract failure differs in message or span\nsky run: {walker:?}\nSIR:     {sir:?}\n--- SIR text ---\n{}",
+            sky_ir::print(m)
+        ));
+    }
+    Ok(())
+}
+
 /// What the AST interpreter (`sky run`) does.
 fn interpret(ast: &sky_ast::Module, src: &str) -> (String, Result<(), Failure>) {
     let mut env = sky_interp::RuntimeEnv::with_prelude();
@@ -2206,6 +2353,11 @@ fn check_inner(src: &str, strict: bool) -> Result<Outcome, String> {
 
     let (want_out, want) = interpret(&ast, src);
     let (got_out, got) = run_sir(&m, src);
+    if let Err(msg) = &want {
+        if is_contract_failure(msg) {
+            check_contract_span(&ast, src, &m)?;
+        }
+    }
     let dump = |m: &sky_ir::Module| sky_ir::print(m);
     if got_out != want_out {
         return Err(format!(

@@ -1393,3 +1393,231 @@ fn a_gradient_of_a_matrix_parameter() {
     assert_eq!(o.error, None);
     assert!(o.stdout.starts_with("[["), "{}", o.stdout);
 }
+
+// ----- contracts: assert, requires, ensures -----
+//
+// The message names the values of the names in the condition, and the span
+// is the condition's; both engines build them from `sky_interp::contract`,
+// and these tests hold them to it: same stdout, same message, same span.
+
+/// Both engines fail on `src` with the same message at the same span; returns
+/// the message. Their output before the failure is the same too.
+fn same_failure(src: &str) -> String {
+    let (walker, sir) = located_errors(src);
+    assert_eq!(sir, walker, "the engines differ on:\n{src}");
+    let out = assert_same(src);
+    let (message, span) = walker.expect("the program fails");
+    assert_eq!(out.error.as_deref(), Some(message.as_str()));
+    assert!(
+        span.start < span.end && (span.end as usize) <= src.len(),
+        "{span:?}"
+    );
+    message
+}
+
+#[test]
+fn a_true_contract_changes_nothing() {
+    let o = assert_same(
+        "def fall_time(h: m) -> s:\n    requires h >= 0 m\n    ensures result > 0 s\n    return sqrt(2 * h / g_n)\n\
+         E = 3 J\nassert E > 0 J, \"energy\"\nprint(fall_time(20 m), E)\n",
+    );
+    assert_eq!(o.stdout, "2.0196199771025523 s 3 J\n");
+    assert_eq!(o.error, None);
+}
+
+#[test]
+fn a_false_assertion_fails_alike() {
+    let src = "print(1)\nE = -3.2 J\nassert E > 0 J\nprint(2)\n";
+    assert_eq!(
+        same_failure(src),
+        "assertion failed: `E > 0 J` (E = -3.2 J)"
+    );
+    let src = "E = -3.2 J\nassert E > 0 J, \"energy must be positive\"\n";
+    assert_eq!(
+        same_failure(src),
+        "assertion failed: energy must be positive (`E > 0 J`, E = -3.2 J)"
+    );
+    let src = "assert 1 > 2\n";
+    assert_eq!(same_failure(src), "assertion failed: `1 > 2`");
+}
+
+#[test]
+fn the_names_shown_are_those_of_the_condition_in_order() {
+    // Names not reached by short-circuiting are still shown; a called
+    // function's name is not a name; a constant is one.
+    let src = "def sq(x):\n    return x * x\na = 3\nb = 4 m\nassert sq(a) + a < 1 and b > 9 m and pi > 0\n";
+    assert_eq!(
+        same_failure(src),
+        "assertion failed: `sq(a) + a < 1 and b > 9 m and pi > 0` (a = 3, b = 4 m, pi = 3.141592653589793)"
+    );
+    let src =
+        "v = [1 m, 2 m]\ns = \"a\"\nflag = true\nassert v[0] > 5 m or s == \"b\" or not flag\n";
+    assert_eq!(
+        same_failure(src),
+        "assertion failed: `v[0] > 5 m or s == \"b\" or not flag` (v = [1 m, 2 m], s = \"a\", flag = true)"
+    );
+    // A condition over several lines is quoted on one.
+    let src = "a = 1\nassert (a >\n    2\n    and\n    true)\n";
+    assert_eq!(
+        same_failure(src),
+        "assertion failed: `(a > 2 and true)` (a = 1)"
+    );
+}
+
+#[test]
+fn a_failed_precondition_fails_alike_and_runs_before_the_body() {
+    let src = "def fall_time(h: m) -> s:\n    requires h >= 0 m\n    print(\"body\")\n    return sqrt(2 * h / g_n)\n\
+               print(fall_time(20 m))\nx = fall_time(-1 m)\nprint(9)\n";
+    assert_eq!(
+        same_failure(src),
+        "precondition of `fall_time` failed: `h >= 0 m` (h = -1 m)"
+    );
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "body\n2.0196199771025523 s\n");
+    // Two of them, and the message of the one that fails.
+    let src = "def f(x):\n    requires x > 0, \"positive\"\n    requires x < 10\n    return x\nf(3)\nf(20)\n";
+    assert_eq!(
+        same_failure(src),
+        "precondition of `f` failed: `x < 10` (x = 20)"
+    );
+    let src =
+        "def f(x):\n    requires x > 0, \"positive\"\n    requires x < 10\n    return x\nf(-2)\n";
+    assert_eq!(
+        same_failure(src),
+        "precondition of `f` failed: positive (`x > 0`, x = -2)"
+    );
+}
+
+#[test]
+fn a_failed_postcondition_fails_alike_and_sees_the_arguments_as_passed() {
+    let src = "def f(x):\n    requires x > 0\n    ensures result > x\n    x = x - 5\n    return x + 1\nf(3)\n";
+    assert_eq!(
+        same_failure(src),
+        "postcondition of `f` failed: `result > x` (result = -1, x = 3)"
+    );
+    // At every return, whichever it is.
+    let src = "def f(x):\n    ensures result >= 0\n    if x > 0:\n        return x\n    return x\nprint(f(1))\nprint(f(-1))\n";
+    assert_eq!(
+        same_failure(src),
+        "postcondition of `f` failed: `result >= 0` (result = -1)"
+    );
+    let src = "def f(x: m) -> m:\n    ensures result > 0 m\n    i = 0\n    while i < 10:\n        if i == x / 1 m:\n            return x\n        i += 1\n    return 0 m - x\nprint(f(3 m))\nprint(f(-2 m))\nprint(f(20 m))\nprint(f(-1 m))\n";
+    assert_eq!(
+        same_failure(src),
+        "postcondition of `f` failed: `result > 0 m` (result = -20 m)"
+    );
+}
+
+#[test]
+fn a_postcondition_after_a_break_in_a_loop_and_with_no_result() {
+    let src = "def f(n):\n    ensures result == 10\n    total = 0\n    for i in range(20):\n        if i == n:\n            break\n        total += 1\n    return total\nprint(f(10))\nprint(f(5))\n";
+    assert_eq!(
+        same_failure(src),
+        "postcondition of `f` failed: `result == 10` (result = 5)"
+    );
+    let src = "def f(x):\n    ensures x > 0\n    print(x)\nf(1)\nf(-1)\n";
+    assert_eq!(
+        same_failure(src),
+        "postcondition of `f` failed: `x > 0` (x = -1)"
+    );
+}
+
+#[test]
+fn contracts_read_module_names_and_result_is_an_ordinary_name_elsewhere() {
+    let src = "limit = 10\ndef f(x):\n    requires x < limit\n    ensures result < limit + 1\n    return x + 5\nprint(f(3))\nf(8)\n";
+    assert_eq!(
+        same_failure(src),
+        "postcondition of `f` failed: `result < limit + 1` (result = 13, limit = 10)"
+    );
+    let o = assert_same(
+        "result = 3\ndef f(x):\n    ensures result == x + 1\n    return x + 1\nassert result == 3\nprint(f(2), result)\n",
+    );
+    assert_eq!(o.stdout, "3 3\n");
+}
+
+#[test]
+fn recursion_and_nesting_check_every_level() {
+    let src = "def f(n):\n    requires n >= 0\n    if n == 0:\n        return 0\n    return f(n - 1)\nprint(f(3))\nf(-1)\n";
+    assert_eq!(
+        same_failure(src),
+        "precondition of `f` failed: `n >= 0` (n = -1)"
+    );
+    // A contract that calls a function with a contract.
+    let src = "def pos(x):\n    requires x != 0\n    return x > 0\ndef g(x):\n    requires pos(x)\n    return x\nprint(g(2))\nprint(g(-2))\n";
+    assert_eq!(
+        same_failure(src),
+        "precondition of `g` failed: `pos(x)` (x = -2)"
+    );
+    let src = "def pos(x):\n    requires x != 0\n    return x > 0\ndef g(x):\n    requires pos(x)\n    return x\ng(0)\n";
+    assert_eq!(
+        same_failure(src),
+        "precondition of `pos` failed: `x != 0` (x = 0)"
+    );
+}
+
+#[test]
+fn a_contract_on_a_value_the_checker_cannot_type_is_checked_at_run_time() {
+    let def = "def f(a):\n    return a\n";
+    let src = format!("{def}assert f(1)\n");
+    assert_eq!(
+        same_failure(&src),
+        "`assert` needs a Bool condition, found a number"
+    );
+    let src = format!("{def}def g(x):\n    requires f(x)\n    return x\ng(1)\n");
+    assert_eq!(
+        same_failure(&src),
+        "`requires` needs a Bool condition, found a number"
+    );
+    let src = format!("{def}def g(x):\n    ensures f(result)\n    return x\ng(true)\ng(4)\n");
+    assert_eq!(
+        same_failure(&src),
+        "`ensures` needs a Bool condition, found a number"
+    );
+    let o = assert_same(&format!(
+        "{def}assert f(true)\nassert f(2) == 2\nprint(1)\n"
+    ));
+    assert_eq!(o.stdout, "1\n");
+    let src = format!("{def}x = 5\nassert f(x > 9), \"unknown\"\n");
+    assert_eq!(
+        same_failure(&src),
+        "assertion failed: unknown (`f(x > 9)`, x = 5)"
+    );
+}
+
+#[test]
+fn asserts_in_blocks_after_an_early_return_and_in_loops() {
+    let src = "def f(x):\n    if x > 100:\n        return 1\n    assert x > -5, \"floor\"\n    for i in range(3):\n        assert i < x\n    return 2\nprint(f(200))\nprint(f(4))\nprint(f(2))\n";
+    assert_eq!(
+        same_failure(src),
+        "assertion failed: `i < x` (i = 2, x = 2)"
+    );
+    let src = "def f(x):\n    if x > 100:\n        return 1\n    assert x > -5, \"floor\"\n    return 2\nprint(f(200))\nprint(f(-9))\n";
+    assert_eq!(
+        same_failure(src),
+        "assertion failed: floor (`x > -5`, x = -9)"
+    );
+    let src = "k = 0\nwhile k < 10:\n    k += 1\n    if k == 4:\n        continue\n    assert k != 7\nprint(k)\n";
+    assert_eq!(same_failure(src), "assertion failed: `k != 7` (k = 7)");
+}
+
+#[test]
+fn an_assertion_is_output_ordered_and_stops_a_failing_function_before_its_effects() {
+    let src = "def f(x):\n    print(\"in\")\n    assert x > 0\n    print(\"out\")\n    return x\nprint(f(1))\nprint(f(0))\n";
+    assert_eq!(same_failure(src), "assertion failed: `x > 0` (x = 0)");
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "in\nout\n1\nin\n");
+}
+
+#[test]
+fn a_derivative_of_a_function_with_a_contract_keeps_the_contract() {
+    let o = assert_same(
+        "def f(x: m) -> m:\n    requires x > 0 m\n    ensures result > 0 m\n    return x * x / 1 m\n\
+         print(derivative(f, x)(3 m))\nprint(f(2 m))\n",
+    );
+    assert_eq!(o.stdout, "6\n4 m\n");
+    let src = "def f(x: m) -> m:\n    requires x > 0 m, \"x must be positive\"\n    return x * x / 1 m\nprint(derivative(f, x)(-1 m))\n";
+    assert_eq!(
+        same_failure(src),
+        "precondition of `f` failed: x must be positive (`x > 0 m`, x = -1 m)"
+    );
+}

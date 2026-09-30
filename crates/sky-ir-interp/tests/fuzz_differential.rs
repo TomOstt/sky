@@ -165,6 +165,15 @@ fn generated_programs_agree_in_both_engines() {
         stats.failed
     );
     assert!(stats.limit >= 1, "no program hit the recursion limit");
+    // Contracts that fail are part of the comparison: the messages (with the
+    // values of the names) and the spans agree.
+    for kind in ["assertion failed", "precondition of", "postcondition of"] {
+        assert!(
+            stats.errors.keys().any(|e| e.starts_with(kind)),
+            "no program failed with `{kind}...`: {:?}",
+            stats.errors.keys().collect::<Vec<_>>()
+        );
+    }
     assert!(
         stats.printed > 100_000,
         "only {} bytes printed",
@@ -229,6 +238,10 @@ fn generated_programs_agree_in_both_engines() {
         "\"hi\"",
         "while true:",
         "def f",
+        "assert ",
+        "requires ",
+        "ensures ",
+        "result",
     ] {
         assert!(
             stats.sources.contains(needle),

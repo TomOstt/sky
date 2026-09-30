@@ -238,36 +238,9 @@ impl Compiled {
     /// Run this under `sky_ast::with_deep_stack`: the stack budget assumes its
     /// stack.
     pub fn run(&self, out: &mut dyn Write) -> Result<(), RunFailure> {
-        let guard = runtime::begin(self.program.clone(), out);
-        let limit = sky_interp::arith::stack_address().saturating_sub(STACK_BUDGET) as i64;
-        // SAFETY: `main` is the address of `<main>` compiled with the
-        // signature `(i32 depth, i64 stack limit, i32 call site) -> i32
-        // status` (checked when it was built: `<main>` has no parameters and
-        // no results), in the platform's default calling convention, and
-        // `self.jit`, which owns the code, is alive for the whole call.
-        let entry: extern "C" fn(i32, i64, i32) -> i32 =
-            unsafe { std::mem::transmute(self.main as *const u8) };
-        let status = entry(0, limit, -1);
-        let done = runtime::finish();
-        drop(guard);
-        // A finished run has released everything it made: a check of the
-        // ownership rules, on in the tests.
-        debug_assert!(
-            status != 0 || done.live == 0,
-            "native code leaked {} handles",
-            done.live
-        );
-        match (status, done.error) {
-            (0, _) => Ok(()),
-            (_, _) if done.deopt => Err(RunFailure::Deopt {
-                written: done.written,
-            }),
-            (_, Some(e)) => Err(RunFailure::Error(e)),
-            (_, None) => Err(RunFailure::Error(RuntimeError::new(
-                "internal error in the native engine: a failure without a diagnostic",
-                Span::point(0),
-            ))),
-        }
+        // SAFETY: `self.main` is `<main>`'s address (see `Compiled::main`),
+        // and `self.jit`, which owns the code, is alive for the whole call.
+        unsafe { run_entry(self.program.clone(), self.main, out) }
     }
 
     /// [`Compiled::run`], and on a deoptimization `rerun` (the SIR
@@ -283,6 +256,49 @@ impl Compiled {
             Err(RunFailure::Error(e)) => (Err(E::from(e)), false),
             Err(RunFailure::Deopt { written }) => (rerun(&mut SkipWriter::new(out, written)), true),
         }
+    }
+}
+
+/// Runs the compiled `<main>` at `main` with the runtime state of `program`
+/// installed, writing `print` output to `out`: [`Compiled::run`] for code in
+/// memory, and the entry point of an executable built ahead of time.
+///
+/// # Safety
+///
+/// `main` must be the address of `<main>` compiled by [`translate_module`]
+/// from `program.module`, with the signature `(i32 depth, i64 stack limit,
+/// i32 call site) -> i32 status` in the platform's default calling
+/// convention, and its code must stay valid for the whole call.
+pub(crate) unsafe fn run_entry(
+    program: Arc<Program>,
+    main: usize,
+    out: &mut dyn Write,
+) -> Result<(), RunFailure> {
+    let guard = runtime::begin(program, out);
+    let limit = sky_interp::arith::stack_address().saturating_sub(STACK_BUDGET) as i64;
+    // SAFETY: the caller promises that `main` has this signature and is live.
+    let entry: extern "C" fn(i32, i64, i32) -> i32 =
+        unsafe { std::mem::transmute(main as *const u8) };
+    let status = entry(0, limit, -1);
+    let done = runtime::finish();
+    drop(guard);
+    // A finished run has released everything it made: a check of the
+    // ownership rules, on in the tests.
+    debug_assert!(
+        status != 0 || done.live == 0,
+        "native code leaked {} handles",
+        done.live
+    );
+    match (status, done.error) {
+        (0, _) => Ok(()),
+        (_, _) if done.deopt => Err(RunFailure::Deopt {
+            written: done.written,
+        }),
+        (_, Some(e)) => Err(RunFailure::Error(e)),
+        (_, None) => Err(RunFailure::Error(RuntimeError::new(
+            "internal error in the native engine: a failure without a diagnostic",
+            Span::point(0),
+        ))),
     }
 }
 
@@ -413,23 +429,7 @@ pub(crate) struct Shared<'m> {
 }
 
 fn build(module: &SirModule, emit: bool) -> Res<Built> {
-    if let Err(errors) = sky_ir::verify(module) {
-        let first = errors.first();
-        return refuse(
-            format!(
-                "the module does not verify ({})",
-                first.map_or("no detail", |e| e.message.as_str())
-            ),
-            first.map(|e| e.span),
-        );
-    }
-    let main = module.function(SirModule::MAIN);
-    match main {
-        Some(f) if f.params.is_empty() && f.results.is_empty() => {}
-        Some(f) => return refuse("`<main>` takes parameters or returns values", Some(f.span)),
-        None => return refuse("the module has no `<main>`", None),
-    }
-
+    precheck(module)?;
     let isa = crate::host_isa().map_err(|e| CompileError {
         message: format!("no code generator for this machine ({e})"),
         span: None,
@@ -482,7 +482,28 @@ fn build(module: &SirModule, emit: bool) -> Res<Built> {
     })
 }
 
-fn internal(what: &str, e: &dyn fmt::Display) -> CompileError {
+/// The module must verify and have a `<main>` without parameters or results.
+pub(crate) fn precheck(module: &SirModule) -> Res<()> {
+    if let Err(errors) = sky_ir::verify(module) {
+        let first = errors.first();
+        return refuse(
+            format!(
+                "the module does not verify ({})",
+                first.map_or("no detail", |e| e.message.as_str())
+            ),
+            first.map(|e| e.span),
+        );
+    }
+    let main = module.function(SirModule::MAIN);
+    match main {
+        Some(f) if f.params.is_empty() && f.results.is_empty() => {}
+        Some(f) => return refuse("`<main>` takes parameters or returns values", Some(f.span)),
+        None => return refuse("the module has no `<main>`", None),
+    }
+    Ok(())
+}
+
+pub(crate) fn internal(what: &str, e: &dyn fmt::Display) -> CompileError {
     CompileError {
         message: format!("the code generator failed on {what}: {e}"),
         span: None,

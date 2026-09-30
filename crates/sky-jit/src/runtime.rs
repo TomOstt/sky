@@ -369,7 +369,8 @@ impl State {
 
 // ----- boxing and handles -----
 
-pub(crate) extern "C" fn sky_rt_box_num(dim: i32, x: f64) -> i64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_box_num(dim: i32, x: f64) -> i64 {
     with(0, |st| {
         let d = st.program.dims.get(dim as usize).copied();
         match d {
@@ -382,11 +383,13 @@ pub(crate) extern "C" fn sky_rt_box_num(dim: i32, x: f64) -> i64 {
     })
 }
 
-pub(crate) extern "C" fn sky_rt_box_bool(b: i32) -> i64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_box_bool(b: i32) -> i64 {
     with(0, |st| st.alloc(Rc::new(Value::Bool(b != 0))))
 }
 
-pub(crate) extern "C" fn sky_rt_const_str(site: i32) -> i64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_const_str(site: i32) -> i64 {
     with(0, |st| {
         let text = match st.program.op(site) {
             Some((
@@ -405,11 +408,13 @@ pub(crate) extern "C" fn sky_rt_const_str(site: i32) -> i64 {
     })
 }
 
-pub(crate) extern "C" fn sky_rt_const_none() -> i64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_const_none() -> i64 {
     with(0, |st| st.alloc(Rc::new(Value::None)))
 }
 
-pub(crate) extern "C" fn sky_rt_retain(h: i64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_retain(h: i64) {
     with((), |st| {
         let i = usize::try_from(h.wrapping_sub(1)).unwrap_or(usize::MAX);
         if let Some(c) = st.cells.get_mut(i).filter(|c| c.rc > 0) {
@@ -418,7 +423,8 @@ pub(crate) extern "C" fn sky_rt_retain(h: i64) {
     });
 }
 
-pub(crate) extern "C" fn sky_rt_release(h: i64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_release(h: i64) {
     with((), |st| st.release(h));
 }
 
@@ -461,29 +467,34 @@ fn bool_of(h: i64, release: bool) -> i32 {
 
 /// The number in handle `h` (which is released): NaN and a deoptimization if
 /// it is not a number of dimension `dim`.
-pub(crate) extern "C" fn sky_rt_take_num(h: i64, dim: i32) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_take_num(h: i64, dim: i32) -> f64 {
     number_of(h, dim, true)
 }
 
 /// [`sky_rt_take_num`] without releasing `h`.
-pub(crate) extern "C" fn sky_rt_peek_num(h: i64, dim: i32) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_peek_num(h: i64, dim: i32) -> f64 {
     number_of(h, dim, false)
 }
 
 /// The Bool in handle `h` (which is released) as 0 or 1, or -1 and a
 /// deoptimization if it is not a Bool.
-pub(crate) extern "C" fn sky_rt_take_bool(h: i64) -> i32 {
+#[no_mangle]
+pub extern "C" fn sky_rt_take_bool(h: i64) -> i32 {
     bool_of(h, true)
 }
 
 /// [`sky_rt_take_bool`] without releasing `h`.
-pub(crate) extern "C" fn sky_rt_peek_bool(h: i64) -> i32 {
+#[no_mangle]
+pub extern "C" fn sky_rt_peek_bool(h: i64) -> i32 {
     bool_of(h, false)
 }
 
 /// The condition of the `if` or `while` at `site` held in handle `h`: 0 or 1,
 /// or -1 with `sky run`'s error for a condition that is not a Bool.
-pub(crate) extern "C" fn sky_rt_cond(site: i32, h: i64) -> i32 {
+#[no_mangle]
+pub extern "C" fn sky_rt_cond(site: i32, h: i64) -> i32 {
     with(-1, |st| {
         let Some(v) = st.take_value(h) else {
             return -1;
@@ -505,18 +516,21 @@ pub(crate) extern "C" fn sky_rt_cond(site: i32, h: i64) -> i32 {
 
 // ----- operands and generic operations -----
 
-pub(crate) extern "C" fn sky_rt_push_num(dim: i32, x: f64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_push_num(dim: i32, x: f64) {
     with((), |st| match st.program.dims.get(dim as usize).copied() {
         Some(d) => st.args.push(Arg::Val(Value::number(x, d))),
         None => st.fail(internal("unknown dimension")),
     });
 }
 
-pub(crate) extern "C" fn sky_rt_push_bool(b: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_push_bool(b: i32) {
     with((), |st| st.args.push(Arg::Val(Value::Bool(b != 0))));
 }
 
-pub(crate) extern "C" fn sky_rt_push_ref(h: i64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_push_ref(h: i64) {
     with((), |st| {
         if let Some(v) = st.take_value(h) {
             st.args.push(Arg::Shared(v));
@@ -526,7 +540,8 @@ pub(crate) extern "C" fn sky_rt_push_ref(h: i64) {
 
 /// Runs the operation at `site` on the operands pushed since the last
 /// operation, and returns a handle to its result (0 on failure).
-pub(crate) extern "C" fn sky_rt_op(site: i32) -> i64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_op(site: i32) -> i64 {
     with(0, |st| {
         let args = std::mem::take(&mut st.args);
         let mut scratch = std::mem::take(&mut st.scratch);
@@ -579,17 +594,20 @@ fn fail_with(st: &mut State, site: i32, values: &[f64]) {
 }
 
 /// The operation at `site` failed inline on the operand `a`.
-pub(crate) extern "C" fn sky_rt_fail1(site: i32, a: f64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_fail1(site: i32, a: f64) {
     with((), |st| fail_with(st, site, &[a]));
 }
 
 /// The operation at `site` failed inline on the operands `a` and `b`.
-pub(crate) extern "C" fn sky_rt_fail2(site: i32, a: f64, b: f64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_fail2(site: i32, a: f64, b: f64) {
     with((), |st| fail_with(st, site, &[a, b]));
 }
 
 /// The call at `site` is nested more than `MAX_CALL_DEPTH` deep.
-pub(crate) extern "C" fn sky_rt_fail_depth(site: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_fail_depth(site: i32) {
     with((), |st| {
         let span = st.program.span(site);
         let callee = match st.program.op(site) {
@@ -607,7 +625,8 @@ pub(crate) extern "C" fn sky_rt_fail_depth(site: i32) {
 }
 
 /// The function at `site` was entered with the stack budget used up.
-pub(crate) extern "C" fn sky_rt_fail_stack(site: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_fail_stack(site: i32) {
     with((), |st| {
         let span = st.program.span(site);
         st.fail(stack_exhausted(span));
@@ -615,7 +634,8 @@ pub(crate) extern "C" fn sky_rt_fail_stack(site: i32) {
 }
 
 /// `literal.error` and `input`: operations that fail whenever they run.
-pub(crate) extern "C" fn sky_rt_fail_always(site: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_fail_always(site: i32) {
     with((), |st| {
         let s = st.program.span(site);
         let e = match st.program.op(site) {
@@ -639,24 +659,28 @@ pub(crate) extern "C" fn sky_rt_fail_always(site: i32) {
 
 /// `f(x)` for the math function at `site`, in the interpreters' own code;
 /// NaN with the pending error set on failure.
-pub(crate) extern "C" fn sky_rt_math1(site: i32, x: f64) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_math1(site: i32, x: f64) -> f64 {
     math(site, x, 0.0)
 }
 
 /// `f(x, y)` for the two-argument math function at `site`.
-pub(crate) extern "C" fn sky_rt_math2(site: i32, x: f64, y: f64) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_math2(site: i32, x: f64, y: f64) -> f64 {
     math(site, x, y)
 }
 
 /// `f(x)` for the math function number `f` (its place in `MathFn::ALL`):
 /// the value only, with no lookup of the site and no state. Native code has
 /// already checked the domain, and checks the result, inline.
-pub(crate) extern "C" fn sky_rt_libm1(f: i32, x: f64) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_libm1(f: i32, x: f64) -> f64 {
     libm(f, x, 0.0)
 }
 
 /// [`sky_rt_libm1`] for a two-argument function.
-pub(crate) extern "C" fn sky_rt_libm2(f: i32, x: f64, y: f64) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_libm2(f: i32, x: f64, y: f64) -> f64 {
     libm(f, x, y)
 }
 
@@ -690,7 +714,8 @@ fn math(site: i32, x: f64, y: f64) -> f64 {
 
 /// `b ^ x` for the `pow.const` or `pow` at `site`: `sky_interp`'s
 /// `pow_scalar`; NaN with the pending error set on failure.
-pub(crate) extern "C" fn sky_rt_pow_scalar(site: i32, b: f64, x: f64) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_pow_scalar(site: i32, b: f64, x: f64) -> f64 {
     with(f64::NAN, |st| {
         let span = st.program.span(site);
         let base_span = st
@@ -848,18 +873,21 @@ fn print_item(text: String) {
     });
 }
 
-pub(crate) extern "C" fn sky_rt_print_num(dim: i32, x: f64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_print_num(dim: i32, x: f64) {
     let d = with(None, |st| st.program.dims.get(dim as usize).copied());
     if let Some(d) = d {
         print_item(Value::number(x, d).print_text());
     }
 }
 
-pub(crate) extern "C" fn sky_rt_print_bool(b: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_print_bool(b: i32) {
     print_item(Value::Bool(b != 0).print_text());
 }
 
-pub(crate) extern "C" fn sky_rt_print_ref(h: i64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_print_ref(h: i64) {
     let v = with(None, |st| st.value(h));
     if let Some(v) = v {
         print_item(v.print_text());
@@ -868,7 +896,8 @@ pub(crate) extern "C" fn sky_rt_print_ref(h: i64) {
 
 /// Ends the `print` at `site`: writes the line in one piece, like the SIR
 /// interpreter. 0 on success, 1 with the pending error set otherwise.
-pub(crate) extern "C" fn sky_rt_print_end(site: i32) -> i32 {
+#[no_mangle]
+pub extern "C" fn sky_rt_print_end(site: i32) -> i32 {
     with(1, |st| {
         let mut line = std::mem::take(&mut st.line);
         st.first = true;
@@ -898,7 +927,8 @@ pub(crate) extern "C" fn sky_rt_print_end(site: i32) -> i32 {
 /// 0 if it is false (the caller then pushes the values of the names and
 /// calls [`sky_rt_assert_fail`]), -1 with the pending error set if it is not
 /// a Bool.
-pub(crate) extern "C" fn sky_rt_assert_dyn(site: i32, h: i64) -> i32 {
+#[no_mangle]
+pub extern "C" fn sky_rt_assert_dyn(site: i32, h: i64) -> i32 {
     with(-1, |st| {
         let Some(v) = st.take_value(h) else {
             return -1;
@@ -924,7 +954,8 @@ pub(crate) extern "C" fn sky_rt_assert_dyn(site: i32, h: i64) -> i32 {
 /// The contract at `site` is false. The values of its names were pushed;
 /// `call_site` is the site of the call that entered the function (or -1),
 /// which a failed `requires` labels "called here".
-pub(crate) extern "C" fn sky_rt_assert_fail(site: i32, call_site: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_assert_fail(site: i32, call_site: i32) {
     with((), |st| {
         let args = std::mem::take(&mut st.args);
         let call = (call_site >= 0).then(|| st.program.span(call_site));

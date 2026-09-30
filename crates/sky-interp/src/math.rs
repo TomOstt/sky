@@ -28,7 +28,7 @@
 //! lets calls through it cannot type (see the crate docs).
 
 use sky_diag::Span;
-use sky_units::{MathDimError, MathFn};
+use sky_units::{Dimension, MathDimError, MathFn};
 
 use crate::arith::{arity_mismatch, describe, finite, R};
 use crate::erf::erf;
@@ -42,8 +42,10 @@ pub fn apply(f: MathFn, args: &[Value], whole: Span, spans: &[Span]) -> R<Value>
         return Err(arity_mismatch(f.name(), f.arity(), args.len(), whole));
     }
     let name = f.name();
-    let mut nums = Vec::with_capacity(args.len());
-    let mut dims = Vec::with_capacity(args.len());
+    // At most two arguments (the arity was checked above): on the stack, so
+    // a call in a loop allocates nothing.
+    let mut nums = [0.0_f64; 2];
+    let mut dims = [Dimension::DIMENSIONLESS; 2];
     for (i, v) in args.iter().enumerate() {
         let Value::Number { value, dim } = v else {
             return Err(RuntimeError::new(
@@ -51,11 +53,11 @@ pub fn apply(f: MathFn, args: &[Value], whole: Span, spans: &[Span]) -> R<Value>
                 spans.get(i).copied().unwrap_or(whole),
             ));
         };
-        nums.push(*value);
-        dims.push(*dim);
+        nums[i] = *value;
+        dims[i] = *dim;
     }
     let span_of = |i: usize| spans.get(i).copied().unwrap_or(whole);
-    let dim = f.result_dim(&dims).map_err(|e| match e {
+    let dim = f.result_dim(&dims[..args.len()]).map_err(|e| match e {
         MathDimError::NotDimensionless => RuntimeError::new(
             format!(
                 "the argument of `{name}` must be dimensionless, found {}",

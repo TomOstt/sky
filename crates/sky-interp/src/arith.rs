@@ -197,14 +197,22 @@ pub fn expect_number(what: &str, v: &Value, span: Span) -> R<()> {
     }
 }
 
-/// `-v` or `+v`.
+/// `-v` or `+v`. An array is negated in its own buffer, since it is owned
+/// (`0 - x` per entry, as [`crate::array::negate`]).
 pub fn sign(negate: bool, v: Value, operand: Span) -> R<Value> {
     match v {
-        Value::Array { dims, data, dim } => Ok(if negate {
-            crate::array::negate(&dims, &data, dim)
-        } else {
-            Value::array(dims, data, dim)
-        }),
+        Value::Array {
+            dims,
+            mut data,
+            dim,
+        } => {
+            if negate {
+                for x in &mut data {
+                    *x = 0.0 - *x;
+                }
+            }
+            Ok(Value::array(dims, data, dim))
+        }
         Value::Number { value, dim } => Ok(Value::number(if negate { -value } else { value }, dim)),
         other => Err(needs_a_number(
             if negate { "-" } else { "+" },
@@ -223,12 +231,56 @@ pub enum ArithOp {
     Div,
 }
 
+/// An operand of an operation: a value the operation may consume (its last
+/// use, so its buffer can hold the result) or one it must leave alone.
+pub enum Operand<'a> {
+    Owned(Value),
+    Borrowed(&'a Value),
+}
+
+impl Operand<'_> {
+    pub fn get(&self) -> &Value {
+        match self {
+            Operand::Owned(v) => v,
+            Operand::Borrowed(v) => v,
+        }
+    }
+}
+
 /// `l op r` on two evaluated operands. `whole` is the span of the
 /// expression, `lspan` and `rspan` those of its operands.
 pub fn arith(op: ArithOp, l: &Value, r: &Value, whole: Span, lspan: Span, rspan: Span) -> R<Value> {
     if matches!(l, Value::Array { .. }) || matches!(r, Value::Array { .. }) {
         return crate::array::arith(op, l, r, whole, lspan, rspan);
     }
+    arith_scalar(op, l, r, whole, lspan, rspan)
+}
+
+/// [`arith`] where an owned array operand may be overwritten with the result
+/// ([`crate::array::arith_owned`]); the values and errors are the same.
+pub fn arith_owned(
+    op: ArithOp,
+    l: Operand<'_>,
+    r: Operand<'_>,
+    whole: Span,
+    lspan: Span,
+    rspan: Span,
+) -> R<Value> {
+    if matches!(l.get(), Value::Array { .. }) || matches!(r.get(), Value::Array { .. }) {
+        return crate::array::arith_owned(op, l, r, whole, lspan, rspan);
+    }
+    arith_scalar(op, l.get(), r.get(), whole, lspan, rspan)
+}
+
+/// [`arith`] for operands that are not arrays.
+fn arith_scalar(
+    op: ArithOp,
+    l: &Value,
+    r: &Value,
+    whole: Span,
+    lspan: Span,
+    rspan: Span,
+) -> R<Value> {
     match op {
         ArithOp::Add | ArithOp::Sub => {
             let (verb, prep) = if op == ArithOp::Add {

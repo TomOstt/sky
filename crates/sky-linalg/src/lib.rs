@@ -31,8 +31,8 @@
 //!   `c = c - l*u` for its `k` in ascending order, applied to the value the
 //!   earlier blocks left. The inverse is Gauss-Jordan elimination with
 //!   partial pivoting, unchanged in its arithmetic (blocked the same way).
-//! * **Threads**: [`default_threads`] (the `SKY_THREADS` environment
-//!   variable, else the available parallelism) workers, only above a size
+//! * **Threads**: [`default_threads`] (what [`set_threads`] chose, the
+//!   `SKY_THREADS` environment variable, else the available parallelism) workers, only above a size
 //!   threshold. Work is split by output, deterministically.
 //!
 //! The [`mod@reference`] module holds the plain loops; `tests/reference.rs`
@@ -119,7 +119,7 @@ pub use dot::{dot, sum_squares, sum_squares_scaled, LANES};
 pub use gemm::{gemm, gemm_into_with, gemm_with, syrk, syrk_with};
 pub use inverse::{inverse, inverse_with};
 pub use lu::{lu, lu_with, solve, Lu};
-pub use threads::default_threads;
+pub use threads::{default_threads, set_threads, MAX_THREADS};
 
 /// Why a factorization or inverse failed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

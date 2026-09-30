@@ -2,32 +2,50 @@
 //!
 //! Splitting the *output* across threads never changes the order of any
 //! entry's arithmetic, so results are the same for every thread count. The
-//! count comes from `SKY_THREADS` (a positive integer) or, without it, from
-//! [`std::thread::available_parallelism`]. Work below a size threshold runs
-//! on the calling thread.
+//! count is, in order: what [`set_threads`] was given (the `--threads` flag
+//! of `sky run`), `SKY_THREADS` (a whole number from 1 to [`MAX_THREADS`]),
+//! or [`std::thread::available_parallelism`]. Work below a size threshold
+//! runs on the calling thread.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
-/// A thread count from the text of `SKY_THREADS`: a positive integer.
+/// The most threads a count may ask for (the same bound as `--threads`).
+pub const MAX_THREADS: usize = 1024;
+
+/// A thread count from the text of `SKY_THREADS`: a whole number from 1 to
+/// [`MAX_THREADS`].
 fn parse_threads(text: Option<&str>) -> Option<usize> {
     text.and_then(|s| s.trim().parse::<usize>().ok())
-        .filter(|&n| n >= 1)
+        .filter(|n| (1..=MAX_THREADS).contains(n))
 }
 
-/// The number of threads the kernels use by default: `SKY_THREADS` if it is
-/// a positive integer, else the available parallelism (at least 1).
+/// The count [`set_threads`] chose; 0 means "not set".
+static CHOSEN: AtomicUsize = AtomicUsize::new(0);
+
+/// Sets how many threads the kernels use from now on, above `SKY_THREADS`
+/// and the machine's parallelism (`n` is clamped to `1..=MAX_THREADS`; 0
+/// undoes it). It changes how fast an answer arrives, never the answer.
+pub fn set_threads(n: usize) {
+    CHOSEN.store(n.min(MAX_THREADS), Ordering::Relaxed);
+}
+
+/// The number of threads the kernels use by default: what [`set_threads`]
+/// chose, else `SKY_THREADS` if it is a valid count, else the available
+/// parallelism (at least 1).
 pub fn default_threads() -> usize {
     static N: OnceLock<usize> = OnceLock::new();
+    let chosen = CHOSEN.load(Ordering::Relaxed);
+    if chosen != 0 {
+        return chosen;
+    }
     *N.get_or_init(|| {
-        parse_threads(std::env::var("SKY_THREADS").ok().as_deref()).unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(usize::from)
-                .unwrap_or(1)
-        })
+        parse_threads(std::env::var("SKY_THREADS").ok().as_deref())
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, usize::from))
     })
 }
 
@@ -89,7 +107,8 @@ mod tests {
         assert_eq!(parse_threads(Some("4")), Some(4));
         assert_eq!(parse_threads(Some(" 12 ")), Some(12));
         assert_eq!(parse_threads(Some("1")), Some(1));
-        for bad in ["0", "-2", "many", "", "2.5"] {
+        assert_eq!(parse_threads(Some("1024")), Some(1024));
+        for bad in ["0", "-2", "many", "", "2.5", "1025", "99999"] {
             assert_eq!(parse_threads(Some(bad)), None, "{bad:?}");
         }
         assert_eq!(parse_threads(None), None);

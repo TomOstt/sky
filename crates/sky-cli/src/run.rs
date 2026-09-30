@@ -25,7 +25,10 @@
 //! `--threads=N` (or `SKY_THREADS`) sets how many threads the SIR engine may
 //! use for work that cannot change the output (`sky_ir::parallel`: big
 //! elementwise kernels and independent pure calls); 1 means sequential, and
-//! the output is the same for every N. The tree-walker is always sequential.
+//! the output is the same for every N. The tree-walker is always sequential,
+//! except that every engine's array kernels (`sky_linalg`: big products,
+//! factorizations and solves) split their output across the same N threads,
+//! which changes no bit of any result.
 //!
 //! `--engine=auto` picks native code and falls back to SIR when the program
 //! does not compile natively, and to the tree-walker on a `LowerError`,
@@ -126,6 +129,11 @@ fn run_source(
     engine: Engine,
     threads: Option<usize>,
 ) -> ExitCode {
+    // `--threads=N` also sizes the array kernels' pool (`SKY_THREADS` does
+    // it without the flag): how fast an answer arrives, never which.
+    if let Some(n) = threads {
+        sky_interp::linalg::set_threads(n);
+    }
     let file = SourceFile::new(path, src);
     let front = analyze(src, sky_types::Env::with_prelude(), false, edition);
     let rendered = front.render(&file);

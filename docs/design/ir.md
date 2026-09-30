@@ -290,6 +290,17 @@ Each transfer rule is an inequality with a short derivation in its comment. The 
 
 Not a change of meaning: `sky run` still computes `f64`, one rounding per operation. Not interval arithmetic on the inputs: an input is an exact value (the range says which, not how uncertain). Not a proof of the whole program's correctness: a budget is proven for the *runs that produce a number* (overflow and domain errors are not analysed) and under the library assumption.
 
+## The cost model
+
+`sky_ir::cost` gives every function a **cost**: flops, bytes read, bytes written, allocations and bytes allocated, each an `Amount`: a lower and an upper bound (`lo <= actual <= hi`, for every run and every size from 1 up) as polynomials in the symbolic shape sizes (`sky_types::poly::Poly`: exact rational coefficients over monomials in named sizes, capped in terms and degree, every operation checked, `None` on overflow). It is a static analysis over L1, one rule per operation (`cost/ops.rs`, with the weights in the module documentation and the spec's "Performance contracts"), computed on the module after the default pipeline, since the contract is about the program that runs (fusion removes allocations, the Cholesky rewrite changes a solve's flops).
+
+- **Straight-line code is exact** (`lo == hi`). An `if` joins its branches: the greater `hi`, the lesser `lo`, using the sound polynomial order (`x = 1 + y`, all coefficients non-negative), and where two polynomials are not ordered, the coefficient-wise max or min, which is above (below) both wherever sizes are non-negative.
+- **Loops** multiply the body by a `Trips` interval. A `while` is counted when its condition is `i < stop` (or `<=`, `>`, `>=`) on a carried index that the body advances by a constant (`add %i, c` yielded at the same position, which is how `for i in range(...)` lowers) and `start` and `stop` are sizes the model can name (constants, `len` of an array, sums and products of those). The count is exact for a step of 1 and `[d/c, d/c + 1]` for another step. A condition of the form `if not broke { i < stop } else { false }` (a `break`) gives an upper bound only. The index's own step is left out of the flops. Any other loop makes the amount unbounded, with a `Reason` carrying the loop's span.
+- **Calls** substitute the callee's size variables by the polynomials of the argument shapes (a callee size the arguments do not fix, or a cycle in the call graph, makes the amount unbounded), in an order where callees come first, found without recursion over the call graph.
+- **Sites**: every costly operation, call and loop keeps its contribution (loops around it included), which is how `sky check` says which operation dominates a refuted contract and where the hot spots are.
+
+`sky check` (`sky-cli/src/cost.rs`) proves a `cost` line when `hi` is at most the bound for all sizes from 1 up (sound, not complete), refutes it with a witness point where `lo` exceeds the bound in exact arithmetic, and otherwise warns. The unit of cost is the model's, not a machine's: it counts what the reference implementation does. Making a machine-specific estimate (idea 87) means replacing the weights with a hardware description, not changing the analysis.
+
 ## Reference semantics and testing
 
 - **The IR interpreter is the specification.** It evaluates L1 directly. Once it exists, the tree-walking interpreter in sky-interp either becomes lowering plus the IR interpreter, or stays as a second implementation for differential testing. The Phase 1 decision is to keep both until the IR interpreter passes every run test. It does, so `sky run` executes lowered, optimized SIR by default (`--engine=auto`), and the tree-walker stays as the oracle of the differential tests (`--engine=ast`) and as the fallback for what lowering cannot express yet. The run tests in `sky-cli` compare the two engines' stdout, stderr and exit status byte for byte. One SIR limit is still worked around there, and is what to fix before the tree-walker can retire: SIR has no operation that stops a run with a message (so a `range` bound computed at run time stays on the tree-walker). An operation also carries the source span of each operand at its use (`OpData::operand_spans`), so a runtime error found on SIR has the tree-walker's labels, secondary labels and notes, and `sky run` prints SIR's diagnostic as it is.
@@ -324,7 +335,7 @@ It is parsed by a small hand-written parser that never panics, limits nesting to
 
 | Crate | Contents | Depends on |
 |---|---|---|
-| `sky-ir` | data model, operation table, verifier, effect inference, exactness analysis, text printer and parser, pass manager | sky-units, sky-types (types only), sky-ast (reads the unit text of `show`), sky-diag |
+| `sky-ir` | data model, operation table, verifier, effect inference, exactness analysis, roundoff analysis, static cost model, text printer and parser, pass manager | sky-units, sky-types (types only), sky-ast (reads the unit text of `show`), sky-diag |
 | `sky-lower` | checked AST to L1 | sky-ast, sky-types, sky-ir |
 | `sky-opt` | passes: fold, dce, fuse, cholesky, and the default pipeline (which includes `sky-egraph`'s pass); later autodiff | sky-ir, sky-egraph |
 | `sky-egraph` | identity-aware e-graph rewriting (`egg`) as a pass | sky-ir |

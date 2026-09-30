@@ -57,7 +57,7 @@ These come cheaply once the IR exists:
 - Algorithm variants chosen by size and hardware [15], and discovery of hardware capabilities [20]. Built so far: `sky hw` and the `sky-hw` crate (SIMD, cores, caches, memory, a machine fingerprint); the variants themselves need the fast kernels.
 - Autotuning with a local performance database [16, 17]. Built so far: `sky tune` and the `sky-tune` crate (a tuner, a data-only database keyed by the fingerprint, a registry for kernels to plug into); see the spec's "Hardware and tuning".
 - Allocation and copy elimination guided by lifetimes [25, 26, 85].
-- Performance contracts [86].
+- Performance contracts [86]. Built so far: `cost flops <= 2 * N^3` lines in a function header, proven or refuted by `sky check` from a static cost model over SIR (`sky_ir::cost`: flops, bytes moved, allocations, as polynomials in the symbolic shape sizes), and a per-function cost report under `--explain`. A run-time time budget is deliberately not part of it (time is noise). See `spec/v0.1.md`, "Performance contracts".
 
 **Done when:** dense linear algebra and fused elementwise code in Sky are within 2× of hand-tuned libraries.
 

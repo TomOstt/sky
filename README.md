@@ -59,6 +59,20 @@ print(explain(sol))              # which method ran, and why
 
 `sky check --explain` says what the checker found in each `solve` (a second-order system, so a symplectic integrator applies; what is to be conserved) without running it. Equations run on the tree-walking interpreter (SIR cannot lower them yet, so `--engine=auto` falls back). See "Differential equations" in `spec/v0.1.md`.
 
+A function states what it costs in its header, next to `requires` and `ensures`, and `sky check` proves it (or refutes it, as an error) from the program, without running it. The cost is a polynomial in the sizes of the arrays, in floating-point operations, bytes moved and allocations; `--explain` reports it for every function, even without contracts, with the hot spots.
+
+```sky
+def gram(A: Matrix[N, M]) -> Matrix[M, M]:
+    cost flops <= 2 * N * M^2       # proven: `gram` costs 2·M²·N flops
+    return Aᵀ @ A
+
+def mm(A: Matrix[N, K], B: Matrix[K, M]) -> Matrix[N, M]:
+    cost flops <= 2 * N^3           # error: `A @ B` costs 2·K·M·N flops
+    return A @ B
+```
+
+A loop the model cannot bound is a warning, not silence (`unbounded (loop at line 7)`). Time is not a contract: it is noise, and a contract that is sometimes false is not one. See "Performance contracts" in `spec/v0.1.md`.
+
 ```
 sky check file.sky            # diagnostics on stderr; exit 1 on any error
 sky check --explain file.sky  # also show the edition, the checker's rewrites (A⁻¹ @ b → Cholesky solve), what it found in each `solve`, and what the optimization passes did

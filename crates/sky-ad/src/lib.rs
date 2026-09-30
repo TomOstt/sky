@@ -23,17 +23,41 @@
 //! * Functions of any number of parameters; `wrt` picks one. The other
 //!   parameters may be numbers (constants for this derivative) or anything
 //!   else (a Bool flag, say), and are passed through.
-//! * One or more results, each a scalar number. With one result `r` the
-//!   derivative function returns `(r, ∂r/∂x)`; with several it returns
+//! * One or more results, each a number of any shape. With one result `r`
+//!   the derivative function returns `(r, ∂r/∂x)`; with several it returns
 //!   the values, then their tangents (`(r0, r1, ∂r0/∂x, ∂r1/∂x)`), which
 //!   is what lets a derivative function be differentiated again (a second
-//!   derivative is the derivative of a function that calls `df/dx`).
-//! * Every scalar operation of SIR v1, `if`, `while` and `call`. Array
-//!   operations (`matmul`, `transpose`, `solve`, `array.literal`, `index`,
-//!   `slice`, `zeros`, `identity`, `len`, non-scalar shapes) are errors
-//!   when the derivative flows through them ("array differentiation is not
-//!   supported yet"); array AD is future work.
+//!   derivative is the derivative of a function that calls `df/dx`). The
+//!   tangent of an array is an array of the same shape with dimension
+//!   `dim(value)/dim(x)`: differentiating a position vector by time gives a
+//!   velocity vector.
+//! * Every operation of SIR v1, arrays included (`array.literal`, `index`,
+//!   `slice`, `zeros`, `identity`, `len`, elementwise arithmetic and
+//!   scaling, `matmul`, `transpose`, `inverse`, `solve`, `fused`), `if`,
+//!   `while` and `call`. The rules are in `rules.rs`; the math functions
+//!   are scalar in SIR and have no array form.
 //!
+//! # Array parameters: gradients
+//!
+//! `wrt` may also be an *array* parameter `p` (a `Vector` or `Matrix`),
+//! for a function with one scalar result `F`: the derivative is then the
+//! gradient `∂F/∂p`, an array of `p`'s shape and of dimension
+//! `dim(F)/dim(p)` (a potential of a position gives a force). Two engines
+//! compute it, behind the one function `d<f>/d<p>(params...) -> (F, ∂F/∂p)`:
+//!
+//! * **reverse mode** (`reverse.rs`): one forward and one backward sweep,
+//!   however large `p` is. It handles straight-line code, `if` and calls.
+//! * **forward mode, one pass per entry** (`gradient.rs`): the fallback for
+//!   a loop that carries a value the gradient depends on, which reverse mode
+//!   would need a tape for. It costs `n` evaluations for `n` entries and
+//!   needs `p`'s size to be known and at most 256.
+//!
+//! [`derivative_functions`] tries reverse mode and falls back.
+//!
+//! Calls that pass or return arrays are inlined first (`inline.rs`), so a
+//! helper `displacement(p)` is part of the function and its derivative
+//! flows through it; calls of scalar functions stay calls.
+
 //! # `Unknown` types
 //!
 //! A value of type `Unknown` has no dimension, so its tangent cannot be
@@ -70,8 +94,12 @@
 #![forbid(unsafe_code)]
 
 mod analysis;
+mod arrays;
 mod emit;
+mod gradient;
+mod inline;
 mod math_rules;
+mod reverse;
 mod rules;
 
 #[cfg(test)]
@@ -169,6 +197,49 @@ pub fn derivative_name_of(func: &str, param: &str) -> String {
     format!("d{func}/d{param}")
 }
 
+/// What is built for one differentiation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Kind {
+    /// A scalar parameter, by forward mode: `d<f>/d<x>`.
+    Forward,
+    /// An array parameter in one direction (a Jacobian-vector product):
+    /// `d<f>/d<p>#jvp`, with the direction as an extra last parameter.
+    Jvp,
+    /// An array parameter, the gradient `d<f>/d<p>`, by reverse mode or by
+    /// one [`Kind::Jvp`] per entry.
+    Gradient,
+}
+
+/// A derivative function to build: `func` with respect to parameter `wrt`.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct Task {
+    pub func: String,
+    pub wrt: usize,
+    pub kind: Kind,
+}
+
+/// The name of the function of `kind` for `f` and `wrt`.
+pub(crate) fn derivative_name_for(f: &Function, wrt: usize, kind: Kind) -> String {
+    match kind {
+        Kind::Jvp => format!("{}#jvp", derivative_name(f, wrt)),
+        Kind::Forward | Kind::Gradient => derivative_name(f, wrt),
+    }
+}
+
+/// What differentiating `f` with respect to its parameter `wrt` builds: the
+/// gradient for an array parameter, else the (forward) derivative.
+fn kind_of(f: &Function, wrt: usize) -> Kind {
+    let array = f
+        .param_values()
+        .get(wrt)
+        .is_some_and(|p| matches!(f.ty(*p), Type::Number(n) if n.shape.rank() > 0));
+    if array {
+        Kind::Gradient
+    } else {
+        Kind::Forward
+    }
+}
+
 /// The derivative of `func` with respect to parameter `wrt`, as a new
 /// function `d<func>/d<param>` with `func`'s parameters that returns
 /// `(value, derivative)`.
@@ -186,12 +257,19 @@ pub fn derivative(m: &Module, func: &str, wrt: usize) -> Result<Function, AdErro
 pub fn derivative_functions(m: &Module, func: &str, wrt: usize) -> Result<Vec<Function>, AdError> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    let mut queue = VecDeque::from([(func.to_string(), wrt)]);
-    while let Some((name, k)) = queue.pop_front() {
+    let first = m
+        .function(func)
+        .ok_or_else(|| AdError::NoSuchFunction(func.to_string()))?;
+    let mut queue = VecDeque::from([Task {
+        func: func.to_string(),
+        wrt,
+        kind: kind_of(first, wrt),
+    }]);
+    while let Some(task) = queue.pop_front() {
         let f = m
-            .function(&name)
-            .ok_or_else(|| AdError::NoSuchFunction(name.clone()))?;
-        let dname = derivative_name(f, k);
+            .function(&task.func)
+            .ok_or_else(|| AdError::NoSuchFunction(task.func.clone()))?;
+        let dname = derivative_name_for(f, task.wrt, task.kind);
         // Memoization; for recursion it is also the cycle check.
         if !seen.insert(dname.clone()) {
             continue;
@@ -199,11 +277,36 @@ pub fn derivative_functions(m: &Module, func: &str, wrt: usize) -> Result<Vec<Fu
         if !out.is_empty() && m.function(&dname).is_some() {
             continue;
         }
-        let (d, needs) = emit::build(m, f, k)?;
+        let (d, needs) = build_task(m, f, &task)?;
         out.push(d);
         queue.extend(needs);
     }
     Ok(out)
+}
+
+/// Builds the function of one task.
+fn build_task(m: &Module, f: &Function, task: &Task) -> Result<(Function, Vec<Task>), AdError> {
+    match task.kind {
+        Kind::Forward => emit::build(m, f, task.wrt, emit::Seed::Unit),
+        Kind::Jvp => emit::build(m, f, task.wrt, emit::Seed::Direction),
+        Kind::Gradient => match reverse::build(m, f, task.wrt) {
+            Err(AdError::Unsupported {
+                op: reverse_op,
+                why: reverse_why,
+                ..
+            }) => gradient::build(m, f, task.wrt).map_err(|e| match e {
+                AdError::Unsupported { func, op, why } => AdError::Unsupported {
+                    func,
+                    op,
+                    why: format!(
+                        "{why}; reverse mode does not apply either (`{reverse_op}`: {reverse_why})"
+                    ),
+                },
+                other => other,
+            }),
+            other => other,
+        },
+    }
 }
 
 /// Adds the derivative of `func` (and what it needs) to `m` and returns
@@ -223,7 +326,7 @@ pub fn differentiate_into(m: &mut Module, func: &str, wrt: usize) -> Result<Stri
     Ok(name)
 }
 
-/// Whether a type can carry a tangent (a scalar number is checked later).
+/// Whether a type can carry a tangent (a number of any shape).
 pub(crate) fn can_carry_tangent(t: &Type) -> bool {
     matches!(t, Type::Number(_) | Type::Unknown)
 }

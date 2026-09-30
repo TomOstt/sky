@@ -10,10 +10,10 @@ publish.workspace = true
 [dependencies]
 sky-diag = { path = "../sky-diag" }
 sky-ir = { path = "../sky-ir" }
+sky-types = { path = "../sky-types" }
 sky-units = { path = "../sky-units" }
 
 [dev-dependencies]
 proptest = { version = "1", default-features = false, features = ["std"] }
 sky-ast = { path = "../sky-ast" }
 sky-ir-interp = { path = "../sky-ir-interp" }
-sky-types = { path = "../sky-types" }

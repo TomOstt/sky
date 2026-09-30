@@ -53,7 +53,7 @@
 use sky_ir::{OpData, OpKind, ValueId};
 use sky_units::Rational;
 
-use crate::emit::{number_type, Diff, Res};
+use crate::emit::{number_type, shaped_type, Diff, Res};
 
 impl Diff<'_> {
     /// The tangent of the (single) result `r` of `op`, given that at least
@@ -192,32 +192,122 @@ impl Diff<'_> {
                 })
             }
             OpKind::Inverse => {
-                // r = 1/a: tr = -(r*r) * ta. r*r has dim(r)^2, times
-                // dim(a)/dim(x) = dim(r)^-1/dim(x) gives dim(r)/dim(x).
                 let [a] = self.operands(op)?;
                 let Some(ta) = self.tan_of(a) else {
                     return Ok(None);
                 };
                 let pr = self.primal(r)?;
+                let ty = self.tangent_ty(r)?;
+                if self.shape_of(a).rank() > 0 {
+                    // r = A⁻¹: tr = -(r ta r). With dim(r) = 1/dim(A) the
+                    // product r ta r has dim(r)/dim(x).
+                    let r_dim = self.dim_of(r)?;
+                    let half = shaped_type(
+                        self.dim_div(self.dim_mul(r_dim, self.dim_of(a)?)?, self.x_dim)?,
+                        self.shape_of(r),
+                        self.repr_of(r),
+                    );
+                    let left = self.emit(OpKind::MatMul, vec![pr, ta], half, span);
+                    let prod = self.emit(OpKind::MatMul, vec![left, pr], ty.clone(), span);
+                    return Ok(Some(self.emit(OpKind::Neg, vec![prod], ty, span)));
+                }
+                // r = 1/a: tr = -(r*r) * ta. r*r has dim(r)^2, times
+                // dim(a)/dim(x) = dim(r)^-1/dim(x) gives dim(r)/dim(x).
                 let r_dim = self.dim_of(r)?;
                 let sq_ty = number_type(self.dim_mul(r_dim, r_dim)?, self.repr_of(r));
                 let sq = self.emit(OpKind::Mul, vec![pr, pr], sq_ty, span);
-                let ty = self.tangent_ty(r)?;
                 let prod = self.emit(OpKind::Mul, vec![sq, ta], ty.clone(), span);
                 Ok(Some(self.emit(OpKind::Neg, vec![prod], ty, span)))
             }
-            OpKind::MatMul
-            | OpKind::Transpose
-            | OpKind::Solve { .. }
-            | OpKind::ArrayLiteral { .. }
-            | OpKind::Index
-            | OpKind::Slice { .. }
-            | OpKind::Zeros
-            | OpKind::Identity
-            | OpKind::Len => Err(self.unsupported(
-                op.kind.mnemonic(),
-                "array differentiation is not supported yet",
-            )),
+            OpKind::MatMul => {
+                // r = a @ b: tr = ta @ b + a @ tb. Each product has
+                // dim(a) dim(b) / dim(x) and the shape of r.
+                let [a, b] = self.operands(op)?;
+                let ty = self.tangent_ty(r)?;
+                let (pa, pb) = (self.primal(a)?, self.primal(b)?);
+                let left = self
+                    .tan_of(a)
+                    .map(|ta| self.emit(OpKind::MatMul, vec![ta, pb], ty.clone(), span));
+                let right = self
+                    .tan_of(b)
+                    .map(|tb| self.emit(OpKind::MatMul, vec![pa, tb], ty.clone(), span));
+                Ok(match (left, right) {
+                    (Some(l), Some(rt)) => Some(self.emit(OpKind::Add, vec![l, rt], ty, span)),
+                    (Some(t), None) | (None, Some(t)) => Some(t),
+                    (None, None) => None,
+                })
+            }
+            OpKind::Transpose => {
+                // Transposing only moves entries: tr = ta^T (a scalar is its
+                // own transpose).
+                let [a] = self.operands(op)?;
+                let Some(ta) = self.tan_of(a) else {
+                    return Ok(None);
+                };
+                if self.shape_of(a).rank() == 0 {
+                    return Ok(Some(ta));
+                }
+                let ty = self.tangent_ty(r)?;
+                Ok(Some(self.emit(OpKind::Transpose, vec![ta], ty, span)))
+            }
+            OpKind::Solve { method } => {
+                // r = A⁻¹ b, so A r = b and A tr + tA r = tb:
+                // tr = A⁻¹ (tb - tA r), a solve with the same A. tA r has
+                // dim(A)/dim(x) dim(b)/dim(A) = dim(b)/dim(x), the type of tb.
+                let [a, b] = self.operands(op)?;
+                let (pa, pr) = (self.primal(a)?, self.primal(r)?);
+                let rhs_ty = self.tangent_ty(b)?;
+                let via_a = self
+                    .tan_of(a)
+                    .map(|ta| self.emit(OpKind::MatMul, vec![ta, pr], rhs_ty.clone(), span));
+                let rhs = match (self.tan_of(b), via_a) {
+                    (Some(tb), Some(t)) => self.emit(OpKind::Sub, vec![tb, t], rhs_ty, span),
+                    (Some(tb), None) => tb,
+                    (None, Some(t)) => self.emit(OpKind::Neg, vec![t], rhs_ty, span),
+                    (None, None) => return Ok(None),
+                };
+                let ty = self.tangent_ty(r)?;
+                Ok(Some(self.emit(
+                    OpKind::Solve { method: *method },
+                    vec![pa, rhs],
+                    ty,
+                    span,
+                )))
+            }
+            OpKind::ArrayLiteral { cols } => {
+                // Each entry has its own tangent (a zero when it does not
+                // depend on x): the tangent of `[a, b]` is `[ta, tb]`.
+                let ty = self.tangent_ty(r)?;
+                let entries = op
+                    .operands
+                    .iter()
+                    .map(|v| self.tangent_or_zero(*v, span))
+                    .collect::<Res<Vec<_>>>()?;
+                Ok(Some(self.emit(
+                    OpKind::ArrayLiteral { cols: *cols },
+                    entries,
+                    ty,
+                    span,
+                )))
+            }
+            OpKind::Index | OpKind::Slice { .. } => {
+                // Picking entries is linear: the tangent of `A[i]` is
+                // `tA[i]` (the positions are integers and have no tangent).
+                let Some((&base, positions)) = op.operands.split_first() else {
+                    return Err(self.malformed("`index` has no operands"));
+                };
+                let Some(tbase) = self.tan_of(base) else {
+                    return Ok(None);
+                };
+                let mut operands = vec![tbase];
+                for p in positions {
+                    operands.push(self.primal(*p)?);
+                }
+                let ty = self.tangent_ty(r)?;
+                Ok(Some(self.emit(op.kind.clone(), operands, ty, span)))
+            }
+            // Sizes are integers: no tangent.
+            OpKind::Zeros | OpKind::Identity | OpKind::Len => Ok(None),
             OpKind::Math(f) => self.math_tangent(*f, op, r),
             // New operations get an arm above.
             other => {

@@ -481,6 +481,7 @@ name = "sky-opt"
 version = "0.0.1"
 dependencies = [
  "proptest",
+ "sky-ad",
  "sky-ast",
  "sky-diag",
  "sky-egraph",

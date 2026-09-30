@@ -3024,7 +3024,7 @@ impl Gen<'_> {
         let saved_counters = std::mem::take(&mut self.counters);
         let saved_fns = std::mem::take(&mut self.fns);
         let saved_in_fn = std::mem::replace(&mut self.in_fn, true);
-        let saved_ret = std::mem::replace(&mut self.ret, None);
+        let saved_ret = self.ret.take();
         self.ind = 1;
         for (n, t) in pnames.iter().zip(&params) {
             match *t {

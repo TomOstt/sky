@@ -1,4 +1,5 @@
-//! Fast, reproducible dense linear algebra for Sky.
+//! Fast, reproducible dense linear algebra for Sky (and, opt-in, fast
+//! relaxed variants: see "Relaxed numerics" below).
 //!
 //! Every engine that runs a Sky program (the tree-walking interpreter, the
 //! SIR interpreter, and any native one) calls these kernels, and they give
@@ -85,21 +86,37 @@
 //!
 //! # SIMD
 //!
-//! The hot loops are written so LLVM vectorizes them (NEON on aarch64 is
-//! part of the base ISA); on x86_64 they are also compiled with AVX2
-//! enabled (never FMA) and chosen at run time with
-//! `is_x86_feature_detected!`. The only `unsafe` in the crate is calling
-//! those `target_feature` functions after the check.
+//! The reproducible hot loops are written so LLVM vectorizes them (NEON on
+//! aarch64 is part of the base ISA); on x86_64 they are also compiled with
+//! AVX2 enabled (never FMA) and chosen at run time with
+//! `is_x86_feature_detected!`.
 //!
-//! # Cost of not fusing
+//! # Unsafe code
+//!
+//! Only three kinds, each commented where it is: calling a `target_feature`
+//! function after the run-time check, the NEON and AVX2 intrinsics of the
+//! relaxed kernels, and the FFI calls into Accelerate (macOS only).
+//!
+//! # Relaxed numerics
 //!
 //! Hardware FMA does a multiply and an add in one instruction and one
 //! rounding, which is twice the peak flop rate of the same silicon
 //! (`vfmadd`, `fmla`) and a different result. Sky's products round the
-//! product first, so on the same core these kernels top out at half the
-//! peak of an FMA library. (Apple's Accelerate also uses the AMX
-//! coprocessor, which no portable code reaches.) `benches/blas.rs` measures
+//! product first, so on the same core the reproducible kernels top out at
+//! half the peak of an FMA library, and Apple's Accelerate also uses the AMX
+//! coprocessor, which no portable code reaches. `benches/blas.rs` measures
 //! all of this.
+//!
+//! The opt-in answer is the **relaxed** family (the `*_relaxed*` and
+//! `*_fused*` functions, see [`Numerics`]): fused multiply-add microkernels
+//! (`vfmaq_laneq_f64` on aarch64, FMA3 on x86-64 when detected), a
+//! reassociated and threaded [`dot_relaxed`], and Accelerate's `cblas_dgemm`,
+//! `dpotrf`/`dpotrs` and `dgesv` on macOS ([`gemm_relaxed_with`],
+//! [`cholesky_relaxed_with`], [`solve_relaxed_with`]). They are separate
+//! functions, so a reproducible call never changes meaning, and they keep
+//! Sky's errors: a vendor factorization is trusted only when clearly
+//! successful, and otherwise the reproducible kernel decides (see the
+//! `relaxed` module). The spec's "Relaxed numerics" is the contract.
 
 #![deny(unsafe_code)]
 // Kernels take many operands (pointers, strides, extents), and their lane

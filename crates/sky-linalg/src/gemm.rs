@@ -363,6 +363,11 @@ fn gemm_columns(
 // ---------------------------------------------------------------------------
 // The public products on contiguous row-major matrices.
 
+// The kernels below (`small`, `matvec_rows`, `vecmat_*`) are `inline(always)`
+// so that the instance with `FMA` is compiled *inside* the `target_feature`
+// wrapper that enables FMA3 on x86-64: `mul_add` is a `vfmadd` instruction
+// there and a call of libm's `fma` anywhere else.
+
 /// `acc + a*b`: with `FMA`, one fused rounding; without, the multiply and
 /// the add rounded separately (what Rust's `acc += a * b` is).
 #[inline(always)]
@@ -576,9 +581,63 @@ pub fn syrk(b: &[f64], m: usize, k: usize) -> Vec<f64> {
 /// The widest product the small kernels handle without packing.
 pub(crate) const SMALL_MAX_COLS: usize = 16;
 
+/// `RR` rows of [`small`], starting at row `i`, with NEON intrinsics: each
+/// row of `C` is `N / 2` two-lane registers updated by `vfmaq_n_f64` (fused,
+/// the entry's products added in `p` order as always), and an odd last column
+/// is a scalar `mul_add`. LLVM's own vectorization of the generic loop leaves
+/// `fmla` scalar at some widths, which costs half the speed of the plain
+/// kernel.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+#[allow(unsafe_code)]
+fn small_neon_rows<const N: usize, const RR: usize>(
+    a: &[f64],
+    k: usize,
+    b: &[f64],
+    c: &mut [f64],
+    i: usize,
+) {
+    use std::arch::aarch64::*;
+    const { assert!(N <= 16) };
+    let (pairs, odd) = (N / 2, N % 2 == 1);
+    // SAFETY: NEON is part of the aarch64 base ISA. Every vector load is of
+    // two elements at an even offset below `N - 1` of a slice of exactly `N`
+    // elements (`brow`, `row`), so it is in bounds; `a` is indexed safely.
+    unsafe {
+        let mut acc = [[vdupq_n_f64(0.0); 8]; RR];
+        let mut last = [0.0_f64; RR];
+        for p in 0..k {
+            let brow = &b[p * N..p * N + N];
+            let mut bv = [vdupq_n_f64(0.0); 8];
+            for (v, x) in bv.iter_mut().enumerate().take(pairs) {
+                *x = vld1q_f64(brow.as_ptr().add(2 * v));
+            }
+            for r in 0..RR {
+                let av = a[(i + r) * k + p];
+                for v in 0..pairs {
+                    acc[r][v] = vfmaq_n_f64(acc[r][v], bv[v], av);
+                }
+                if odd {
+                    last[r] = av.mul_add(brow[N - 1], last[r]);
+                }
+            }
+        }
+        for r in 0..RR {
+            let row = &mut c[(i + r) * N..(i + r + 1) * N];
+            for v in 0..pairs {
+                vst1q_f64(row.as_mut_ptr().add(2 * v), acc[r][v]);
+            }
+            if odd {
+                row[N - 1] = last[r];
+            }
+        }
+    }
+}
+
 /// A product with at most `SMALL_MAX_COLS` columns, without packing: the `R`
 /// rows in flight give the adds independent chains, and the `N`-wide
 /// accumulators vectorize across columns.
+#[inline(always)]
 fn small<const N: usize, const R: usize, const FMA: bool>(
     a: &[f64],
     k: usize,
@@ -587,6 +646,18 @@ fn small<const N: usize, const R: usize, const FMA: bool>(
 ) {
     let m = c.len() / N;
     let mut i = 0;
+    #[cfg(target_arch = "aarch64")]
+    if FMA {
+        while i + R <= m {
+            small_neon_rows::<N, R>(a, k, b, c, i);
+            i += R;
+        }
+        while i < m {
+            small_neon_rows::<N, 1>(a, k, b, c, i);
+            i += 1;
+        }
+        return;
+    }
     while i + R <= m {
         let mut acc = [[0.0_f64; N]; R];
         for p in 0..k {
@@ -617,6 +688,7 @@ fn small<const N: usize, const R: usize, const FMA: bool>(
     }
 }
 
+#[inline(always)]
 fn small_dispatch<const FMA: bool>(a: &[f64], k: usize, b: &[f64], n: usize, c: &mut [f64]) {
     match n {
         1 => small::<1, 4, FMA>(a, k, b, c),
@@ -672,6 +744,7 @@ fn small_rows(
 
 /// `y = A·x` for `A` (m by k): eight rows at a time, so eight independent
 /// chains, each entry summed in `k` order.
+#[inline(always)]
 fn matvec_rows<const FMA: bool>(a: &[f64], k: usize, x: &[f64], y: &mut [f64]) {
     const R: usize = 8;
     let m = y.len();
@@ -719,6 +792,7 @@ fn matvec(fma: bool, a: &[f64], m: usize, k: usize, x: &[f64], y: &mut [f64], th
 
 /// `y[j0..j0+W] = Σ_p x[p] · B[p, j0..j0+W]`, `p` ascending, for a block of
 /// `W` columns held in registers.
+#[inline(always)]
 fn vecmat_block<const W: usize, const FMA: bool>(
     x: &[f64],
     b: &[f64],
@@ -740,6 +814,7 @@ fn vecmat_block<const W: usize, const FMA: bool>(
 const VECMAT_STREAM_COLS: usize = 512;
 
 /// `y = x·B` for `B` (k by n): the columns in blocks, `k` order per entry.
+#[inline(always)]
 fn vecmat_cols<const FMA: bool>(x: &[f64], b: &[f64], n: usize, j_start: usize, y: &mut [f64]) {
     let total = y.len();
     let mut j = 0;

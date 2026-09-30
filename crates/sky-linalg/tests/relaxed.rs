@@ -146,6 +146,13 @@ fn the_fused_kernels_are_fused_and_keep_each_entrys_order() {
         (3, 40, 1),
         (1, 40, 9),
         (9, 33, 7),
+        (5, 20, 16),
+        (7, 20, 15),
+        (6, 30, 2),
+        (11, 25, 8),
+        (2, 17, 13),
+        (130, 9, 12),
+        (37, 64, 3),
         (70, 300, 90),
         (128, 512, 33),
     ] {
@@ -192,7 +199,7 @@ fn gram_matrices_are_exactly_symmetric_and_close() {
 #[test]
 fn cholesky_agrees_and_solves_agree() {
     let mut rng = Rng(4);
-    for n in [1, 5, 23, 24, 33, 64, 100, 257] {
+    for n in [1, 5, 31, 32, 33, 64, 100, 257] {
         let a = spd(&mut rng, n);
         let want = sky::cholesky(&a, n).unwrap();
         for threads in THREADS {
@@ -216,7 +223,7 @@ fn cholesky_agrees_and_solves_agree() {
 #[test]
 fn lu_solves_agree() {
     let mut rng = Rng(5);
-    for n in [1, 4, 23, 24, 40, 100, 200] {
+    for n in [1, 4, 11, 12, 24, 40, 100, 200] {
         let a = dominant(&mut rng, n);
         for k in [1, 4, 33] {
             let b = random(&mut rng, n * k);
@@ -299,7 +306,7 @@ fn singular_matrices_are_rejected_as_sky_rejects_them() {
 #[test]
 fn cholesky_rejects_as_sky_rejects() {
     let mut rng = Rng(7);
-    for n in [3, 30, 90] {
+    for n in [3, 31, 32, 90] {
         // Not symmetric: by one ulp in one entry.
         let mut a = spd(&mut rng, n);
         a[1] = f64::from_bits(a[1].to_bits() + 1);
@@ -469,5 +476,17 @@ fn the_fused_factorizations_agree_and_reject_like_sky() {
     assert_eq!(
         sky::lu_fused_with(&singular_integers(n), n, 2).map(|_| ()),
         Err(LinalgError::Singular)
+    );
+}
+
+/// Says which kernels this machine ran (visible with `--nocapture`), so a
+/// log of the suite shows whether the fused and vendor paths were exercised.
+#[test]
+fn reports_which_relaxed_kernels_this_machine_has() {
+    println!(
+        "fma available: {}; vendor library: {:?}; arch: {}",
+        sky::fma_available(),
+        sky::vendor(),
+        std::env::consts::ARCH
     );
 }

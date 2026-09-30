@@ -29,7 +29,21 @@ const SMALL: usize = 40;
 
 /// Whether the `n` by `n` matrix `a` equals its transpose entry for entry.
 pub fn is_symmetric(a: &[f64], n: usize) -> bool {
-    (0..n).all(|i| (i + 1..n).all(|j| a[i * n + j] == a[j * n + i]))
+    // In tiles, so that the column reads of `a[j * n + i]` stay in cache: the
+    // same pairs are compared as in the plain double loop.
+    const T: usize = 32;
+    for ib in (0..n).step_by(T) {
+        for jb in (ib..n).step_by(T) {
+            for i in ib..(ib + T).min(n) {
+                for j in jb.max(i + 1)..(jb + T).min(n) {
+                    if a[i * n + j] != a[j * n + i] {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
 }
 
 /// Factors the diagonal block `j0..j1` of `w` in place. The block is held

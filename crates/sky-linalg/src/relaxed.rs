@@ -31,22 +31,31 @@
 
 use crate::{syrk_fused_with, threads, LinalgError};
 
-/// Below this many multiply-adds a product is not worth a call into the
-/// vendor library (measured: the call and its thread wake-up cost more than
-/// our kernels' whole run).
+/// Products of at least this many multiply-adds, with every side at least 8,
+/// go to the vendor library; below it the fused kernels are as fast or faster
+/// (measured on an M2 Pro: 16 by 16 by 16 runs at 35 GFLOP/s fused against 22
+/// for Accelerate, 32 by 16 by 16 ties, 24 by 24 by 24 is 42 against 24, and
+/// 32 by 32 by 32 is 97 against 28).
 #[cfg(target_os = "macos")]
-const VENDOR_MIN_MADDS: usize = 1 << 15;
+const VENDOR_MIN_MADDS: usize = 1 << 13;
 
-/// Products with a side shorter than this (a matrix times a thin matrix, a
-/// matrix-vector product) stay on the fused kernels, which are already
-/// memory-bound there.
+/// A matrix-vector or vector-matrix product (a side of 1) goes to the vendor
+/// library from this many multiply-adds (64 by 4096 by 1 is 76 GFLOP/s
+/// against 9). A side between 2 and 7 stays on the fused kernels, whose
+/// narrow-tile code beats the call (4096 by 16 by 4: 21 against 13).
 #[cfg(target_os = "macos")]
-const VENDOR_MIN_SIDE: usize = 4;
+const VENDOR_MIN_MADDS_THIN: usize = 1 << 15;
 
-/// Factorizations and solves of at most this order stay on the fused
-/// kernels.
+/// LU solves of matrices of at least this order go to the vendor library
+/// (12 by 12: 0.7 microseconds against 1.0 for the plain kernels).
 #[cfg(target_os = "macos")]
-const VENDOR_MIN_ORDER: usize = 24;
+const VENDOR_MIN_ORDER: usize = 12;
+
+/// Cholesky factorizations and solves of at least this order go to the
+/// vendor library (below about 30 Sky's own loops win: 1.7 microseconds
+/// against 2.1 at order 24, 3.8 against 3.4 at 32, 15.7 against 8.4 at 64).
+#[cfg(target_os = "macos")]
+const VENDOR_MIN_ORDER_CHOLESKY: usize = 32;
 
 /// How many times Sky's singularity threshold a vendor pivot must exceed to
 /// be trusted (see the module docs). Generous on purpose: a fall back costs
@@ -73,6 +82,19 @@ pub fn gemm_vendor(a: &[f64], m: usize, k: usize, b: &[f64], n: usize) -> Option
     }
 }
 
+/// Whether an `m` by `k` times `k` by `n` product is worth a call into the
+/// vendor library (see [`VENDOR_MIN_MADDS`]).
+#[cfg(target_os = "macos")]
+fn vendor_gemm_pays(m: usize, n: usize, k: usize) -> bool {
+    let (side, madds) = (m.min(n).min(k), m * n * k);
+    match side {
+        0 => false,
+        1 => madds >= VENDOR_MIN_MADDS_THIN,
+        2..=7 => false,
+        _ => madds >= VENDOR_MIN_MADDS,
+    }
+}
+
 /// `a * b` (`a` is `m` by `k`, `b` is `k` by `n`, both row-major) with
 /// **relaxed numerics**: the vendor library where there is one and the
 /// product is big enough to pay for the call, else the fused kernels
@@ -88,7 +110,7 @@ pub fn gemm_relaxed_with(
 ) -> Vec<f64> {
     assert_eq!((a.len(), b.len()), (m * k, k * n), "gemm: shape mismatch");
     #[cfg(target_os = "macos")]
-    if m.min(n).min(k) >= VENDOR_MIN_SIDE && m * n * k >= VENDOR_MIN_MADDS {
+    if vendor_gemm_pays(m, n, k) {
         if let Some(c) = gemm_vendor(a, m, k, b, n) {
             return c;
         }
@@ -109,7 +131,7 @@ pub fn gemm_relaxed(a: &[f64], m: usize, k: usize, b: &[f64], n: usize) -> Vec<f
 pub fn syrk_relaxed_with(b: &[f64], m: usize, k: usize, threads: usize) -> Vec<f64> {
     assert_eq!(b.len(), m * k, "syrk: shape mismatch");
     #[cfg(target_os = "macos")]
-    if m.min(k) >= VENDOR_MIN_SIDE && m * m * k / 2 >= VENDOR_MIN_MADDS {
+    if m.min(k) >= 8 && m * m * k / 2 >= VENDOR_MIN_MADDS {
         let mut c = vec![0.0; m * m];
         if crate::accelerate::syrk_lower(b, m, k, &mut c) {
             for i in 0..m {
@@ -167,7 +189,7 @@ fn cholesky_vendor(a: &[f64], n: usize) -> Vendor<Result<Vec<f64>, LinalgError>>
 }
 
 /// The lower-triangular Cholesky factor with **relaxed numerics**: LAPACK's
-/// `dpotrf` on macOS (for matrices of order [`VENDOR_MIN_ORDER`] and up),
+/// `dpotrf` on macOS (for matrices of order [`VENDOR_MIN_ORDER_CHOLESKY`] and up),
 /// else the fused kernels. The errors are Sky's ([`LinalgError::NotSymmetric`]
 /// first, then [`LinalgError::NotPositiveDefinite`] at the first row whose
 /// pivot is not positive), decided by Sky's kernel whenever the vendor's
@@ -175,7 +197,7 @@ fn cholesky_vendor(a: &[f64], n: usize) -> Vendor<Result<Vec<f64>, LinalgError>>
 pub fn cholesky_relaxed_with(a: &[f64], n: usize, threads: usize) -> Result<Vec<f64>, LinalgError> {
     assert_eq!(a.len(), n * n, "cholesky: shape mismatch");
     #[cfg(target_os = "macos")]
-    if n >= VENDOR_MIN_ORDER {
+    if n >= VENDOR_MIN_ORDER_CHOLESKY {
         return match cholesky_vendor(a, n) {
             Vendor::Done(r) => r,
             Vendor::Fallback => crate::cholesky_with(a, n, threads),
@@ -192,17 +214,23 @@ pub fn cholesky_relaxed(a: &[f64], n: usize) -> Result<Vec<f64>, LinalgError> {
 /// The transpose of an `r` by `c` row-major matrix.
 #[cfg(target_os = "macos")]
 fn transpose(x: &[f64], r: usize, c: usize) -> Vec<f64> {
+    // In tiles, so that both the reads and the writes stay in cache.
+    const T: usize = 32;
     let mut t = vec![0.0; r * c];
-    for i in 0..r {
-        for j in 0..c {
-            t[j * r + i] = x[i * c + j];
+    for ib in (0..r).step_by(T) {
+        for jb in (0..c).step_by(T) {
+            for i in ib..(ib + T).min(r) {
+                for j in jb..(jb + T).min(c) {
+                    t[j * r + i] = x[i * c + j];
+                }
+            }
         }
     }
     t
 }
 
 /// Solves `A·X = B` for a Cholesky factor with **relaxed numerics**
-/// (`dpotrs` on macOS for order [`VENDOR_MIN_ORDER`] and up, else Sky's
+/// (`dpotrs` on macOS for order [`VENDOR_MIN_ORDER_CHOLESKY`] and up, else Sky's
 /// solve). `l` is the factor from [`cholesky_relaxed_with`] (or
 /// [`crate::cholesky_with`]), `B` is `n` by `k` row-major. Zeros are `+0.0`.
 pub fn cholesky_solve_relaxed_with(
@@ -214,7 +242,7 @@ pub fn cholesky_solve_relaxed_with(
 ) -> Vec<f64> {
     assert_eq!((l.len(), b.len()), (n * n, n * k), "cholesky_solve: shape");
     #[cfg(target_os = "macos")]
-    if n >= VENDOR_MIN_ORDER && k >= 1 {
+    if n >= VENDOR_MIN_ORDER_CHOLESKY && k >= 1 {
         // LAPACK wants `B` by columns: a vector already is, a matrix is
         // transposed in and out.
         let mut x = if k == 1 {

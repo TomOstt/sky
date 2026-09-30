@@ -105,8 +105,9 @@ impl Lower<'_> {
             _ => return self.err("internal error: a derivative without a number type", e.span),
         };
         let mut vals = Vec::with_capacity(args.len() + globals.len());
-        for a in args {
-            vals.push(self.expr(a)?);
+        for (i, a) in args.iter().enumerate() {
+            let v = self.expr(a)?;
+            vals.push(self.promise_tags(v, f, i, a.span));
         }
         for g in &globals {
             vals.push(self.module_value(g, e.span)?);

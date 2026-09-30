@@ -1126,6 +1126,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
             | OpKind::Norm
             | OpKind::Dot
             | OpKind::Transpose
+            | OpKind::Assume
             | OpKind::Solve { .. }
             | OpKind::SolveRight { .. }
             | OpKind::MatMulEx { .. }

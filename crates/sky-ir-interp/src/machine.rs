@@ -1478,6 +1478,13 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
         }
         OpKind::Assert { .. } => assert_op(act, op),
 
+        // A tag promise: the value as it is (the retag is the type's).
+        OpKind::Assume => {
+            let [a] = fixed(op)?;
+            let v = act.get(a, s)?.clone();
+            act.define(op, vec![v])
+        }
+
         // `+x` of a value the checker could not type: a number or an array
         // passes as it is, anything else fails as in `sky run`.
         OpKind::ExpectNumber { context } => {

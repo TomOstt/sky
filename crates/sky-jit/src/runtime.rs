@@ -942,6 +942,7 @@ fn eval_op(
         OpKind::ExpectBool { context } => {
             Ok(Value::Bool(expect_bool(context.keyword(), arg(0)?, s)?))
         }
+        OpKind::Assume => Ok(arg(0)?.clone()),
         OpKind::ExpectNumber { context } => {
             let v = arg(0)?;
             expect_number(context.keyword(), v, s)?;

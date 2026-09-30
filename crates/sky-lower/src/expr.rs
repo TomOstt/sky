@@ -9,7 +9,8 @@ use sky_ast::{BinaryOp, BoolOp, Expr, ExprKind, Ident, Literal, UnaryOp};
 use sky_diag::Span;
 use sky_interp::{number_literal, unit_literal_si};
 use sky_ir::{
-    BlockId, BoolContext, CmpOp, LiteralError, NumberContext, OpId, OpKind, Type, ValueId,
+    BlockId, BoolContext, CmpOp, LiteralError, NumberContext, NumberType, OpId, OpKind, Type,
+    ValueId,
 };
 use sky_syntax::lexer::unescape_str;
 use sky_types::{const_exponent, FuncSig, Ty};
@@ -505,8 +506,9 @@ impl Lower<'_> {
             );
         }
         let mut vals = Vec::with_capacity(args.len() + globals.len());
-        for a in args {
-            vals.push(self.expr(a)?);
+        for (i, a) in args.iter().enumerate() {
+            let v = self.expr(a)?;
+            vals.push(self.promise_tags(v, sig, i, a.span));
         }
         for g in &globals {
             vals.push(self.module_value(g, e.span)?);
@@ -519,6 +521,40 @@ impl Lower<'_> {
             _ => result,
         };
         Ok(self.op1(OpKind::Call { callee: name }, vals, ty, e.span))
+    }
+
+    /// Argument `v` of parameter `i` of `sig`, with the parameter's tags.
+    ///
+    /// A tag on a parameter (`K: PositiveDefinite Matrix[N, N]`) is a
+    /// promise: the checker does not prove it of the argument (a computed
+    /// matrix has no tags), and `sky run` does not check it at the call, only
+    /// where the callee relies on it (a Cholesky solve fails with "the matrix
+    /// is not positive definite"). SIR types carry the tags and a call
+    /// requires the argument to guarantee the parameter's, so an argument
+    /// that does not gets an `assume`: the same value, typed with the tags
+    /// the parameter promises, and no check, so that the failure, if the
+    /// promise is broken, is the callee's, with the tree-walker's message.
+    pub(crate) fn promise_tags(
+        &mut self,
+        v: ValueId,
+        sig: &FuncSig,
+        i: usize,
+        span: Span,
+    ) -> ValueId {
+        let Some(want) = sig.param_ty(i).map(|p| p.ty.tags().closure()) else {
+            return v;
+        };
+        let Type::Number(n) = self.st.b.ty(v).clone() else {
+            return v;
+        };
+        if want.is_empty() || n.tags.is_subtag_of(want) || n.shape.rank() != 2 {
+            return v;
+        }
+        let ty = Type::Number(NumberType {
+            tags: n.tags.meet(want),
+            ..n
+        });
+        self.op1(OpKind::Assume, vec![v], ty, span)
     }
 
     /// The value module-level name `name` has now, as a callee would read

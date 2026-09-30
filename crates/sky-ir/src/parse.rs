@@ -964,6 +964,7 @@ impl<'a> Parser<'a> {
                 self.expect(']')?;
                 OpKind::ExpectNumber { context }
             }
+            "assume" => OpKind::Assume,
             "assert" => self.assert_attrs()?,
             "if" => OpKind::If,
             "while" => OpKind::While,

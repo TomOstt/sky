@@ -612,6 +612,67 @@ print(solve_with(K, [3, 4]))
 }
 
 #[test]
+fn a_computed_matrix_passed_to_a_tagged_parameter_is_taken_on_trust() {
+    // The checker proves nothing about `A + identity(2)` and takes the
+    // parameter's tags as promises; the callee's Cholesky solve (or its
+    // diagonal division) checks them where it uses them.
+    let src = "\
+def spd(K: PositiveDefinite Matrix[2, 2], f: Vector[2]) -> Vector[2]:
+    return K⁻¹ @ f
+def sym(K: Symmetric Matrix[2, 2], f: Vector[2]) -> Vector[2]:
+    return K⁻¹ @ f
+def dia(D: Diagonal Matrix[2, 2], f: Vector[2]) -> Vector[2]:
+    return D⁻¹ @ f
+def through(K: Matrix[2, 2], f: Vector[2]) -> Vector[2]:
+    return spd(K, f)
+f = [1, 2]
+B = [[2, 1], [1, 3]] + identity(2)
+print(spd(B, f))
+print(sym(B, f))
+print(dia(2 * identity(2), f))
+print(through(B, f))
+for r in range(3):
+    print(spd(B + r * identity(2), (1 + r) * f))
+";
+    let o = assert_same(src);
+    assert_eq!(o.error, None, "{}", o.stdout);
+    assert_eq!(o.stdout.lines().count(), 7);
+}
+
+#[test]
+fn a_computed_matrix_that_breaks_a_tag_promise_fails_where_the_callee_uses_it() {
+    // Not positive definite, not symmetric, not diagonal: the same error, on
+    // the same span, as the tree-walker, after the output before it.
+    let solves = "\
+def spd(K: PositiveDefinite Matrix[2, 2], f: Vector[2]) -> Vector[2]:
+    return K⁻¹ @ f
+f = [1, 2]
+print(spd([[2, 1], [1, 3]] + identity(2), f))
+N = [[1, 2], [2, 1]] - 0 * identity(2)
+print(spd(N, f))
+print(\"not reached\")
+";
+    let o = assert_same(solves);
+    assert_eq!(o.stdout.lines().count(), 1, "{}", o.stdout);
+    let message = o.error.as_deref().unwrap_or_default();
+    assert_eq!(message, "the matrix is not positive definite");
+    let asym = "\
+def spd(K: PositiveDefinite Matrix[2, 2], f: Vector[2]) -> Vector[2]:
+    return K⁻¹ @ f
+print(spd([[2, 1], [0, 3]] + identity(2), [1, 2]))
+";
+    let o = assert_same(asym);
+    assert_eq!(o.error.as_deref(), Some("the matrix is not symmetric"));
+    let diag = "\
+def dia(D: Diagonal Matrix[2, 2], f: Vector[2]) -> Vector[2]:
+    return D⁻¹ @ f
+print(dia([[2, 1], [0, 3]] + identity(2), [1, 2]))
+";
+    let o = assert_same(diag);
+    assert!(o.error.is_some(), "{}", o.stdout);
+}
+
+#[test]
 fn literals_arithmetic_and_builtins_agree() {
     let o = assert_same(
         "\

@@ -449,6 +449,20 @@ pub enum OpKind {
     ///   [`OpKind::properties`] says pure and the passes look inside).
     Fused,
 
+    /// `assume a`: one operand, one result: the operand's value, unchanged,
+    /// typed with the tags the callee's parameter promises. A tag on a
+    /// parameter (`K: PositiveDefinite Matrix[3, 3]`) is a promise the
+    /// checker takes on trust at a call, and that `sky run` checks only where
+    /// it is used (the Cholesky solve fails with "the matrix is not positive
+    /// definite" if it does not hold), so an argument the checker could not
+    /// prove tagged (a computed matrix) is passed on as it is; this operation
+    /// only changes its type, so that the call verifies. It checks nothing
+    /// and cannot fail: the operations that rely on a tag check it
+    /// themselves, with the tree-walker's messages. The result has the
+    /// operand's dimension, shape and representation and any tags at all
+    /// (closed, on a square matrix). Pure.
+    Assume,
+
     // ----- comparison and logic -----
     /// Two operands (scalars of equal dimension, two Bools, or two
     /// strings for `eq`/`ne`), one Bool result.
@@ -618,6 +632,7 @@ impl OpKind {
             OpKind::Identity => "identity",
             OpKind::Len => "len",
             OpKind::Fused => "fused",
+            OpKind::Assume => "assume",
             OpKind::Cmp(c) => match c {
                 CmpOp::Eq => "cmp.eq",
                 CmpOp::Ne => "cmp.ne",
@@ -676,6 +691,7 @@ impl OpKind {
             | OpKind::ConstNothing
             | OpKind::Neg
             | OpKind::Transpose
+            | OpKind::Assume
             | OpKind::ArrayLiteral { .. }
             | OpKind::Cmp(_)
             | OpKind::Not => (EffectSet::PURE, false, false, false),

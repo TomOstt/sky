@@ -319,6 +319,9 @@ impl<'a> Interp<'a> {
                 Ok(Flow::Normal(None))
             }
             StmtKind::Pass => Ok(Flow::Normal(None)),
+            // A budget is a claim about the program, checked by `sky check`;
+            // running it changes nothing.
+            StmtKind::Accuracy { .. } => Ok(Flow::Normal(None)),
             StmtKind::Break => Ok(Flow::Break),
             StmtKind::Continue => Ok(Flow::Continue),
             StmtKind::Equation(eq) => {

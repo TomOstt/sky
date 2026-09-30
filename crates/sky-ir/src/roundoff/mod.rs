@@ -199,8 +199,17 @@ pub enum Verdict {
     /// and `rel` (relative), whichever the tolerance uses.
     Proven { abs: f64, rel: f64 },
     /// The budget provably fails: the error is at least `lower_abs`
-    /// (absolute) and `lower_rel` (relative).
-    Violated { lower_abs: f64, lower_rel: f64 },
+    /// (absolute) and `lower_rel` (relative). `computed` is what the
+    /// interpreter computes and `exact` the exact value, when they are
+    /// known to be single numbers; `blame` names the operations that
+    /// lose the accuracy.
+    Violated {
+        lower_abs: f64,
+        lower_rel: f64,
+        computed: Option<f64>,
+        exact: Option<f64>,
+        blame: Vec<Blame>,
+    },
     /// The analysis can neither prove nor refute it. `abs` and `rel` are
     /// the bounds it did prove (infinite: none); `blame` names the
     /// operations that dominate the error.
@@ -881,6 +890,9 @@ impl Analysis {
             Verdict::Violated {
                 lower_abs: n.lower_abs,
                 lower_rel: n.lower_rel,
+                computed: n.range.as_point(),
+                exact: n.exact_value(),
+                blame: blame::blame(self, m, &goal.function, goal.value),
             }
         } else {
             Verdict::Unproven {

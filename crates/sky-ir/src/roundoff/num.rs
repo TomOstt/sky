@@ -116,6 +116,11 @@ impl Num {
         }
     }
 
+    /// The exact value, to about 27 digits, when an enclosure is known.
+    pub fn exact_value(&self) -> Option<f64> {
+        self.hp.map(|e| e.value())
+    }
+
     /// The same range, with no bound on the error: the value is a number
     /// the computation reached in a way the analysis cannot follow.
     pub fn unbounded(self) -> Num {

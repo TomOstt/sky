@@ -253,6 +253,11 @@ impl Enc {
         (lo, add_up(self.mag_up(), self.rad))
     }
 
+    /// The centre, rounded to an `f64`.
+    pub fn value(self) -> f64 {
+        self.hi + self.lo
+    }
+
     /// An interval of `f64`s that contains the exact value.
     pub fn interval(self) -> (f64, f64) {
         let lower = dd_add(self.dd(), (-self.rad, 0.0));

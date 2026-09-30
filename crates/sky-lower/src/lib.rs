@@ -221,6 +221,7 @@
 
 #![forbid(unsafe_code)]
 
+mod accuracy;
 mod analysis;
 mod array;
 mod build;
@@ -315,7 +316,7 @@ pub fn lower_with_defs(
     src: &str,
     checked: &Checked,
 ) -> Result<(Module, HashMap<Span, String>), LowerError> {
-    lower_impl(module, src, checked, false, false)
+    lower_impl(module, src, checked, false, false).map(|(m, d, _)| (m, d))
 }
 
 /// [`lower_with_defs`] for the `def`s alone: `<main>` is empty, and the
@@ -331,7 +332,19 @@ pub fn lower_defs(
     src: &str,
     checked: &Checked,
 ) -> Result<(Module, HashMap<Span, String>), LowerError> {
-    lower_impl(module, src, checked, false, true)
+    lower_impl(module, src, checked, false, true).map(|(m, d, _)| (m, d))
+}
+
+/// [`lower`], and the `accuracy` declarations of the program as goals for
+/// the roundoff analysis (`sky_ir::roundoff`). The goals refer to the
+/// module returned, as lowering produced it: run the analysis on it before
+/// any pass.
+pub fn lower_with_accuracy(
+    module: &Ast,
+    src: &str,
+    checked: &Checked,
+) -> Result<(Module, Vec<sky_ir::roundoff::Goal>), LowerError> {
+    lower_impl(module, src, checked, false, false).map(|(m, _, g)| (m, g))
 }
 
 /// [`lower`] for a module that is about to be executed in place of the tree
@@ -344,8 +357,12 @@ pub fn lower_defs(
 /// Tools that only look at the IR (`sky check --emit-ir`) keep using
 /// [`lower`], which lowers such a loop as far as `f64` arithmetic goes.
 pub fn lower_for_run(module: &Ast, src: &str, checked: &Checked) -> Result<Module, LowerError> {
-    lower_impl(module, src, checked, true, false).map(|(m, _)| m)
+    lower_impl(module, src, checked, true, false).map(|(m, _, _)| m)
 }
+
+/// Everything one lowering produces: the module, which SIR function each
+/// `def` became, and the `accuracy` goals.
+type Lowered = (Module, HashMap<Span, String>, Vec<sky_ir::roundoff::Goal>);
 
 fn lower_impl(
     module: &Ast,
@@ -353,7 +370,7 @@ fn lower_impl(
     checked: &Checked,
     for_run: bool,
     defs_only: bool,
-) -> Result<(Module, HashMap<Span, String>), LowerError> {
+) -> Result<Lowered, LowerError> {
     let main = FnState {
         b: Builder::new(Module::MAIN.to_string(), module.span),
         scope: Default::default(),
@@ -378,6 +395,7 @@ fn lower_impl(
         stack: Vec::new(),
         derivatives: Vec::new(),
         for_run,
+        goals: Vec::new(),
     };
     lw.collect_defs(&module.stmts);
     lw.collect_module_names(&module.stmts);
@@ -396,6 +414,7 @@ fn lower_impl(
         mut out,
         derivatives,
         fns,
+        goals,
         ..
     } = lw;
     out.sort_by_key(|(start, _)| *start);
@@ -419,7 +438,7 @@ fn lower_impl(
         .into_iter()
         .map(|(def, info)| (def, info.name))
         .collect();
-    Ok((module, defs))
+    Ok((module, defs, goals))
 }
 
 /// Lexes, parses, checks and lowers `src`: the whole path from source text

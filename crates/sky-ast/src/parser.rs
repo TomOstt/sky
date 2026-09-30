@@ -794,6 +794,9 @@ impl<'t, 's> Parser<'t, 's> {
     // ----- statements (simple) -----
 
     fn parse_stmt(&mut self) -> Option<Stmt> {
+        if self.at_accuracy() {
+            return self.parse_accuracy();
+        }
         let first = match self.peek() {
             TokenKind::Keyword(Kw::Return) => return self.parse_return(),
             TokenKind::Keyword(kw @ (Kw::Assert | Kw::Requires | Kw::Ensures)) => {
@@ -863,6 +866,51 @@ impl<'t, 's> Parser<'t, 's> {
             },
         };
         self.expect_stmt_end(&stmt, first_op)?;
+        Some(stmt)
+    }
+
+    /// Whether the statement starts with `accuracy` followed by a name: the
+    /// contextual statement `accuracy x within 1e-12`. Two names side by
+    /// side are never a valid expression, so nothing else is taken.
+    fn at_accuracy(&self) -> bool {
+        let is_word = |t: Option<Token>, word: &str| {
+            t.is_some_and(|t| {
+                t.kind == TokenKind::Ident && span_text(self.src, t.span) == Some(word)
+            })
+        };
+        is_word(self.nth(0), "accuracy") && self.nth(1).is_some_and(|t| t.kind == TokenKind::Ident)
+    }
+
+    /// `accuracy x within tolerance`, with `accuracy` current.
+    fn parse_accuracy(&mut self) -> Option<Stmt> {
+        let kw = self.bump();
+        let name_tok = self.bump();
+        let name = Ident {
+            span: name_tok.span,
+        };
+        let within = self.current();
+        if within.kind != TokenKind::Ident || span_text(self.src, within.span) != Some("within") {
+            self.errors.push(
+                ParseError::new(
+                    format!(
+                        "expected `within` after `accuracy {}`, found {}",
+                        self.text(name.span),
+                        self.describe(within)
+                    ),
+                    within.span,
+                )
+                .with_secondary(kw.span, "this declares an accuracy budget")
+                .with_help("write `accuracy x within 1e-12` (a relative error) or `accuracy x within 2 mm` (an absolute one)"),
+            );
+            return None;
+        }
+        self.bump();
+        let tolerance = self.expr_bp(0)?;
+        let stmt = Stmt {
+            span: kw.span.join(tolerance.span),
+            kind: StmtKind::Accuracy { name, tolerance },
+        };
+        self.expect_stmt_end(&stmt, None)?;
         Some(stmt)
     }
 

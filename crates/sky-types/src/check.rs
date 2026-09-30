@@ -803,6 +803,7 @@ impl<'s> Checker<'s> {
                     self.note_const_binding(self.ident(name), v);
                 }
             }
+            StmtKind::Accuracy { name, tolerance } => self.accuracy_stmt(name, tolerance),
             StmtKind::If {
                 branches,
                 else_block,

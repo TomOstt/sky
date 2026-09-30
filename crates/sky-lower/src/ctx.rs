@@ -109,6 +109,8 @@ pub(crate) struct Lower<'a> {
     /// run differently from `sky run`'s tree walker, instead of lowering it
     /// faithfully as far as SIR can say.
     pub(crate) for_run: bool,
+    /// The `accuracy` declarations met so far (see `accuracy.rs`).
+    pub(crate) goals: Vec<sky_ir::roundoff::Goal>,
 }
 
 /// A checker type as a SIR type. `None` for a function value (and for an

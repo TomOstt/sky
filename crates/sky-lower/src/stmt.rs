@@ -235,6 +235,10 @@ impl Lower<'_> {
                 cond,
                 message,
             } => self.assert_stmt(*kind, cond, *message),
+            StmtKind::Accuracy { name, tolerance } => {
+                self.accuracy(s, name, tolerance);
+                Ok(())
+            }
             StmtKind::Pass => Ok(()),
             // Differential equations run on the tree-walker only: the
             // solvers (`sky-ode`) call back into the evaluator for every

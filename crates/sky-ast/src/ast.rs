@@ -534,6 +534,16 @@ pub enum StmtKind {
         ty: TypeExpr,
         value: Option<Expr>,
     },
+    /// `accuracy x within 1e-12`: the error budget of the value `x` has
+    /// here. `tolerance` is a number literal (a relative error) or a number
+    /// with a unit (an absolute error in that unit); the checker rejects
+    /// anything else. `accuracy` and `within` are contextual words: only a
+    /// statement that starts with two names after them is this one, so both
+    /// stay ordinary identifiers everywhere else.
+    Accuracy {
+        name: Ident,
+        tolerance: Expr,
+    },
     /// `target op= value`, e.g. `x += 1`. Its own node, not desugared to
     /// `x = x + 1`: the target is evaluated once and errors point at `+=`.
     CompoundAssign {

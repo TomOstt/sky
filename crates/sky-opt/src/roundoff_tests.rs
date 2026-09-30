@@ -774,3 +774,77 @@ fn unknown_types_and_arrays_give_no_bound() {
         Fact::Unreached => panic!(),
     }
 }
+
+// ------------------------------------------------------------ budgets in source
+
+fn lower_goals(src: &str) -> (Module, Vec<Goal>) {
+    sky_ast::with_deep_stack(|| {
+        let lexed = sky_syntax::lex(src).expect("lexes");
+        let (ast, errors) = sky_ast::parse_module(&lexed.tokens, src);
+        assert!(errors.is_empty(), "{errors:?}");
+        let checked = sky_types::check_module(&ast, src);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        sky_lower::lower_with_accuracy(&ast, src, &checked).expect("lowers")
+    })
+}
+
+fn verdicts(src: &str) -> Vec<Verdict> {
+    let (m, goals) = lower_goals(src);
+    let a = roundoff::analyze(&m, &Options::default());
+    goals.iter().map(|g| a.check(&m, g)).collect()
+}
+
+#[test]
+fn a_goal_is_about_the_value_at_its_statement() {
+    // The first `x` is exact; the budget is stated before it is rebound to
+    // the cancellation.
+    let v = verdicts(
+        "x = 0.5\naccuracy x within 1e-15\nx = sqrt(1e16 + 1) - 1e8\naccuracy x within 1e-3\n",
+    );
+    assert!(matches!(v[0], Verdict::Proven { .. }), "{:?}", v[0]);
+    assert!(matches!(v[1], Verdict::Violated { .. }), "{:?}", v[1]);
+}
+
+#[test]
+fn a_goal_in_a_function_is_analysed_with_the_arguments_of_its_calls() {
+    let src = "def f(x: Scalar) -> Scalar:\n    y = sqrt(x^2 + 1) - x\n    accuracy y within 1e-3\n    return y\nr = f(3.0)\n";
+    // Called with 3: no cancellation, the budget holds.
+    let v = verdicts(src);
+    assert!(matches!(v[0], Verdict::Proven { .. }), "{:?}", v[0]);
+    // Never called: nothing is known about x.
+    let v = verdicts(
+        "def f(x: Scalar) -> Scalar:\n    y = sqrt(x^2 + 1) - x\n    accuracy y within 1e-3\n    return y\n",
+    );
+    assert!(matches!(v[0], Verdict::Unproven { .. }), "{:?}", v[0]);
+}
+
+#[test]
+fn an_absolute_budget_is_in_si_units() {
+    let v = verdicts("d = 1e8 m + 1 mm\naccuracy d within 10 nm\naccuracy d within 1 pm\n");
+    assert!(matches!(v[0], Verdict::Proven { .. }), "{:?}", v[0]);
+    // 1 pm = 1e-12 m is far below the spacing of an f64 at 1e8: the sum is
+    // off by about 2e-9 m.
+    assert!(matches!(v[1], Verdict::Violated { .. }), "{:?}", v[1]);
+}
+
+#[test]
+fn the_flagship_example_names_the_subtraction() {
+    let (m, goals) = lower_goals("x = 1e8\ny = sqrt(x^2 + 1) - x\naccuracy y within 1e-12\n");
+    let a = roundoff::analyze(&m, &Options::default());
+    let Verdict::Violated {
+        blame,
+        computed,
+        exact,
+        ..
+    } = a.check(&m, &goals[0])
+    else {
+        panic!("expected a violation");
+    };
+    assert_eq!(computed, Some(0.0));
+    assert!((exact.unwrap() - 5e-9).abs() < 1e-15, "{exact:?}");
+    assert_eq!(blame.first().map(|b| b.mnemonic), Some("sub"));
+    assert!(matches!(
+        blame[0].kind,
+        roundoff::BlameKind::Cancellation { .. }
+    ));
+}

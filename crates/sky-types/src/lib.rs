@@ -37,6 +37,7 @@
 
 #![forbid(unsafe_code)]
 
+mod accuracy;
 mod array;
 mod builtins;
 mod cancellation;

@@ -467,6 +467,13 @@ impl Lower<'_> {
                     self.scan_expr(cond, defined, direct, callees);
                 }
             }
+            // Reads the name, like any use of it.
+            StmtKind::Accuracy { name, .. } => {
+                let n = self.text(name.span);
+                if !defined.contains(n) {
+                    direct.insert(n.to_string());
+                }
+            }
             // A nested `def` is its own function. Equations do not lower
             // (see `stmt`), so what they read does not matter.
             StmtKind::Def { .. }

@@ -174,6 +174,7 @@ impl Walk<'_> {
                 }
             }
             StmtKind::Assert { cond, .. } => self.expr(cond, false),
+            StmtKind::Accuracy { tolerance, .. } => self.expr(tolerance, false),
             StmtKind::Pass | StmtKind::Break | StmtKind::Continue => {}
             StmtKind::Equation(eq) => {
                 for item in &eq.items {

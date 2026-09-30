@@ -41,6 +41,11 @@ impl Builder {
         b
     }
 
+    /// The function's name.
+    pub(crate) fn name(&self) -> &str {
+        &self.f.name
+    }
+
     /// The insertion block.
     pub(crate) fn at(&self) -> BlockId {
         self.at

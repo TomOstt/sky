@@ -214,6 +214,10 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
                 message.iter().for_each(|m| f(*m));
             }
             StmtKind::Pass | StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Accuracy { name, tolerance } => {
+                f(name.span);
+                stack.push(Node::Expr(tolerance));
+            }
             StmtKind::Expr(e) => stack.push(Node::Expr(e)),
             StmtKind::Assign { target, value } => {
                 stack.push(Node::Target(target));

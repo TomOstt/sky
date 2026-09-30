@@ -192,6 +192,13 @@ impl Stmt {
                 }
                 out.push(')');
             }
+            StmtKind::Accuracy { name, tolerance } => {
+                out.push_str("(accuracy ");
+                out.push_str(text(src, name.span));
+                out.push(' ');
+                write_expr(&mut out, tolerance, src);
+                out.push(')');
+            }
             StmtKind::Pass => out.push_str("(pass)"),
             StmtKind::Break => out.push_str("(break)"),
             StmtKind::Continue => out.push_str("(continue)"),

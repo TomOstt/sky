@@ -161,7 +161,7 @@ impl SymKind {
 /// middle step is negative (`w0 ~ -1.70`), which is why the error constant
 /// is large and Yoshida only pays off at tight tolerances.
 fn yoshida_weights() -> (f64, f64) {
-    let cbrt2 = 2.0_f64.cbrt();
+    let cbrt2 = libm::cbrt(2.0);
     let w1 = 1.0 / (2.0 - cbrt2);
     (w1, -cbrt2 * w1)
 }

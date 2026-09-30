@@ -303,7 +303,7 @@ pub(crate) fn rodas3(
         let mut fac = if errn == 0.0 {
             FAC_MAX
         } else {
-            (SAFETY * errn.powf(-1.0 / 3.0)).clamp(FAC_MIN, FAC_MAX)
+            (SAFETY * libm::pow(errn, -1.0 / 3.0)).clamp(FAC_MIN, FAC_MAX)
         };
         if errn <= 1.0 {
             run.stats.steps += 1;

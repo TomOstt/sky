@@ -21,7 +21,7 @@ sol = solve orbit from 0 s to 1 yr with r = [1 AU, 0 m], v = [0 m/s, 29.78 km/s]
     conserve energy = 0.5 * norm(v)^2 + U(r)
 
 assert norm(sol.r) > 0.9 AU, "Earth stays near 1 AU"
-print("after one year, Earth is", norm(sol.r - [1 AU, 0 m]) as km, "from where it started")
+print("after one year, Earth is", round(norm(sol.r - [1 AU, 0 m]) / (1 km)), "km from where it started")
 print(explain(sol))
 
 # A measured quantity carries its uncertainty through the arithmetic.

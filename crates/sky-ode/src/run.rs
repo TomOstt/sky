@@ -196,7 +196,7 @@ pub(crate) fn initial_step(
     let h1 = if der12 <= 1e-15 {
         (h0 * 1e-3).max(1e-6)
     } else {
-        (0.01 / der12).powf(1.0 / f64::from(order))
+        libm::pow(0.01 / der12, 1.0 / f64::from(order))
     };
     (100.0 * h0).min(h1).min(hmax)
 }

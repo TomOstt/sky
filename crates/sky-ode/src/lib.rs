@@ -52,6 +52,17 @@
 //! followed by the drift of each conserved quantity. Choices are
 //! deterministic: the same inputs give bit-identical outputs.
 
+//! # Reproducible on every machine
+//!
+//! The step-size controllers and the Yoshida coefficients need `pow` and
+//! `cbrt`, which the platform's math library (glibc, Apple's libm, ...)
+//! may round differently in the last bit; over hundreds of steps that
+//! changes the printed trajectory in its last digits from one OS to the
+//! next. They are computed with the `libm` crate (a port of musl's), the
+//! same bits everywhere, and everything else a method does is IEEE
+//! arithmetic and `sqrt`, which are exact. So a solve gives the same bits
+//! on every machine, given right-hand sides that do.
+
 #![forbid(unsafe_code)]
 // Integrators index several parallel state and stage vectors with one loop
 // variable (`y[i] + h * k1[i]`); iterator chains over four slices at once

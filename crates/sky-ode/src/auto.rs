@@ -120,7 +120,7 @@ fn symplectic(run: &mut Run<'_>, n: usize, y0: &[f64]) -> Result<Chosen, SolveEr
             break;
         }
         // The bounded energy error of a p-th order method scales like h^p.
-        let factor = (0.9 * last.ratio.powf(-1.0 / f64::from(kind.order()))).clamp(0.1, 0.9);
+        let factor = (0.9 * libm::pow(last.ratio, -1.0 / f64::from(kind.order()))).clamp(0.1, 0.9);
         h *= factor;
         if h < 1e-3 * h_probe {
             break; // the target is out of reach (or a roundoff floor): stop
@@ -384,9 +384,9 @@ fn probe_step(run: &mut Run<'_>, kind: SymKind, n: usize, y0: &[f64]) -> Result<
         // proportional to `h^(p+1)` and would understate the allowed step.
         h_max_tried = h_max_tried.max(hh);
         if err >= 0.01 {
-            h_min = h_min.min(hh * err.powf(expo));
+            h_min = h_min.min(hh * libm::pow(err, expo));
         }
-        let fac = (0.9 * err.powf(expo)).clamp(0.2, 5.0);
+        let fac = (0.9 * libm::pow(err, expo)).clamp(0.2, 5.0);
         if err <= 1.0 {
             y = yb;
             t = if last { t1 } else { t + hh };

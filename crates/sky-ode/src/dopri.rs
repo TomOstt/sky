@@ -245,8 +245,8 @@ pub(crate) fn dopri5(
 
         // PI step-size controller (Hairer's `dopri5.f`): `fac` is the
         // factor by which the step is *divided*.
-        let fac11 = errn.powf(EXPO1);
-        let fac = (fac11 / facold.powf(BETA)).clamp(1.0 / FAC_MAX, 1.0 / FAC_MIN);
+        let fac11 = libm::pow(errn, EXPO1);
+        let fac = (fac11 / libm::pow(facold, BETA)).clamp(1.0 / FAC_MAX, 1.0 / FAC_MIN);
         let mut hnew = hh / fac;
 
         if errn <= 1.0 {

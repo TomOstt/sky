@@ -878,11 +878,7 @@ fn math_functions_apply_to_arrays_entry_by_entry() {
         "should have shape Vector[3]",
     );
     rejects(
-        &unary(
-            OpKind::Math(MathFn::Sqrt),
-            vec3_of(area()),
-            vec3_of(area()),
-        ),
+        &unary(OpKind::Math(MathFn::Sqrt), vec3_of(area()), vec3_of(area())),
         "should have dimension",
     );
     // Two arrays of one shape, or an array and a scalar (every entry).
@@ -892,18 +888,8 @@ fn math_functions_apply_to_arrays_entry_by_entry() {
         vec3(),
         vec3_of(Dimension::DIMENSIONLESS),
     ));
-    accepts(&binary(
-        OpKind::Math(MathFn::Max),
-        vec3(),
-        len(),
-        vec3(),
-    ));
-    accepts(&binary(
-        OpKind::Math(MathFn::Min),
-        len(),
-        vec3(),
-        vec3(),
-    ));
+    accepts(&binary(OpKind::Math(MathFn::Max), vec3(), len(), vec3()));
+    accepts(&binary(OpKind::Math(MathFn::Min), len(), vec3(), vec3()));
     let matrix = num(
         Dimension::LENGTH,
         Shape::matrix(3, 3),

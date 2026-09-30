@@ -11,6 +11,7 @@ repository.workspace = true
 sky-diag = { path = "../sky-diag" }
 sky-ir = { path = "../sky-ir" }
 sky-interp = { path = "../sky-interp" }
+sky-units = { path = "../sky-units" }
 cranelift-codegen = "0.121.2"
 cranelift-frontend = "0.121.2"
 cranelift-jit = "0.121.2"

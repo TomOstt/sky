@@ -35,4 +35,6 @@ pub fn host_isa() -> Result<OwnedTargetIsa, String> {
         .map_err(|e| e.to_string())
 }
 
+pub mod kernel;
+pub mod kernel_rt;
 pub mod smoke;

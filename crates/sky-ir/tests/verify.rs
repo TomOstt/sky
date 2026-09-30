@@ -821,11 +821,37 @@ fn mul_and_div_combine_dimensions() {
             Repr::Unchosen,
         ),
     ));
-    // No elementwise product of arrays; no scalar divided by an array.
+    // Two arrays of one shape multiply and divide entry by entry, the
+    // dimensions as for numbers; other shapes do not combine.
+    let vec3_of = |d: Dimension| num(d, Shape::vector(3), TagSet::EMPTY, Repr::Unchosen);
+    let dim_of = |t: &Type| t.as_number().unwrap().dim;
+    accepts(&binary(
+        OpKind::Mul,
+        vec3(),
+        vec3(),
+        vec3_of(dim_of(&area())),
+    ));
+    accepts(&binary(
+        OpKind::Div,
+        vec3_of(dim_of(&area())),
+        vec3(),
+        vec3(),
+    ));
     rejects(
         &binary(OpKind::Mul, vec3(), vec3(), vec3()),
-        "`mul` needs a scalar operand",
+        "should have dimension L²",
     );
+    let matrix = num(
+        Dimension::LENGTH,
+        Shape::matrix(3, 3),
+        TagSet::EMPTY,
+        Repr::Unchosen,
+    );
+    rejects(
+        &binary(OpKind::Mul, vec3(), matrix.clone(), matrix),
+        "rank mismatch",
+    );
+    // A scalar is never divided by an array.
     rejects(
         &binary(OpKind::Div, len(), vec3(), vec3()),
         "`div` needs a scalar divisor",
@@ -833,6 +859,69 @@ fn mul_and_div_combine_dimensions() {
     rejects(
         &binary(OpKind::Mul, len(), vec3(), vec3()),
         "should have dimension L²",
+    );
+}
+
+#[test]
+fn math_functions_apply_to_arrays_entry_by_entry() {
+    use sky_units::MathFn;
+    let vec3_of = |d: Dimension| num(d, Shape::vector(3), TagSet::EMPTY, Repr::Unchosen);
+    let area = || Dimension::LENGTH.pow_int(2).unwrap();
+    // One array: the dimension rule of the function, the shape of the array.
+    accepts(&unary(
+        OpKind::Math(MathFn::Sqrt),
+        vec3_of(area()),
+        vec3_of(Dimension::LENGTH),
+    ));
+    rejects(
+        &unary(OpKind::Math(MathFn::Sqrt), vec3_of(area()), len()),
+        "should have shape Vector[3]",
+    );
+    rejects(
+        &unary(
+            OpKind::Math(MathFn::Sqrt),
+            vec3_of(area()),
+            vec3_of(area()),
+        ),
+        "should have dimension",
+    );
+    // Two arrays of one shape, or an array and a scalar (every entry).
+    accepts(&binary(
+        OpKind::Math(MathFn::Atan2),
+        vec3(),
+        vec3(),
+        vec3_of(Dimension::DIMENSIONLESS),
+    ));
+    accepts(&binary(
+        OpKind::Math(MathFn::Max),
+        vec3(),
+        len(),
+        vec3(),
+    ));
+    accepts(&binary(
+        OpKind::Math(MathFn::Min),
+        len(),
+        vec3(),
+        vec3(),
+    ));
+    let matrix = num(
+        Dimension::LENGTH,
+        Shape::matrix(3, 3),
+        TagSet::EMPTY,
+        Repr::Unchosen,
+    );
+    rejects(
+        &binary(OpKind::Math(MathFn::Hypot), vec3(), matrix.clone(), matrix),
+        "different shapes",
+    );
+    // The scalar rules still hold: a dimension the function refuses.
+    rejects(
+        &unary(
+            OpKind::Math(MathFn::Exp),
+            vec3(),
+            vec3_of(Dimension::DIMENSIONLESS),
+        ),
+        "exp",
     );
 }
 

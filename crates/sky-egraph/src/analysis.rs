@@ -279,7 +279,9 @@ pub(crate) fn derive_ty(op: Op, kids: &[&Info]) -> Option<NumberType> {
             let dim = a.dim.checked_mul(b.dim).ok()?;
             let shape = if scalar(a) {
                 b.shape.clone()
-            } else if scalar(b) {
+            } else if scalar(b) || a.shape == b.shape {
+                // A number scales the array; two arrays of one shape
+                // multiply entry by entry.
                 a.shape.clone()
             } else {
                 return None;
@@ -289,7 +291,7 @@ pub(crate) fn derive_ty(op: Op, kids: &[&Info]) -> Option<NumberType> {
         Op::Div => {
             let (a, b) = (t(0)?, t(1)?);
             let dim = a.dim.checked_div(b.dim).ok()?;
-            scalar(b).then(|| bare(dim, a.shape.clone(), TagSet::EMPTY))
+            (scalar(b) || a.shape == b.shape).then(|| bare(dim, a.shape.clone(), TagSet::EMPTY))
         }
         Op::Neg => {
             let a = t(0)?;

@@ -522,6 +522,26 @@ impl Cx<'_> {
                 None => Err(Fail::Memory),
             },
             OpKind::Fused => self.fused(op),
+            // `dot(a, b)`: a product and a sum per entry, 2·n; `norm(x)`:
+            // a square and a sum per entry and one `sqrt`, 2·n + 1 (the
+            // scaling that guards against overflow is bookkeeping, as the
+            // loop index is). Both read their operands and make a scalar.
+            OpKind::Dot => {
+                let (a, b) = (product(&self.arg(op, 0)?)?, product(&self.arg(op, 1)?)?);
+                Ok(Parts {
+                    flops: scale(&a, 2)?,
+                    read: scale(&add(&a, &b)?, ENTRY_BYTES)?,
+                    ..Parts::default()
+                })
+            }
+            OpKind::Norm => {
+                let n = product(&self.arg(op, 0)?)?;
+                Ok(Parts {
+                    flops: add(&scale(&n, 2)?, &Poly::integer(1))?,
+                    read: scale(&n, ENTRY_BYTES)?,
+                    ..Parts::default()
+                })
+            }
             // Constants, comparisons, `len`, `print`, `show`, contract
             // checks, control-flow terminators: no floating-point work and
             // no array traffic.

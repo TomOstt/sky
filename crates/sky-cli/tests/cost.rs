@@ -158,3 +158,21 @@ fn the_report_is_in_source_order_with_the_other_notes() {
     let b = e.find("cost of `b`").expect("b");
     assert!(a < b, "{e}");
 }
+
+/// `norm` and `dot` became SIR operations in parallel with the cost model:
+/// they cost their entries (2·n, and 2·n + 1 with the `sqrt`), never zero,
+/// so a contract that leaves them out is refuted, not proven.
+#[test]
+fn norm_and_dot_are_counted() {
+    let src = "def energy(v: Vector[N] m/s, p: Vector[N] m) -> m^2/s^2:\n    cost flops == 4 * N + 5\n    return 0.5 * norm(v)^2 + dot(p, p) / (1 s^2)\n";
+    let o = sky("norm-dot", &["check", "--explain"], src);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert!(err(&o).contains("`energy` costs exactly"), "{}", err(&o));
+    let o = sky("norm-dot-free", &["check"], &src.replace("4 * N + 5", "5"));
+    assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+    assert!(
+        err(&o).contains("`norm(v)` costs") || err(&o).contains("`dot(p, p)` costs"),
+        "{}",
+        err(&o)
+    );
+}

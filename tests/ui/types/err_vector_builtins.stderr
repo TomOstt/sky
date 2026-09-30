@@ -1,0 +1,39 @@
+tests/ui/types/err_vector_builtins.sky:4:7: error: `norm` takes 1 argument, found 2
+  |
+4 | one = norm(a, b)
+  |       ^^^^^^^^^^ wrong number of arguments
+  = help: call it as `norm(v)`
+
+tests/ui/types/err_vector_builtins.sky:5:7: error: `dot` takes 2 arguments, found 1
+  |
+5 | two = dot(a)
+  |       ^^^^^^ wrong number of arguments
+  = help: call it as `dot(a, b)`
+
+tests/ui/types/err_vector_builtins.sky:6:12: error: cannot apply `dot` to Vector[3] and Vector[2]
+  |
+6 | mismatch = dot(a, b)
+  |            ^^^^^^^^^ axis 0 differs: 3 vs 2
+  |                - this is Vector[3] [L]
+  |                   - this is Vector[2] [L]
+  = note: axis     0
+  = note: left     3
+  = note: right    2
+  = note: differs  ^
+
+tests/ui/types/err_vector_builtins.sky:7:14: error: `dot` needs two vectors, found a scalar
+  |
+7 | scalar = dot(1 m, 2 m)
+  |              ^^^ this is Scalar [L]
+  = help: multiply a scalar with `*`
+
+tests/ui/types/err_vector_builtins.sky:8:14: error: `dot` needs two vectors, found Matrix[2,2]
+  |
+8 | matrix = dot([[1, 2], [3, 4]], [[1, 2], [3, 4]])
+  |              ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [1]
+  = help: for matrices, use `@`
+
+tests/ui/types/err_vector_builtins.sky:9:13: error: `norm` needs a vector, found Bool
+  |
+9 | flag = norm(1 m == 1 m)
+  |             ^^^^^^^^^^ this is Bool

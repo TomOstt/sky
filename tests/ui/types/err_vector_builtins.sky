@@ -1,0 +1,9 @@
+# norm and dot: wrong argument counts, kinds and sizes.
+a: Vector[3] m = [1 m, 2 m, 3 m]
+b: Vector[2] m = [1 m, 2 m]
+one = norm(a, b)
+two = dot(a)
+mismatch = dot(a, b)
+scalar = dot(1 m, 2 m)
+matrix = dot([[1, 2], [3, 4]], [[1, 2], [3, 4]])
+flag = norm(1 m == 1 m)

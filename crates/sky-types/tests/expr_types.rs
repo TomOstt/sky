@@ -5,7 +5,8 @@
 use std::path::Path;
 
 use sky_ast::{
-    with_deep_stack, AssignTarget, Block, Expr, ExprKind, IndexItem, Module, Stmt, StmtKind,
+    with_deep_stack, AssignTarget, Block, EquationItem, Expr, ExprKind, IndexItem, Module,
+    SolveOption, Stmt, StmtKind,
 };
 use sky_types::{check_module, Checked, Ty};
 use sky_units::Dimension;
@@ -59,7 +60,7 @@ impl Walk<'_> {
                 // Builtins (`print`, `inv`, `range`, the array and math functions) are
                 // recognised by name, so their callee is never typed.
                 let builtin = matches!(&callee.kind, ExprKind::Name(id)
-                    if matches!(&self.src[id.span.range()], "print" | "inv" | "transpose" | "zeros" | "identity" | "len" | "range" | "derivative" | "grad" | "nominal" | "uncertainty")
+                    if matches!(&self.src[id.span.range()], "print" | "inv" | "transpose" | "zeros" | "identity" | "len" | "range" | "derivative" | "grad" | "nominal" | "uncertainty" | "norm" | "dot" | "explain")
                         || sky_units::MathFn::from_name(&self.src[id.span.range()]).is_some())
                     && !self.checked.expr_types.contains_key(&callee.span);
                 self.expr(callee, builtin);
@@ -173,7 +174,33 @@ impl Walk<'_> {
                 }
             }
             StmtKind::Pass | StmtKind::Break | StmtKind::Continue => {}
-            StmtKind::Equation(_) | StmtKind::Solve(_) => {}
+            StmtKind::Equation(eq) => {
+                for item in &eq.items {
+                    match item {
+                        EquationItem::State { .. } => {}
+                        EquationItem::Derivative { value, .. }
+                        | EquationItem::Local { value, .. } => self.expr(value, false),
+                    }
+                }
+            }
+            StmtKind::Solve(solve) => {
+                self.expr(&solve.from, false);
+                self.expr(&solve.to, false);
+                for init in &solve.initial {
+                    self.expr(&init.value, false);
+                }
+                for option in &solve.options {
+                    match option {
+                        SolveOption::Tolerance { value, .. } => self.expr(value, false),
+                        SolveOption::Conserve { value, within, .. } => {
+                            self.expr(value, false);
+                            if let Some(w) = within {
+                                self.expr(w, false);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

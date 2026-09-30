@@ -181,7 +181,7 @@ impl Checker<'_> {
                 );
                 return Err(());
             }
-            Ty::Bool | Ty::Func(_) => {
+            Ty::Bool | Ty::Func(_) | Ty::Ode(_) => {
                 self.error(
                     Diagnostic::error(format!("`range` needs an integer, found {t}"), a.span)
                         .with_label(format!("this is {t}")),
@@ -255,7 +255,7 @@ impl Checker<'_> {
                 self.not_iterable(iter, &t, Some(v));
                 Ty::Unknown
             }
-            Ty::Bool | Ty::Func(_) => {
+            Ty::Bool | Ty::Func(_) | Ty::Ode(_) => {
                 self.not_iterable(iter, &t, None);
                 Ty::Unknown
             }
@@ -280,6 +280,7 @@ impl Checker<'_> {
                 format!("function `{}`", quote(f.name())),
                 "this is a function".to_string(),
             ),
+            (Ty::Ode(o), _) => (o.describe(), format!("this is {o}")),
             _ => ("a Bool".to_string(), "this is Bool".to_string()),
         };
         let mut d = Diagnostic::error(format!("cannot iterate over {noun}"), iter.span)

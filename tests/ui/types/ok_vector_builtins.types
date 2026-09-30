@@ -1,0 +1,8 @@
+F: Vector[3] [L·M·T⁻²]
+d: Vector[3] [L]
+kinetic: Scalar [L²·T⁻²]
+plain: Scalar [L]
+size: Scalar [1]
+speed: Scalar [L·T⁻¹]
+v: Vector[3] [L·T⁻¹]
+work: Scalar [L²·M·T⁻²]

@@ -7,7 +7,7 @@
 //! truthiness, per the spec's "Booleans and conditions"), the builtin
 //! `print(...)` call, calls to user functions, and `derivative(f, x)(...)` (in [`crate::derivative`]). Array literals, indexing
 //! and the builtins `zeros`, `identity` and `len` are in [`crate::array`].
-//! Anything else (strings, attributes, `∂`, `∇`, calls to names that are not
+//! Anything else (strings, attributes other than those of a solution (see the `ode` module), `∂`, `∇`, calls to names that are not
 //! functions) is typed as [`Ty::Unknown`] without a diagnostic, and an
 //! operator with an unknown operand is unknown too, so one error never
 //! cascades.
@@ -66,6 +66,7 @@ use sky_units::{lookup, lookup_constant, suggest_unit, Dimension, Rational, CONS
 use crate::array::LiteralProof;
 use crate::flow::{FnCtx, FuncSig, LoopFrame};
 use crate::numerics::NumState;
+use crate::ode::OdeTy;
 use crate::provenance::{label_dim, Provenance};
 use crate::rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 use crate::rules::{elementwise, inverse, matmul, transpose, TensorType};
@@ -107,6 +108,8 @@ pub enum Ty {
     Bool,
     /// A function defined with `def`: its signature, for checking calls.
     Func(Arc<FuncSig>),
+    /// An `equation`, or the solution a `solve` gave (see [`OdeTy`]).
+    Ode(Arc<OdeTy>),
     /// Not typed in this slice, or the result of an error already reported.
     Unknown,
 }
@@ -136,6 +139,7 @@ impl fmt::Display for Ty {
             Ty::Value(v) => v.fmt(f),
             Ty::Bool => f.write_str("Bool"),
             Ty::Func(sig) => write!(f, "function `{}`", sig.name()),
+            Ty::Ode(o) => o.fmt(f),
             Ty::Unknown => f.write_str("?"),
         }
     }
@@ -358,6 +362,10 @@ pub struct Checked {
     /// Types hold the shape variables as they were when the expression was
     /// typed: resolve them with [`Checked::resolve_ty`].
     pub expr_types: HashMap<Span, Ty>,
+    /// One note per `solve`, for `sky check --explain`: the structure the
+    /// checker found in the equation and what the solver will be asked for
+    /// (see the `ode` module).
+    pub ode_notes: Vec<Diagnostic>,
     /// The type given to each name a statement binds (`x = ...`, `x: T`,
     /// `x: T = ...`), keyed by the span of the name in the statement. For
     /// `x: T` without a value this is the declared type, which nothing else
@@ -411,6 +419,7 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         diverged: false,
         prov: Provenance::new(source),
         expr_types: HashMap::new(),
+        ode_notes: Vec::new(),
         binding_types: HashMap::new(),
         funcs: HashMap::new(),
         num: NumState::default(),
@@ -427,6 +436,7 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         cholesky_solves: c.solves,
         env: c.env,
         expr_types: c.expr_types,
+        ode_notes: c.ode_notes,
         binding_types: c.binding_types,
         funcs: c.funcs,
     }
@@ -468,6 +478,8 @@ pub(crate) struct Checker<'s> {
     /// See [`Checked::expr_types`]. Recording is write-only: nothing in the
     /// walk reads these tables, so they cannot change a diagnostic.
     pub(crate) expr_types: HashMap<Span, Ty>,
+    /// See [`Checked::ode_notes`].
+    pub(crate) ode_notes: Vec<Diagnostic>,
     /// See [`Checked::binding_types`].
     binding_types: HashMap<Span, Ty>,
     /// See [`Checked::funcs`].
@@ -803,7 +815,8 @@ impl<'s> Checker<'s> {
             StmtKind::Pass => {}
             StmtKind::Break => self.break_stmt(stmt.span),
             StmtKind::Continue => self.continue_stmt(stmt.span),
-            StmtKind::Equation(_) | StmtKind::Solve(_) => {}
+            StmtKind::Equation(eq) => self.equation_stmt(eq),
+            StmtKind::Solve(solve) => self.solve_stmt(solve),
         }
     }
 
@@ -854,6 +867,14 @@ impl<'s> Checker<'s> {
                     )
                     .with_label("this is a function")
                     .with_secondary(ty.span, "expected because of this annotation"),
+                );
+                return Ty::value(declared_dim, tensor);
+            }
+            Ty::Ode(o) => {
+                self.error(
+                    Diagnostic::error(format!("expected a number, found {o}"), value.span)
+                        .with_label(format!("this is {o}"))
+                        .with_secondary(ty.span, "expected because of this annotation"),
                 );
                 return Ty::value(declared_dim, tensor);
             }
@@ -1373,6 +1394,12 @@ impl<'s> Checker<'s> {
                     }
                     return Ty::Unknown;
                 }
+                if let Some(t) = self.vector_call(callee, args, e.span) {
+                    return t;
+                }
+                if let Some(t) = self.ode_call(callee, args, e.span) {
+                    return t;
+                }
                 if let Some(t) = self.math_call(callee, args, e.span) {
                     return t;
                 }
@@ -1389,10 +1416,7 @@ impl<'s> Checker<'s> {
                 self.call(callee_ty, callee, args, e.span)
             }
             ExprKind::Index { base, items } => self.index_expr(base, items),
-            ExprKind::Attribute { base, .. } => {
-                self.expr(base);
-                Ty::Unknown
-            }
+            ExprKind::Attribute { base, name } => self.attribute_expr(base, name),
             ExprKind::IfElse { then, cond, else_ } => self.if_else(then, cond, else_),
             ExprKind::As { value, unit, .. } => self.show(e, value, unit),
             ExprKind::PlusMinus {

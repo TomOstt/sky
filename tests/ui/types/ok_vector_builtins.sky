@@ -1,0 +1,10 @@
+# norm and dot: the length of a vector keeps its dimension; a dot product
+# multiplies them.
+v: Vector[3] m/s = [3 m/s, 4 m/s, 12 m/s]
+F: Vector[3] N = [1 N, 2 N, 2 N]
+d: Vector[3] m = [1 m, 0 m, 0 m]
+speed = norm(v)
+work = dot(F, d)
+size = norm([[1, 2], [3, 4]])
+plain = norm(2 m)
+kinetic = 0.5 * dot(v, v)

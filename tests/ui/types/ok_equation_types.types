@@ -1,0 +1,9 @@
+GM: Scalar [L³·T⁻²]
+energy: Scalar [L²·T⁻²]
+final_r: Vector[2] [L]
+final_t: Scalar [T]
+final_v: Vector[2] [L·T⁻¹]
+orbit: equation `orbit`
+sol: solution of `orbit`
+speed: Scalar [L·T⁻¹]
+work: Scalar [L²·T⁻²]

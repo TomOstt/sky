@@ -204,6 +204,7 @@ impl Checker<'_> {
             ),
             Ty::Bool => "a Bool".to_string(),
             Ty::Func(f) => format!("function `{}`", quote(f.name())),
+            Ty::Ode(o) => o.describe(),
             Ty::Unknown => "unknown".to_string(),
         }
     }
@@ -219,6 +220,7 @@ impl Checker<'_> {
             .to_string(),
             Ty::Bool => "Bool".to_string(),
             Ty::Func(f) => format!("function `{}`", quote(f.name())),
+            Ty::Ode(o) => o.describe(),
             Ty::Unknown => "?".to_string(),
         }
     }
@@ -249,6 +251,7 @@ impl Checker<'_> {
             // Two different functions under one name (a `def` in each branch)
             // can't be told apart at a call: calls to it are unchecked.
             (Ty::Func(f), Ty::Func(g)) => Some(if f == g { a.clone() } else { Ty::Unknown }),
+            (Ty::Ode(x), Ty::Ode(y)) => Some(if x == y { a.clone() } else { Ty::Unknown }),
             _ => None,
         }
     }
@@ -785,7 +788,7 @@ impl Checker<'_> {
                     );
                 }
             }
-            Ty::Bool | Ty::Func(_) => {
+            Ty::Bool | Ty::Func(_) | Ty::Ode(_) => {
                 let found = self.ty_label(&t);
                 self.error(
                     Diagnostic::error(format!("expected a number, found {found}"), vspan)
@@ -1089,7 +1092,7 @@ impl Checker<'_> {
                     self.error(d);
                 }
             }
-            Ty::Bool | Ty::Func(_) => {
+            Ty::Bool | Ty::Func(_) | Ty::Ode(_) => {
                 let found = self.ty_label(t);
                 self.error(
                     Diagnostic::error(format!("expected a number, found {found}"), arg.span)

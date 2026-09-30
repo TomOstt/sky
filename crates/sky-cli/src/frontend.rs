@@ -99,6 +99,7 @@ pub fn analyze_ir(
                 }
                 diagnostics.extend(checked.diagnostics.iter().cloned());
                 if explain {
+                    diagnostics.extend(checked.ode_notes.iter().cloned());
                     diagnostics.extend(checked.rewrites.iter().map(|r| r.to_diagnostic(src)));
                     if checked.rewrites_omitted > 0 {
                         let last = checked.rewrites.last().map_or(Span::point(0), |r| r.span);

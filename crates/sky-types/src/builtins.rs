@@ -49,7 +49,7 @@ impl Checker<'_> {
                     self.math_array(f, a, v);
                     bad = true;
                 }
-                Ty::Bool | Ty::Func(_) => {
+                Ty::Bool | Ty::Func(_) | Ty::Ode(_) => {
                     let what = match t {
                         Ty::Bool => "Bool".to_string(),
                         other => other.to_string(),

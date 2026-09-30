@@ -391,6 +391,10 @@ impl Lower<'_> {
                         )
                         .with_note(UNCERTAINTY));
                     }
+                    // Vector builtins that run on the tree-walker only.
+                    (name @ ("norm" | "dot" | "explain"), _) => {
+                        return self.err(format!("`{name}` is not supported by SIR yet"), e.span);
+                    }
                     (name, _) => {
                         if let Some(f) = sky_ir::MathFn::from_name(name) {
                             let mut vals = Vec::with_capacity(args.len());

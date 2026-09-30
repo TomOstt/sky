@@ -108,7 +108,8 @@ pub(crate) struct Lower<'a> {
     pub(crate) for_run: bool,
 }
 
-/// A checker type as a SIR type. `None` for a function value.
+/// A checker type as a SIR type. `None` for a function value (and for an
+/// equation or solution, which SIR does not have).
 pub(crate) fn map_ty(t: &Ty) -> Option<Type> {
     match t {
         Ty::Value(v) => Some(Type::Number(NumberType {
@@ -119,7 +120,7 @@ pub(crate) fn map_ty(t: &Ty) -> Option<Type> {
         })),
         Ty::Bool => Some(Type::Bool),
         Ty::Unknown => Some(Type::Unknown),
-        Ty::Func(_) => None,
+        Ty::Func(_) | Ty::Ode(_) => None,
     }
 }
 

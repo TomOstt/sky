@@ -9,6 +9,10 @@
 //!   Blocks, control flow, and functions (scoping, merges, calls to `def`s)
 //!   are in the private `flow` module, documented at its top; `for` loops
 //!   are in `for_loop`.
+//! * `ode` and `ode_analysis`: `equation` and `solve` (dimensions of `x'`,
+//!   initial values, options, the type of a solution and of `sol.name`),
+//!   and the structure read from an equation ([`analyze_equation`]), which
+//!   the interpreter shares. `vecfn` types `norm` and `dot`.
 //! * `display`: `v as unit`, a value shown in a chosen unit (only printed,
 //!   never computed with; private).
 //! * `provenance`: why a name has its dimension, for the derivation notes on
@@ -44,6 +48,8 @@ mod flow;
 mod for_loop;
 pub mod linalg;
 pub mod numerics;
+mod ode;
+mod ode_analysis;
 mod provenance;
 pub mod rewrite;
 pub mod rules;
@@ -53,6 +59,7 @@ mod shape_diag;
 pub mod tag_ops;
 pub mod tags;
 mod uncertain;
+mod vecfn;
 
 pub use check::{
     check_module, check_module_with, const_exponent, Checked, Env, RewriteSite, Ty, ValueTy,
@@ -66,6 +73,8 @@ pub use derivative::DerivativeOf;
 pub use display::a_dimension;
 pub use flow::FuncSig;
 pub use for_loop::{range_constants, range_runs_at_least_once};
+pub use ode::{EquationSig, OdeTy, SolutionSig, StateSig};
+pub use ode_analysis::{analyze_equation, EquationInfo};
 pub use rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 pub use rules::{elementwise, inverse, matmul, transpose, TensorType};
 pub use scale::{negated_tags, scaled_tags};

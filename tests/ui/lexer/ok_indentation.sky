@@ -12,7 +12,6 @@ def classify(x):
 
 for i in range(3):
     total = total + i
-equation spring:
+field spring:
     field u
-    solve u
 y = classify(2)

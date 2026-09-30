@@ -1,0 +1,112 @@
+# The classic N-body benchmark (Sun and the four gas giants), advanced with
+# a symplectic-Euler step of 0.01. Positions and velocities are vectors, the
+# way a Sky programmer writes physics. Prints the energy before and after.
+
+SM = 4 * pi * pi
+DPY = 365.24
+dt = 0.01
+
+p0 = [0.0, 0.0, 0.0]
+m0 = SM
+p1 = [4.84143144246472090e+00, -1.16032004402742839e+00, -1.03622044471123109e-01]
+v1 = [1.66007664274403694e-03 * DPY, 7.69901118419740425e-03 * DPY, -6.90460016972063023e-05 * DPY]
+m1 = 9.54791938424326609e-04 * SM
+p2 = [8.34336671824457987e+00, 4.12479856412430479e+00, -4.03523417114321381e-01]
+v2 = [-2.76742510726862411e-03 * DPY, 4.99852801234917238e-03 * DPY, 2.30417297573763929e-05 * DPY]
+m2 = 2.85885980666130812e-04 * SM
+p3 = [1.28943695621391310e+01, -1.51111514016986312e+01, -2.23307578892655734e-01]
+v3 = [2.96460137564761618e-03 * DPY, 2.37847173959480950e-03 * DPY, -2.96589568540237556e-05 * DPY]
+m3 = 4.36624404335156298e-05 * SM
+p4 = [1.53796971148509165e+01, -2.59193146099879641e+01, 1.79258772950371181e-01]
+v4 = [2.68067772490389322e-03 * DPY, 1.62824170038242295e-03 * DPY, -9.51592254519715870e-05 * DPY]
+m4 = 5.15138902046611451e-05 * SM
+v0 = [0.0, 0.0, 0.0] - (m1 * v1 + m2 * v2 + m3 * v3 + m4 * v4) / SM
+
+def energy(p0, p1, p2, p3, p4, v0, v1, v2, v3, v4):
+    e = 0.5 * m0 * (v0 @ v0) + 0.5 * m1 * (v1 @ v1) + 0.5 * m2 * (v2 @ v2) + 0.5 * m3 * (v3 @ v3) + 0.5 * m4 * (v4 @ v4)
+    d = p0 - p1
+    e = e - m0 * m1 / sqrt(d @ d)
+    d = p0 - p2
+    e = e - m0 * m2 / sqrt(d @ d)
+    d = p0 - p3
+    e = e - m0 * m3 / sqrt(d @ d)
+    d = p0 - p4
+    e = e - m0 * m4 / sqrt(d @ d)
+    d = p1 - p2
+    e = e - m1 * m2 / sqrt(d @ d)
+    d = p1 - p3
+    e = e - m1 * m3 / sqrt(d @ d)
+    d = p1 - p4
+    e = e - m1 * m4 / sqrt(d @ d)
+    d = p2 - p3
+    e = e - m2 * m3 / sqrt(d @ d)
+    d = p2 - p4
+    e = e - m2 * m4 / sqrt(d @ d)
+    d = p3 - p4
+    e = e - m3 * m4 / sqrt(d @ d)
+    return e
+
+e0 = energy(p0, p1, p2, p3, p4, v0, v1, v2, v3, v4)
+# SIR needs loop temporaries bound before the loop (a vector first bound
+# inside the body does not lower yet).
+d = p0 - p1
+r2 = 0.0
+mag = 0.0
+for step in range({{STEPS}}):
+    d = p0 - p1
+    r2 = d @ d
+    mag = dt / (r2 * sqrt(r2))
+    v0 = v0 - (m1 * mag) * d
+    v1 = v1 + (m0 * mag) * d
+    d = p0 - p2
+    r2 = d @ d
+    mag = dt / (r2 * sqrt(r2))
+    v0 = v0 - (m2 * mag) * d
+    v2 = v2 + (m0 * mag) * d
+    d = p0 - p3
+    r2 = d @ d
+    mag = dt / (r2 * sqrt(r2))
+    v0 = v0 - (m3 * mag) * d
+    v3 = v3 + (m0 * mag) * d
+    d = p0 - p4
+    r2 = d @ d
+    mag = dt / (r2 * sqrt(r2))
+    v0 = v0 - (m4 * mag) * d
+    v4 = v4 + (m0 * mag) * d
+    d = p1 - p2
+    r2 = d @ d
+    mag = dt / (r2 * sqrt(r2))
+    v1 = v1 - (m2 * mag) * d
+    v2 = v2 + (m1 * mag) * d
+    d = p1 - p3
+    r2 = d @ d
+    mag = dt / (r2 * sqrt(r2))
+    v1 = v1 - (m3 * mag) * d
+    v3 = v3 + (m1 * mag) * d
+    d = p1 - p4
+    r2 = d @ d
+    mag = dt / (r2 * sqrt(r2))
+    v1 = v1 - (m4 * mag) * d
+    v4 = v4 + (m1 * mag) * d
+    d = p2 - p3
+    r2 = d @ d
+    mag = dt / (r2 * sqrt(r2))
+    v2 = v2 - (m3 * mag) * d
+    v3 = v3 + (m2 * mag) * d
+    d = p2 - p4
+    r2 = d @ d
+    mag = dt / (r2 * sqrt(r2))
+    v2 = v2 - (m4 * mag) * d
+    v4 = v4 + (m2 * mag) * d
+    d = p3 - p4
+    r2 = d @ d
+    mag = dt / (r2 * sqrt(r2))
+    v3 = v3 - (m4 * mag) * d
+    v4 = v4 + (m3 * mag) * d
+    p0 = p0 + dt * v0
+    p1 = p1 + dt * v1
+    p2 = p2 + dt * v2
+    p3 = p3 + dt * v3
+    p4 = p4 + dt * v4
+e1 = energy(p0, p1, p2, p3, p4, v0, v1, v2, v3, v4)
+print(e0, e1)

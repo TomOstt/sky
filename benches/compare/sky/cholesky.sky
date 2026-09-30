@@ -1,0 +1,19 @@
+# Solve K x = f with K symmetric positive definite ({{N}} x {{N}}), {{R}} times
+# with a different load each time. `K⁻¹ @ f` on a PositiveDefinite K is a
+# Cholesky solve (no inverse is formed). K = c1 c1ᵀ + c2 c2ᵀ + n I is dense and
+# is passed as a declared input: the checker cannot prove a computed matrix
+# positive definite.
+def spd_solve(K: PositiveDefinite Matrix[{{N}}, {{N}}], f: Vector[{{N}}]) -> Vector[{{N}}]:
+    return K⁻¹ @ f
+
+c1 = {{COL:0:N}}
+c2 = {{COL:1:N}}
+K = c1 @ transpose(c1) + c2 @ transpose(c2) + {{N}} * identity({{N}})
+f = {{VEC:2:N}}
+ones = {{VEC:ones:N}}
+acc = 0.0
+x = f
+for r in range({{R}}):
+    x = spd_solve(K, (1 + r) * f)
+    acc = acc + x[0] + x[{{N}} - 1] + ones @ x
+print(acc, x[0], x[{{N}} - 1])

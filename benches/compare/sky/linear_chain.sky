@@ -1,0 +1,9 @@
+# A linear elementwise chain x = (x + y) * 0.25 + (x - y) * 0.125 on
+# {{M}} x {{K}} = {{LEN}} elements, {{R}} times (each pass feeds the next): the
+# part of the sqrt chain that Sky v0.1 can express (array +, - and scaling by
+# a number).
+X = {{COL:0:M}} @ {{ROW:1:K}}
+Y = {{COL:2:M}} @ {{ROW:3:K}}
+for r in range({{R}}):
+    X = (X + Y) * 0.25 + (X - Y) * 0.125
+print(({{ROW:ones:M}} @ X @ {{COL:ones:K}})[0, 0], X[0, 0], X[{{M}} - 1, {{K}} - 1])

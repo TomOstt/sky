@@ -1,0 +1,10 @@
+# The elementwise chain x = sqrt(x*x + y*y) * c + d on {{M}} x {{K}} = {{LEN}}
+# elements, {{R}} times (each pass feeds the next), written the way it is in
+# every other language. Sky v0.1 has no elementwise product and no math
+# functions on arrays, so this is expected not to check.
+X = {{COL:0:M}} @ {{ROW:1:K}}
+Y = {{COL:2:M}} @ {{ROW:3:K}}
+D = 0.25 * ({{COL:ones:M}} @ {{ROW:ones:K}})
+for r in range({{R}}):
+    X = sqrt(X * X + Y * Y) * 0.5 + D
+print(({{ROW:ones:M}} @ X @ {{COL:ones:K}})[0, 0], X[0, 0], X[{{M}} - 1, {{K}} - 1])

@@ -12,7 +12,7 @@
 //! format ([`print`] and [`parse`], round-trip exact), and the pass manager
 //! with explanations ([`pass`]), effect inference ([`effects`]), and the
 //! exactness analysis ([`exact`]: what every scalar is over the reals, and
-//! which of its operations provably cannot fail). The roundoff analysis ([`roundoff`]) bounds how far each scalar is from the exact real result, for error budgets. The cost model ([`cost`]) gives each function its flops, bytes moved and allocations as polynomials in the symbolic shape sizes, for performance contracts. Lowering
+//! which of its operations provably cannot fail), and the parallelism analysis ([`parallel`]: what may run concurrently without changing any observable behaviour). The roundoff analysis ([`roundoff`]) bounds how far each scalar is from the exact real result, for error budgets. The cost model ([`cost`]) gives each function its flops, bytes moved and allocations as polynomials in the symbolic shape sizes, for performance contracts. Lowering
 //! from the checked AST and the reference interpreter build on these.
 //!
 //! # Levels
@@ -31,6 +31,7 @@ pub mod effects;
 pub mod exact;
 pub mod ir;
 pub mod op;
+pub mod parallel;
 pub mod parse;
 pub mod pass;
 pub mod print;

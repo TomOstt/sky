@@ -396,6 +396,9 @@ impl<'a> Interp<'a> {
             } => match op {
                 UnaryOp::Neg | UnaryOp::Pos => {
                     let v = self.eval(operand)?;
+                    if let Value::Uncertain(u) = &v {
+                        return crate::uncertain::sign(*op == UnaryOp::Neg, u, e.span);
+                    }
                     sign(*op == UnaryOp::Neg, v, operand.span)
                 }
                 UnaryOp::Not => Ok(Value::Bool(!self.expect_bool("not", operand)?)),
@@ -478,10 +481,11 @@ impl<'a> Interp<'a> {
                 let v = self.eval(value)?;
                 show_value(self.src, unit, &v, e.span)
             }
-            ExprKind::PlusMinus { .. } => Err(RuntimeError::new(
-                "uncertainty is not supported by the interpreter yet",
-                e.span,
-            )),
+            ExprKind::PlusMinus { value, sigma, .. } => {
+                let v = self.eval(value)?;
+                let s = self.eval(sigma)?;
+                crate::uncertain::plus_minus(&v, &s, e.span, value.span, sigma.span)
+            }
         }
     }
 
@@ -513,6 +517,7 @@ impl<'a> Interp<'a> {
                     "print" => return self.print(args),
                     "inv" => return self.inv(call, args),
                     "transpose" => return self.transpose(call, args),
+                    "nominal" | "uncertainty" => return self.uncertain_part(name, call, args),
                     "zeros" | "identity" | "len" => return self.array_builtin(name, call, args),
                     _ => {
                         if let Some(f) = MathFn::from_name(name) {
@@ -711,7 +716,20 @@ impl<'a> Interp<'a> {
             .map(|a| self.eval(a))
             .collect::<R<Vec<Value>>>()?;
         let spans: Vec<Span> = args.iter().map(|a| a.span).collect();
+        if vals.iter().any(Value::is_uncertain) {
+            return crate::uncertain_math::apply(f, &vals, call.span, &spans);
+        }
         crate::math::apply(f, &vals, call.span, &spans)
+    }
+
+    /// `nominal(x)` and `uncertainty(x)`: the value and the standard
+    /// uncertainty of a number (zero for an exact one).
+    fn uncertain_part(&mut self, name: &str, call: &Expr, args: &[Expr]) -> R<Value> {
+        let [arg] = args else {
+            return Err(arity_mismatch(name, 1, args.len(), call.span));
+        };
+        let v = self.eval(arg)?;
+        crate::uncertain::part(name, &v, call.span, arg.span)
     }
 
     /// `inv(x)`: the function spelling of `x⁻¹`.
@@ -740,6 +758,9 @@ impl<'a> Interp<'a> {
 
     /// `1/x` with the inverse dimension.
     fn reciprocal(&self, what: &str, v: Value, whole: Span, operand: Span) -> R<Value> {
+        if let Value::Uncertain(u) = &v {
+            return crate::uncertain::reciprocal(u, whole, operand);
+        }
         reciprocal(what, &v, whole, operand)
     }
 
@@ -756,6 +777,12 @@ impl<'a> Interp<'a> {
         rexpr: &Expr,
     ) -> R<Value> {
         let rspan = rexpr.span;
+        // An uncertain operand: the exact rules for the nominal values, plus
+        // the propagation (see `crate::uncertain`).
+        if l.is_uncertain() || r.is_uncertain() {
+            let const_exp = || sky_types::const_exponent(self.src, rexpr);
+            return crate::uncertain::binary(op, &l, &r, const_exp, whole, lspan, rspan);
+        }
         match op {
             BinaryOp::Add => arith(ArithOp::Add, &l, &r, whole, lspan, rspan),
             BinaryOp::Sub => arith(ArithOp::Sub, &l, &r, whole, lspan, rspan),

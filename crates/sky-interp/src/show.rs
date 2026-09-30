@@ -40,6 +40,7 @@ pub fn show_value(src: &str, unit: &UnitExpr, v: &Value, span: Span) -> R<Value>
     let label = span_text(src, unit.span()).unwrap_or("");
     let dim = match v {
         Value::Number { dim, .. } | Value::Array { dim, .. } => *dim,
+        Value::Uncertain(u) => u.dim,
         other => {
             return Err(RuntimeError::new(
                 format!("cannot show {} in `{label}`", other.kind()),
@@ -73,6 +74,14 @@ pub fn show_value(src: &str, unit: &UnitExpr, v: &Value, span: Span) -> R<Value>
             let x = shown_number(src, unit, *value, span)?;
             let _ = write!(text, "{} {label}", format_number(x));
         }
+        // Both parts scale by the unit's factor (units here are pure
+        // factors), and the digits follow the uncertainty, so no readback
+        // search: `5.31 ± 0.02 kg as g` is `5310 ± 20 g`.
+        Value::Uncertain(u) => {
+            let x = express(src, unit, u.value, span)?;
+            let s = express(src, unit, u.std_dev(), span)?;
+            let _ = write!(text, "{} {label}", crate::plus_minus_text(x, s));
+        }
         _ => {}
     }
     Ok(Value::Shown(text))
@@ -85,6 +94,16 @@ pub fn show_unit_text(text: &str, v: &Value, span: Span) -> R<Value> {
     match parse_unit_text(text) {
         Some(u) => show_value(&u.src, &u.unit, v, span),
         None => Err(RuntimeError::new(format!("`{text}` is not a unit"), span)),
+    }
+}
+
+/// `si` (in SI) in `unit`, exactly converted.
+fn express(src: &str, unit: &UnitExpr, si: f64, span: Span) -> R<f64> {
+    let (x, _) = express_in_unit(src, unit, si).map_err(|e| unit_error(src, e))?;
+    if x.is_finite() {
+        Ok(x)
+    } else {
+        Err(overflow(span))
     }
 }
 

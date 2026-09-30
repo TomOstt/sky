@@ -9,6 +9,8 @@ use sky_ast::Block;
 use sky_diag::Span;
 use sky_units::{BaseDim, Dimension, Rational, UNITS};
 
+use crate::uncertain::Uncertain;
+
 /// A runtime value.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -21,6 +23,10 @@ pub enum Value {
         value: f64,
         dim: Dimension,
     },
+    /// A number with an uncertainty (`5.31 ± 0.02 kg`): the sibling of
+    /// [`Value::Number`] for a value that is not exact. See
+    /// [`crate::uncertain`].
+    Uncertain(Uncertain),
     /// A vector (one entry in `dims`) or matrix (two) of numbers that share
     /// one dimension, row-major: entry `(i, j)` of an `m` by `n` matrix is
     /// `data[i * n + j]`. Every entry is finite, `data.len()` is the product
@@ -124,6 +130,7 @@ impl Value {
     pub fn kind(&self) -> &'static str {
         match self {
             Value::Number { .. } => "a number",
+            Value::Uncertain(_) => "an uncertain number",
             Value::Array { dims, .. } if dims.len() == 1 => "a vector",
             Value::Array { .. } => "a matrix",
             Value::Bool(_) => "a Bool",
@@ -153,6 +160,16 @@ impl fmt::Display for Value {
                 f.write_str(&format_number(*value))?;
                 match si_unit(dim) {
                     Some(u) => write!(f, " {u}"),
+                    None => Ok(()),
+                }
+            }
+            Value::Uncertain(u) => {
+                f.write_str(&crate::uncertain_format::plus_minus_text(
+                    u.value,
+                    u.std_dev(),
+                ))?;
+                match si_unit(&u.dim) {
+                    Some(unit) => write!(f, " {unit}"),
                     None => Ok(()),
                 }
             }

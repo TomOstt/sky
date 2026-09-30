@@ -48,6 +48,9 @@ mod eval;
 mod literal;
 pub mod math;
 pub mod show;
+pub mod uncertain;
+mod uncertain_format;
+mod uncertain_math;
 mod value;
 
 #[cfg(test)]
@@ -69,4 +72,6 @@ pub use show::{show_unit_text, show_value};
 /// The dense numerics, shared with the checker (see `sky_types::linalg`).
 pub use sky_types::linalg;
 pub use sky_units::Dimension;
+pub use uncertain::{Lin, Term, Uncertain};
+pub use uncertain_format::plus_minus_text;
 pub use value::{format_number, si_unit, Function, Value};

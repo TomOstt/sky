@@ -81,6 +81,7 @@ sky run file.sky              # check, then run; only a clean file runs. print()
 sky repl                      # expressions echo their value; blocks (def, if, while, for) continue on `...` lines until an empty line
 sky run --engine=sir file.sky # pick the engine: ast (tree-walker, the default), sir (lower to SIR, run it), native (compile the SIR to machine code), auto
 sky run --engine=sir --threads=4 file.sky  # SIR runs big elementwise kernels and independent pure calls on 4 threads (SKY_THREADS; 1 is sequential); the output never depends on it
+sky run --numerics=relaxed file.sky  # opt in to fast, not bit-reproducible arrays: fused multiply-add, reassociated sums, Accelerate on macOS (or `numerics = "relaxed"` in sky.toml); says so on stderr
 sky check --emit=clif file.sky # print the Cranelift IR the native engine compiles
 sky build file.sky -o prog    # compile to a standalone native executable that behaves like `sky run --engine=native`; --emit=obj writes the object file only
 sky repl                      # one line at a time; expressions echo their value

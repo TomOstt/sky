@@ -77,6 +77,14 @@ const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../benches/programs/vec3_physics.sky"),
     ),
     ("nbody", include_str!("../../../benches/programs/nbody.sky")),
+    (
+        "licm_inverse",
+        include_str!("../../../benches/programs/licm_inverse.sky"),
+    ),
+    (
+        "cse_kernel",
+        include_str!("../../../benches/programs/cse_kernel.sky"),
+    ),
 ];
 
 /// One workload.

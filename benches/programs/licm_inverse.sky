@@ -1,0 +1,13 @@
+# bench: N=2000 quick=20
+# A time-stepping loop that inverts the same 30 x 30 stiffness matrix on every
+# step. `inv(K)` does not depend on the loop, so `licm` computes it once,
+# before the loop (the loop is known to run, so no guard is needed); without
+# the pass the inverse costs O(30^3) on every step.
+N = 2000
+K = identity(30) * 5 + identity(30)
+b = identity(30)[0] + identity(30)[1] * 2 + identity(30)[29] * 3
+u = zeros(30)
+for i in range(N):
+    Kinv = inv(K)
+    u = 0.5 * u + Kinv @ b
+print(u[0], u[1], u[29])

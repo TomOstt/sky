@@ -45,9 +45,12 @@ fn sir(m: &Module, src: &str) -> Run {
 }
 
 /// Native code with `cfg` (the SIR interpreter finishing the run, with the
-/// same configuration, if native code deoptimizes).
-fn native(m: &Module, src: &str, cfg: &Config) -> Run {
+/// same configuration, if native code deoptimizes). `help`: whether a thread
+/// that joins the calls it started runs the ones no worker has started yet
+/// (the default), or leaves them all to workers.
+fn native(m: &Module, src: &str, cfg: &Config, help: bool) -> Run {
     sky_ast::with_deep_stack(|| {
+        sky_jit::par::set_help_at_join_for_tests(help);
         let code =
             sky_jit::compile_par(m, sky_jit::Numerics::Reproducible, sky_jit::Slp::Auto, cfg)
                 .unwrap_or_else(|e| panic!("{e}"));
@@ -81,6 +84,7 @@ struct Grew {
     kernels: u64,
     elementwise: u64,
     calls: u64,
+    retried: u64,
 }
 
 /// Runs `f` with the process-wide counters of `sky_jit::par` to itself (the
@@ -99,6 +103,7 @@ fn measured<T>(f: impl FnOnce() -> T) -> (T, Grew) {
             kernels: after.kernels_split - before.kernels_split,
             elementwise: after.elementwise_split - before.elementwise_split,
             calls: after.calls_on_workers - before.calls_on_workers,
+            retried: after.calls_retried - before.calls_retried,
         },
     )
 }
@@ -115,11 +120,16 @@ fn agree_measured(src: &str) -> (Run, Grew) {
 fn agree(src: &str) -> Run {
     let m = lower(src);
     let want = sir(&m, src);
-    let seq = native(&m, src, &Config::sequential());
+    let seq = native(&m, src, &Config::sequential(), true);
     assert_eq!(seq, want, "sequential native code differs on:\n{src}");
     for cfg in configs() {
-        let got = native(&m, src, &cfg);
-        assert_eq!(got, want, "{cfg:?} differs on:\n{src}");
+        for help in [false, true] {
+            let got = native(&m, src, &cfg, help);
+            assert_eq!(
+                got, want,
+                "{cfg:?} (help at join: {help}) differs on:\n{src}"
+            );
+        }
     }
     want
 }
@@ -387,4 +397,29 @@ fn a_callee_that_prints_is_never_started() {
         None,
     );
     assert!(r.stdout.starts_with("1\n2\n"), "{}", r.stdout);
+}
+
+#[test]
+fn a_call_that_runs_out_of_a_workers_stack_is_run_again_on_the_caller() {
+    // The budget of a worker is zero: every started call that makes calls runs
+    // out of it on its worker, and is run again on the calling thread, where
+    // the run's whole stack is. Nothing can show: same output, same errors.
+    let src = format!(
+        "{PRELUDE}\n\
+         def loopy(n):\n    total = 0\n    i = 0\n    while i < n:\n        total = total + heavy(10) + g(i)\n        i = i + 1\n    return total\n\n\
+         a = loopy(5)\nb = loopy(6)\nc = boom(7)\nprint(a, b, c)\n"
+    );
+    let ((r, plain), grew) = measured(|| {
+        let plain = agree(&src);
+        sky_jit::par::set_worker_stack_budget_for_tests(Some(0));
+        let r = agree(&src);
+        sky_jit::par::set_worker_stack_budget_for_tests(None);
+        (r, plain)
+    });
+    assert_eq!(r, plain);
+    assert!(
+        r.failure.as_ref().is_some_and(|e| e.contains("assert")),
+        "{r:?}"
+    );
+    assert!(grew.retried > 0, "no call was run again: {grew:?}");
 }

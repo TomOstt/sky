@@ -67,9 +67,12 @@ fn run(ir: &Module, src: &str, cfg: &Config) -> Outcome {
 }
 
 /// Native code under `cfg`, with the SIR interpreter (under the same
-/// configuration) finishing the run if it deoptimizes. `None` if native code
-/// refuses the program.
-fn run_native(ir: &Module, src: &str, cfg: &Config) -> Option<Outcome> {
+/// configuration) finishing the run if it deoptimizes. `help` says whether a
+/// thread that joins the calls it started runs the ones no worker has started
+/// yet (the default) or leaves them all to workers: the output must not show
+/// which. `None` if native code refuses the program.
+fn run_native(ir: &Module, src: &str, cfg: &Config, help: bool) -> Option<Outcome> {
+    sky_jit::par::set_help_at_join_for_tests(help);
     let code =
         sky_jit::compile_par(ir, sky_jit::Numerics::Reproducible, sky_jit::Slp::Auto, cfg).ok()?;
     let mut out = Vec::new();
@@ -106,11 +109,11 @@ fn notes(m: &Module, t: usize) -> Vec<String> {
         .iter()
         .map(|n| {
             format!(
-                "{} {:?} {} {:?}",
+                "{} {:?} {} {}",
                 n.rule,
                 n.span,
                 n.headline.replace(&words, "N threads"),
-                n.because
+                format!("{:?}", n.because).replace(&words, "N threads")
             )
         })
         .collect()
@@ -151,8 +154,11 @@ fn check(src: &str) -> Result<(), String> {
         // Native code, sequential and on every configuration, does what the
         // sequential SIR interpreter does.
         let all = std::iter::once(Config::sequential()).chain(configs());
-        for cfg in all {
-            let Some(got) = run_native(m, src, &cfg) else {
+        for (i, cfg) in all.enumerate() {
+            // Workers run every call in half of the runs, and the joining
+            // thread helps in the other half.
+            let help = (src.len() + i) % 2 == 0;
+            let Some(got) = run_native(m, src, &cfg, help) else {
                 break;
             };
             if got != want {
@@ -535,7 +541,7 @@ fn the_generators_reach_the_native_parallel_paths() {
             default_passes(PassManager::new().verify_each(true))
                 .run(&mut ir)
                 .expect("the pipeline verifies");
-            let got = sky_ast::with_deep_stack(|| run_native(&ir, &src, &Config::eager(4)));
+            let got = sky_ast::with_deep_stack(|| run_native(&ir, &src, &Config::eager(4), false));
             if got.is_some_and(|(_, e)| e.is_some()) {
                 native_failed += 1;
             }

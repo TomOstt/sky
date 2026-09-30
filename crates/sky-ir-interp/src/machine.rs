@@ -1145,7 +1145,14 @@ impl<'m> Machine<'m, '_> {
                     &heap
                 };
                 let outcome = if native {
-                    self.jit.run_into(act.func, op, inputs, count, &mut out)
+                    self.jit.run_into(
+                        act.func,
+                        op,
+                        inputs,
+                        count,
+                        &mut out,
+                        self.par.map(|rt| &rt.cfg),
+                    )
                 } else {
                     Native::Declined
                 };

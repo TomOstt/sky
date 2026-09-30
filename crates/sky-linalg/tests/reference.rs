@@ -122,6 +122,19 @@ proptest! {
     }
 
     #[test]
+    fn the_gram_product_is_the_naive_product_of_b_and_its_transpose(
+        seed in any::<u64>(), m in awkward(), k in awkward(), flavor in flavors(), t in threads(),
+    ) {
+        let mut rng = Rng(seed);
+        let b = matrix(&mut rng, m * k, flavor);
+        let bt: Vec<f64> = (0..k * m).map(|x| b[(x % m) * k + x / m]).collect();
+        let want = reference::matmul(&b, m, k, &bt, m);
+        let got = sky_linalg::syrk_with(&b, m, k, t);
+        prop_assert!(same(&got, &want), "{m}x{k} ({flavor:?}, {t} threads)");
+        prop_assert!(same(&got, &reference::gram(&b, m, k)));
+    }
+
+    #[test]
     fn dot_and_sum_squares_equal_the_fixed_order(
         seed in any::<u64>(), n in awkward(), flavor in flavors(), long in any::<bool>(),
     ) {
@@ -216,11 +229,16 @@ proptest! {
         let got = sky_linalg::lu_with(&a, n, t);
         match (&got, &want) {
             (Ok(g), Ok(w)) => {
-                prop_assert!(same(&g.lu, &w.lu) && g.perm == w.perm && g.swaps == w.swaps);
+                prop_assert!(same(&g.lu, &w.lu) && g.swaps == w.swaps);
                 let b = matrix(&mut rng, n * k, flavor);
                 let want_x = reference::lu_solve(w, &b, k);
                 let got_x = g.solve_with(&b, k, t);
                 prop_assert!(same(&got_x, &want_x));
+                // `Z·A = X` for `k` rows of X.
+                let x = matrix(&mut rng, k * n, flavor);
+                let want_z = reference::lu_solve_right(w, &x, k);
+                let got_z = g.solve_right_with(&x, k, t);
+                prop_assert!(same(&got_z, &want_z));
             }
             (Err(g), Err(w)) => prop_assert_eq!(g, w),
             _ => prop_assert!(false, "one factored and the other did not: n = {n}"),
@@ -237,6 +255,40 @@ proptest! {
         let want = reference::inverse(&a, n, mirror);
         let got = sky_linalg::inverse_with(&a, n, mirror, t);
         prop_assert!(same_result(&got, &want), "n = {n} ({flavor:?})");
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(80))]
+
+    /// Large enough for the recursive (GEMM-based) LU and its solves, on
+    /// every flavor of data: exact zeros (the plain loops skip a zero
+    /// multiplier), ties, overflow, singular matrices.
+    #[test]
+    fn the_recursive_lu_equals_the_plain_algorithm(
+        seed in any::<u64>(),
+        n in prop::sample::select(vec![33usize, 47, 64, 65, 100, 129, 150]),
+        k in prop::sample::select(vec![1usize, 3, 17, 33]),
+        flavor in flavors(), t in threads(), strong_diagonal in any::<bool>(),
+    ) {
+        let mut rng = Rng(seed);
+        let mut a = matrix(&mut rng, n * n, flavor);
+        if strong_diagonal && !flavor_is_big(flavor) {
+            for i in 0..n { a[i * n + i] = 40.0 + i as f64; }
+        }
+        let want = reference::lu(&a, n);
+        let got = sky_linalg::lu_with(&a, n, t);
+        match (&got, &want) {
+            (Ok(g), Ok(w)) => {
+                prop_assert!(same(&g.lu, &w.lu) && g.swaps == w.swaps, "n = {n} ({flavor:?})");
+                let b = matrix(&mut rng, n * k, flavor);
+                prop_assert!(same(&g.solve_with(&b, k, t), &reference::lu_solve(w, &b, k)));
+                let x = matrix(&mut rng, k * n, flavor);
+                prop_assert!(same(&g.solve_right_with(&x, k, t), &reference::lu_solve_right(w, &x, k)));
+            }
+            (Err(g), Err(w)) => prop_assert_eq!(g, w),
+            _ => prop_assert!(false, "one factored and the other did not: n = {n} ({flavor:?})"),
+        }
     }
 }
 
@@ -320,7 +372,7 @@ fn big_factorizations_and_every_thread_count_agree_with_the_plain_algorithm() {
         for t in [1, 2, 5, 16] {
             let got = sky_linalg::lu_with(&a, n, t).expect("nonsingular");
             assert!(
-                same(&got.lu, &want_lu.lu) && got.perm == want_lu.perm,
+                same(&got.lu, &want_lu.lu) && got.swaps == want_lu.swaps,
                 "lu n = {n}"
             );
             assert!(
@@ -376,7 +428,7 @@ fn known_results() {
     // A system that needs a row exchange.
     let sys = [0.0, 2.0, 1.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0];
     let f = sky_linalg::lu(&sys, 3).unwrap();
-    assert_eq!(f.perm, [1, 0, 2]);
+    assert_eq!(f.swaps, [1, 1, 2]);
     let x = f.solve(&[4.0, 3.0, 3.0], 1);
     let want = [1.0, 1.0, 1.0];
     let back = reference::matmul(&sys, 3, 3, &x, 1);

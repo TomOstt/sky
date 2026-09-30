@@ -54,9 +54,13 @@
 //!   operations along columns (on a transposed copy), and the trailing
 //!   update `A₂₂ -= L₂₁·L₂₁ᵀ` is the GEMM kernel restricted to the lower
 //!   triangle. Small matrices run the plain loops.
-//! * **LU** ([`lu`]): recursive on the columns (left half, triangular
-//!   solve for the block row of `U`, GEMM update, right half), with narrow
-//!   panels factored on a transposed copy.
+//! * **LU** ([`lu`]): Sky's LU is the forward phase of the Gauss-Jordan
+//!   inverse, operation for operation. Recursive on the columns (left
+//!   half, triangular solve for the block row of `U`, GEMM update, right
+//!   half), with narrow panels factored on a transposed copy. [`Lu::solve`]
+//!   and [`Lu::solve_right`] (`x @ A⁻¹`) are triangular solves.
+//! * **Gram products** ([`syrk`]): the lower triangle of `b · bᵀ` by the
+//!   GEMM kernel, mirrored.
 //! * **Triangular solves** (behind [`cholesky_solve`] and [`Lu::solve`]):
 //!   the dot-product form, with a register block of 16 right-hand sides per
 //!   pass (a lane per right-hand side) and blocks of columns as the unit of
@@ -112,7 +116,7 @@ mod tri;
 
 pub use chol::{cholesky, cholesky_solve, cholesky_solve_with, cholesky_with, is_symmetric};
 pub use dot::{dot, sum_squares, sum_squares_scaled, LANES};
-pub use gemm::{gemm, gemm_into_with, gemm_with};
+pub use gemm::{gemm, gemm_into_with, gemm_with, syrk, syrk_with};
 pub use inverse::{inverse, inverse_with};
 pub use lu::{lu, lu_with, solve, Lu};
 pub use threads::default_threads;

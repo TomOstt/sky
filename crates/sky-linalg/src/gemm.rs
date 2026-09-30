@@ -416,6 +416,68 @@ pub fn gemm(a: &[f64], m: usize, k: usize, b: &[f64], n: usize) -> Vec<f64> {
     gemm_with(a, m, k, b, n, threads::default_threads())
 }
 
+/// The Gram matrix `b · bᵀ` of `b` (m by k, row-major) as an m by m
+/// row-major matrix, on up to `threads` workers. Entry `(i, j)` is
+/// `Σ_p b[i,p]·b[j,p]` accumulated in `p` order (no fused multiply-add), which
+/// is what [`gemm_with`] gives for `b` times its transpose. The entries
+/// `(i, j)` and `(j, i)` are the same products in the same order (IEEE
+/// multiplication commutes), so only the lower triangle is computed and
+/// the upper mirrored: half the multiplications.
+pub fn syrk_with(b: &[f64], m: usize, k: usize, threads: usize) -> Vec<f64> {
+    assert_eq!(b.len(), m * k, "syrk: shape mismatch");
+    let mut c = vec![0.0; m * m];
+    if m == 0 || k == 0 {
+        return c;
+    }
+    if m <= SMALL_MAX_COLS {
+        // Small: the plain loops (upper triangle, mirrored).
+        for i in 0..m {
+            for j in i..m {
+                let mut s = 0.0;
+                for p in 0..k {
+                    s += b[i * k + p] * b[j * k + p];
+                }
+                c[i * m + j] = s;
+                c[j * m + i] = s;
+            }
+        }
+        return c;
+    }
+    let threads = if m * m * k / 2 >= PARALLEL_MIN_MADDS {
+        threads
+    } else {
+        1
+    };
+    let op = Op {
+        sub: false,
+        zero: true,
+        shift: 0,
+    };
+    // B(p, j) = b[j, p]: the transpose, read through strides.
+    gemm_view(
+        View::row_major(b, k),
+        View::row_major(b, k).transposed(),
+        &mut c,
+        m,
+        m,
+        m,
+        k,
+        op,
+        threads,
+    );
+    for i in 0..m {
+        for j in i + 1..m {
+            c[i * m + j] = c[j * m + i];
+        }
+    }
+    c
+}
+
+/// [`syrk_with`] on the default number of threads.
+pub fn syrk(b: &[f64], m: usize, k: usize) -> Vec<f64> {
+    syrk_with(b, m, k, threads::default_threads())
+}
+
 /// The widest product the small kernels handle without packing.
 const SMALL_MAX_COLS: usize = 16;
 

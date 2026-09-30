@@ -573,6 +573,17 @@ pub enum StmtKind {
         ret: Option<TypeExpr>,
         body: Block,
     },
+    /// `assert cond`, `requires cond`, or `ensures cond`, each with an
+    /// optional `, "message"` (spec "Contracts"). `requires` and `ensures`
+    /// only parse at the start of a `def` body, where they state the
+    /// function's contract; the checker and both engines treat them as part
+    /// of the function, not as statements that run in order.
+    Assert {
+        kind: AssertKind,
+        cond: Expr,
+        /// The string literal after the comma, as written (quotes included).
+        message: Option<Span>,
+    },
     /// `return` or `return value`.
     Return(Option<Expr>),
     Pass,
@@ -583,6 +594,29 @@ pub enum StmtKind {
     Equation(Box<Equation>),
     /// `sol = solve name from a to b with ...: options`: solves an equation.
     Solve(Box<Solve>),
+}
+
+/// Which contract statement an [`StmtKind::Assert`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AssertKind {
+    /// `assert cond`: checked where the statement runs.
+    Assert,
+    /// `requires cond`: a precondition, checked when the function is called.
+    Requires,
+    /// `ensures cond`: a postcondition, checked at every `return`; `result`
+    /// names the returned value inside it.
+    Ensures,
+}
+
+impl AssertKind {
+    /// The keyword, also used by the S-expression printer.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            AssertKind::Assert => "assert",
+            AssertKind::Requires => "requires",
+            AssertKind::Ensures => "ensures",
+        }
+    }
 }
 
 /// An indented run of statements after a `:`. Never empty in a tree the

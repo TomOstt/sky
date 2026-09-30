@@ -21,8 +21,8 @@ mod sexpr;
 pub mod unit_text;
 
 pub use ast::{
-    AssignTarget, BinaryOp, Block, BoolOp, CompoundOp, DimExpr, Equation, EquationItem, Expr,
-    ExprKind, Ident, IndexItem, Initial, Literal, Module, Param, ShapeAnn, ShapeKind, Solve,
+    AssertKind, AssignTarget, BinaryOp, Block, BoolOp, CompoundOp, DimExpr, Equation, EquationItem,
+    Expr, ExprKind, Ident, IndexItem, Initial, Literal, Module, Param, ShapeAnn, ShapeKind, Solve,
     SolveOption, Stmt, StmtKind, TypeExpr, UnaryOp, UnitExpr, TAG_NAMES,
 };
 pub use parser::{

@@ -177,6 +177,21 @@ impl Stmt {
                 }
                 out.push(')');
             }
+            StmtKind::Assert {
+                kind,
+                cond,
+                message,
+            } => {
+                out.push('(');
+                out.push_str(kind.keyword());
+                out.push(' ');
+                write_expr(&mut out, cond, src);
+                if let Some(m) = message {
+                    out.push(' ');
+                    out.push_str(text(src, *m));
+                }
+                out.push(')');
+            }
             StmtKind::Pass => out.push_str("(pass)"),
             StmtKind::Break => out.push_str("(break)"),
             StmtKind::Continue => out.push_str("(continue)"),

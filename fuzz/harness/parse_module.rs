@@ -209,6 +209,10 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
                 push_block(&mut stmts, body, &mut f);
             }
             StmtKind::Return(value) => stack.extend(value.iter().map(Node::Expr)),
+            StmtKind::Assert { cond, message, .. } => {
+                stack.push(Node::Expr(cond));
+                message.iter().for_each(|m| f(*m));
+            }
             StmtKind::Pass | StmtKind::Break | StmtKind::Continue => {}
             StmtKind::Expr(e) => stack.push(Node::Expr(e)),
             StmtKind::Assign { target, value } => {
@@ -476,6 +480,9 @@ const KINDS: &[TokenKind] = {
         Keyword(Kw::Equation),
         Keyword(Kw::Solve),
         Keyword(Kw::Field),
+        Keyword(Kw::Assert),
+        Keyword(Kw::Requires),
+        Keyword(Kw::Ensures),
         Keyword(Kw::And),
         Keyword(Kw::Or),
         Keyword(Kw::Not),

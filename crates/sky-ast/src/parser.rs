@@ -25,9 +25,9 @@ use sky_diag::{display_capped, Diagnostic, Label};
 use sky_syntax::{Kw, Span, Token, TokenKind};
 
 use crate::ast::{
-    span_text, AssignTarget, BinaryOp, Block, BoolOp, CompoundOp, DimExpr, Expr, ExprKind, Ident,
-    IndexItem, Literal, Module, Param, ShapeAnn, ShapeKind, Stmt, StmtKind, TypeExpr, UnaryOp,
-    UnitExpr, TAG_NAMES,
+    span_text, AssertKind, AssignTarget, BinaryOp, Block, BoolOp, CompoundOp, DimExpr, Expr,
+    ExprKind, Ident, IndexItem, Literal, Module, Param, ShapeAnn, ShapeKind, Stmt, StmtKind,
+    TypeExpr, UnaryOp, UnitExpr, TAG_NAMES,
 };
 use crate::precedence::{
     bool_binding_power, infix_binding_power, is_postfix_start, prefix_binding_power, AS_BP,
@@ -138,6 +138,7 @@ pub fn parse_expr(tokens: &[Token], src: &str) -> (Option<Expr>, Vec<ParseError>
 pub fn parse_module(tokens: &[Token], src: &str) -> (Module, Vec<ParseError>) {
     let mut p = Parser::new(tokens, src);
     let stmts = p.parse_stmts(false);
+    p.check_contract_placement(&stmts, false);
     let end = u32::try_from(src.len()).unwrap_or(u32::MAX);
     let module = Module {
         stmts,
@@ -675,6 +676,51 @@ impl<'t, 's> Parser<'t, 's> {
     /// `None` means an error was recorded and the position is at a line
     /// boundary; see [`Self::parse_item`].
     fn parse_body(&mut self, header: Span, what: &str) -> Option<Block> {
+        let block = self.parse_body_inner(header, what)?;
+        self.check_contract_placement(&block.stmts, what == "`def`");
+        Some(block)
+    }
+
+    /// `requires` and `ensures` state a function's contract, so they are
+    /// allowed only as the first statements of a `def` body (spec
+    /// "Contracts"). `stmts` are the statements of one block; `in_def` says
+    /// it is a `def` body. Nested blocks were checked when they were parsed.
+    fn check_contract_placement(&mut self, stmts: &[Stmt], in_def: bool) {
+        let mut head = in_def;
+        for s in stmts {
+            match &s.kind {
+                StmtKind::Assert {
+                    kind: kind @ (AssertKind::Requires | AssertKind::Ensures),
+                    ..
+                } if !head => {
+                    let word = kind.keyword();
+                    let err = if in_def {
+                        ParseError::new(
+                            format!("`{word}` must come before the other statements of the function body"),
+                            s.span,
+                        )
+                        .with_help("write the contract lines first, right after the `def` line")
+                    } else {
+                        ParseError::new(
+                            format!("`{word}` is only allowed at the start of a function body"),
+                            s.span,
+                        )
+                        .with_help(
+                            "state a function's contract with `requires` and `ensures` right after its `def` line; use `assert` to check a condition here",
+                        )
+                    };
+                    self.errors.push(err);
+                }
+                StmtKind::Assert {
+                    kind: AssertKind::Requires | AssertKind::Ensures,
+                    ..
+                } => {}
+                _ => head = false,
+            }
+        }
+    }
+
+    fn parse_body_inner(&mut self, header: Span, what: &str) -> Option<Block> {
         let colon = self.current();
         if colon.kind != TokenKind::Colon {
             return self.fail_expected_colon(colon, header, what);
@@ -750,6 +796,9 @@ impl<'t, 's> Parser<'t, 's> {
     fn parse_stmt(&mut self) -> Option<Stmt> {
         let first = match self.peek() {
             TokenKind::Keyword(Kw::Return) => return self.parse_return(),
+            TokenKind::Keyword(kw @ (Kw::Assert | Kw::Requires | Kw::Ensures)) => {
+                return self.parse_contract(kw)
+            }
             TokenKind::Keyword(kw @ (Kw::Pass | Kw::Break | Kw::Continue)) => {
                 return self.parse_bare_keyword(kw)
             }
@@ -828,6 +877,66 @@ impl<'t, 's> Parser<'t, 's> {
         let stmt = Stmt {
             span: kw.span.join(end),
             kind: StmtKind::Return(value),
+        };
+        self.expect_stmt_end(&stmt, None)?;
+        Some(stmt)
+    }
+
+    /// `assert cond`, `requires cond` or `ensures cond`, each with an
+    /// optional `, "message"`, with the keyword current.
+    fn parse_contract(&mut self, kw: Kw) -> Option<Stmt> {
+        let kind = match kw {
+            Kw::Requires => AssertKind::Requires,
+            Kw::Ensures => AssertKind::Ensures,
+            _ => AssertKind::Assert,
+        };
+        let tok = self.bump();
+        let cond = self.expr_bp(0)?;
+        let mut message = None;
+        match self.peek() {
+            TokenKind::Comma => {
+                self.bump();
+                let m = self.current();
+                if m.kind != TokenKind::Str {
+                    let found = self.describe(m);
+                    self.errors.push(
+                        ParseError::new(
+                            format!("expected a string message after `,`, found {found}"),
+                            m.span,
+                        )
+                        .with_secondary(tok.span, format!("`{}` starts here", kind.keyword()))
+                        .with_help(format!(
+                            "write `{} condition, \"what went wrong\"`",
+                            kind.keyword()
+                        )),
+                    );
+                    return None;
+                }
+                self.bump();
+                message = Some(m.span);
+            }
+            TokenKind::Assign => {
+                let eq = self.current();
+                self.errors.push(
+                    ParseError::new(
+                        format!("`{}` takes a condition, not an assignment", kind.keyword()),
+                        eq.span,
+                    )
+                    .with_secondary(cond.span, "this is the condition")
+                    .with_help("compare with `==` (or `<=`, `>=`, ...)"),
+                );
+                return None;
+            }
+            _ => {}
+        }
+        let end = message.unwrap_or(cond.span);
+        let stmt = Stmt {
+            span: tok.span.join(end),
+            kind: StmtKind::Assert {
+                kind,
+                cond,
+                message,
+            },
         };
         self.expect_stmt_end(&stmt, None)?;
         Some(stmt)
@@ -944,6 +1053,7 @@ impl<'t, 's> Parser<'t, 's> {
                     StmtKind::Binding { ty, value, .. } => {
                         value.as_ref().map_or(ty.span, |v| v.span)
                     }
+                    StmtKind::Assert { cond, message, .. } => message.unwrap_or(cond.span),
                     // Simple statements only; block statements never get here.
                     _ => stmt.span,
                 };

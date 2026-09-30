@@ -79,6 +79,9 @@ const KINDS: &[TokenKind] = {
         Keyword(Kw::Equation),
         Keyword(Kw::Solve),
         Keyword(Kw::Field),
+        Keyword(Kw::Assert),
+        Keyword(Kw::Requires),
+        Keyword(Kw::Ensures),
     ]
 };
 

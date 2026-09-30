@@ -76,6 +76,7 @@ pub(crate) fn exits_stmt(s: &Stmt) -> Exits {
         | StmtKind::CompoundAssign { .. }
         | StmtKind::Equation(_)
         | StmtKind::Solve(_)
+        | StmtKind::Assert { .. }
         | StmtKind::Pass => Exits::default(),
     }
 }

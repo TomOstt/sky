@@ -224,6 +224,7 @@
 mod analysis;
 mod array;
 mod build;
+mod contract;
 mod ctx;
 mod derivative;
 mod expr;
@@ -362,6 +363,7 @@ fn lower_impl(
         is_main: true,
         flags: false,
         ret_value: false,
+        fn_name: None,
     };
     let mut lw = Lower {
         src,

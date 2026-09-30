@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use sky_ast::{AssignTarget, Block, Expr, ExprKind, IndexItem, Param, Stmt, StmtKind};
+use sky_ast::{AssertKind, AssignTarget, Block, Expr, ExprKind, IndexItem, Param, Stmt, StmtKind};
 use sky_diag::Span;
 use sky_ir::{OpKind, Type};
 use sky_types::Ty;
@@ -17,7 +17,8 @@ use sky_units::lookup_constant;
 
 use crate::analysis::{count_returns, live_prefix, returns_value};
 use crate::build::Builder;
-use crate::ctx::{map_ty, DefInfo, FnInfo, FnState, Lower, Needed, R, RET, RETVAL};
+use crate::contract::has_ensures;
+use crate::ctx::{map_ty, DefInfo, FnInfo, FnState, Lower, Needed, Scope, R, RET, RETVAL};
 use sky_ast::Ident;
 
 impl Lower<'_> {
@@ -158,6 +159,7 @@ impl Lower<'_> {
             is_main: false,
             flags,
             ret_value: flags && has_value,
+            fn_name: Some(self.text(name.span).to_string()),
         };
         let parent = std::mem::replace(&mut self.st, state);
         self.stack.push(parent);
@@ -181,6 +183,8 @@ impl Lower<'_> {
             self.st.scope.entry(g.clone()).or_insert(v);
         }
         self.seed_constants(&body.stmts, span);
+        // What an `ensures` sees: the function as it starts.
+        let entry = has_ensures(live).then(|| self.st.scope.clone());
         if flags {
             let f = self.const_bool(false, span);
             self.st.scope.insert(RET.to_string(), f);
@@ -190,7 +194,7 @@ impl Lower<'_> {
             }
         }
 
-        self.lower_body(live, span)?;
+        self.lower_body(live, span, entry.map(|e| (e, has_value)))?;
         self.st.b.set_results(vec![ret_ty]);
         let Some(parent) = self.stack.pop() else {
             return self.err("internal error: lost the enclosing function", span);
@@ -224,7 +228,12 @@ impl Lower<'_> {
     }
 
     /// A function body: the statements, then `return`.
-    pub(crate) fn lower_body(&mut self, stmts: &[Stmt], span: Span) -> R<()> {
+    pub(crate) fn lower_body(
+        &mut self,
+        stmts: &[Stmt],
+        span: Span,
+        ensures: Option<(Scope, bool)>,
+    ) -> R<()> {
         let needed = Needed::new();
         let value = if self.st.flags {
             self.block(stmts, &needed)?;
@@ -247,6 +256,9 @@ impl Lower<'_> {
                 _ => self.op1(OpKind::ConstNothing, Vec::new(), Type::Nothing, span),
             }
         };
+        if let Some((entry, has_value)) = ensures {
+            self.lower_ensures(stmts, entry, has_value.then_some(value))?;
+        }
         self.st.b.op(OpKind::Return, vec![value], Vec::new(), span);
         Ok(())
     }
@@ -442,6 +454,17 @@ impl Lower<'_> {
             StmtKind::Return(v) => {
                 if let Some(v) = v {
                     self.scan_expr(v, defined, direct, callees);
+                }
+            }
+            // `result` in an `ensures` is the returned value, not a name of
+            // the module.
+            StmtKind::Assert { kind, cond, .. } => {
+                if *kind == AssertKind::Ensures {
+                    let mut with_result = defined.clone();
+                    with_result.insert("result".to_string());
+                    self.scan_expr(cond, &with_result, direct, callees);
+                } else {
+                    self.scan_expr(cond, defined, direct, callees);
                 }
             }
             // A nested `def` is its own function. Equations do not lower

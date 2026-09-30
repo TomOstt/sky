@@ -230,6 +230,11 @@ impl Lower<'_> {
                 name, params, body, ..
             } => self.lower_def(name, params, body, s.span),
             StmtKind::Return(value) => self.return_stmt(s.span, value.as_ref()),
+            StmtKind::Assert {
+                kind,
+                cond,
+                message,
+            } => self.assert_stmt(*kind, cond, *message),
             StmtKind::Pass => Ok(()),
             // Differential equations run on the tree-walker only: the
             // solvers (`sky-ode`) call back into the evaluator for every

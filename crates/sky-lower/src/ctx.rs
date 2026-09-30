@@ -61,6 +61,9 @@ pub(crate) struct FnState {
     pub(crate) flags: bool,
     /// Whether the function has a `<retval>` slot.
     pub(crate) ret_value: bool,
+    /// The function's name in the source (`None` for the file), which a
+    /// `requires` or `ensures` names in its failure message.
+    pub(crate) fn_name: Option<String>,
 }
 
 /// What a call needs to know about a lowered (or being lowered) function.

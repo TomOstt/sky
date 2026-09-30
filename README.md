@@ -166,6 +166,7 @@ crates/
   sky-ast/      typed AST with source spans, and the parser
   sky-units/    dimensions and the unit table
   sky-types/    type checker (units, shapes, matrix properties)
+  sky-linalg/   dense linear algebra kernels (GEMM, Cholesky, LU, inverse) with a fixed order of arithmetic
   sky-project/  project root discovery, sky.toml manifest, import resolution
   sky-interp/   tree-walking interpreter
   sky-ir/       SIR: data model, verifier, effects, text format, pass manager

@@ -17,7 +17,6 @@ rayon = "1"
 
 [dev-dependencies]
 sky-derive = { path = "../sky-derive" }
-sky-jit = { path = "../sky-jit" }
 sky-opt = { path = "../sky-opt" }
 proptest = { version = "1", default-features = false, features = ["std"] }
 sky-ast = { path = "../sky-ast" }

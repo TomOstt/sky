@@ -42,7 +42,7 @@ These come cheaply once the IR exists:
 **Done when:** `--explain` shows fused kernels and rewrites with reasons, and `grad(f)` works on checked code.
 
 ### Phase 3: numerics as semantics
-- Error budgets: `error <= 1e-12` leads to precision chosen per region [7, 8, 31], using interval and affine analysis on the IR.
+- Error budgets: `error <= 1e-12` leads to precision chosen per region [7, 8, 31], using interval and affine analysis on the IR. Built so far: the roundoff analysis (`sky_ir::roundoff`) and the contract (`accuracy x within 1e-12`, checked by `sky check`); choosing the precision needs code generation (Phase 4). See `docs/design/ir.md`, "Error budgets and roundoff".
 - Uncertainty-carrying values [10], starting with linear propagation. Done: `5.31 ± 0.02 kg` with correlations tracked, on the tree-walker (`spec/v0.1.md`, "Uncertainty"); arrays, SIR and non-linear propagation are next.
 - `equation` / `solve` for ordinary differential equations (ODEs), with a transparent solver-selection table [11, 12]: stiffness, symplectic structure, tolerances.
 - Condition-number warnings [42] and numerical-instability hints with rewrites [92].

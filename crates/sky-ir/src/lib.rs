@@ -12,7 +12,7 @@
 //! format ([`print`] and [`parse`], round-trip exact), and the pass manager
 //! with explanations ([`pass`]), effect inference ([`effects`]), and the
 //! exactness analysis ([`exact`]: what every scalar is over the reals, and
-//! which of its operations provably cannot fail). Lowering
+//! which of its operations provably cannot fail). The roundoff analysis ([`roundoff`]) bounds how far each scalar is from the exact real result, for error budgets. Lowering
 //! from the checked AST and the reference interpreter build on these.
 //!
 //! # Levels

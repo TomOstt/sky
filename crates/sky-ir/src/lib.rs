@@ -33,6 +33,7 @@ pub mod op;
 pub mod parse;
 pub mod pass;
 pub mod print;
+pub mod roundoff;
 pub mod verify;
 
 pub use builder::FunctionBuilder;

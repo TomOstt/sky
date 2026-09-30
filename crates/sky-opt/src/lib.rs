@@ -44,6 +44,10 @@ mod exact_tests;
 #[cfg(test)]
 mod fuse_tests;
 #[cfg(test)]
+mod roundoff_ref;
+#[cfg(test)]
+mod roundoff_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod testutil;

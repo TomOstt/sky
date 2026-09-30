@@ -44,13 +44,18 @@ enum Exit {
 struct Act<'m> {
     func: &'m Function,
     vals: Vec<Option<Value>>,
+    /// Where this activation was called from, for the "called here" label
+    /// of a failed `requires` (as the tree-walker's frame has it); `None`
+    /// for a run's entry call.
+    call: Option<Span>,
 }
 
 impl<'m> Act<'m> {
-    fn new(func: &'m Function) -> Self {
+    fn new(func: &'m Function, call: Option<Span>) -> Self {
         Act {
             func,
             vals: vec![None; func.values.len()],
+            call,
         }
     }
 
@@ -214,7 +219,7 @@ pub(crate) fn call(
     args: Vec<Value>,
     out: &mut dyn Write,
 ) -> R<Vec<Value>> {
-    call_metered(module, name, args, out, StackMeter::new())
+    call_metered(module, name, args, out, StackMeter::new(), None)
 }
 
 /// [`call`] measuring the stack from `stack`, a meter another interpreter
@@ -225,6 +230,7 @@ pub(crate) fn call_metered(
     args: Vec<Value>,
     out: &mut dyn Write,
     stack: StackMeter,
+    call: Option<Span>,
 ) -> R<Vec<Value>> {
     let mut m = Machine {
         module,
@@ -234,7 +240,7 @@ pub(crate) fn call_metered(
         #[cfg(test)]
         fuel: u64::MAX,
     };
-    m.entry(name, args, Span::point(0))
+    m.entry(name, args, Span::point(0), call)
 }
 
 /// [`call`] with a bounded number of ops, for fuzzing.
@@ -253,7 +259,7 @@ pub(crate) fn call_with_fuel(
         stack: StackMeter::new(),
         fuel,
     };
-    m.entry(name, args, Span::point(0))
+    m.entry(name, args, Span::point(0), None)
 }
 
 impl<'m> Machine<'m, '_> {
@@ -274,9 +280,15 @@ impl<'m> Machine<'m, '_> {
 
     /// The entry call of a run. Like `sky run`'s top level, it is not a
     /// nested call and does not count against [`MAX_CALL_DEPTH`].
-    fn entry(&mut self, name: &str, args: Vec<Value>, span: Span) -> R<Vec<Value>> {
+    fn entry(
+        &mut self,
+        name: &str,
+        args: Vec<Value>,
+        span: Span,
+        call: Option<Span>,
+    ) -> R<Vec<Value>> {
         let func = self.resolve(name, args.len(), span)?;
-        self.activate(func, args)
+        self.activate(func, args, call)
     }
 
     /// A call made by a `call` op.
@@ -286,14 +298,14 @@ impl<'m> Machine<'m, '_> {
             return Err(recursion_too_deep(name, span).into());
         }
         self.depth += 1;
-        let result = self.activate(func, args);
+        let result = self.activate(func, args, Some(span));
         self.depth -= 1;
         result
     }
 
     /// Runs `func`'s body in a new activation.
-    fn activate(&mut self, func: &Function, args: Vec<Value>) -> R<Vec<Value>> {
-        let mut act = Act::new(func);
+    fn activate(&mut self, func: &Function, args: Vec<Value>, call: Option<Span>) -> R<Vec<Value>> {
+        let mut act = Act::new(func, call);
         let entry = act.entry_of(func.body, func.span)?;
         match self.block(&mut act, entry, args, func.span)? {
             Exit::Return(values) if values.len() == func.results.len() => Ok(values),
@@ -696,7 +708,11 @@ fn assert_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
     for (name, v) in names.iter().zip(values) {
         shown.push((name.as_str(), contract::show(act.get(*v, s)?)));
     }
-    Err(contract::failure(*kind, func.as_deref(), text, message.as_deref(), &shown, s).into())
+    let mut err = contract::failure(*kind, func.as_deref(), text, message.as_deref(), &shown, s);
+    if let (sky_ir::AssertKind::Requires, Some(call)) = (kind, act.call) {
+        err = err.with_secondary(call, "called here");
+    }
+    Err(err.into())
 }
 
 /// `fused` (see `OpKind::Fused`): runs the scalar body once per element.

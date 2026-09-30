@@ -143,13 +143,16 @@ pub fn call(
 
 /// [`call`] for a run nested in another interpreter (`sky run` evaluating a
 /// derivative): `stack` is that interpreter's meter, so both share one
-/// stack budget instead of each spending a whole one.
+/// stack budget instead of each spending a whole one, and `call` is the
+/// call site in that program, which a failed `requires` of the function
+/// labels "called here", as when SIR makes the call itself.
 pub fn call_metered(
     module: &Module,
     name: &str,
     args: Vec<Value>,
     out: &mut dyn Write,
     stack: sky_interp::arith::StackMeter,
+    call: Span,
 ) -> Result<Vec<Value>, IrRuntimeError> {
-    machine::call_metered(module, name, args, out, stack)
+    machine::call_metered(module, name, args, out, stack, Some(call))
 }

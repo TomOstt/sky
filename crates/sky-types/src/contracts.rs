@@ -388,6 +388,7 @@ fn mentions(src: &str, e: &Expr, name: &str) -> bool {
         ExprKind::BoolOp { operands, .. } | ExprKind::Array(operands) => operands.iter().any(go),
         ExprKind::IfElse { then, cond, else_ } => go(then) || go(cond) || go(else_),
         ExprKind::As { value, .. } => go(value),
+        ExprKind::PlusMinus { value, sigma, .. } => go(value) || go(sigma),
         ExprKind::Attribute { base, .. } => go(base),
         ExprKind::Index { base, items } => {
             go(base)

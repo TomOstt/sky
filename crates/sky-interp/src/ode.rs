@@ -131,6 +131,8 @@ impl Conserve {
             solves: &solves,
             frames: vec![Frame {
                 vars,
+                // Not a call: an equation has no `requires` to point here.
+                call: self.scope.def_span,
                 func: self.scope.clone(),
             }],
             stack: StackMeter::new(),
@@ -263,6 +265,8 @@ impl System for OdeSystem<'_, '_> {
         );
         self.it.frames.push(Frame {
             vars,
+            // Not a call: an equation has no `requires` to point here.
+            call: self.scope.def_span,
             func: self.scope.clone(),
         });
         let result = self.run_steps(dydt);

@@ -1406,7 +1406,7 @@ fn same_failure(src: &str) -> String {
     let (walker, sir) = located_errors(src);
     assert_eq!(sir, walker, "the engines differ on:\n{src}");
     let out = assert_same(src);
-    let (message, span) = walker.expect("the program fails");
+    let (message, span, _) = walker.expect("the program fails");
     assert_eq!(out.error.as_deref(), Some(message.as_str()));
     assert!(
         span.start < span.end && (span.end as usize) <= src.len(),

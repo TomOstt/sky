@@ -2354,7 +2354,7 @@ fn check_inner(src: &str, strict: bool) -> Result<Outcome, String> {
     let (want_out, want) = interpret(&ast, src);
     let (got_out, got) = run_sir(&m, src);
     if let Err(msg) = &want {
-        if is_contract_failure(msg) {
+        if is_contract_failure(&msg.message) {
             check_contract_span(&ast, src, &m)?;
         }
     }

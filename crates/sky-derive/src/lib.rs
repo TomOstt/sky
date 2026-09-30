@@ -157,8 +157,9 @@ impl DerivativeHook for SirDerivatives<'_> {
                 }
             }
         }
-        let results = sky_ir_interp::call_metered(&lowered.module, &name, args, out, request.stack)
-            .map_err(|e| (*e).clone())?;
+        let results =
+            sky_ir_interp::call_metered(&lowered.module, &name, args, out, request.stack, at)
+                .map_err(|e| (*e).clone())?;
         match results.as_slice() {
             // `(f(args), ∂f/∂x)`
             [_, derivative] => Ok(derivative.clone()),

@@ -66,6 +66,10 @@ fn collect<'s>(e: &Expr, src: &'s str, out: &mut Vec<&'s str>) {
             }
         }
         ExprKind::As { value, .. } => collect(value, src, out),
+        ExprKind::PlusMinus { value, sigma, .. } => {
+            collect(value, src, out);
+            collect(sigma, src, out);
+        }
         ExprKind::Attribute { base, .. } => collect(base, src, out),
         ExprKind::Index { base, items } => {
             collect(base, src, out);

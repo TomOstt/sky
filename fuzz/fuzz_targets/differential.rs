@@ -8,8 +8,10 @@
 //! fail at run time). Every program is lexed, parsed and checked (a
 //! rejection is a generator bug), lowered to SIR and verified, then run by
 //! the AST interpreter (`sky run`) and by the SIR interpreter. The check
-//! panics unless both print the same stdout and stop with the same error (or
-//! both succeed), and unless the SIR text format round-trips
+//! panics unless both print the same stdout and stop with the same error,
+//! compared as the whole rendered diagnostic (spans, labels and notes, not
+//! only the message; or both succeed), and unless the SIR text format
+//! round-trips
 //! (`parse(print(m)) == canonicalize(m)`) and the re-parsed module runs the
 //! same. The generator and the oracle are in `fuzz/harness/differential.rs`,
 //! which a stable sky-ir-interp test also runs, on fixed seeds.

@@ -327,12 +327,26 @@ fn signature(msg: &str) -> Option<String> {
     if msg.starts_with("generator bug") {
         return None;
     }
-    let n = if msg.starts_with("the error differs") {
-        3
-    } else {
-        1
-    };
-    Some(msg.lines().take(n).collect::<Vec<_>>().join("\n"))
+    if msg.starts_with("the error differs") {
+        // The messages of the two diagnostics, without the position in their
+        // headers (`program.sky:3:7: error: division by zero`), which moves
+        // as a program shrinks.
+        let mut sig = vec!["the error differs".to_string()];
+        let mut lines = msg.lines();
+        while let Some(l) = lines.next() {
+            if l == "--- sky run ---" || l == "--- SIR ---" {
+                let header = lines.next().unwrap_or("");
+                sig.push(
+                    header
+                        .split_once(": error: ")
+                        .map_or(header, |(_, m)| m)
+                        .to_string(),
+                );
+            }
+        }
+        return Some(sig.join("\n"));
+    }
+    Some(msg.lines().next().unwrap_or("").to_string())
 }
 
 /// Whether every `while` in `lines` still ends: generated loops count with

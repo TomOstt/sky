@@ -23,7 +23,9 @@
 //! 2. [`check_source`] is the oracle. It lexes, parses and checks the source
 //!    (all must succeed: a rejection is a generator bug), lowers it, verifies
 //!    the SIR, runs the AST interpreter and the SIR interpreter, and requires
-//!    the same stdout and the same error message (or both succeed). Then it
+//!    the same stdout and the same error, compared as the whole rendered
+//!    diagnostic (message, spans, labels, secondary labels, notes; the SIR
+//!    operations carry the spans of their operands), or both succeed. Then it
 //!    prints the SIR, parses the text back, requires the result to equal
 //!    `canonicalize(m)`, verifies it, and runs it again for the same result.
 //!    The two resource-limit errors compare as one, exactly as in the
@@ -2082,38 +2084,66 @@ fn known_issue(msg: &str) -> Option<&'static str> {
         .map(|(id, _)| *id)
 }
 
+/// A run-time error: its message, and the diagnostic as `sky run` prints it
+/// (rendered against the program, so a span, a label or a note that differs
+/// is a difference).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Failure {
+    pub message: String,
+    pub rendered: String,
+}
+
+impl Failure {
+    fn new(d: &sky_diag::Diagnostic, message: &str, src: &str) -> Failure {
+        Failure {
+            message: message.to_string(),
+            rendered: d.render_to_string(&sky_diag::SourceFile::new("program.sky", src)),
+        }
+    }
+}
+
+/// A run's result for a report: `Ok`, or the rendered diagnostic.
+fn shown(r: &Result<(), Failure>) -> String {
+    match r {
+        Ok(()) => "ok".to_string(),
+        Err(f) => f.rendered.clone(),
+    }
+}
+
 /// The two resource-limit errors compare as one: which trips first depends
-/// on each interpreter's stack use per call, not on the program.
-fn normalized(r: &Result<(), String>) -> Result<(), String> {
-    r.clone().map_err(|e| {
-        if e.starts_with("recursion is too deep")
-            || e == "the program nests too deeply for the interpreter"
+/// on each interpreter's stack use per call, not on the program. Any other
+/// error compares as the whole rendered diagnostic.
+fn normalized(r: &Result<(), Failure>) -> Result<(), String> {
+    r.clone().map_err(|f| {
+        if f.message.starts_with("recursion is too deep")
+            || f.message == "the program nests too deeply for the interpreter"
         {
             "<resource limit>".to_string()
         } else {
-            e
+            f.rendered
         }
     })
 }
 
 /// What the AST interpreter (`sky run`) does.
-fn interpret(ast: &sky_ast::Module, src: &str) -> (String, Result<(), String>) {
+fn interpret(ast: &sky_ast::Module, src: &str) -> (String, Result<(), Failure>) {
     let mut env = sky_interp::RuntimeEnv::with_prelude();
     let mut out = Vec::new();
     let r = sky_interp::run_module(ast, src, &mut env, &mut out);
     (
         String::from_utf8_lossy(&out).into_owned(),
-        r.map(|_| ()).map_err(|e| e.message.clone()),
+        r.map(|_| ())
+            .map_err(|e| Failure::new(&e.to_diagnostic(), &e.message, src)),
     )
 }
 
 /// What the SIR reference interpreter does with `m`.
-fn run_sir(m: &sky_ir::Module) -> (String, Result<(), String>) {
+fn run_sir(m: &sky_ir::Module, src: &str) -> (String, Result<(), Failure>) {
     let mut out = Vec::new();
     let r = sky_ir_interp::run(m, &mut out);
     (
         String::from_utf8_lossy(&out).into_owned(),
-        r.map_err(|e| e.message.clone()),
+        r.map_err(|e| Failure::new(&e.to_diagnostic(), &e.message, src)),
     )
 }
 
@@ -2175,17 +2205,21 @@ fn check_inner(src: &str, strict: bool) -> Result<Outcome, String> {
     }
 
     let (want_out, want) = interpret(&ast, src);
-    let (got_out, got) = run_sir(&m);
+    let (got_out, got) = run_sir(&m, src);
     let dump = |m: &sky_ir::Module| sky_ir::print(m);
     if got_out != want_out {
         return Err(format!(
-            "stdout differs\n--- sky run ---\n{want_out}(error: {want:?})\n--- SIR ---\n{got_out}(error: {got:?})\n--- SIR text ---\n{}",
+            "stdout differs\n--- sky run ---\n{want_out}(error: {})\n--- SIR ---\n{got_out}(error: {})\n--- SIR text ---\n{}",
+            shown(&want),
+            shown(&got),
             dump(&m)
         ));
     }
     if normalized(&got) != normalized(&want) {
         return Err(format!(
-            "the error differs\nsky run: {want:?}\nSIR:     {got:?}\nstdout (both):\n{want_out}\n--- SIR text ---\n{}",
+            "the error differs\n--- sky run ---\n{}--- SIR ---\n{}--- stdout (both) ---\n{want_out}\n--- SIR text ---\n{}",
+            shown(&want),
+            shown(&got),
             dump(&m)
         ));
     }
@@ -2194,7 +2228,7 @@ fn check_inner(src: &str, strict: bool) -> Result<Outcome, String> {
     let outcome = |known| Outcome {
         failed: want.is_err(),
         limit: normalized(&want) == Err("<resource limit>".to_string()),
-        error: want.clone().err(),
+        error: want.clone().err().map(|f| f.message),
         printed: want_out.len(),
         known,
     };
@@ -2224,10 +2258,12 @@ fn check_inner(src: &str, strict: bool) -> Result<Outcome, String> {
         let ms: Vec<&str> = errors.iter().map(|e| e.message.as_str()).collect();
         return Err(format!("the reparsed SIR does not verify: {ms:?}\n{text}"));
     }
-    let (back_out, back_r) = run_sir(&back);
+    let (back_out, back_r) = run_sir(&back, src);
     if back_out != got_out || normalized(&back_r) != normalized(&got) {
         return Err(format!(
-            "the reparsed SIR runs differently\nbefore: {got_out:?} {got:?}\nafter:  {back_out:?} {back_r:?}\n--- SIR text ---\n{text}"
+            "the reparsed SIR runs differently\nbefore: {got_out:?} {}\nafter:  {back_out:?} {}\n--- SIR text ---\n{text}",
+            shown(&got),
+            shown(&back_r)
         ));
     }
 

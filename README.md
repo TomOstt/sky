@@ -38,9 +38,28 @@ print(v as km/h, u as mm)        # 90 km/h [100 mm, 200 mm]: `as` shows a value 
 print(v as kg)                   # error: cannot show a velocity in kg
 ```
 
+Differential equations read like the blackboard: `x'` is the derivative, dimensions are checked (`v'` must be an acceleration), and the solver picks its method from what the script declares, and explains it.
+
+```sky
+GM = 1.327e20 m^3/s^2
+equation orbit(t: s):
+    r: Vector[2] m
+    v: Vector[2] m/s
+    r' = v
+    v' = -GM * r / norm(r)^3
+
+sol = solve orbit from 0 s to 1 yr with r = [1 AU, 0 m], v = [0 m/s, 29.8 km/s]:
+    tolerance 1e-9
+    conserve energy = 0.5 * norm(v)^2 - GM / norm(r) within 1e-6
+print(sol.r, sol.v)              # the final state, in SI: about where the year began
+print(explain(sol))              # which method ran, and why
+```
+
+`sky check --explain` says what the checker found in each `solve` (a second-order system, so a symplectic integrator applies; what is to be conserved) without running it. Equations run on the tree-walking interpreter (SIR cannot lower them yet, so `--engine=auto` falls back). See "Differential equations" in `spec/v0.1.md`.
+
 ```
 sky check file.sky            # diagnostics on stderr; exit 1 on any error
-sky check --explain file.sky  # also show the edition, the checker's rewrites (A⁻¹ @ b → Cholesky solve) and what the optimization passes did
+sky check --explain file.sky  # also show the edition, the checker's rewrites (A⁻¹ @ b → Cholesky solve), what it found in each `solve`, and what the optimization passes did
 sky check --emit-ir file.sky  # print the program's IR (SIR text) on stdout; --emit-ir=lower, =after:fold|egraph|dce|cholesky, =final
 sky run file.sky              # check, then run; only a clean file runs. print() writes to stdout
 sky repl                      # expressions echo their value; blocks (def, if, while, for) continue on `...` lines until an empty line

@@ -146,6 +146,13 @@ Each item is either **signed off by Eng Lead** or **needs sign-off** (a default 
 - **Keywords:** `while`, `elif`, `pass`, `break`, `continue` are new `Kw` variants (lexer). No test or golden used them as identifiers.
 - **Downstream:** exhaustive matches on `StmtKind` and `ExprKind` need the new arms (the checker has them; the fuzz harness walks all of them with an explicit worklist, blocks included). The interpreter should treat `Block` as a plain statement list.
 
+**Differential equations** (`sky-ast/equations`; the language rules are in `spec/v0.1.md`, "Differential equations"; needs sign-off):
+- `equation` and `solve` are statements now (they were reserved); `field` is still reserved. The nodes are `StmtKind::Equation(Box<Equation>)` and `StmtKind::Solve(Box<Solve>)` (ast.rs, end of file), parsed in `parse_ode.rs`.
+- The derivative mark is a new token, `TokenKind::Prime`, lexed only directly after a name or another prime (`r'`). Everywhere else a `'` is still the "strings use double quotes" lexer error, so that help is unchanged. `r''` is a parse error for now.
+- `from`, `to`, `with`, `within`, `tolerance` and `conserve` are contextual: ordinary names outside the two statements. Inside a `solve` header or option line, the parser field `solve_words` makes those three end a number's unit (`from 0 to 1 s`: `0` is not a unit literal `0 to`), in the two places that read a unit after a number.
+- `sol = solve ...` is a statement form (a name, `=`, `solve`, an equation name), not an expression: a solve has a block, and blocks belong to statements. A bare `solve` gets its own error.
+- The body of an equation is its own list of lines (`EquationItem`), not a `Block` of statements: a line is `x: type`, `x' = expr` or `x = expr`, and nothing else.
+
 ## Robustness (fuzz target)
 - The parser never panics. All token access is bounds-checked, text goes through `str::get`, and integer conversions are checked.
 - It never calls `Span::new` on token-derived offsets, because that debug-asserts.

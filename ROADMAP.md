@@ -54,8 +54,8 @@ These come cheaply once the IR exists:
 - Native code through Cranelift, with LLVM later [61].
 - Runtime specialisation on shapes and values [62, 63].
 - Automatic parallelism from the dependency graph [22].
-- Algorithm variants chosen by size and hardware [15], and discovery of hardware capabilities [20].
-- Autotuning with a local performance database [16, 17].
+- Algorithm variants chosen by size and hardware [15], and discovery of hardware capabilities [20]. Built so far: `sky hw` and the `sky-hw` crate (SIMD, cores, caches, memory, a machine fingerprint); the variants themselves need the fast kernels.
+- Autotuning with a local performance database [16, 17]. Built so far: `sky tune` and the `sky-tune` crate (a tuner, a data-only database keyed by the fingerprint, a registry for kernels to plug into); see the spec's "Hardware and tuning".
 - Allocation and copy elimination guided by lifetimes [25, 26, 85].
 - Performance contracts [86].
 

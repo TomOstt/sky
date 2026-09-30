@@ -67,7 +67,12 @@ sky run file.sky              # check, then run; only a clean file runs. print()
 sky repl                      # expressions echo their value; blocks (def, if, while, for) continue on `...` lines until an empty line
 sky run --engine=sir file.sky # pick the engine: ast (tree-walker, the default), sir (lower to SIR, run it), auto
 sky repl                      # one line at a time; expressions echo their value
+sky hw                        # what this machine can do (SIMD, cores, caches, memory) and what Sky uses each for
+sky tune                      # measure kernel parameters (block sizes, unroll factors) here and remember the winners
+sky tune --show               # list the remembered results; --reset forgets them
 ```
+
+Phase 4 has started with the machine. `sky hw` discovers the CPU, its SIMD features, core counts (performance and efficiency), cache sizes and memory, with no `unsafe` code and no dependencies, and a stable fingerprint of the machine. `sky tune` times each tunable kernel's candidate parameters on this machine and stores the winners in a small text file in your cache directory (`SKY_TUNE_DB` overrides it), keyed by that fingerprint. Tuning changes speed, never results, and the file is data only: it is written only when you run `sky tune`, and it is not a saved session. The kernels that use it are still to come; today two demo tunables exercise the machinery.
 
 ```
 $ sky repl

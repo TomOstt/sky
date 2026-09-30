@@ -254,3 +254,12 @@ fn the_optimizer_keeps_gradients_bit_identical() {
         &[vector(&[1.0, -2.0], Dimension::DIMENSIONLESS)],
     );
 }
+
+#[test]
+fn the_gradient_through_norm_of_a_fused_chain() {
+    // `norm` and `dot` are opaque to the fuse pass, and the gradient of a
+    // function that has both around a fused kernel is the unfused one.
+    let src = "def f(p: Vector[3] m) -> J:\n    q = (p + [1 m, 2 m, 3 m]) * 2 - p / 3\n    return 1 N/m * norm(q) * norm(p) + 1 N/m^2 * dot(q, p) * 1 m\n";
+    let p = vector(&[0.3, -1.0, 2.0], Dimension::LENGTH);
+    same_derivative(src, "f", 0, &[p]);
+}

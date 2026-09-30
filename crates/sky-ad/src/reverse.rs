@@ -663,6 +663,31 @@ impl Rev<'_> {
                 self.acc(a, c, span)
             }
             OpKind::MatMul => self.adjoint_matmul(op, rb),
+            // r = ‖a‖: ā += (r̄ / r) a. r̄ has dim(F)/dim(a), so r̄ / r is
+            // dim(F)/dim(a)², and times `a` gives dim(F)/dim(a), the
+            // adjoint's. At ‖a‖ = 0 the division fails, as in the tangent.
+            OpKind::Norm => {
+                let [a] = self.d.operands(op)?;
+                let (pa, pr) = (self.d.primal(a)?, self.d.primal(r)?);
+                let q = self.div(rb, pr, span)?;
+                let c = self.mul(pa, q, span)?;
+                self.acc(a, c, span)
+            }
+            // r = a·b: ā += r̄ b, b̄ += r̄ a, as for the product of two
+            // vectors.
+            OpKind::Dot => {
+                let [a, b] = self.d.operands(op)?;
+                let (pa, pb) = (self.d.primal(a)?, self.d.primal(b)?);
+                if self.d.active[a.index()] {
+                    let c = self.mul(pb, rb, span)?;
+                    self.acc(a, c, span)?;
+                }
+                if self.d.active[b.index()] {
+                    let c = self.mul(pa, rb, span)?;
+                    self.acc(b, c, span)?;
+                }
+                Ok(())
+            }
             OpKind::Transpose => {
                 let [a] = self.d.operands(op)?;
                 let c = if self.d.shape_of(a).rank() == 0 {

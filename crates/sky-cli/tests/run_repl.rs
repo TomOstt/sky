@@ -1174,6 +1174,105 @@ const ENGINE_PROGRAMS: &[(&str, bool, &str)] = &[
         true,
         "def root(a: m^2) -> m:\n    return sqrt(a)\nprint(derivative(root, a)(0 m^2))\n",
     ),
+    // A runtime error's labels, notes and helps come from the operands' spans
+    // on SIR (no replay on the tree-walker): the whole stderr must be the
+    // tree-walker's, after the pass pipeline too. The values are passed through
+    // an unannotated function so the checker cannot see the error.
+    (
+        "eng-labels-div",
+        true,
+        "def id(a):\n    return a\nx = id(4)\nz = id(2) - 2\nprint(x / z)\n",
+    ),
+    (
+        "eng-labels-div-assign",
+        true,
+        "def id(a):\n    return a\nx = id(4)\nz = id(0)\nx /= z\n",
+    ),
+    (
+        "eng-labels-inverse",
+        true,
+        "def id(a):\n    return a\nx = id(0)\nprint(1 + x⁻¹)\n",
+    ),
+    (
+        "eng-labels-dims",
+        true,
+        "def id(a):\n    return a\nprint(id(1 m) + id(2 s))\n",
+    ),
+    (
+        "eng-labels-compare",
+        true,
+        "def id(a):\n    return a\nprint(id(1 m) < id(2 s))\n",
+    ),
+    (
+        "eng-labels-math",
+        true,
+        "def id(a):\n    return a\nprint(sqrt(id(0) - 4))\n",
+    ),
+    (
+        "eng-labels-pow",
+        true,
+        "def id(a):\n    return a\nprint(id(0 - 8) ^ id(1 / 3))\n",
+    ),
+    (
+        "eng-labels-index",
+        true,
+        "def id(a):\n    return a\nv = [1, 2, 3]\nprint(v[id(5)])\n",
+    ),
+    (
+        "eng-labels-index-negative",
+        true,
+        "def id(a):\n    return a\nv = [1, 2, 3]\nprint(v[id(0) - 1])\n",
+    ),
+    (
+        "eng-labels-slice",
+        true,
+        "def id(a):\n    return a\nv = [1, 2, 3, 4]\nprint(v[id(1):id(9)])\n",
+    ),
+    (
+        "eng-labels-slice-open",
+        true,
+        "def id(a):\n    return a\nA = [[1, 2], [3, 4]]\nprint(A[id(1), id(9):])\n",
+    ),
+    (
+        "eng-labels-shapes",
+        true,
+        "def id(a):\n    return a\nprint(id([1, 2]) + id([1, 2, 3]))\n",
+    ),
+    (
+        "eng-labels-matmul",
+        true,
+        "def id(a):\n    return a\nprint(id([[1, 2]]) @ id([[3, 4]]))\n",
+    ),
+    (
+        "eng-labels-chain",
+        true,
+        "a = [1, 2, 3]\nb = [1, 2, 3]\nz = 0\nprint((a + b) / z * 2)\n",
+    ),
+    (
+        "eng-labels-overflow-chain",
+        true,
+        "a = [1e200, 2, 3]\nz = 0\nprint((a * 1e200) / z + a)\n",
+    ),
+    (
+        "eng-unknown-plus",
+        true,
+        "def f(a):\n    return +a + a\nprint(f(2))\nprint(f(true))\n",
+    ),
+    (
+        "eng-unknown-inv",
+        true,
+        "def f(a):\n    return inv(a)\nprint(f(4))\nprint(f(true))\n",
+    ),
+    (
+        "eng-unknown-neg",
+        true,
+        "def f(a):\n    return -a\nprint(f(4))\nprint(f(\"s\"))\n",
+    ),
+    (
+        "eng-unknown-array-element",
+        true,
+        "def f(a):\n    return [a, 1]\nprint(f(2))\nprint(f(true))\n",
+    ),
     (
         "eng-gradient-gravity",
         true,

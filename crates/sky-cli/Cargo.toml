@@ -23,6 +23,7 @@ sky-jit = { path = "../sky-jit" }
 sky-lower = { path = "../sky-lower" }
 sky-opt = { path = "../sky-opt" }
 sky-project = { path = "../sky-project" }
+sky-rt = { path = "../sky-rt" }
 sky-syntax = { path = "../sky-syntax" }
 sky-tune = { path = "../sky-tune" }
 sky-types = { path = "../sky-types" }

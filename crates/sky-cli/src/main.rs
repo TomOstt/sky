@@ -7,6 +7,7 @@ use sky_project::{Project, SystemIdentity};
 use sky_syntax::Edition;
 
 mod accuracy;
+mod build;
 mod cost;
 mod frontend;
 mod hw;
@@ -15,11 +16,14 @@ mod repl;
 mod run;
 mod tune;
 
-const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] [--emit=clif] [--threads=N] <file.sky>\n       sky run [--engine=auto|ast|sir|native] [--threads=N] <file.sky>\n       sky repl\n\
+const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] [--emit=clif] [--threads=N] <file.sky>\n       sky run [--engine=auto|ast|sir|native] [--threads=N] <file.sky>\n       sky build [--emit=exe|obj] [-o <path>] [--target=<triple>] [--runtime=<path>] <file.sky>\n       sky repl\n\
                      sky hw\n\
                      sky tune [--show | --reset] [--budget-ms=<n>] [<kernel>]\n\n\
                      <stage> is `lower`, `final` (the default), or `after:<pass>` for one of\n\
                      fold, egraph, contracts, dce, fuse, cholesky\n\
+                     `sky build` compiles the program ahead of time to a native executable\n\
+                     (`--emit=obj`: to an object file), linked with the system's C compiler\n\
+                     and the runtime library `libsky_rt.a`; it runs like `sky run --engine=native`\n\
                      --emit=clif prints the Cranelift IR the native engine compiles\n\
                      --engine picks how `sky run` executes: `ast` (the tree-walking\n\
                      interpreter, the default), `sir` (lower to SIR, run the optimized IR),\n\
@@ -91,6 +95,23 @@ fn main() -> ExitCode {
                 Err(code) => return code,
             };
             run::run(&path, &file, &src, engine, threads)
+        }
+        Some("build") => {
+            let opts = match build::BuildArgs::parse(&args[1..]) {
+                Ok(o) => o,
+                Err(msg) => {
+                    eprintln!("{USAGE}");
+                    if let Some(msg) = msg {
+                        eprintln!("\nerror: {msg}");
+                    }
+                    return ExitCode::from(2);
+                }
+            };
+            let (file, src) = match read_entry(&opts.path) {
+                Ok(x) => x,
+                Err(code) => return code,
+            };
+            build::build(&opts, &file, &src)
         }
         Some("repl") => {
             if args.len() != 1 {

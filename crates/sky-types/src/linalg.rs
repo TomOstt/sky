@@ -22,7 +22,8 @@
 //! all-zero sum.
 
 pub use sky_linalg::{
-    cholesky, cholesky_solve, dot, is_symmetric, sum_squares, sum_squares_scaled, LinalgError,
+    cholesky, cholesky_solve, dot, is_symmetric, lu, sum_squares, sum_squares_scaled, syrk,
+    LinalgError, Lu,
 };
 
 /// `a * b` for `a` (m by k) and `b` (k by n): an m by n matrix. Each entry

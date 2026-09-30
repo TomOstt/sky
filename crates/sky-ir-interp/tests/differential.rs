@@ -2064,3 +2064,46 @@ print(Cᵀ @ C)
     let o = assert_same(&src);
     assert_eq!(o.error, None, "{}", o.stdout);
 }
+
+#[test]
+fn lu_solves_and_gram_products_of_larger_matrices_are_the_same_bits_in_both_engines() {
+    // A 40 by 40 system takes the recursive LU (panels of 16 and a GEMM
+    // update); `x @ A⁻¹` runs the two transposed triangular solves; the
+    // Gram products of a 20 by 40 matrix take the lower-triangle kernel.
+    let strong = |n: usize, seed: usize| {
+        let row = |i: usize| {
+            let entries: Vec<String> = (0..n)
+                .map(|j| {
+                    let x = ((i * 29 + j * 13 + seed * 5) % 31) as f64 / 9.0 - 1.7;
+                    format!("{}", if i == j { x + 12.0 } else { x })
+                })
+                .collect();
+            format!("[{}]", entries.join(", "))
+        };
+        let all: Vec<String> = (0..n).map(row).collect();
+        format!("[{}]", all.join(", "))
+    };
+    let vector = |n: usize, seed: usize| {
+        let items: Vec<String> = (0..n)
+            .map(|i| format!("{}", ((i * 7 + seed) % 17) as f64 / 3.0 - 2.5))
+            .collect();
+        format!("[{}]", items.join(", "))
+    };
+    let src = format!(
+        "\
+S = {}
+b = {}
+print(S⁻¹ @ b)
+print(b @ S⁻¹)
+B = {}
+print(B @ Bᵀ)
+print(Bᵀ @ B)
+",
+        strong(40, 3),
+        vector(40, 4),
+        matrix_literal(20, 40, 5),
+    );
+    let o = assert_same(&src);
+    assert_eq!(o.error, None, "{}", o.stdout);
+    assert_eq!(o.stdout.lines().count(), 4, "{}", o.stdout);
+}

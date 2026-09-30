@@ -26,7 +26,11 @@
 //! the same numbers, and a matrix is singular for the solve exactly when it
 //! is for the inverse (`solve_is_singular_exactly_when_inverse_is` pins it).
 //! Only the back phase differs: back substitution with the unit upper
-//! triangle instead of elimination above the pivots.
+//! triangle instead of elimination above the pivots. The factorization and
+//! both solves are `sky-linalg`'s (`sky_linalg::Lu`), which runs them
+//! blocked and threaded and gives the bits of the plain loops
+//! (`sky_linalg::reference`); this module only turns failures into
+//! runtime errors.
 
 use sky_diag::Span;
 use sky_units::Dimension;
@@ -37,163 +41,14 @@ use crate::linalg::{self, LinalgError};
 use crate::{RuntimeError, Value};
 use sky_types::{Algorithm, Side, SolveMethod};
 
-/// The result of [`lu_factor`]: `A = P⁻¹·L·U'` with a unit upper `U'`.
-///
-/// `rows` holds, row-major, the normalized rows of `U'` above the diagonal
-/// and the elimination multipliers below it (the diagonal is implied: `U'`
-/// has ones, and `pivots[i]` is the divisor of row `i`). `swaps[c]` is the
-/// row exchanged with row `c` at step `c`. Whole rows are exchanged, so the
-/// multipliers sit at their final positions.
-#[derive(Clone, Debug)]
-pub struct Lu {
-    n: usize,
-    rows: Vec<f64>,
-    pivots: Vec<f64>,
-    swaps: Vec<usize>,
-}
+/// The factorization [`lu_factor`] returns: see `sky_linalg::Lu`.
+pub use crate::linalg::Lu;
 
 /// Factors the `n` by `n` matrix `a`. [`LinalgError::Singular`] under the
 /// same test as [`linalg::inverse`]: a pivot no larger than `n·ε·max|aᵢⱼ|`.
 pub fn lu_factor(a: &[f64], n: usize) -> Result<Lu, LinalgError> {
     debug_assert_eq!(a.len(), n * n);
-    let mut m = a.to_vec();
-    let mut pivots = Vec::with_capacity(n);
-    let mut swaps = Vec::with_capacity(n);
-    let scale = a.iter().fold(0.0_f64, |s, x| s.max(x.abs()));
-    let tol = n as f64 * f64::EPSILON * scale;
-    for col in 0..n {
-        let mut pivot = col;
-        for r in col + 1..n {
-            if m[r * n + col].abs() > m[pivot * n + col].abs() {
-                pivot = r;
-            }
-        }
-        let size = m[pivot * n + col].abs();
-        if size.is_nan() || size <= tol {
-            return Err(LinalgError::Singular);
-        }
-        if pivot != col {
-            for j in 0..n {
-                m.swap(pivot * n + j, col * n + j);
-            }
-        }
-        swaps.push(pivot);
-        let d = m[col * n + col];
-        pivots.push(d);
-        for j in col + 1..n {
-            m[col * n + j] /= d;
-        }
-        for r in col + 1..n {
-            let f = m[r * n + col];
-            if f == 0.0 {
-                continue;
-            }
-            for j in col + 1..n {
-                m[r * n + j] -= f * m[col * n + j];
-            }
-        }
-    }
-    Ok(Lu {
-        n,
-        rows: m,
-        pivots,
-        swaps,
-    })
-}
-
-impl Lu {
-    /// Solves `A·X = B` for `B` (`n` by `k`, row-major); a vector is the
-    /// `k = 1` case.
-    pub fn solve(&self, b: &[f64], k: usize) -> Vec<f64> {
-        let n = self.n;
-        debug_assert_eq!(b.len(), n * k);
-        let mut x = b.to_vec();
-        for (c, &p) in self.swaps.iter().enumerate() {
-            if p != c {
-                for j in 0..k {
-                    x.swap(p * k + j, c * k + j);
-                }
-            }
-        }
-        // The forward phase of the elimination, on the right-hand sides.
-        for col in 0..n {
-            let d = self.pivots[col];
-            for j in 0..k {
-                x[col * k + j] /= d;
-            }
-            for r in col + 1..n {
-                let f = self.rows[r * n + col];
-                if f == 0.0 {
-                    continue;
-                }
-                for j in 0..k {
-                    x[r * k + j] -= f * x[col * k + j];
-                }
-            }
-        }
-        // Back substitution with the unit upper triangle.
-        for i in (0..n).rev() {
-            for j in i + 1..n {
-                let u = self.rows[i * n + j];
-                for c in 0..k {
-                    x[i * k + c] -= u * x[j * k + c];
-                }
-            }
-        }
-        for v in &mut x {
-            *v += 0.0;
-        }
-        x
-    }
-
-    /// Solves `Z·A = X` for `X` (`m` by `n`, row-major): `Z = X·A⁻¹`,
-    /// without forming `A⁻¹` or `Aᵀ`. `A⁻¹ = U'⁻¹·E`, where `E` is the
-    /// sequence of row operations of the elimination, so `Z = (X·U'⁻¹)·E`:
-    /// a forward solve against the unit upper triangle, then the
-    /// elimination's operations applied to columns, last step first.
-    #[allow(clippy::needless_range_loop)]
-    pub fn solve_right(&self, x: &[f64], m: usize) -> Vec<f64> {
-        let n = self.n;
-        debug_assert_eq!(x.len(), m * n);
-        let mut z = x.to_vec();
-        // Y·U' = X, column by column: yⱼ = xⱼ - Σ_{i<j} yᵢ·u'ᵢⱼ.
-        for row in 0..m {
-            let y = &mut z[row * n..(row + 1) * n];
-            for j in 0..n {
-                let mut s = y[j];
-                for (i, &yi) in y[..j].iter().enumerate() {
-                    s -= yi * self.rows[i * n + j];
-                }
-                y[j] = s;
-            }
-        }
-        // Z = Y·E, with E = Elimₙ₋₁·Scaleₙ₋₁⋯Elim₀·Scale₀·P.
-        for col in (0..n).rev() {
-            for row in 0..m {
-                let y = &mut z[row * n..(row + 1) * n];
-                let mut s = y[col];
-                for r in col + 1..n {
-                    let f = self.rows[r * n + col];
-                    if f == 0.0 {
-                        continue;
-                    }
-                    s -= f * y[r];
-                }
-                y[col] = s / self.pivots[col];
-            }
-        }
-        for (c, &p) in self.swaps.iter().enumerate().rev() {
-            if p != c {
-                for row in 0..m {
-                    z.swap(row * n + p, row * n + c);
-                }
-            }
-        }
-        for v in &mut z {
-            *v += 0.0;
-        }
-        z
-    }
+    linalg::lu(a, n)
 }
 
 // ----------------------------------------------------------------------
@@ -631,16 +486,6 @@ fn gram(l: &Value, r: &Value, whole: Span) -> R<Option<Value>> {
     let dim = dim_l
         .checked_mul(*dim_r)
         .map_err(|_| exponent_overflow(whole))?;
-    let mut out = vec![0.0; m * m];
-    for i in 0..m {
-        for j in i..m {
-            let mut s = 0.0;
-            for p in 0..k {
-                s += b[i * k + p] * b[j * k + p];
-            }
-            out[i * m + j] = s;
-            out[j * m + i] = s;
-        }
-    }
+    let out = linalg::syrk(b, m, k);
     Ok(Some(Value::array(vec![m, m], all_finite(out, whole)?, dim)))
 }

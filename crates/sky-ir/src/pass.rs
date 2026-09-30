@@ -81,6 +81,10 @@ pub struct Explanation {
     /// The facts and type properties the rule relied on, one per entry
     /// ("`A` is PositiveDefinite", "`b` is Vector[3]").
     pub because: Vec<String>,
+    /// A second place in the source the change is about, if any: the earlier
+    /// computation that `span`'s code now reuses (`gvn`), the loop that
+    /// `span`'s code moved out of (`licm`). `to_diagnostic` labels it.
+    pub related: Option<Span>,
 }
 
 impl Explanation {
@@ -103,6 +107,9 @@ impl Explanation {
         };
         let mut d = Diagnostic::note(headline, self.span)
             .with_note(format!("applied by the `{}` pass", self.pass));
+        if let Some(related) = self.related {
+            d = d.with_secondary(related, "see also");
+        }
         for reason in &self.because {
             d = d.with_note(format!("because {reason}"));
         }
@@ -143,6 +150,20 @@ impl PassCx {
         after: impl Into<String>,
         because: Vec<String>,
     ) {
+        self.explain_related(rule, span, None, before, after, because);
+    }
+
+    /// [`Self::explain`] for a change that is also about a second place in
+    /// the source (see [`Explanation::related`]).
+    pub fn explain_related(
+        &mut self,
+        rule: RuleId,
+        span: Span,
+        related: Option<Span>,
+        before: impl Into<String>,
+        after: impl Into<String>,
+        because: Vec<String>,
+    ) {
         if self.explanations.len() >= MAX_EXPLANATIONS {
             self.omitted += 1;
             return;
@@ -154,6 +175,7 @@ impl PassCx {
             before: before.into(),
             after: after.into(),
             because,
+            related,
         });
     }
 

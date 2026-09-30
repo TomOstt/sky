@@ -762,6 +762,7 @@ fn user_names_appear_in_before_and_after() {
         before: rws[0].before.clone(),
         after: rws[0].after.clone(),
         because: rws[0].because.clone(),
+        related: None,
     };
     assert_eq!(
         crate::cholesky_text(&x).unwrap(),

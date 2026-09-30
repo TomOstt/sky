@@ -41,7 +41,9 @@
 //! # The kernels
 //!
 //! * **GEMM** ([`gemm`]): the Goto/BLIS structure. Cache blocks over `j`
-//!   (1024 columns), `k` (256) and `i` (128 rows); the block of `B` is packed
+//!   (1024 columns), `k` (256) and `i` (128 rows; these, the Cholesky and LU
+//!   block sizes and the thread threshold are the defaults `sky tune`
+//!   replaces on a machine where it finds better ones, see [`tuning`]); the block of `B` is packed
 //!   once into slivers of 8 columns (shared by all workers) and each worker
 //!   packs its own rows of `A` into slivers of 4 rows; a 4 by 8 tile of
 //!   accumulators lives in registers while 256 rank-one updates stream
@@ -113,6 +115,7 @@ mod micro;
 pub mod reference;
 mod threads;
 mod tri;
+pub mod tuning;
 
 pub use chol::{cholesky, cholesky_solve, cholesky_solve_with, cholesky_with, is_symmetric};
 pub use dot::{dot, sum_squares, sum_squares_scaled, LANES};
@@ -120,6 +123,7 @@ pub use gemm::{gemm, gemm_into_with, gemm_with, syrk, syrk_with};
 pub use inverse::{inverse, inverse_with};
 pub use lu::{lu, lu_with, solve, Lu};
 pub use threads::{default_threads, set_threads, MAX_THREADS};
+pub use tuning::register;
 
 /// Why a factorization or inverse failed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

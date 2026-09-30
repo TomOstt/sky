@@ -1514,6 +1514,8 @@ dependencies = [
  "matrixmultiply",
  "proptest",
  "rayon",
+ "sky-hw",
+ "sky-tune",
 ]
 
 [[package]]

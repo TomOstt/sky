@@ -22,14 +22,8 @@
 use std::cell::RefCell;
 
 use crate::micro::{tile, MR, NR};
-use crate::threads::{self, PARALLEL_MIN_MADDS};
-
-/// Rows of `A` per cache block (a multiple of `MR`).
-const MC: usize = 128;
-/// The `k` extent of a cache block.
-const KC: usize = 256;
-/// Columns of `B` per cache block (a multiple of `NR`).
-const NC: usize = 1024;
+use crate::threads::{self, par_min_madds};
+use crate::tuning::{gemm_blocks, Blocks};
 
 /// A read-only matrix with arbitrary strides: entry `(i, j)` is
 /// `data[i * rs + j * cs]`.
@@ -212,12 +206,13 @@ fn run_chunk(
     pc: usize,
     kc: usize,
     op: Op,
+    mc_max: usize,
 ) {
     let load = !(op.zero && pc == 0);
-    let mut ap = take_scratch(&A_PACK, round_up(MC, MR) * kc);
+    let mut ap = take_scratch(&A_PACK, round_up(mc_max, MR) * kc);
     let mut ic = 0;
     while ic < chunk.rows {
-        let mc = MC.min(chunk.rows - ic);
+        let mc = mc_max.min(chunk.rows - ic);
         let grow = chunk.row0 + ic;
         // Skip a block that lies wholly above the diagonal.
         if (jc as isize) > (grow + mc - 1) as isize + op.shift {
@@ -268,7 +263,12 @@ pub(crate) fn gemm_view(
         }
         return;
     }
-    let big = m * n * k >= PARALLEL_MIN_MADDS;
+    let Blocks {
+        mc: mc_max,
+        kc: kc_max,
+        nc: nc_max,
+    } = gemm_blocks(m, n, k);
+    let big = m * n * k >= par_min_madds();
     let threads = if big { threads } else { 1 };
     if threads > 1 && m < 4 * MR * 2 && n >= 64 {
         return gemm_columns(a, b, c, ldc, m, n, k, op, threads);
@@ -279,11 +279,11 @@ pub(crate) fn gemm_view(
         m
     };
     let mut chunks = split_rows(c, ldc, m, n, rows_per);
-    let mut bp = take_scratch(&B_PACK, KC.min(k) * round_up(NC.min(n), NR));
-    for jc in (0..n).step_by(NC) {
-        let nc = NC.min(n - jc);
-        for pc in (0..k).step_by(KC) {
-            let kc = KC.min(k - pc);
+    let mut bp = take_scratch(&B_PACK, kc_max.min(k) * round_up(nc_max.min(n), NR));
+    for jc in (0..n).step_by(nc_max) {
+        let nc = nc_max.min(n - jc);
+        for pc in (0..k).step_by(kc_max) {
+            let kc = kc_max.min(k - pc);
             let slivers = nc.div_ceil(NR);
             let panel = &mut bp[..slivers * kc * NR];
             if threads > 1 {
@@ -299,7 +299,7 @@ pub(crate) fn gemm_view(
             }
             let panel: &[f64] = panel;
             threads::for_each(threads, chunks.iter_mut().collect(), |chunk| {
-                run_chunk(a, panel, chunk, ldc, jc, nc, pc, kc, op)
+                run_chunk(a, panel, chunk, ldc, jc, nc, pc, kc, op, mc_max)
             });
         }
     }
@@ -377,11 +377,7 @@ pub fn gemm_into_with(
         return;
     }
     let madds = m * n * k;
-    let threads = if madds >= PARALLEL_MIN_MADDS {
-        threads
-    } else {
-        1
-    };
+    let threads = if madds >= par_min_madds() { threads } else { 1 };
     if n == 1 {
         matvec(a, m, k, b, c, threads);
     } else if m == 1 {
@@ -443,7 +439,7 @@ pub fn syrk_with(b: &[f64], m: usize, k: usize, threads: usize) -> Vec<f64> {
         }
         return c;
     }
-    let threads = if m * m * k / 2 >= PARALLEL_MIN_MADDS {
+    let threads = if m * m * k / 2 >= par_min_madds() {
         threads
     } else {
         1

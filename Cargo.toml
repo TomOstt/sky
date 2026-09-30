@@ -29,3 +29,8 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.regalloc2]
 opt-level = 3
+# The linear algebra kernels are timed by `sky tune` and hammered by property
+# tests over matrices of order 300: unoptimised, the tests take minutes.
+# (Overflow checks and debug assertions stay on.)
+[profile.dev.package.sky-linalg]
+opt-level = 3

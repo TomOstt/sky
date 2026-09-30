@@ -50,8 +50,10 @@ pub fn default_threads() -> usize {
 }
 
 /// Below this many multiply-adds a kernel stays on the calling thread: the
-/// cost of waking the pool is about 5 to 20 microseconds.
-pub(crate) const PARALLEL_MIN_MADDS: usize = 1 << 21;
+/// cost of waking the pool is about 5 to 20 microseconds. Tuned by `sky tune`
+/// (see [`crate::tuning`]); [`crate::tuning::DEFAULT_PAR_MIN_MADDS`] is the
+/// built-in value.
+pub(crate) use crate::tuning::par_min_madds;
 
 /// A pool with exactly `threads` workers (cached, so repeated calls share).
 fn pool(threads: usize) -> Arc<ThreadPool> {

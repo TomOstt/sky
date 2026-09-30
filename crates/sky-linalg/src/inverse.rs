@@ -240,7 +240,7 @@ fn blocked(a: &[f64], n: usize, tol: f64, threads: usize) -> Option<Result<Vec<f
             &mut u,
             w,
             threads,
-            threads::PARALLEL_MIN_MADDS / 8,
+            threads::par_min_madds() / 8,
         );
         if !u.iter().all(|x| x.is_finite()) {
             return None;

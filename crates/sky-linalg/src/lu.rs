@@ -142,7 +142,7 @@ impl Factor<'_> {
             &mut block,
             cols,
             self.threads,
-            threads::PARALLEL_MIN_MADDS / 8,
+            threads::par_min_madds() / 8,
         );
         if !block.iter().all(|x| x.is_finite()) {
             return Err(Stop::NonFinite);
@@ -243,7 +243,7 @@ impl Lu {
             }
         }
         let v = View::row_major(&self.lu, n);
-        let par = threads::PARALLEL_MIN_MADDS;
+        let par = threads::par_min_madds();
         tri::solve_in_place(v, n, false, true, &mut x, k, threads, par);
         tri::solve_in_place(v, n, true, false, &mut x, k, threads, par);
         if !x.iter().all(|v| v.is_finite()) {
@@ -279,7 +279,7 @@ impl Lu {
             }
         }
         let v = self.transposed();
-        let par = threads::PARALLEL_MIN_MADDS;
+        let par = threads::par_min_madds();
         tri::solve_in_place(v, n, true, true, &mut t, m, threads, par);
         tri::solve_in_place(v, n, false, false, &mut t, m, threads, par);
         if !t.iter().all(|v| v.is_finite()) {

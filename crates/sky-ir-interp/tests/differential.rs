@@ -2012,3 +2012,55 @@ print(A @ A @ f() @ g())
     assert_eq!(o.stdout, "f\ng\n");
     assert_eq!(o.error.as_deref(), Some("division by zero"));
 }
+
+// ----- reproducible array arithmetic -----
+
+/// A matrix literal whose entries are cheap, deterministic and not exact
+/// sums, so a different order of additions shows in the printed bits.
+fn matrix_literal(rows: usize, cols: usize, seed: usize) -> String {
+    let row = |i: usize| {
+        let entries: Vec<String> = (0..cols)
+            .map(|j| {
+                let x = ((i * 31 + j * 17 + seed * 7) % 23) as f64 / 7.0 - 1.5;
+                format!("{x}")
+            })
+            .collect();
+        format!("[{}]", entries.join(", "))
+    };
+    let all: Vec<String> = (0..rows).map(row).collect();
+    format!("[{}]", all.join(", "))
+}
+
+#[test]
+fn long_reductions_and_blocked_products_are_the_same_bits_in_both_engines() {
+    // Vectors of 9 and 33 entries take the interleaved-sums dot product;
+    // the 9-by-70 product and its transpose cross the kernel's block edges.
+    let v9 = "[1e16, 1, -1e16, 1, 1, 1, 1, 1, 0.5]";
+    let vector = |n: usize, seed: usize| {
+        let items: Vec<String> = (0..n)
+            .map(|i| format!("{}", ((i * 13 + seed) % 19) as f64 / 3.0 - 2.5))
+            .collect();
+        format!("[{}]", items.join(", "))
+    };
+    let src = format!(
+        "\
+v = {v9}
+w = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+print(v @ w)
+a = {}
+b = {}
+print(a @ b)
+A = {}
+B = {}
+C = A @ B
+print(C)
+print(Cᵀ @ C)
+",
+        vector(33, 1),
+        vector(33, 5),
+        matrix_literal(9, 70, 1),
+        matrix_literal(70, 11, 2),
+    );
+    let o = assert_same(&src);
+    assert_eq!(o.error, None, "{}", o.stdout);
+}

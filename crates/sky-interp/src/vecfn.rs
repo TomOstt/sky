@@ -16,6 +16,7 @@ use sky_diag::Span;
 
 use crate::arith::{arity_mismatch, describe, finite, overflow, R};
 use crate::eval::Interp;
+use crate::linalg;
 use crate::{RuntimeError, Value};
 
 impl Interp<'_> {
@@ -56,10 +57,10 @@ pub fn norm(v: &Value, whole: Span, arg: Span) -> R<Value> {
     // Squares of ordinary numbers cannot overflow or vanish, and give the
     // correctly rounded `5` for `[3, 4]`; only extreme entries are scaled.
     if (1e-100..1e100).contains(&scale) {
-        let sum: f64 = data.iter().map(|x| x * x).sum();
+        let sum = linalg::sum_squares(data);
         return Ok(Value::number(sum.sqrt(), dim));
     }
-    let sum: f64 = data.iter().map(|x| (x / scale) * (x / scale)).sum();
+    let sum = linalg::sum_squares_scaled(data, scale);
     Ok(Value::number(finite(scale * sum.sqrt(), whole)?, dim))
 }
 
@@ -115,7 +116,7 @@ pub fn dot(a: &Value, b: &Value, whole: Span, aspan: Span, bspan: Span) -> R<Val
             whole,
         )
     })?;
-    let sum: f64 = xs.iter().zip(ys).map(|(x, y)| x * y).sum();
+    let sum = linalg::dot(xs, ys);
     if !sum.is_finite() {
         return Err(overflow(whole));
     }

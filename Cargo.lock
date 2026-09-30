@@ -1549,6 +1549,7 @@ dependencies = [
  "proptest",
  "sky-ast",
  "sky-diag",
+ "sky-linalg",
  "sky-syntax",
  "sky-units",
 ]

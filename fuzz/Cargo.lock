@@ -727,6 +727,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sky-linalg"
+version = "0.0.1"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
 name = "sky-lower"
 version = "0.0.1"
 dependencies = [
@@ -782,6 +789,7 @@ version = "0.0.1"
 dependencies = [
  "sky-ast",
  "sky-diag",
+ "sky-linalg",
  "sky-units",
 ]
 

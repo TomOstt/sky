@@ -46,7 +46,7 @@ These come cheaply once the IR exists:
 - Uncertainty-carrying values [10], starting with linear propagation. Done: `5.31 ± 0.02 kg` with correlations tracked, on the tree-walker (`spec/v0.1.md`, "Uncertainty"); arrays, SIR and non-linear propagation are next.
 - `equation` / `solve` for ordinary differential equations (ODEs), with a transparent solver-selection table [11, 12]: stiffness, symplectic structure, tolerances.
 - Condition-number warnings [42] and numerical-instability hints with rewrites [92].
-- Contracts such as `ensures` and `conserve energy`, monitored at run time [3, 29, 81].
+- Contracts such as `ensures` and `conserve energy`, monitored at run time [3, 29, 81]. `assert`, `requires` and `ensures` are in (spec "Contracts"); `conserve` comes with `equation`/`solve`.
 
 **Done when:** an orbit script declares its tolerance and conserved quantity, and Sky picks and explains the integrator.
 

@@ -1,3 +1,5 @@
-A: Matrix[3, 3]
-B: Matrix[3, 3]
+# `*` between arrays works entry by entry, so the shapes must be equal; the
+# matrix product is `@`.
+A: Matrix[2, 3]
+B: Matrix[3, 4]
 C = A * B

@@ -1,4 +1,5 @@
-# `^` needs a scalar base in v0.1, so `v^2` on a vector is an error.
+# `^` on a vector could mean the square of every entry or the squared
+# length, so it is an error with both spellings offered.
 v: Vector[3] m/s
 m = 2 kg
 k = 0.5 * m * v^2

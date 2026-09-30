@@ -1,7 +1,8 @@
-tests/ui/types/err_vector_power.sky:4:16: error: cannot raise a vector to a power
+tests/ui/types/err_vector_power.sky:5:16: error: cannot raise a vector to a power
   |
-4 | k = 0.5 * m * v^2
+5 | k = 0.5 * m * v^2
   |                ^^
   |               - this is Vector[3] [L·T⁻¹]
-  = note: `^` needs a scalar base in v0.1
+  = note: `^` needs a scalar base: on an array it could mean the square of every entry or the squared length
   = help: for the squared magnitude write `v @ v`
+  = help: for the square of every entry write `v * v`

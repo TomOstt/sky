@@ -8,9 +8,9 @@
 //!
 //! * A user binding or `def` named like a builtin wins, exactly as for
 //!   `print` and `inv`: the hook declines and the normal call path runs.
-//! * Arrays are rejected ("elementwise math on arrays comes with arrays at
-//!   run time"), since the interpreter has no array values yet and a
-//!   silent scalar typing would be wrong.
+//! * A function of an array is entry by entry (`sqrt(v)`, `atan2(y, x)`);
+//!   the array arguments of one call share one shape and numbers broadcast
+//!   (see [`crate::entrywise`]).
 //! * An argument whose type is already unknown (an earlier error, a string)
 //!   makes the result unknown, so one mistake reports once.
 
@@ -18,7 +18,7 @@ use sky_ast::{Expr, ExprKind};
 use sky_diag::{display_capped as quote, Diagnostic, Span};
 use sky_units::{Dimension, MathDimError, MathFn};
 
-use crate::check::{describe, Checker, Ty, ValueTy};
+use crate::check::{describe, Checker, Ty};
 
 impl Checker<'_> {
     /// The type of `callee(args)` if `callee` names a builtin math function
@@ -44,11 +44,7 @@ impl Checker<'_> {
         let mut bad = false;
         for (a, t) in args.iter().zip(&tys) {
             match t {
-                Ty::Value(v) if v.is_scalar() => dims.push(v.dim),
-                Ty::Value(v) => {
-                    self.math_array(f, a, v);
-                    bad = true;
-                }
+                Ty::Value(v) => dims.push(v.dim),
                 Ty::Bool | Ty::Func(_) | Ty::Ode(_) => {
                     let what = match t {
                         Ty::Bool => "Bool".to_string(),
@@ -68,6 +64,9 @@ impl Checker<'_> {
         }
         if bad {
             return Some(Ty::Unknown);
+        }
+        if let Some(t) = self.math_array_type(f, callee, args, &tys, &dims) {
+            return Some(t);
         }
         match f.result_dim(&dims) {
             Ok(d) => Some(Ty::scalar(d)),
@@ -106,20 +105,7 @@ impl Checker<'_> {
     }
 
     #[cold]
-    fn math_array(&mut self, f: MathFn, arg: &Expr, v: &ValueTy) {
-        self.error(
-            Diagnostic::error(
-                format!("`{}` takes a scalar, found an array", f.name()),
-                arg.span,
-            )
-            .with_label(self.this_is(v))
-            .with_note("elementwise math on arrays comes with arrays at run time")
-            .with_help("apply it to one element at a time"),
-        );
-    }
-
-    #[cold]
-    fn math_dim_error(
+    pub(crate) fn math_dim_error(
         &mut self,
         f: MathFn,
         e: MathDimError,

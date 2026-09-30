@@ -1,0 +1,16 @@
+# `*` and `/` between arrays of one shape work entry by entry; dimensions
+# multiply or divide per entry. `@` stays the matrix product.
+x: Vector[3] m
+y: Vector[3] m
+t: Vector[3] s
+area = x * y
+speed = x / t
+ratio = x / y
+rr = sqrt(x * x + y * y)
+M: Matrix[2, 3] m
+N: Matrix[2, 3] s
+MN = M * N
+dot_xy = x @ y
+S: Matrix[K, K]
+T: Matrix[K, K]
+ST = S * T

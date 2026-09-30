@@ -50,6 +50,7 @@ mod contracts;
 pub mod cost;
 mod derivative;
 mod display;
+mod entrywise;
 pub mod flops;
 mod flow;
 mod for_loop;

@@ -1,8 +1,13 @@
-tests/ui/types/err_array_times_array.sky:3:7: error: cannot multiply two arrays with `*`
+tests/ui/types/err_array_times_array.sky:5:7: error: cannot apply `*` to Matrix[2,3] and Matrix[3,4]
   |
-3 | C = A * B
-  |       ^
-  |     - this is Matrix[3,3] [1]
-  |         - this is Matrix[3,3] [1]
-  = note: v0.1 has no elementwise `*` or `/` between arrays
-  = help: use `@` for the matrix product
+5 | C = A * B
+  |       ^ axis 0 differs: 2 vs 3
+  |     - this is Matrix[2,3] [1]
+  |         - this is Matrix[3,4] [1]
+  = note: axis     0  1
+  = note: left     2  3
+  = note: right    3  4
+  = note: differs  ^
+  = note: in a matrix, axis 0 is the rows and axis 1 the columns
+  = note: `*` on two arrays works entry by entry, so both need one shape
+  = help: for the matrix product use `@`

@@ -1,0 +1,21 @@
+tests/ui/types/err_array_math_dimensions.sky:3:9: error: the argument of `exp` must be dimensionless, found length
+  |
+3 | a = exp(u)
+  |         ^ this has dimension length
+  = note: exp(x) = 1 + x + x²/2 + …, which adds terms of different dimensions unless x has none
+  = help: divide by a reference length, e.g. `exp(u / (1 m))`
+
+tests/ui/types/err_array_math_dimensions.sky:4:9: error: the argument of `sin` must be dimensionless, found length
+  |
+4 | b = sin(u)
+  |         ^ this has dimension length
+  = note: trigonometric functions take an angle, and an angle is a pure number (`rad` is a dimensionless unit)
+  = help: divide by a reference length, e.g. `sin(u / (1 m))`
+  = help: angles are dimensionless: write `0.5 rad` or `30 deg`, or a plain number of radians
+
+tests/ui/types/err_array_math_dimensions.sky:5:11: error: the argument of `floor` must be dimensionless, found length
+  |
+5 | d = floor(u)
+  |           ^ this has dimension length
+  = note: values are stored in SI, so rounding a quantity depends on the unit you would show it in, which Sky does not keep
+  = help: divide by a reference length, e.g. `floor(u / (1 m))`

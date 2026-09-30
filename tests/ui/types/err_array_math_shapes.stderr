@@ -1,0 +1,30 @@
+tests/ui/types/err_array_math_shapes.sky:4:5: error: cannot apply `atan2` to Vector[3] and Vector[4]
+  |
+4 | a = atan2(u, v)
+  |     ^^^^^^^^^^ axis 0 differs: 3 vs 4
+  |           - this is Vector[3] [L]
+  |              - this is Vector[4] [L]
+  = note: axis     0
+  = note: left     3
+  = note: right    4
+  = note: differs  ^
+
+tests/ui/types/err_array_math_shapes.sky:5:5: error: cannot apply `hypot` to Vector[3] and Vector[4]
+  |
+5 | b = hypot(u, v)
+  |     ^^^^^^^^^^ axis 0 differs: 3 vs 4
+  |           - this is Vector[3] [L]
+  |              - this is Vector[4] [L]
+  = note: axis     0
+  = note: left     3
+  = note: right    4
+  = note: differs  ^
+
+tests/ui/types/err_array_math_shapes.sky:7:5: error: the arguments of `max` must have the same dimension, found length and time
+  |
+7 | d = max(u, 2 s)
+  |     ^^^ mismatched dimensions
+  |         - length
+  |            --- time
+  = note: `max` compares or combines its two arguments, which only makes sense in one dimension
+  = help: convert one side, or fix the unit

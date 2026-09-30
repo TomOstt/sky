@@ -1,0 +1,8 @@
+# `^` on an array reads two ways (the square of each entry, or the squared
+# length), so it is an error; both spellings are offered.
+v: Vector[3] m/s
+m = 2 kg
+k = 0.5 * m * v^2
+w = v^3
+A: Matrix[2, 2]
+B = A^2

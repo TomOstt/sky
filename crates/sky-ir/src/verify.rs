@@ -627,12 +627,14 @@ impl<'a> FnVerifier<'a> {
             | OpKind::Div
             | OpKind::Pow
             | OpKind::MatMul
+            | OpKind::Dot
             | OpKind::Solve { .. }
             | OpKind::Cmp(_) => (Some(2), Some(1)),
             OpKind::Neg
             | OpKind::PowConst { .. }
             | OpKind::Inverse
             | OpKind::Transpose
+            | OpKind::Norm
             | OpKind::Show { .. }
             | OpKind::Identity
             | OpKind::Len
@@ -712,6 +714,8 @@ impl<'a> FnVerifier<'a> {
             OpKind::Inverse => self.check_inverse(o, op),
             OpKind::MatMul => self.check_matmul(o, op),
             OpKind::Transpose => self.check_transpose(o, op),
+            OpKind::Norm => self.check_norm(o, op),
+            OpKind::Dot => self.check_dot(o, op),
             OpKind::Solve { method } => self.check_solve(o, op, *method),
             OpKind::ArrayLiteral { cols } => self.check_array_literal(o, op, *cols),
             OpKind::Index => self.check_index(o, op),
@@ -1165,6 +1169,50 @@ impl<'a> FnVerifier<'a> {
         // wrapper for its error text.
         if let Some(t) = self.with_rules(o, |_| rules::transpose(&t)) {
             self.expect_result(o, op, Some(a.dim), Some(t.shape().clone()));
+        }
+    }
+
+    /// `norm(x)`: any number; the result is a scalar of the operand's
+    /// dimension.
+    fn check_norm(&mut self, o: OpId, op: &OpData) {
+        match self.operand_num(o, op, 0) {
+            Some(Slot::Num(a)) => self.expect_result(o, op, Some(a.dim), Some(Shape::scalar())),
+            _ => self.expect_result_loose(o, op),
+        }
+    }
+
+    /// `dot(a, b)`: two vectors of one length; the result is a scalar in the
+    /// product of the dimensions.
+    fn check_dot(&mut self, o: OpId, op: &OpData) {
+        let Some((a, b)) = self.two_nums(o, op) else {
+            self.expect_result_loose(o, op);
+            return;
+        };
+        let mut ok = true;
+        for (i, n) in [a, b].into_iter().enumerate() {
+            if n.shape.rank() != 1 {
+                self.err_op(
+                    o,
+                    format!("operand {i} of `dot` must be a vector, found {}", n.shape),
+                );
+                ok = false;
+            }
+        }
+        if ok {
+            let (ta, tb) = (
+                TensorType::untagged(a.shape.clone()),
+                TensorType::untagged(b.shape.clone()),
+            );
+            if self
+                .with_rules(o, |u| rules::elementwise(u, &ta, &tb))
+                .is_none()
+            {
+                ok = false;
+            }
+        }
+        let dim = self.dim_result(o, a.dim.checked_mul(b.dim));
+        if let (true, Some(d)) = (ok, dim) {
+            self.expect_result(o, op, Some(d), Some(Shape::scalar()));
         }
     }
 

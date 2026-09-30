@@ -53,7 +53,7 @@ pub mod uncertain;
 mod uncertain_format;
 mod uncertain_math;
 mod value;
-mod vecfn;
+pub mod vecfn;
 
 #[cfg(test)]
 mod array_tests;

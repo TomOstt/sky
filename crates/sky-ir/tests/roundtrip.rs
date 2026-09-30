@@ -43,6 +43,8 @@ fn all_ops_module_uses_every_mnemonic() {
         "inverse",
         "matmul",
         "transpose",
+        "norm",
+        "dot",
         "solve",
         "cmp.eq",
         "cmp.ne",

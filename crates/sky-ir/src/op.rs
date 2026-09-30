@@ -269,6 +269,22 @@ pub enum OpKind {
     Math(MathFn),
     /// `A @ B`: two operands, one result.
     MatMul,
+    /// `norm(x)`: one operand (a number, vector or matrix), one result: the
+    /// Euclidean length of a vector (the Frobenius norm of a matrix, the
+    /// absolute value of a scalar), a scalar of the operand's dimension. The
+    /// evaluation is `sky_interp::vecfn::norm`, the function `sky run` calls
+    /// too, scaled for extreme entries so that a vector of `1e200`s has a
+    /// norm. Effect `Fail`: a norm can overflow the finite range, and an
+    /// operand that is not a number fails with the interpreter's error at
+    /// the operand's span.
+    Norm,
+    /// `dot(a, b)`: two operands (vectors of one length), one result: their
+    /// inner product, a scalar in the product of the operands' dimensions.
+    /// Evaluated by `sky_interp::vecfn::dot`. Effect `Fail`: the sum can
+    /// overflow, and operands that are not two vectors of one length fail
+    /// with the interpreter's error (the length mismatch labels both
+    /// operands' spans). It takes no matrices: that is `matmul`.
+    Dot,
     /// `Aᵀ`: one operand, one result. Pure: it can't fail. A scalar is its
     /// own transpose and a matrix `M×N` becomes `N×M`; a vector or a
     /// higher-rank tensor has no transpose.
@@ -561,6 +577,8 @@ impl OpKind {
             OpKind::Inverse => "inverse",
             OpKind::MatMul => "matmul",
             OpKind::Transpose => "transpose",
+            OpKind::Norm => "norm",
+            OpKind::Dot => "dot",
             OpKind::Solve { .. } => "solve",
             OpKind::Show { .. } => "show",
 
@@ -626,6 +644,11 @@ impl OpKind {
             // A singular matrix or a zero scalar fails.
             OpKind::Inverse | OpKind::Solve { .. } => (fail, false, false, false),
             OpKind::MatMul => (fail, false, false, true),
+            // The sum of squares (or products) can overflow; `dot` is
+            // commutative exactly, as each product is and the sum runs in
+            // the same order.
+            OpKind::Norm => (fail, false, false, false),
+            OpKind::Dot => (fail, false, true, false),
             // A bad or out-of-bounds index, or a bad size, fails.
             OpKind::Index
             | OpKind::Slice { .. }

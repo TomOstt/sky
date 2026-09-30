@@ -1,0 +1,12 @@
+// `norm` and `dot`: the vector builtins, with the spans of their operands.
+sir edition 2026
+
+fn @length(%v: num[L; (3)]) -> (num[L; ()]) effects(fail) {
+  %n = norm %v : num[L; ()] @ 10..18
+  return %n
+}
+
+fn @work(%f: num[L·M·T⁻²; (3)], %d: num[L; (3)]) -> (num[L²·M·T⁻²; ()]) effects(fail) {
+  %w = dot %f, %d : num[L²·M·T⁻²; ()] @ 20..34
+  return %w
+}

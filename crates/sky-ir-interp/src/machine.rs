@@ -566,6 +566,20 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             let v = array::matmul(act.get(a, s)?, act.get(b, s)?, s, l, r)?;
             act.define(op, vec![v])
         }
+        // The functions `sky run` calls for `norm(x)` and `dot(a, b)`, with
+        // the call's span and the arguments' spans, so the results and the
+        // errors are the same bytes.
+        OpKind::Norm => {
+            let [a] = fixed(op)?;
+            let v = sky_interp::vecfn::norm(act.get(a, s)?, s, op.operand_span(0))?;
+            act.define(op, vec![v])
+        }
+        OpKind::Dot => {
+            let [a, b] = fixed(op)?;
+            let (l, r) = (op.operand_span(0), op.operand_span(1));
+            let v = sky_interp::vecfn::dot(act.get(a, s)?, act.get(b, s)?, s, l, r)?;
+            act.define(op, vec![v])
+        }
         OpKind::Transpose => {
             let [a] = fixed(op)?;
             let v = array::transpose(act.get(a, s)?, s)?;

@@ -763,6 +763,8 @@ impl<'a> Parser<'a> {
             "inverse" => OpKind::Inverse,
             "matmul" => OpKind::MatMul,
             "transpose" => OpKind::Transpose,
+            "norm" => OpKind::Norm,
+            "dot" => OpKind::Dot,
             "solve" => {
                 self.expect('[')?;
                 self.skip_inline();

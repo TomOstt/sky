@@ -1,0 +1,66 @@
+# A tour of Sky: units, exact derivatives, proven matrix properties.
+# Run it with `sky run examples/showcase.sky`; the expected output is
+# in `showcase.out` next to it, and a test keeps the two in step.
+
+# ── 1. Units are types: every value knows its physical dimension ─────────
+distance = 42.195 km
+time     = 2 h + 35 min
+pace     = distance / time
+print("marathon speed:", pace as km/h)
+
+# Physical constants are built in (CODATA 2018, exact where SI says so)
+E = 1 g * c^2
+print("energy in one gram:", E as TJ)
+
+# ── 2. Functions with dimensioned signatures ─────────────────────────────
+def fall_time(height: m) -> s:
+    return sqrt(2 * height / g_n)
+
+print("drop from 100 m:", fall_time(100 m))
+print("drop from 1 km: ", fall_time(1 km))       # km converts automatically
+
+# ── 3. Exact derivatives (automatic differentiation, not finite diffs) ──
+def position(t: s) -> m:
+    return 5 m/s^2 * t^2 + 3 m/s * t
+
+v = derivative(position, t)(2 s)                 # a velocity, by type
+a = (∂position/∂t)(2 s)                          # physics notation, same thing
+print("velocity at 2 s:", v)
+
+def velocity(t: s) -> m/s:
+    return derivative(position, t)(t)
+
+print("acceleration:", derivative(velocity, t)(2 s))
+
+# Gradient of a potential energy is (minus) a force: the unit falls out
+k = 3 N/m
+def U(x: m, y: m) -> J:
+    return 0.5 * k * (x^2 + y^2)
+
+F: Vector[2] N = -grad(U)(1 m, 2 m)
+print("spring force:", F)
+
+# ── 4. Matrices with properties the checker proves ──────────────────────
+K: PositiveDefinite Matrix[2, 2] N/m = [[4 N/m, 1 N/m],
+                                        [1 N/m, 3 N/m]]
+f = [2 N, 1 N]
+x = K⁻¹ @ f                                      # solved via Cholesky, no inverse formed
+print("displacement:", x as mm)
+
+# ── 5. Loops, conditionals, and a tiny simulation ───────────────────────
+def orbit_speed(r: m) -> m/s:
+    return sqrt(G * 5.972e24 kg / r)
+
+r = 6371 km + 400 km
+print("ISS orbital speed:", orbit_speed(r) as km/s)
+
+# projectile with drag-free Euler integration
+dt = 0.01 s
+t  = 0 s
+y  = 0 m
+vy = 20 m/s
+while y >= 0 m:
+    y  = y + vy * dt
+    vy = vy - g_n * dt
+    t  = t + dt
+print("time aloft:", t, "(exact: ", 2 * 20 m/s / g_n, ")")

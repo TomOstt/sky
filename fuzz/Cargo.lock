@@ -651,6 +651,7 @@ name = "sky-egraph"
 version = "0.0.1"
 dependencies = [
  "egg",
+ "quanta",
  "sky-diag",
  "sky-ir",
  "sky-types",

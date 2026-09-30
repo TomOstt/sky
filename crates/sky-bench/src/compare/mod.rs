@@ -46,7 +46,7 @@ const USAGE: &str = "usage: sky-bench compare [--filter <substring>] [--reps <n>
 /// Engines of `sky run --engine=`, in report order.
 pub const SKY_ENGINES: [&str; 4] = ["ast", "sir", "native", "auto"];
 
-/// The id of the column that runs Sky's native engine with
+/// The id of the column that runs Sky's default engine (`ast`) with
 /// `--numerics=relaxed` (fused multiply-add, reassociated sums, Accelerate on
 /// macOS): not bit-reproducible, so it is a column of its own, never the
 /// "best Sky engine" the interpretation compares with, and it is checked
@@ -65,7 +65,7 @@ pub const IMPLS: [(&str, &str); 11] = [
     ("sky-sir", "Sky sir"),
     ("sky-native", "Sky native"),
     ("sky-auto", "Sky auto"),
-    (SKY_RELAXED, "Sky native, relaxed"),
+    (SKY_RELAXED, "Sky ast, relaxed"),
 ];
 
 pub fn is_sky(id: &str) -> bool {
@@ -585,7 +585,7 @@ fn command_for(
                 .strip_prefix("sky-")
                 .ok_or("unknown implementation")?;
             let relaxed = impl_id == SKY_RELAXED;
-            let engine = if relaxed { "native" } else { engine };
+            let engine = if relaxed { "ast" } else { engine };
             let sky = ctx.sky.as_ref().ok_or("no sky binary")?;
             if !ctx.engines.contains(&engine_name(engine)) {
                 return Err(format!("this `sky` has no `{engine}` engine"));

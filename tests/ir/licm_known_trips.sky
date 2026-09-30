@@ -1,0 +1,13 @@
+# The loop is known to run: `i` starts at 0 and the bound is 3, so the first
+# test is true, and nothing before `1 / d` can print or fail on the first
+# iteration. The division moves out of the loop without a guard, and if `d`
+# is zero the error is the same as before, at the same line, with the same
+# output before it.
+d: Scalar
+i = 0
+total = 0
+while i < 3:
+    t = 1 / d
+    total = total + t
+    i += 1
+print(total)

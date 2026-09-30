@@ -255,6 +255,8 @@ fn generated_programs_agree_in_both_engines() {
         "false",
         "\"hi\"",
         "while true:",
+        "for ",
+        "range(",
         "def f",
         "assert ",
         "requires ",
@@ -704,4 +706,172 @@ fn sir_does_not_check_the_right_operand_of_and_or_for_bool() {
 #[test]
 fn the_left_operand_of_and_is_worded_as_an_if_in_sir() {
     assert_agree("def f(a):\n    return a\nprint(f(1) and true)\n");
+}
+
+// ----- programs of small arrays -----
+//
+// The native engine holds small vectors and matrices as separate numbers, so
+// it gets a generator of its own (`harness::generate_vectors`); the oracle is
+// the same. `SKY_VEC_FROM` and `SKY_VEC_SEEDS` run a longer campaign (use
+// `--release`; 50 000 seeds take a few minutes), `SKY_VEC_SEED=n` prints the
+// program for seed `n`.
+
+/// What a run of small-array seeds saw.
+#[derive(Default)]
+struct VecStats {
+    programs: u64,
+    failed: u64,
+    printed: usize,
+    native_deopts: u64,
+    native_refusals: BTreeMap<String, u64>,
+    errors: BTreeMap<String, u64>,
+    sources: String,
+}
+
+fn run_vec_lane(first: u64, end: u64, lane: u64, lanes: u64, keep_sources: bool) -> VecStats {
+    let mut stats = VecStats::default();
+    let keep_going = std::env::var("SKY_FUZZ_KEEP_GOING").is_ok();
+    let mut seed = first + lane;
+    while seed < end {
+        let src = harness::generate_vectors(&input(seed));
+        match harness::check_source_strict(&src) {
+            Ok(o) => {
+                stats.programs += 1;
+                stats.failed += u64::from(o.failed);
+                stats.printed += o.printed;
+                if let Some(e) = o.error {
+                    let kind: String = e.chars().take(34).collect();
+                    *stats.errors.entry(kind).or_default() += 1;
+                }
+                stats.native_deopts += u64::from(o.native_deopt);
+                if let Some(why) = o.native_refusal {
+                    *stats.native_refusals.entry(why).or_default() += 1;
+                }
+                if keep_sources {
+                    stats.sources.push_str(&src);
+                }
+            }
+            Err(msg) if keep_going => {
+                eprintln!("FAIL seed {seed}: {}", msg.lines().next().unwrap_or(""));
+            }
+            Err(msg) => panic!("seed {seed}: {msg}\n--- program ---\n{src}"),
+        }
+        seed += lanes;
+    }
+    stats
+}
+
+#[test]
+fn generated_small_array_programs_agree_in_all_engines() {
+    let first = env_number("SKY_VEC_FROM").unwrap_or(1);
+    let count = env_number("SKY_VEC_SEEDS").unwrap_or(1500);
+    let default_run = count == 1500 && first == 1 && env_number("SKY_FUZZ_LEN").is_none();
+    let lanes = std::thread::available_parallelism().map_or(1, |n| n.get().min(8)) as u64;
+    let mut stats = VecStats::default();
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..lanes)
+            .map(|lane| {
+                scope.spawn(move || run_vec_lane(first, first + count, lane, lanes, default_run))
+            })
+            .collect();
+        for h in handles {
+            match h.join() {
+                Ok(s) => {
+                    stats.programs += s.programs;
+                    stats.failed += s.failed;
+                    stats.printed += s.printed;
+                    stats.native_deopts += s.native_deopts;
+                    for (k, v) in s.native_refusals {
+                        *stats.native_refusals.entry(k).or_default() += v;
+                    }
+                    for (k, v) in s.errors {
+                        *stats.errors.entry(k).or_default() += v;
+                    }
+                    stats.sources.push_str(&s.sources);
+                }
+                Err(payload) => std::panic::resume_unwind(payload),
+            }
+        }
+    });
+    eprintln!(
+        "{} small-array programs: {} stop with a run-time error, {} bytes printed; native code refused {}: {:?}; deoptimized on {}",
+        stats.programs,
+        stats.failed,
+        stats.printed,
+        stats.native_refusals.values().sum::<u64>(),
+        stats.native_refusals,
+        stats.native_deopts
+    );
+    if !default_run {
+        eprintln!("errors: {:#?}", stats.errors);
+        return;
+    }
+    let total = stats.programs;
+    // The comparison must mean something: most programs run to the end, the
+    // failures are of several kinds, and native code compiles the programs.
+    assert!(
+        stats.failed * 100 >= total * 4 && stats.failed * 100 <= total * 60,
+        "{} of {total} programs fail",
+        stats.failed
+    );
+    assert!(
+        stats.errors.len() >= 4,
+        "too few kinds of run-time error: {:?}",
+        stats.errors
+    );
+    assert_eq!(
+        stats.native_refusals.values().sum::<u64>(),
+        0,
+        "native code refused programs: {:?}",
+        stats.native_refusals
+    );
+    // The generator covers what it claims to.
+    for needle in [
+        "Vector[",
+        "Matrix[",
+        "-> Vector[",
+        "-> Matrix[",
+        "def vf",
+        "def uf",
+        "dot(",
+        "norm(",
+        "len(",
+        " @ ",
+        "transpose(",
+        "ᵀ",
+        "for ",
+        "while ",
+        "if ",
+        "assert norm(",
+        "+= ",
+        "*= ",
+        "/= ",
+        " m",
+        "[1",
+    ] {
+        assert!(
+            stats.sources.contains(needle),
+            "the generator never produced {needle:?}"
+        );
+    }
+    assert!(
+        stats.errors.keys().any(|e| e.starts_with("index ")),
+        "no program indexed out of range: {:?}",
+        stats.errors
+    );
+    assert!(
+        stats
+            .errors
+            .keys()
+            .any(|e| e.starts_with("arithmetic overflow")),
+        "no program overflowed: {:?}",
+        stats.errors
+    );
+}
+
+#[test]
+fn show_generated_small_array_program() {
+    if let Some(seed) = env_number("SKY_VEC_SEED") {
+        println!("{}", harness::generate_vectors(&input(seed)));
+    }
 }

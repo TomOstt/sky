@@ -98,6 +98,10 @@ impl Default for JitOptions {
     }
 }
 
+/// The most operands of a `fused` that are run natively (their kinds and data
+/// are gathered on the stack).
+pub(crate) const MAX_INLINE: usize = 8;
+
 /// How many `fused` operations ran natively in this process, for tests.
 #[cfg(test)]
 pub(crate) static NATIVE_RUNS: std::sync::atomic::AtomicUsize =
@@ -147,51 +151,80 @@ impl Jit {
         }
     }
 
+    /// Whether native kernels are used at all.
+    pub(crate) fn enabled(&self) -> bool {
+        self.options.enabled
+    }
+
     /// Runs `op` (a `fused` of `func`, operands `inputs`, `count` elements)
     /// natively if that is enabled, worth it (see the module docs), and the
     /// body compiles.
-    pub(crate) fn run(
+    #[cfg(test)]
+    pub(crate) fn run<V: std::borrow::Borrow<Value>>(
         &mut self,
         func: &Function,
         op: &OpData,
-        inputs: &[Value],
+        inputs: &[V],
         count: usize,
     ) -> Native {
-        if !self.options.enabled {
+        self.run_into(func, op, inputs, count, &mut Vec::new())
+    }
+
+    /// [`Jit::run`] writing the result into `out` (cleared and resized to
+    /// `count`, and taken out of it on success), so a caller that keeps
+    /// buffers for the purpose allocates nothing: the interpreter takes `out`
+    /// from the buffers of arrays that died.
+    ///
+    /// Nothing here allocates once the kernel is compiled: the operand kinds
+    /// and data are gathered on the stack (a `fused` has few operands; one
+    /// with more than [`MAX_INLINE`] is not run natively).
+    pub(crate) fn run_into<V: std::borrow::Borrow<Value>>(
+        &mut self,
+        func: &Function,
+        op: &OpData,
+        inputs: &[V],
+        count: usize,
+        out: &mut Vec<f64>,
+    ) -> Native {
+        if !self.options.enabled || inputs.len() > MAX_INLINE {
             return Native::Declined;
         }
-        let mut sigs = Vec::with_capacity(inputs.len());
-        let mut args = Vec::with_capacity(inputs.len());
-        for input in inputs {
-            match input {
+        let n = inputs.len();
+        let mut sigs = [InputSig {
+            dim: sky_units::Dimension::DIMENSIONLESS,
+            array: false,
+        }; MAX_INLINE];
+        let mut args = [Input::Scalar(0.0); MAX_INLINE];
+        for (k, input) in inputs.iter().enumerate() {
+            match input.borrow() {
                 Value::Array { data, dim, .. } => {
-                    sigs.push(InputSig {
+                    sigs[k] = InputSig {
                         dim: *dim,
                         array: true,
-                    });
-                    args.push(Input::Array(data));
+                    };
+                    args[k] = Input::Array(data);
                 }
                 Value::Number { value, dim } => {
-                    sigs.push(InputSig {
+                    sigs[k] = InputSig {
                         dim: *dim,
                         array: false,
-                    });
-                    args.push(Input::Scalar(*value));
+                    };
+                    args[k] = Input::Scalar(*value);
                 }
                 _ => return Native::Declined,
             }
         }
         let key = op as *const OpData as usize;
         let entry = self.kernels.entry(key).or_default();
-        if entry.sigs != sigs {
+        if entry.sigs != sigs[..n] {
             // Compile once the interpreter has spent about what compiling
             // costs on this operation (immediately, for one long array).
             entry.interpreted = entry.interpreted.saturating_add(count);
             if entry.interpreted < self.options.min_elements {
                 return Native::Declined;
             }
-            entry.kernel = compile_kernel(func, op, &sigs).ok();
-            entry.sigs = sigs;
+            entry.kernel = compile_kernel(func, op, &sigs[..n]).ok();
+            entry.sigs = sigs[..n].to_vec();
             #[cfg(test)]
             {
                 self.compiles += 1;
@@ -202,8 +235,10 @@ impl Jit {
         };
         #[cfg(test)]
         NATIVE_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        match kernel.run_alloc(&args, count) {
-            Ok(data) => Native::Done(data, kernel.output_dim()),
+        out.clear();
+        out.resize(count, 0.0);
+        match kernel.run(&args[..n], out) {
+            Ok(()) => Native::Done(std::mem::take(out), kernel.output_dim()),
             Err(e) => Native::Failed(e.into()),
         }
     }

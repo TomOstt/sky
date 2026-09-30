@@ -1,6 +1,6 @@
 # Classic RK4 for a damped pendulum, y = [angle, angular velocity], h = 0.001,
 # {{STEPS}} steps. The state is a vector and f returns one, as in a textbook.
-def f(y):
+def f(y: Vector[2]) -> Vector[2]:
     return [y[1], -sin(y[0]) - 0.1 * y[1]]
 
 y = [1.0, 0.0]

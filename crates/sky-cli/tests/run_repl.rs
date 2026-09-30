@@ -1342,13 +1342,25 @@ const ENGINE_PROGRAMS: &[(&str, bool, &str)] = &[
         true,
         "def f(n):\n    return f(n + 1)\nprint(\"start\")\nf(0)\n",
     ),
-    // Programs SIR cannot run yet: `--engine=sir` refuses them, and `auto`
-    // must give the tree-walker's answer (`run_script` checks that).
+    // A `range` bound or step computed at run time is checked on every
+    // engine, with the same errors.
     (
         "eng-computed-range",
-        false,
+        true,
         "n = 2 + 1\nfor i in range(n):\n    print(i)\n",
     ),
+    (
+        "eng-computed-range-fraction",
+        true,
+        "print(\"before\")\nn = 5 / 2\nfor i in range(n):\n    print(i)\n",
+    ),
+    (
+        "eng-computed-range-zero-step",
+        true,
+        "s = 2 - 2\nfor i in range(0, 3, s):\n    print(i)\n",
+    ),
+    // Programs SIR cannot run yet: `--engine=sir` refuses them, and `auto`
+    // must give the tree-walker's answer (`run_script` checks that).
     (
         "eng-array-loop",
         false,
@@ -1602,19 +1614,17 @@ fn repl_commands_help_and_quit() {
 }
 
 #[test]
-fn a_computed_range_bound_is_still_checked_at_run_time() {
-    // SIR cannot stop a run with the message `range` gives for 2.5, so the
-    // loop stays on the tree-walker under `auto`, which fails as before.
+fn a_computed_range_bound_is_checked_at_run_time_on_every_engine() {
     let src = "n = 5 / 2\nfor i in range(n):\n    print(i)\n";
-    let auto = run_engine("range-bound", src, None);
-    assert_eq!(auto.status.code(), Some(1));
-    assert!(
-        err(&auto).contains("`range` needs an integer, found 2.5"),
-        "{}",
-        err(&auto)
-    );
-    let sir = run_engine("range-bound", src, Some("sir"));
-    assert!(err(&sir).contains(NOT_ON_SIR), "{}", err(&sir));
+    for engine in [None, Some("sir"), Some("native"), Some("ast")] {
+        let o = run_engine("range-bound", src, engine);
+        assert_eq!(o.status.code(), Some(1), "{engine:?}");
+        assert!(
+            err(&o).contains("2:16: error: `range` needs an integer, found 2.5"),
+            "{engine:?}: {}",
+            err(&o)
+        );
+    }
 }
 
 #[test]

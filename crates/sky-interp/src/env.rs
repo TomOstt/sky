@@ -57,6 +57,25 @@ impl RuntimeEnv {
         self.vars.get(name)
     }
 
+    /// Moves the value out of `name`, leaving `Value::None` bound there; the
+    /// caller stores the next value right away. `None` if `name` is unbound.
+    pub(crate) fn take(&mut self, name: &str) -> Option<Value> {
+        self.vars
+            .get_mut(name)
+            .map(|slot| std::mem::replace(slot, Value::None))
+    }
+
+    /// [`RuntimeEnv::set`] for a name that is usually bound already (a loop
+    /// updating a variable): the key is not allocated again.
+    pub(crate) fn assign(&mut self, name: &str, value: Value) {
+        match self.vars.get_mut(name) {
+            Some(slot) => *slot = value,
+            None => {
+                self.vars.insert(name.to_string(), value);
+            }
+        }
+    }
+
     pub fn set(&mut self, name: impl Into<String>, value: Value) {
         self.vars.insert(name.into(), value);
     }

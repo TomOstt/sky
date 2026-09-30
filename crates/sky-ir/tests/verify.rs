@@ -1628,6 +1628,65 @@ fn expect_number_checks_a_number_or_unknown_operand_and_gives_it_back() {
 }
 
 #[test]
+fn expect_range_takes_a_number_or_unknown_and_gives_a_dimensionless_scalar() {
+    use sky_ir::RangePart;
+    for part in RangePart::ALL {
+        let kind = OpKind::ExpectRange { part };
+        accepts(&unary(kind.clone(), one(), one()));
+        accepts(&unary(kind.clone(), Type::Unknown, one()));
+        // A typed operand that can never pass is still the run time's to
+        // fail: the checker types the ones it can.
+        accepts(&unary(kind.clone(), len(), one()));
+        accepts(&unary(kind.clone(), Type::Unknown, Type::Unknown));
+        rejects(
+            &unary(kind.clone(), Type::Bool, one()),
+            "needs a number or unknown operand",
+        );
+        rejects(
+            &unary(kind.clone(), one(), len()),
+            "must be a dimensionless scalar",
+        );
+        rejects(
+            &unary(kind, one(), vec3()),
+            "must be a dimensionless scalar",
+        );
+    }
+}
+
+#[test]
+fn assume_changes_only_the_tags() {
+    let n = || Shape::matrix(3, 3);
+    let plain = num(Dimension::LENGTH, n(), TagSet::EMPTY, Repr::Unchosen);
+    let pd = num(
+        Dimension::LENGTH,
+        n(),
+        TagSet::of(Tag::PositiveDefinite).closure(),
+        Repr::Unchosen,
+    );
+    // A tag promise, or dropping a tag, is the type's business only.
+    accepts(&unary(OpKind::Assume, plain.clone(), pd.clone()));
+    accepts(&unary(OpKind::Assume, pd, plain.clone()));
+    accepts(&unary(OpKind::Assume, len(), len()));
+    // Not the dimension, the shape, the kind.
+    rejects(
+        &unary(OpKind::Assume, plain.clone(), mat(Dimension::MASS, 3, 3)),
+        "`assume` needs a number and gives it back with other tags",
+    );
+    rejects(
+        &unary(OpKind::Assume, plain.clone(), mat(Dimension::LENGTH, 3, 4)),
+        "`assume` needs a number",
+    );
+    rejects(
+        &unary(OpKind::Assume, plain, Type::Unknown),
+        "`assume` needs a number",
+    );
+    rejects(
+        &unary(OpKind::Assume, Type::Bool, Type::Bool),
+        "`assume` needs a number",
+    );
+}
+
+#[test]
 fn norm_keeps_the_dimension_and_takes_any_number() {
     accepts(&unary(OpKind::Norm, vec3(), len()));
     accepts(&unary(OpKind::Norm, mat(Dimension::LENGTH, 2, 3), len()));

@@ -7,6 +7,15 @@ tests/ir/exact_linalg.sky:9:5: note: [LA-TRANSPOSE-001] `Aᵀ @ B` is rewritten 
   = note: because exact: `matmul[ta]` is defined as the transpose followed by the product, so every bit and every error is the same; a kernel may read the operand with swapped strides
   = note: because the flops are unchanged: 48,000
 
+tests/ir/exact_linalg.sky:10:8: note: [GVN-001] `Aᵀ` at line 10 reuses the value computed at line 9
+   |
+10 | gram = Aᵀ @ A
+   |        ^^
+ 9 | x = Aᵀ @ B
+   |     -- computed here first
+   = note: applied by the `gvn` pass
+   = note: because the earlier `transpose` has the same operands and runs first on every path to this one, so both compute the same value
+
 tests/ir/exact_linalg.sky:10:8: note: [LA-TRANSPOSE-001] `Aᵀ @ A` is rewritten to `matmul[ta](A, A)`
    |
 10 | gram = Aᵀ @ A
@@ -42,6 +51,15 @@ tests/ir/exact_linalg.sky:11:9: note: [LA-GRAM-001] `A @ Aᵀ` is rewritten to `
    = note: because A is multiplied by its own transpose: entries (i, j) and (j, i) sum the same products (`aₚᵢ·aₚⱼ` and `aₚⱼ·aₚᵢ`, and multiplication commutes) in the same order
    = note: because one triangle is computed and mirrored: 49,200 flops instead of 96,000
    = note: because exact: the result is bit for bit the general product's, and bitwise symmetric (its type gains the Symmetric tag)
+
+tests/ir/exact_linalg.sky:11:13: note: [GVN-001] `Aᵀ` at line 11 reuses the value computed at line 9
+   |
+11 | outer = A @ Aᵀ
+   |             ^^
+ 9 | x = Aᵀ @ B
+   |     -- computed here first
+   = note: applied by the `gvn` pass
+   = note: because the earlier `transpose` has the same operands and runs first on every path to this one, so both compute the same value
 
 tests/ir/exact_linalg.sky:12:8: note: [LA-SYMMETRIC-001] `gramᵀ` is rewritten to `gram`
    |

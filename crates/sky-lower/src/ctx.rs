@@ -105,10 +105,6 @@ pub(crate) struct Lower<'a> {
     /// The derivative functions `derivative(f, x)(...)` calls need, built
     /// once the module's functions exist (see `derivative.rs`).
     pub(crate) derivatives: Vec<Wanted>,
-    /// Lowering for execution ([`crate::lower_for_run`]): refuse what would
-    /// run differently from `sky run`'s tree walker, instead of lowering it
-    /// faithfully as far as SIR can say.
-    pub(crate) for_run: bool,
     /// The `accuracy` declarations met so far (see `accuracy.rs`).
     pub(crate) goals: Vec<sky_ir::roundoff::Goal>,
 }
@@ -224,6 +220,108 @@ impl<'a> Lower<'a> {
     pub(crate) fn placeholder(&mut self, ty: &Type, span: Span) -> ValueId {
         let (kind, vty) = Self::placeholder_kind(ty);
         self.op1(kind, Vec::new(), vty, span)
+    }
+
+    /// [`Self::placeholder`] for any type, arrays included: a vector or a
+    /// matrix stand-in is `zeros` of its shape (a size the type only knows
+    /// as a variable is the `len` of a value of `scope` that has it), made
+    /// the dimension of `ty` by scaling with a one of that dimension, and
+    /// given its tags by an `assume`. It is emitted at the insertion point
+    /// and never observed. Fails only for a shape variable no value in
+    /// `scope` has.
+    pub(crate) fn stand_in(&mut self, ty: &Type, span: Span, scope: &Scope) -> R<ValueId> {
+        let Type::Number(n) = ty else {
+            return Ok(self.placeholder(ty, span));
+        };
+        if n.shape.rank() == 0 {
+            return Ok(self.placeholder(ty, span));
+        }
+        let index = || Type::scalar(sky_units::Dimension::DIMENSIONLESS);
+        let mut sizes = Vec::with_capacity(2);
+        for (axis, d) in n.shape.dims().iter().enumerate() {
+            let size = match d {
+                sky_types::ShapeDim::Known(k) => self.const_float(*k as f64, index(), span),
+                var => match self.size_of_axis(var, scope, span) {
+                    Some(v) => v,
+                    None => {
+                        return Err(LowerError::new(
+                            format!(
+                                "cannot build a stand-in for an array of type {ty}: its size on axis {axis} is known only as a variable that no value in scope has"
+                            ),
+                            span,
+                        ))
+                    }
+                },
+            };
+            sizes.push(size);
+        }
+        if !(1..=2).contains(&sizes.len()) {
+            return self.err(
+                format!("cannot build a stand-in for an array of type {ty}"),
+                span,
+            );
+        }
+        let plain = |dim, tags| {
+            Type::Number(NumberType {
+                dim,
+                shape: n.shape.clone(),
+                tags,
+                repr: n.repr,
+            })
+        };
+        let dimensionless = sky_units::Dimension::DIMENSIONLESS;
+        let mut v = self.op1(
+            OpKind::Zeros,
+            sizes,
+            plain(dimensionless, sky_types::TagSet::EMPTY),
+            span,
+        );
+        if n.dim != dimensionless {
+            let one = self.const_float(1.0, Type::scalar(n.dim), span);
+            v = self.op1(
+                OpKind::Mul,
+                vec![v, one],
+                plain(n.dim, sky_types::TagSet::EMPTY),
+                span,
+            );
+        }
+        if !n.tags.is_empty() {
+            v = self.op1(OpKind::Assume, vec![v], ty.clone(), span);
+        }
+        Ok(v)
+    }
+
+    /// The size of shape variable `dim` as a number, from a value of
+    /// `scope` whose shape has it on its first axis (`len`) or its second (the
+    /// `len` of its transpose).
+    fn size_of_axis(
+        &mut self,
+        dim: &sky_types::ShapeDim,
+        scope: &Scope,
+        span: Span,
+    ) -> Option<ValueId> {
+        let found = scope.values().find_map(|&v| {
+            let Type::Number(n) = self.st.b.ty(v) else {
+                return None;
+            };
+            let axis = n.shape.dims().iter().position(|d| d == dim)?;
+            (axis < 2 && n.shape.rank() <= 2).then(|| (v, axis, n.clone()))
+        })?;
+        let (v, axis, n) = found;
+        let source = if axis == 0 {
+            v
+        } else {
+            let dims = n.shape.dims();
+            let flipped = sky_types::Shape::new(vec![dims[1].clone(), dims[0].clone()]);
+            let ty = Type::Number(NumberType {
+                shape: flipped,
+                tags: sky_types::TagSet::EMPTY,
+                ..n
+            });
+            self.op1(OpKind::Transpose, vec![v], ty, span)
+        };
+        let ty = Type::scalar(sky_units::Dimension::DIMENSIONLESS);
+        Some(self.op1(OpKind::Len, vec![source], ty, span))
     }
 
     /// Binds `name` to `v` in the current scope.

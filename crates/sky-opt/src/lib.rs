@@ -13,6 +13,11 @@
 //!   condition is provably true, from the constants and the calls in the
 //!   module.
 //! * [`dce`]: removes pure operations whose results are unused.
+//! * [`gvn`]: global value numbering: an operation identical to one that
+//!   dominates it reuses the earlier result, across blocks and regions.
+//! * [`licm`]: loop-invariant code motion: what does not change in a `while`
+//!   is computed once before it, where that keeps the output and the first
+//!   failure (a guard when the loop may not run).
 //! * [`fuse`]: a tree of elementwise array operations becomes one `fused`
 //!   operation (one kernel, no temporary arrays).
 //! * [`cholesky`]: `A⁻¹ @ b` with a PositiveDefinite `A` becomes
@@ -31,7 +36,7 @@
 //!   and [`SpecializationCache`] do the same for values an engine sees at
 //!   run time.
 //! * [`default_pipeline`]: `specialize`, then `fold`, then the e-graph (`sky-egraph`, under the
-//!   `Reproducible` contract), then `contracts`, then `dce`, then `powers`,
+//!   `Reproducible` contract), then `gvn`, then `licm`, then `contracts`, then `dce`, then `powers`,
 //!   then `fuse`, then `cholesky`, then `transposes`, `structure` and
 //!   `algorithms`.
 //!
@@ -51,6 +56,8 @@ mod contracts;
 mod dce;
 mod fold;
 mod fuse;
+mod gvn;
+mod licm;
 mod linalg;
 pub mod pipeline;
 pub mod powers;
@@ -83,14 +90,16 @@ pub use contracts::{contract_headline, contract_rule, contracts};
 pub use dce::dce;
 pub use fold::{fold, fold_with, FoldMode};
 pub use fuse::{fuse, FUSE_RULE};
+pub use gvn::{gvn, GVN_RULE};
+pub use licm::{licm, LICM_GUARDED_RULE, LICM_RULE};
 pub use linalg::{structure, transposes, DIAGONAL_RULE, GRAM_RULE, SYMMETRIC_RULE, TRANSPOSE_RULE};
 pub use pipeline::{
     default_passes, default_passes_without_specialize, default_pipeline, AlgorithmPass,
-    CholeskyPass, ContractsPass, DcePass, FoldPass, FusePass, PowersPass, SpecializePass,
-    StructurePass, TransposesPass, DEFAULT_PASSES,
+    CholeskyPass, ContractsPass, DcePass, FoldPass, FusePass, GvnPass, LicmPass, PowersPass,
+    SpecializePass, StructurePass, TransposesPass, DEFAULT_PASSES,
 };
 pub use powers::{powers, POWER_RULE};
-pub use rewrite::Rewrite;
+pub use rewrite::{motion_headline, Related, Rewrite};
 pub use specialize::{
     specialize, specialize_for, specialize_headline, specialized_name, Specialization,
     SpecializationCache,

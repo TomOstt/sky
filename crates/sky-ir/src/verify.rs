@@ -643,6 +643,8 @@ impl<'a> FnVerifier<'a> {
             | OpKind::Len
             | OpKind::ExpectBool { .. }
             | OpKind::ExpectNumber { .. }
+            | OpKind::ExpectRange { .. }
+            | OpKind::Assume
             | OpKind::Not => (Some(1), Some(1)),
             OpKind::ArrayLiteral { .. } | OpKind::Index | OpKind::Slice { .. } | OpKind::Zeros => {
                 (None, Some(1))
@@ -752,6 +754,51 @@ impl<'a> FnVerifier<'a> {
                     );
                 }
                 self.expect_bool_result(o, op);
+            }
+            OpKind::ExpectRange { part } => {
+                // The operand is a number, or unknown (an unannotated
+                // parameter); what the checks let through is a
+                // dimensionless scalar.
+                let t = self.f.ty(op.operands[0]);
+                let r = self.f.ty(op.results[0]);
+                if !matches!(t, Type::Number(_) | Type::Unknown) {
+                    self.err_op(
+                        o,
+                        format!(
+                            "`expect.range[{}]` needs a number or unknown operand, found {t}",
+                            part.text()
+                        ),
+                    );
+                }
+                let index =
+                    matches!(r, Type::Number(n) if n.shape.rank() == 0 && n.dim.is_dimensionless());
+                if !index && !matches!(r, Type::Unknown) {
+                    self.err_op(
+                        o,
+                        format!(
+                            "the result of `expect.range[{}]` must be a dimensionless scalar, found {r}",
+                            part.text()
+                        ),
+                    );
+                }
+            }
+            OpKind::Assume => {
+                // Only the tags may differ: the value is passed on as it is.
+                let (t, r) = (self.f.ty(op.operands[0]), self.f.ty(op.results[0]));
+                let same = match (t, r) {
+                    (Type::Number(a), Type::Number(b)) => {
+                        a.dim == b.dim && a.shape == b.shape && a.repr == b.repr
+                    }
+                    _ => false,
+                };
+                if !same {
+                    self.err_op(
+                        o,
+                        format!(
+                            "`assume` needs a number and gives it back with other tags, found {t} and {r}"
+                        ),
+                    );
+                }
             }
             OpKind::ExpectNumber { context } => {
                 // Only an operand the checker could not type needs the

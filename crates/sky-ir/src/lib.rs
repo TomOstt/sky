@@ -30,6 +30,7 @@ mod display;
 pub mod effects;
 pub mod exact;
 pub mod ir;
+pub mod lifetime;
 pub mod op;
 pub mod parallel;
 pub mod parse;
@@ -45,9 +46,10 @@ pub use ir::{
     BlockData, BlockId, Edition, Effect, EffectSet, Function, Module, NumberType, OpData, OpId,
     RegionData, RegionId, Repr, Type, ValueData, ValueDef, ValueId,
 };
+pub use lifetime::{Lifetimes, ReuseSite};
 pub use op::{
     Algorithm, AssertKind, BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind,
-    OpProperties, Side, SliceAxis, SolveMethod,
+    OpProperties, RangePart, Side, SliceAxis, SolveMethod,
 };
 pub use parse::{parse, ParseError};
 pub use pass::{

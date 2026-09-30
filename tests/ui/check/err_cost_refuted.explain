@@ -46,6 +46,13 @@ tests/ui/check/err_cost_refuted.sky:8:12: note: [PAR-001] this elementwise kerne
   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
   = note: because 2 of its operations can fail (`mul`, `add`): if chunks fail, the failing operation that comes first in program order is reported, at its lowest failing element, which is the error a sequential run gives
 
+tests/ui/check/err_cost_refuted.sky:8:12: note: [MEM-001] `v + 2 * w` reuses `w`'s buffer: no allocation for this result
+  |
+8 |     return v + 2 * w
+  |            ^^^^^^^^^
+  = note: `w` is not used again after this on any path, and has the shape of the result
+  = note: applied by the `lifetimes` analysis of the SIR interpreter
+
 tests/ui/check/err_cost_refuted.sky:10:5: note: cost of `lower_order`: 2·N³ + N² flops, 2 allocations of N² floats
    |
 10 | def lower_order(A: Matrix[N, N]) -> Matrix[N, N]:
@@ -74,6 +81,13 @@ tests/ui/check/err_cost_refuted.sky:12:12: note: [PAR-001] this elementwise `add
    = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
    = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
 
+tests/ui/check/err_cost_refuted.sky:12:12: note: [MEM-001] `A @ A + A` reuses `A @ A`'s buffer: no allocation for this result
+   |
+12 |     return A @ A + A
+   |            ^^^^^^^^^
+   = note: `A @ A` is not used again after this on any path, and has the shape of the result
+   = note: applied by the `lifetimes` analysis of the SIR interpreter
+
 tests/ui/check/err_cost_refuted.sky:14:5: note: cost of `loop`: N² flops, N allocations (N² floats in all)
    |
 14 | def loop(v: Vector[N]) -> Vector[N]:
@@ -99,6 +113,13 @@ tests/ui/check/err_cost_refuted.sky:17:13: note: [PAR-001] this elementwise `mul
    = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
    = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
 
+tests/ui/check/err_cost_refuted.sky:17:13: note: [MEM-001] `v * 2` reuses `v`'s buffer: no allocation in this loop
+   |
+17 |         v = v * 2
+   |             ^^^^^
+   = note: `v` is not used again after this on any path, and has the shape of the result
+   = note: applied by the `lifetimes` analysis of the SIR interpreter
+
 tests/ui/check/err_cost_refuted.sky:20:5: note: cost of `too_few`: N flops, 1 allocation of N floats
    |
 20 | def too_few(v: Vector[N]) -> Vector[N]:
@@ -119,3 +140,10 @@ tests/ui/check/err_cost_refuted.sky:22:12: note: [PAR-001] this elementwise `mul
    = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
    = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
    = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
+
+tests/ui/check/err_cost_refuted.sky:22:12: note: [MEM-001] `v * 2` reuses `v`'s buffer: no allocation for this result
+   |
+22 |     return v * 2
+   |            ^^^^^
+   = note: `v` is not used again after this on any path, and has the shape of the result
+   = note: applied by the `lifetimes` analysis of the SIR interpreter

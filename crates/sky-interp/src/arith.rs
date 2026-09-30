@@ -11,9 +11,10 @@
 //! records none it passes its own for each.
 
 use sky_diag::Span;
+use sky_types::MAX_RANGE_BOUND;
 use sky_units::{Dimension, Rational};
 
-use crate::{RuntimeError, Value};
+use crate::{format_number, RuntimeError, Value};
 
 /// The result type of every fallible evaluation step.
 pub type R<T> = Result<T, RuntimeError>;
@@ -197,14 +198,87 @@ pub fn expect_number(what: &str, v: &Value, span: Span) -> R<()> {
     }
 }
 
-/// `-v` or `+v`.
+/// A bound or step of `range`: a dimensionless integer of magnitude at
+/// most [`MAX_RANGE_BOUND`].
+pub fn range_int(v: &Value, span: Span) -> R<i64> {
+    let Value::Number { value, dim } = v else {
+        return Err(RuntimeError::new(
+            format!("`range` needs an integer, found {}", v.kind()),
+            span,
+        )
+        .with_label(format!("this is {}", v.kind())));
+    };
+    if !dim.is_dimensionless() {
+        return Err(RuntimeError::new(
+            format!(
+                "`range` needs a dimensionless integer, found {}",
+                describe(dim)
+            ),
+            span,
+        )
+        .with_label(format!("this is {}", describe(dim)))
+        .with_note("a count of steps has no unit"));
+    }
+    if value.fract() != 0.0 {
+        return Err(RuntimeError::new(
+            format!("`range` needs an integer, found {}", format_number(*value)),
+            span,
+        )
+        .with_label("not an integer"));
+    }
+    if value.abs() > MAX_RANGE_BOUND as f64 {
+        return Err(RuntimeError::new(
+            format!(
+                "the bound {} of `range` is too large",
+                format_number(*value)
+            ),
+            span,
+        )
+        .with_label("too large")
+        .with_note("a bound may be at most 2^53 in size"));
+    }
+    Ok(*value as i64)
+}
+
+/// `range_int` as a value: the number, a dimensionless scalar (a `-0` is
+/// `0`, as the loop counts in integers). The SIR operation
+/// `expect.range[bound]`, for a bound or step computed at run time.
+pub fn range_bound(v: &Value, span: Span) -> R<Value> {
+    range_int(v, span).map(|n| Value::scalar(n as f64))
+}
+
+/// `v`, the step of a `range` that `range_bound` accepted, if it is not zero.
+/// The SIR operation `expect.range[step]`.
+pub fn range_step(v: &Value, span: Span) -> R<Value> {
+    match v {
+        Value::Number { value, .. } if *value == 0.0 => Err(zero_step(span)),
+        other => Ok(other.clone()),
+    }
+}
+
+/// The error of a `range` whose step is zero (`at`: the step's span).
+pub fn zero_step(at: Span) -> RuntimeError {
+    RuntimeError::new("the step of `range` cannot be zero", at)
+        .with_label("zero step")
+        .with_note("the index would never move, so the loop would never end")
+}
+
+/// `-v` or `+v`. An array is negated in its own buffer, since it is owned
+/// (`0 - x` per entry, as [`crate::array::negate`]).
 pub fn sign(negate: bool, v: Value, operand: Span) -> R<Value> {
     match v {
-        Value::Array { dims, data, dim } => Ok(if negate {
-            crate::array::negate(&dims, &data, dim)
-        } else {
-            Value::array(dims, data, dim)
-        }),
+        Value::Array {
+            dims,
+            mut data,
+            dim,
+        } => {
+            if negate {
+                for x in &mut data {
+                    *x = 0.0 - *x;
+                }
+            }
+            Ok(Value::array(dims, data, dim))
+        }
         Value::Number { value, dim } => Ok(Value::number(if negate { -value } else { value }, dim)),
         other => Err(needs_a_number(
             if negate { "-" } else { "+" },
@@ -223,12 +297,56 @@ pub enum ArithOp {
     Div,
 }
 
+/// An operand of an operation: a value the operation may consume (its last
+/// use, so its buffer can hold the result) or one it must leave alone.
+pub enum Operand<'a> {
+    Owned(Value),
+    Borrowed(&'a Value),
+}
+
+impl Operand<'_> {
+    pub fn get(&self) -> &Value {
+        match self {
+            Operand::Owned(v) => v,
+            Operand::Borrowed(v) => v,
+        }
+    }
+}
+
 /// `l op r` on two evaluated operands. `whole` is the span of the
 /// expression, `lspan` and `rspan` those of its operands.
 pub fn arith(op: ArithOp, l: &Value, r: &Value, whole: Span, lspan: Span, rspan: Span) -> R<Value> {
     if matches!(l, Value::Array { .. }) || matches!(r, Value::Array { .. }) {
         return crate::array::arith(op, l, r, whole, lspan, rspan);
     }
+    arith_scalar(op, l, r, whole, lspan, rspan)
+}
+
+/// [`arith`] where an owned array operand may be overwritten with the result
+/// ([`crate::array::arith_owned`]); the values and errors are the same.
+pub fn arith_owned(
+    op: ArithOp,
+    l: Operand<'_>,
+    r: Operand<'_>,
+    whole: Span,
+    lspan: Span,
+    rspan: Span,
+) -> R<Value> {
+    if matches!(l.get(), Value::Array { .. }) || matches!(r.get(), Value::Array { .. }) {
+        return crate::array::arith_owned(op, l, r, whole, lspan, rspan);
+    }
+    arith_scalar(op, l.get(), r.get(), whole, lspan, rspan)
+}
+
+/// [`arith`] for operands that are not arrays.
+fn arith_scalar(
+    op: ArithOp,
+    l: &Value,
+    r: &Value,
+    whole: Span,
+    lspan: Span,
+    rspan: Span,
+) -> R<Value> {
     match op {
         ArithOp::Add | ArithOp::Sub => {
             let (verb, prep) = if op == ArithOp::Add {

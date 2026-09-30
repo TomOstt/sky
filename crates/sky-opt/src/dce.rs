@@ -23,6 +23,22 @@
 //! pass repeats to a fixed point, so a removed operation frees its
 //! operands.
 //!
+//! # Dead loop-carried values
+//!
+//! Lowering carries every name a loop assigns, including the temporaries a
+//! body defines before it reads them (`zr2 = zr * zr` in a Mandelbrot loop),
+//! which enter the loop as `nothing` and leave it as an `Unknown`-typed
+//! value nobody reads. A carried slot is **dead** when neither the loop's
+//! parameters for it nor its result are read by anything except the
+//! forwarding of dead slots (the `condition` and `yield` operands and the
+//! initial values of loops, each of which feeds one slot). Liveness is found
+//! optimistically (every slot dead, marked live from real uses, to a fixed
+//! point), so a slot that feeds only itself, or only the same slot of an
+//! outer loop, goes too. Dropping it changes no value anything reads and
+//! removes no operation that could fail (only operands of the loop), so the
+//! run-time behaviour is unchanged, while every engine stops carrying, and
+//! the native engine stops boxing, a value that is never read.
+//!
 //! # Explanations
 //!
 //! Lowering creates many temporaries; dropping those is not news. A
@@ -31,7 +47,7 @@
 //! defines a value that has a source `name`.
 
 use sky_ir::exact::{self, Analysis};
-use sky_ir::{BlockId, CmpOp, Function, Module, OpId, OpKind, RegionId, Type};
+use sky_ir::{BlockId, CmpOp, Function, Module, OpId, OpKind, RegionId, Type, ValueDef, ValueId};
 
 use crate::rewrite::Rewrite;
 use crate::util::{op_text, reachable_ops};
@@ -51,12 +67,161 @@ pub(crate) fn dce_function(f: &mut Function, out: &mut Vec<Rewrite>) {
     // analysis serves the whole fixed point.
     let facts = exact::analyze(f);
     loop {
+        let pruned = prune_dead_carried(f);
         let used = used_values(f);
         let body = f.body;
-        if !sweep_region(f, body, &used, &facts, out) {
+        if !sweep_region(f, body, &used, &facts, out) && !pruned {
             break;
         }
     }
+}
+
+/// One `while` whose carried slots are being analysed.
+struct Loop {
+    op: OpId,
+    before: BlockId,
+    after: BlockId,
+    condition: OpId,
+    yield_op: OpId,
+    /// Index of the loop's first slot in the analysis.
+    first: usize,
+    n: usize,
+}
+
+/// Removes the dead carried slots of every `while` (see the module
+/// documentation). Whether anything was removed.
+fn prune_dead_carried(f: &mut Function) -> bool {
+    use std::collections::HashMap;
+    let ops = reachable_ops(f);
+    let mut loops: Vec<Loop> = Vec::new();
+    let mut slots = 0;
+    for &o in &ops {
+        let op = f.op(o);
+        if !matches!(op.kind, OpKind::While) {
+            continue;
+        }
+        let n = op.operands.len();
+        let [rb, ra] = op.regions[..] else { continue };
+        let (Some(&before), Some(&after)) =
+            (f.region(rb).blocks.first(), f.region(ra).blocks.first())
+        else {
+            continue;
+        };
+        let (Some(&condition), Some(&yield_op)) =
+            (f.block(before).ops.last(), f.block(after).ops.last())
+        else {
+            continue;
+        };
+        if !matches!(f.op(condition).kind, OpKind::Condition)
+            || !matches!(f.op(yield_op).kind, OpKind::Yield)
+            || f.op(condition).operands.len() != n + 1
+            || f.op(yield_op).operands.len() != n
+            || f.block(before).args.len() != n
+            || f.block(after).args.len() != n
+            || op.results.len() != n
+        {
+            continue;
+        }
+        loops.push(Loop {
+            op: o,
+            before,
+            after,
+            condition,
+            yield_op,
+            first: slots,
+            n,
+        });
+        slots += n;
+    }
+    if loops.is_empty() {
+        return false;
+    }
+    // The slot each value holds (as a parameter of `before` or `after`, or
+    // as a result), and the slot each forwarding operand feeds.
+    let mut holder: HashMap<ValueId, usize> = HashMap::new();
+    let mut feeds: HashMap<(OpId, usize), usize> = HashMap::new();
+    for l in &loops {
+        for k in 0..l.n {
+            let s = l.first + k;
+            holder.insert(f.block(l.before).args[k], s);
+            holder.insert(f.block(l.after).args[k], s);
+            holder.insert(f.op(l.op).results[k], s);
+            feeds.insert((l.op, k), s);
+            feeds.insert((l.condition, k + 1), s);
+            feeds.insert((l.yield_op, k), s);
+        }
+    }
+    let mut live = vec![false; slots];
+    let mut edges: Vec<(usize, usize)> = Vec::new();
+    for &o in &ops {
+        for (i, v) in f.op(o).operands.iter().enumerate() {
+            let Some(&from) = holder.get(v) else { continue };
+            match feeds.get(&(o, i)) {
+                Some(&to) => edges.push((from, to)),
+                None => live[from] = true,
+            }
+        }
+    }
+    loop {
+        let mut changed = false;
+        for &(from, to) in &edges {
+            if live[to] && !live[from] {
+                live[from] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut any = false;
+    for l in &loops {
+        let keep: Vec<bool> = (0..l.n).map(|k| live[l.first + k]).collect();
+        if keep.iter().all(|k| *k) {
+            continue;
+        }
+        any = true;
+        drop_slots(f, l, &keep);
+    }
+    any
+}
+
+/// Removes the slots of `l` whose `keep` is false.
+fn drop_slots(f: &mut Function, l: &Loop, keep: &[bool]) {
+    fn retain<T: Copy>(v: &mut Vec<T>, keep: &[bool], offset: usize) {
+        let mut i = 0;
+        v.retain(|_| {
+            let k = i < offset || keep[i - offset];
+            i += 1;
+            k
+        });
+    }
+    // Operands (and their spans, when there are any), results, block
+    // arguments.
+    for (o, offset) in [(l.op, 0), (l.condition, 1), (l.yield_op, 0)] {
+        let op = &mut f.ops[o.index()];
+        let had_spans = op.operand_spans.len() == op.operands.len();
+        retain(&mut op.operands, keep, offset);
+        if had_spans {
+            retain(&mut op.operand_spans, keep, offset);
+        }
+    }
+    retain(&mut f.ops[l.op.index()].results, keep, 0);
+    retain(&mut f.blocks[l.before.index()].args, keep, 0);
+    retain(&mut f.blocks[l.after.index()].args, keep, 0);
+    // The definitions record the position.
+    let renumber = |f: &mut Function, vals: Vec<ValueId>| {
+        for (i, v) in vals.into_iter().enumerate() {
+            match &mut f.values[v.index()].def {
+                ValueDef::BlockArg { index, .. } | ValueDef::OpResult { index, .. } => {
+                    *index = i as u32
+                }
+            }
+        }
+    };
+    renumber(f, f.blocks[l.before.index()].args.clone());
+    renumber(f, f.blocks[l.after.index()].args.clone());
+    renumber(f, f.ops[l.op.index()].results.clone());
 }
 
 fn used_values(f: &Function) -> Vec<bool> {
@@ -107,8 +272,12 @@ fn sweep_block(
     changed
 }
 
-/// Whether removing `id` (if its results are unused) is safe.
-fn removable(f: &Function, id: OpId, facts: &Analysis) -> bool {
+/// Whether removing `id` (if its results are unused) is safe. That is also
+/// the question "is `id` free of effects": it cannot print, fail, call or
+/// loop, so running it earlier, later, or not at all changes nothing anyone
+/// can see. `licm` asks it too, of the operations it moves and of the ones it
+/// leaves behind.
+pub(crate) fn removable(f: &Function, id: OpId, facts: &Analysis) -> bool {
     let op = f.op(id);
     let props = op.kind.properties();
     if props.terminator {

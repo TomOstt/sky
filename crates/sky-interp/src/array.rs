@@ -18,7 +18,7 @@ use sky_diag::Span;
 use sky_types::MAX_ARRAY_ELEMENTS;
 use sky_units::Dimension;
 
-use crate::arith::{describe, div_zero, overflow, ArithOp, R};
+use crate::arith::{describe, div_zero, overflow, ArithOp, Operand, R};
 use crate::linalg::{self, LinalgError};
 use crate::{format_number, RuntimeError, Value};
 
@@ -46,24 +46,77 @@ fn all_finite(data: Vec<f64>, whole: Span) -> R<Vec<f64>> {
 }
 
 /// `l op r` where at least one operand is an array. Called by
-/// [`crate::arith::arith`].
+/// [`crate::arith::arith`]; see [`arith_owned`].
+pub fn arith(op: ArithOp, l: &Value, r: &Value, whole: Span, lspan: Span, rspan: Span) -> R<Value> {
+    arith_owned(
+        op,
+        Operand::Borrowed(l),
+        Operand::Borrowed(r),
+        whole,
+        lspan,
+        rspan,
+    )
+}
+
+/// The entries of an array value (none for anything else, which the callers
+/// have ruled out).
+fn entries(v: &Value) -> &[f64] {
+    match v {
+        Value::Array { data, .. } => data,
+        _ => &[],
+    }
+}
+
+/// Scales (or divides) every entry of the array operand `arr` by the number
+/// already folded into `f`: in place if `arr` is owned, into a new array
+/// otherwise. Entries are computed exactly as `x op s` in both cases.
+fn scale(arr: Operand<'_>, out: Dimension, f: impl Fn(f64) -> f64, whole: Span) -> R<Value> {
+    match arr {
+        Operand::Owned(Value::Array { dims, mut data, .. }) => {
+            for x in &mut data {
+                *x = f(*x);
+            }
+            Ok(Value::array(dims, all_finite(data, whole)?, out))
+        }
+        other => match other.get() {
+            Value::Array { dims, data, .. } => Ok(Value::array(
+                dims.clone(),
+                all_finite(data.iter().map(|&x| f(x)).collect(), whole)?,
+                out,
+            )),
+            v => Err(RuntimeError::new(
+                format!("expected an array, found {}", v.kind()),
+                whole,
+            )),
+        },
+    }
+}
+
+/// [`arith`] on operands that may be owned: an owned array whose shape is the
+/// result's holds the result, so no array is allocated (`v + dt * a` with `v`
+/// dead afterwards writes into `v`). Entries are the same computation
+/// either way, so the bits are identical; the checks come first, so an error
+/// is the same too. If both are owned and equally good, the left one is used.
 ///
 /// * `+` and `-`: two arrays of the same shape and dimension, elementwise.
 /// * `*`, `/`: an array and a number, scaling every entry (a number cannot
 ///   be divided by an array, and two arrays have no elementwise product).
-pub fn arith(op: ArithOp, l: &Value, r: &Value, whole: Span, lspan: Span, rspan: Span) -> R<Value> {
-    match (op, l, r) {
+pub fn arith_owned(
+    op: ArithOp,
+    l: Operand<'_>,
+    r: Operand<'_>,
+    whole: Span,
+    lspan: Span,
+    rspan: Span,
+) -> R<Value> {
+    match (op, l.get(), r.get()) {
         (
             ArithOp::Add | ArithOp::Sub,
             Value::Array {
-                dims: d1,
-                data: a,
-                dim: da,
+                dims: d1, dim: da, ..
             },
             Value::Array {
-                dims: d2,
-                data: b,
-                dim: db,
+                dims: d2, dim: db, ..
             },
         ) => {
             let (verb, prep) = if op == ArithOp::Add {
@@ -96,27 +149,57 @@ pub fn arith(op: ArithOp, l: &Value, r: &Value, whole: Span, lspan: Span, rspan:
                     .with_secondary(lspan, describe(da))
                     .with_secondary(rspan, describe(db)));
             }
+            let dim = *da;
             let f = if op == ArithOp::Add {
                 |x: f64, y: f64| x + y
             } else {
                 |x: f64, y: f64| x - y
             };
-            let data = a.iter().zip(b).map(|(&x, &y)| f(x, y)).collect();
-            Ok(Value::array(d1.clone(), all_finite(data, whole)?, *da))
+            match (l, r) {
+                (Operand::Owned(Value::Array { dims, mut data, .. }), other) => {
+                    for (x, &y) in data.iter_mut().zip(entries(other.get())) {
+                        *x = f(*x, y);
+                    }
+                    Ok(Value::array(dims, all_finite(data, whole)?, dim))
+                }
+                (other, Operand::Owned(Value::Array { dims, mut data, .. })) => {
+                    for (y, &x) in data.iter_mut().zip(entries(other.get())) {
+                        *y = f(x, *y);
+                    }
+                    Ok(Value::array(dims, all_finite(data, whole)?, dim))
+                }
+                (l, r) => {
+                    let data = entries(l.get())
+                        .iter()
+                        .zip(entries(r.get()))
+                        .map(|(&x, &y)| f(x, y))
+                        .collect();
+                    let dims = match l.get() {
+                        Value::Array { dims, .. } => dims.clone(),
+                        _ => Vec::new(),
+                    };
+                    Ok(Value::array(dims, all_finite(data, whole)?, dim))
+                }
+            }
         }
-        (ArithOp::Mul, Value::Number { value: s, dim: ds }, Value::Array { dims, data, dim })
-        | (ArithOp::Mul, Value::Array { dims, data, dim }, Value::Number { value: s, dim: ds }) => {
+        (ArithOp::Mul, Value::Number { value: s, dim: ds }, Value::Array { dim, .. })
+        | (ArithOp::Mul, Value::Array { dim, .. }, Value::Number { value: s, dim: ds }) => {
             let out = dim.checked_mul(*ds).map_err(|_| exponent_overflow(whole))?;
-            let data = data.iter().map(|&x| x * s).collect();
-            Ok(Value::array(dims.clone(), all_finite(data, whole)?, out))
+            let s = *s;
+            let arr = if matches!(l.get(), Value::Array { .. }) {
+                l
+            } else {
+                r
+            };
+            scale(arr, out, |x| x * s, whole)
         }
-        (ArithOp::Div, Value::Array { dims, data, dim }, Value::Number { value: s, dim: ds }) => {
+        (ArithOp::Div, Value::Array { dim, .. }, Value::Number { value: s, dim: ds }) => {
             let out = dim.checked_div(*ds).map_err(|_| exponent_overflow(whole))?;
             if *s == 0.0 {
                 return Err(div_zero(whole, rspan));
             }
-            let data = data.iter().map(|&x| x / s).collect();
-            Ok(Value::array(dims.clone(), all_finite(data, whole)?, out))
+            let s = *s;
+            scale(l, out, |x| x / s, whole)
         }
         (ArithOp::Div, Value::Number { .. }, Value::Array { dims, .. }) => Err(RuntimeError::new(
             format!("cannot divide a number by a {}", noun(dims)),
@@ -136,7 +219,7 @@ pub fn arith(op: ArithOp, l: &Value, r: &Value, whole: Span, lspan: Span, rspan:
                     .with_help("use `@` for the matrix product"),
             )
         }
-        _ => {
+        (op, l, r) => {
             let (verb, prep) = match op {
                 ArithOp::Add => ("add", "and"),
                 ArithOp::Sub => ("subtract", "from"),
@@ -421,6 +504,23 @@ pub fn to_index(v: &Value, span: Span) -> R<usize> {
     Ok(*value as usize)
 }
 
+/// The error for position `i` on axis `axis` of length `len`.
+fn out_of_bounds(
+    i: usize,
+    axis: usize,
+    len: usize,
+    span: Span,
+    base_span: Span,
+    dims: &[usize],
+) -> RuntimeError {
+    RuntimeError::new(
+        format!("index {i} is out of bounds for axis {axis} with length {len}"),
+        span,
+    )
+    .with_label(format!("valid indices are 0 to {}", len - 1))
+    .with_secondary(base_span, format!("this is {}", shape_text(dims)))
+}
+
 /// `base[items]` for an array: a scalar index takes its axis away and a
 /// slice keeps it; trailing axes without an item stay whole. All the
 /// indices were evaluated first; bounds are checked here.
@@ -443,6 +543,20 @@ pub fn index(base: &Value, items: &[Ix], whole: Span, base_span: Span) -> R<Valu
             whole,
         ));
     }
+    // `v[i]` and `A[i, j]`: one entry, found without building ranges.
+    if items.len() == dims.len() && items.iter().all(|it| matches!(it, Ix::At { .. })) {
+        let mut offset = 0;
+        for (axis, (&len, item)) in dims.iter().zip(items).enumerate() {
+            let Ix::At { i, span } = *item else {
+                continue;
+            };
+            if i >= len {
+                return Err(out_of_bounds(i, axis, len, span, base_span, dims));
+            }
+            offset = offset * len + i;
+        }
+        return Ok(Value::number(data[offset], *dim));
+    }
     // The range of each axis, and whether it stays in the result.
     let mut ranges = Vec::with_capacity(dims.len());
     let mut kept = Vec::new();
@@ -454,12 +568,7 @@ pub fn index(base: &Value, items: &[Ix], whole: Span, base_span: Span) -> R<Valu
             }
             Some(&Ix::At { i, span }) => {
                 if i >= len {
-                    return Err(RuntimeError::new(
-                        format!("index {i} is out of bounds for axis {axis} with length {len}"),
-                        span,
-                    )
-                    .with_label(format!("valid indices are 0 to {}", len - 1))
-                    .with_secondary(base_span, format!("this is {}", shape_text(dims))));
+                    return Err(out_of_bounds(i, axis, len, span, base_span, dims));
                 }
                 ranges.push(i..i + 1);
             }

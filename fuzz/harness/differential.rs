@@ -382,6 +382,15 @@ struct Gen<'a> {
     /// one: its result has a type the checker cannot know, so a call of it
     /// can stand where a Bool goes whatever its argument is.
     unknown: Option<String>,
+    /// The array variables in scope, in a program of small arrays
+    /// ([`generate_vectors`]); always empty in the other programs.
+    vecs: Vec<VecVar>,
+    /// The functions over arrays defined so far.
+    vfns: Vec<VecFn>,
+    /// The loop counters in scope, which may index arrays.
+    counters: Vec<Counter>,
+    /// How deep the scalars made from arrays nest.
+    vec_depth: u32,
 }
 
 /// Known bugs the generator steers around, so the fuzzer keeps finding new
@@ -663,6 +672,13 @@ impl Gen<'_> {
     // ----- expressions -----
 
     fn leaf(&mut self, d: Dim) -> E {
+        // In a program of small arrays, a scalar is often read from one (the
+        // choice is drawn only there, so the other programs are unchanged).
+        if (!self.vecs.is_empty() || !self.vfns.is_empty()) && self.c.chance(30) {
+            if let Some(e) = self.vec_scalar(d) {
+                return e;
+            }
+        }
         let names: Vec<String> = self
             .vars
             .iter()
@@ -1323,7 +1339,8 @@ impl Gen<'_> {
             }, // 11 probe
             // 12 an input declaration: the run ends there, so it is rare
             if self.ind == 0 && !self.in_fn { 1 } else { 0 },
-            2, // 13 an assertion
+            2,                            // 13 an assertion
+            if loopable { 6 } else { 0 }, // 14 for
         ];
         match self.c.weighted(&w) {
             0 => {
@@ -1368,6 +1385,7 @@ impl Gen<'_> {
                 self.assert_stmt();
                 Exit::Falls
             }
+            14 => self.for_stmt(depth),
             _ => {
                 self.poly_probe();
                 Exit::Falls
@@ -1384,7 +1402,7 @@ impl Gen<'_> {
     /// engines must check it at run time.
     fn contract_cond(&mut self, depth: u32) -> String {
         let vars: Vec<(String, Ty)> = self.vars.iter().map(|v| (v.name.clone(), v.ty)).collect();
-        let cond = match self.c.weighted(&[40, 16, 14 + self.risk, 2]) {
+        let cond = match self.c.weighted(&[40, 16, 14 + self.risk, 4]) {
             0 if !vars.is_empty() => {
                 let (n, ty) = self.c.pick(&vars).clone();
                 match ty {
@@ -1832,6 +1850,157 @@ impl Gen<'_> {
         self.mult = mult;
         Exit::Falls
     }
+
+    /// The header of a `for` over `range`: its text after `range` and the
+    /// number of iterations to budget for. Bounds are mostly literals (which
+    /// the checker checks), but also names and calls the checker cannot read
+    /// as constants, so the interpreter's checks of a computed bound or step
+    /// (a whole number, not too large, no unit, a step that is not zero) are
+    /// compared too: a fraction, a huge bound, a zero step, a value of unknown
+    /// type that is a Bool, an array or has a unit.
+    fn range_header(&mut self) -> (String, u64) {
+        let count = |lo: i64, hi: i64, step: i64| -> u64 {
+            let n = if step > 0 {
+                (hi - lo + step - 1) / step
+            } else {
+                (lo - hi - step - 1) / -step
+            };
+            n.max(0) as u64
+        };
+        match self.c.weighted(&[6, 3, 3, 7, 4, 3, 3, 2, 3]) {
+            // range(n)
+            0 => {
+                let n = self.small(0, 5);
+                (format!("({n})"), n as u64)
+            }
+            // range(a, b)
+            1 => {
+                let a = self.small(-2, 4);
+                let b = a + self.small(-1, 5);
+                (format!("({a}, {b})"), count(a, b, 1))
+            }
+            // range(a, b, s), literals
+            2 => {
+                let a = self.small(-3, 7);
+                let b = self.small(-3, 7);
+                let s = *self.c.pick(&[1, 2, 3, -1, -2]);
+                (format!("({a}, {b}, {s})"), count(a, b, s))
+            }
+            // Computed whole numbers.
+            3 => {
+                let (a, b, s) = (
+                    self.small(0, 3),
+                    self.small(2, 4),
+                    *self.c.pick(&[1, 2, -1]),
+                );
+                let na = self.bound(&format!("{} - 1", a + 1));
+                let nb = self.bound(&format!("{b} * 1"));
+                let ns = self.bound(&format!("{} / {}", s * 2, 2));
+                let (lo, hi) = if s > 0 { (a, b) } else { (b, a) };
+                let text = match self.c.below(4) {
+                    0 => format!("({nb})"),
+                    1 => format!("({na}, {nb})"),
+                    2 => format!("({na}, {nb}, {ns})"),
+                    _ => format!("({lo}, {hi}, {ns})"),
+                };
+                let n = count(lo, hi, s).max(count(0, b, 1)).min(5);
+                (text, n)
+            }
+            // A bound that is not a whole number.
+            4 => {
+                let n = self.bound_of(&["5 / 2", "1 / 3", "-0.5", "2.000001"]);
+                match self.c.below(3) {
+                    0 => (format!("({n})"), 0),
+                    1 => (format!("(0, {n})"), 0),
+                    _ => (format!("(0, 3, {n})"), 0),
+                }
+            }
+            // A zero step, computed.
+            5 => {
+                let z = self.bound_of(&["3 - 3", "0 * 5", "-(2 - 2)"]);
+                (format!("(0, 3, {z})"), 0)
+            }
+            // Too large, or huge but fine (the range is then empty).
+            6 => match self.c.below(3) {
+                0 => {
+                    let n = self.bound("2 ^ 60");
+                    (format!("({n})"), 0)
+                }
+                1 => {
+                    let n = self.bound("10 ^ 300");
+                    (format!("(0, 2, {n})"), 0)
+                }
+                _ => {
+                    let n = self.bound("2 ^ 53");
+                    (format!("({n}, {n})"), 0)
+                }
+            },
+            // A value the checker cannot type: whatever it is fails or runs
+            // at run time.
+            7 => match self.unknown.clone() {
+                Some(u) => {
+                    let arg = *self
+                        .c
+                        .pick(&["3", "2.5", "1 m", "true", "[1, 2]", "-1", "2 ^ 54"]);
+                    let n = self.bound(&format!("{u}({arg})"));
+                    match self.c.below(2) {
+                        0 => (format!("({n})"), 3),
+                        _ => (format!("(0, {n})"), 3),
+                    }
+                }
+                None => ("(2)".to_string(), 2),
+            },
+            // Computed, negative direction and empty.
+            _ => {
+                let lo = self.small(0, 4);
+                let a = self.bound(&format!("{} + 1", lo));
+                let s = self.bound("-1 * 1");
+                (format!("({a}, 0, {s})"), 5)
+            }
+        }
+    }
+
+    /// A name bound just before a loop to `value`, which the checker does
+    /// not read as a constant.
+    fn bound(&mut self, value: &str) -> String {
+        let n = self.fresh("n");
+        self.line(&format!("{n} = {value}"));
+        n
+    }
+
+    /// [`Self::bound`] of one of `values`.
+    fn bound_of(&mut self, values: &[&str]) -> String {
+        let value = *self.c.pick(values);
+        self.bound(value)
+    }
+
+    /// A small integer: `lo` and up to `span - 1` more.
+    fn small(&mut self, lo: i64, span: usize) -> i64 {
+        lo + self.c.below(span) as i64
+    }
+
+    fn for_stmt(&mut self, depth: usize) -> Exit {
+        let (header, iterations) = self.range_header();
+        let i = self.fresh("i");
+        self.line(&format!("for {i} in range{header}:"));
+        let mult = self.mult;
+        self.mult *= iterations.max(1);
+        self.loops += 1;
+        let mark = self.vars.len();
+        self.vars.push(Var {
+            name: i,
+            ty: Ty::Num(ZERO),
+            assign: false,
+            update: false,
+            module: !self.in_fn && self.ind == 0,
+            retype: false,
+        });
+        self.block(depth + 1);
+        self.vars.truncate(mark);
+        self.loops -= 1;
+        self.mult = mult;
+        Exit::Falls
+    }
 }
 
 // ----- functions and the program -----
@@ -2122,6 +2291,10 @@ pub fn generate(data: &[u8]) -> String {
         shadow_consts,
         no_math,
         unknown: None,
+        vecs: Vec::new(),
+        vfns: Vec::new(),
+        counters: Vec::new(),
+        vec_depth: 0,
     };
     if !GATE_NON_BOOL_OPERAND && g.c.chance(50) {
         let name = g.fresh("u");
@@ -2163,6 +2336,800 @@ pub fn generate(data: &[u8]) -> String {
         .take(6)
         .map(|v| v.name.clone())
         .collect();
+    if !shown.is_empty() {
+        g.line(&format!("print({})", shown.join(", ")));
+    }
+    g.out
+}
+
+// ---------------------------------------------------------------------------
+// Programs of small vectors and matrices
+// ---------------------------------------------------------------------------
+//
+// The native engine holds a vector or matrix of known shape and at most 16
+// entries as separate numbers (`sky_jit`, "Small arrays"), so it must agree
+// with the interpreters on every operation of such arrays, the way values
+// cross `if`, `while` and calls, and every way they fail. [`generate_vectors`]
+// writes programs for that: declarations of vectors and matrices of a few
+// shapes (mostly of 2 to 5 entries, sometimes 8 to 17, on both sides of the
+// limit) and dimensions; assignments of well-typed array expressions
+// (`+ - *` by a scalar, `/`, negation, `@`, transpose, a row, `if`
+// expressions, calls); scalars made from arrays (`dot`, `norm`, `@`, `len`,
+// constant and run-time indexes, some out of range); `for` and `while` loops
+// and `if` statements that carry arrays; typed functions with array
+// parameters and results; functions without annotations, whose values the
+// checker cannot type; contracts over arrays; and the scalar generator's
+// expressions around them. Values are chosen to overflow at some entry, and
+// scales to be zero, when the program is risky.
+
+/// A vector or matrix variable of a generated program.
+#[derive(Clone, Debug)]
+struct VecVar {
+    name: String,
+    d: Dim,
+    /// The rows of a matrix, the length of a vector.
+    r: usize,
+    /// The columns of a matrix; 0 for a vector.
+    c: usize,
+}
+
+/// The type of a parameter or result of a generated array function.
+#[derive(Clone, Copy, Debug)]
+enum VTy {
+    Scalar(Dim),
+    Arr(Dim, usize, usize),
+}
+
+/// A generated function over arrays.
+#[derive(Clone, Debug)]
+struct VecFn {
+    name: String,
+    params: Vec<VTy>,
+    ret: VTy,
+}
+
+/// An integer that may index: a counter, and how many iterations it runs.
+#[derive(Clone, Debug)]
+struct Counter {
+    name: String,
+    bound: usize,
+}
+
+/// Parenthesizes unless `e` is an atom or a postfix form.
+fn par(e: E) -> String {
+    at(e, 9)
+}
+
+impl Gen<'_> {
+    // ----- shapes and types -----
+
+    /// A shape `(rows or length, columns or 0)`: mostly small.
+    fn vec_shape(&mut self) -> (usize, usize) {
+        match self.c.weighted(&[16, 22, 30, 8, 6, 5, 3, 3, 3, 4]) {
+            0 => (2, 0),
+            1 => (3, 0),
+            2 => (3 + usize::from(self.c.chance(30)), 0),
+            3 => (1 + self.c.below(5), 0),
+            4 => (*self.c.pick(&[2, 3, 4]), *self.c.pick(&[1, 2, 3, 4])),
+            5 => (3, 3),
+            6 => (*self.c.pick(&[7, 8, 9, 12]), 0),
+            7 => (*self.c.pick(&[15, 16, 17]), 0),
+            8 => (*self.c.pick(&[1, 2, 4, 5]), *self.c.pick(&[4, 5, 6, 8])),
+            _ => (4, 4),
+        }
+    }
+
+    /// A dimension for arrays: often dimensionless, often a length or a time.
+    fn vec_dim(&mut self) -> Dim {
+        match self.c.weighted(&[40, 20, 12, 10, 18]) {
+            0 => ZERO,
+            1 => dim(1, 0, 0, 0, 0),
+            2 => dim(0, 1, 0, 0, 0),
+            3 => dim(1, -1, 0, 0, 0),
+            _ => self.rand_dim(),
+        }
+    }
+
+    /// `Vector[3] m`, `Matrix[2,3]`: the annotation of an array type.
+    fn vec_type_text(&mut self, d: Dim, r: usize, c: usize) -> String {
+        let shape = if c == 0 {
+            format!("Vector[{r}]")
+        } else {
+            format!("Matrix[{r}, {c}]")
+        };
+        if d.is_zero() {
+            shape
+        } else {
+            let u = self.unit(d);
+            format!("{shape} {u}")
+        }
+    }
+
+    fn vty_text(&mut self, t: VTy) -> String {
+        match t {
+            VTy::Scalar(d) => self.annotation(d),
+            VTy::Arr(d, r, c) => self.vec_type_text(d, r, c),
+        }
+    }
+
+    // ----- literals and leaves -----
+
+    fn vec_entry(&mut self, d: Dim) -> String {
+        // A zero is likelier in a vector than in a scalar: it exercises the
+        // sign of zero and division.
+        if self.c.chance(8) {
+            return self.literal_with(d, "0".to_string()).s;
+        }
+        self.literal(d).s
+    }
+
+    fn vec_literal(&mut self, d: Dim, r: usize, c: usize) -> E {
+        if c == 0 {
+            let items: Vec<String> = (0..r).map(|_| self.vec_entry(d)).collect();
+            return atom(format!("[{}]", items.join(", ")));
+        }
+        let rows: Vec<String> = (0..r)
+            .map(|_| {
+                let items: Vec<String> = (0..c).map(|_| self.vec_entry(d)).collect();
+                format!("[{}]", items.join(", "))
+            })
+            .collect();
+        atom(format!("[{}]", rows.join(", ")))
+    }
+
+    /// An array variable of this shape and dimension, or a literal.
+    fn vec_leaf(&mut self, d: Dim, r: usize, c: usize) -> E {
+        let names: Vec<String> = self
+            .vecs
+            .iter()
+            .filter(|v| v.d == d && v.r == r && v.c == c)
+            .map(|v| v.name.clone())
+            .collect();
+        if !names.is_empty() && self.c.chance(75) {
+            return atom(self.c.pick(&names).clone());
+        }
+        self.vec_literal(d, r, c)
+    }
+
+    /// A valid position on an axis of length `n`: a constant, or a counter
+    /// that (mostly) stays within it.
+    fn vec_index(&mut self, n: usize) -> String {
+        let counters: Vec<Counter> = self
+            .counters
+            .iter()
+            .filter(|k| k.bound <= n || self.risk >= 10)
+            .cloned()
+            .collect();
+        if !counters.is_empty() && self.c.chance(45) {
+            return self.c.pick(&counters).name.clone();
+        }
+        // A counter can be shifted, which stays in range for the smaller ones.
+        if !self.counters.is_empty() && self.c.chance(8) {
+            let k = self.c.pick(&self.counters.clone()).clone();
+            return format!("{} + 1", k.name);
+        }
+        self.c.below(n).to_string()
+    }
+
+    // ----- array expressions -----
+
+    fn vec_expr(&mut self, d: Dim, r: usize, c: usize, depth: u32) -> E {
+        if depth == 0 || self.c.exhausted() || self.c.chance(18) {
+            return self.vec_leaf(d, r, c);
+        }
+        let matrix = c != 0;
+        let w = [
+            22,                                       // 0 a + b, a - b
+            8,                                        // 1 -a
+            12,                                       // 2 a * s
+            7,                                        // 3 s * a
+            6,                                        // 4 a / s
+            if r * c.max(1) <= 16 { 12 } else { 0 },  // 5 a product
+            if matrix { 6 } else { 0 },               // 6 transpose
+            if !matrix { 6 } else { 0 },              // 7 a row of a matrix
+            4,                                        // 8 an `if` expression
+            if self.vfns.is_empty() { 0 } else { 8 }, // 9 a call
+            3,                                        // 10 `+a`-like identity: a - a * 0
+        ];
+        match self.c.weighted(&w) {
+            0 => {
+                let plus = self.c.chance(60);
+                let a = self.vec_expr(d, r, c, depth - 1);
+                let mut b = self.vec_expr(d, r, c, depth - 1);
+                if b.s == a.s && self.c.chance(85) {
+                    b = self.vec_literal(d, r, c);
+                }
+                E {
+                    s: format!("{} {} {}", at(a, 5), if plus { "+" } else { "-" }, at(b, 6)),
+                    p: 5,
+                }
+            }
+            1 => {
+                let mut a = self.vec_expr(d, r, c, depth - 1);
+                // Known bug, reported and not fixed here: the pipeline folds
+                // `-(-a)` of an array to `a`, which loses the sign of a zero
+                // (a negation is `0 - x`), so no double negation is written.
+                if a.s.starts_with('-') {
+                    a = self.vec_leaf(d, r, c);
+                }
+                E {
+                    s: format!("-{}", at(a, 7)),
+                    p: 7,
+                }
+            }
+            2 | 3 => {
+                let d1 = self.vec_dim();
+                let inner = d.sub(d1);
+                if !inner.ok() {
+                    return self.vec_leaf(d, r, c);
+                }
+                let a = self.vec_expr(inner, r, c, depth - 1);
+                let s = self.num(d1, depth.saturating_sub(2));
+                let (a, s) = (par(a), par(s));
+                E {
+                    s: if self.c.chance(65) {
+                        format!("{a} * {s}")
+                    } else {
+                        format!("{s} * {a}")
+                    },
+                    p: 6,
+                }
+            }
+            4 => {
+                let d1 = self.vec_dim();
+                let inner = d.add(d1);
+                if !inner.ok() {
+                    return self.vec_leaf(d, r, c);
+                }
+                let a = self.vec_expr(inner, r, c, depth - 1);
+                // A zero divisor is a run-time error; only a risky program
+                // divides by anything but a positive literal.
+                let s = if self.c.chance(self.risk + 4) {
+                    self.num(d1, 1)
+                } else {
+                    self.positive_literal(d1)
+                };
+                E {
+                    s: format!("{} / {}", par(a), par(s)),
+                    p: 6,
+                }
+            }
+            5 => self.vec_product(d, r, c, depth),
+            6 => {
+                // The transpose of a matrix of the opposite shape.
+                let a = self.vec_expr(d, c, r, depth - 1);
+                if self.c.chance(50) {
+                    atom(format!("transpose({})", a.s))
+                } else {
+                    atom(format!("{}ᵀ", par(a)))
+                }
+            }
+            7 => {
+                // A row of a matrix: `M[i]`.
+                let rows = 1 + self.c.below(4);
+                let m = self.vec_expr(d, rows, r, depth - 1);
+                let i = self.vec_index(rows);
+                atom(format!("{}[{i}]", par(m)))
+            }
+            8 => {
+                let a = self.vec_expr(d, r, c, depth - 1);
+                let cnd = self.boolean(1);
+                let b = self.vec_expr(d, r, c, depth - 1);
+                E {
+                    s: format!("{} if {} else {}", at(a, 1), at(cnd, 1), at(b, 0)),
+                    p: 0,
+                }
+            }
+            9 => {
+                let cands: Vec<usize> = (0..self.vfns.len())
+                    .filter(|&i| matches!(self.vfns[i].ret, VTy::Arr(fd, fr, fc) if fd == d && fr == r && fc == c))
+                    .collect();
+                if cands.is_empty() {
+                    return self.vec_leaf(d, r, c);
+                }
+                let i = *self.c.pick(&cands);
+                self.vec_call(i, depth)
+            }
+            _ => {
+                // `a - a * 0`-like forms keep every entry finite and give
+                // signed zeros.
+                let a = self.vec_expr(d, r, c, depth - 1);
+                E {
+                    s: format!("{} * 0", par(a)),
+                    p: 6,
+                }
+            }
+        }
+    }
+
+    /// A product `x @ y` of shape `(r, c)` and dimension `d`.
+    fn vec_product(&mut self, d: Dim, r: usize, c: usize, depth: u32) -> E {
+        let d1 = self.vec_dim();
+        let d2 = d.sub(d1);
+        if !d2.ok() {
+            return self.vec_leaf(d, r, c);
+        }
+        let k = 1 + self.c.below(4);
+        let (x, y) = if c == 0 {
+            if self.c.chance(50) {
+                // matrix @ vector
+                (
+                    self.vec_expr(d1, r, k, depth - 1),
+                    self.vec_expr(d2, k, 0, depth - 1),
+                )
+            } else {
+                // vector @ matrix
+                (
+                    self.vec_expr(d1, k, 0, depth - 1),
+                    self.vec_expr(d2, k, r, depth - 1),
+                )
+            }
+        } else {
+            (
+                self.vec_expr(d1, r, k, depth - 1),
+                self.vec_expr(d2, k, c, depth - 1),
+            )
+        };
+        E {
+            s: format!("{} @ {}", at(x, 6), at(y, 7)),
+            p: 6,
+        }
+    }
+
+    fn vec_call(&mut self, i: usize, depth: u32) -> E {
+        let f = self.vfns[i].clone();
+        let mut args = Vec::new();
+        for p in &f.params {
+            args.push(match *p {
+                VTy::Scalar(d) => self.num(d, depth.saturating_sub(2)).s,
+                VTy::Arr(d, r, c) => self.vec_expr(d, r, c, depth.saturating_sub(2)).s,
+            });
+        }
+        atom(format!("{}({})", f.name, args.join(", ")))
+    }
+
+    // ----- scalars made from arrays -----
+
+    /// A scalar of dimension `d` that reads an array, for the scalar
+    /// generator's leaves. `None` when there is no array to read.
+    fn vec_scalar(&mut self, d: Dim) -> Option<E> {
+        if self.vecs.is_empty() && self.vfns.is_empty() {
+            return None;
+        }
+        if self.vec_depth >= 2 {
+            return None;
+        }
+        self.vec_depth += 1;
+        let e = self.vec_scalar_inner(d);
+        self.vec_depth -= 1;
+        Some(e)
+    }
+
+    fn vec_scalar_inner(&mut self, d: Dim) -> E {
+        let (r, c) = self.vec_shape();
+        let depth = 1;
+        match self
+            .c
+            .weighted(&[26, 20, 24, 12, if d.is_zero() { 6 } else { 0 }, 12])
+        {
+            0 => {
+                // dot(a, b) or a @ b
+                let d1 = self.vec_dim();
+                let d2 = d.sub(d1);
+                if !d2.ok() {
+                    return self.literal(d);
+                }
+                let n = if c == 0 { r } else { c };
+                let (a, b) = (
+                    self.vec_expr(d1, n, 0, depth),
+                    self.vec_expr(d2, n, 0, depth),
+                );
+                if self.c.chance(50) {
+                    atom(format!("dot({}, {})", a.s, b.s))
+                } else {
+                    E {
+                        s: format!("{} @ {}", at(a, 6), at(b, 7)),
+                        p: 6,
+                    }
+                }
+            }
+            1 => {
+                let a = self.vec_expr(d, r, c, depth);
+                atom(format!("norm({})", a.s))
+            }
+            2 => {
+                // v[i]
+                let a = self.vec_expr(d, r, 0, depth);
+                let i = self.vec_index(r);
+                atom(format!("{}[{i}]", par(a)))
+            }
+            3 => {
+                // M[i, j]
+                let (r, c) = (r.min(4), if c == 0 { 1 + self.c.below(4) } else { c });
+                let a = self.vec_expr(d, r, c, depth);
+                let (i, j) = (self.vec_index(r), self.vec_index(c));
+                atom(format!("{}[{i}, {j}]", par(a)))
+            }
+            4 => {
+                let a = self.vec_expr(ZERO, r, c, 0);
+                atom(format!("len({})", a.s))
+            }
+            _ => {
+                // An entry of a product.
+                let a = self.vec_expr(d, 2, 0, depth);
+                let i = self.vec_index(2);
+                atom(format!("{}[{i}]", par(a)))
+            }
+        }
+    }
+
+    // ----- statements -----
+
+    /// A new array variable, bound where it is written (never inside a loop
+    /// or an `if`: lowering does not take an array first bound there).
+    fn vec_decl(&mut self) {
+        let (r, c) = self.vec_shape();
+        let d = self.vec_dim();
+        let name = self.fresh_name();
+        let e = if self.c.chance(70) || self.vecs.is_empty() {
+            self.vec_literal(d, r, c)
+        } else {
+            self.vec_expr(d, r, c, 3)
+        };
+        self.line(&format!("{name} = {}", e.s));
+        self.vecs.push(VecVar { name, d, r, c });
+    }
+
+    fn vec_assign(&mut self) {
+        if self.vecs.is_empty() {
+            return self.print();
+        }
+        let v = self.c.pick(&self.vecs.clone()).clone();
+        match self.c.weighted(&[60, 14, 8, 6, 6, 6]) {
+            0 => {
+                let e = self.vec_expr(v.d, v.r, v.c, 3);
+                self.line(&format!("{} = {}", v.name, e.s));
+            }
+            1 => {
+                let e = self.vec_expr(v.d, v.r, v.c, 2);
+                self.line(&format!("{} += {}", v.name, e.s));
+            }
+            2 => {
+                let e = self.vec_expr(v.d, v.r, v.c, 2);
+                self.line(&format!("{} -= {}", v.name, e.s));
+            }
+            3 => {
+                let s = self.num(ZERO, 1);
+                self.line(&format!("{} *= {}", v.name, s.s));
+            }
+            4 => {
+                let s = if self.c.chance(self.risk + 4) {
+                    self.num(ZERO, 1)
+                } else {
+                    self.positive_literal(ZERO)
+                };
+                self.line(&format!("{} /= {}", v.name, s.s));
+            }
+            _ => {
+                // The same shape from a function of an array of another.
+                let e = self.vec_expr(v.d, v.r, v.c, 3);
+                self.line(&format!("{} = {} + {}", v.name, v.name, par(e)));
+            }
+        }
+    }
+
+    fn vec_print(&mut self) {
+        let n = 1 + self.c.below(3);
+        let mut args = Vec::new();
+        for _ in 0..n {
+            if self.c.chance(60) && !self.vecs.is_empty() {
+                let v = self.c.pick(&self.vecs.clone()).clone();
+                args.push(self.vec_expr(v.d, v.r, v.c, 2).s);
+            } else {
+                let d = self.vec_dim();
+                args.push(self.num(d, 2).s);
+            }
+        }
+        self.line(&format!("print({})", args.join(", ")));
+    }
+
+    fn vec_assert(&mut self) {
+        let d = self.vec_dim();
+        let (r, c) = self.vec_shape();
+        let a = self.vec_expr(d, r, c, 2);
+        let bound = self.positive_literal(d);
+        // `norm(a) >= 0` always holds; the other two may not.
+        let cond = match self.c.weighted(&[50, 25, 25]) {
+            0 => {
+                let zero = self.literal_with(d, "0".to_string());
+                format!("norm({}) >= {}", a.s, zero.s)
+            }
+            1 => format!("norm({}) < {}", a.s, bound.s),
+            _ => format!("norm({}) >= {}", a.s, bound.s),
+        };
+        let msg = if self.c.chance(40) {
+            ", \"vectors\""
+        } else {
+            ""
+        };
+        self.line(&format!("assert {cond}{msg}"));
+    }
+
+    /// `for i in range(n):` over statements that read `i` as an index and
+    /// assign arrays.
+    fn vec_for(&mut self, depth: usize) {
+        let n = 1 + self.c.below(5);
+        let name = *self.c.pick(&["i", "j", "k", "n"]);
+        let name = self.fresh(name);
+        self.line(&format!("for {name} in range({n}):"));
+        self.counters.push(Counter {
+            name: name.clone(),
+            bound: n,
+        });
+        self.vec_block(depth + 1);
+        self.counters.pop();
+    }
+
+    fn vec_while(&mut self, depth: usize) {
+        let n = 1 + self.c.below(4);
+        let name = self.fresh("t");
+        self.line(&format!("{name} = 0"));
+        self.line(&format!("while {name} < {n}:"));
+        self.counters.push(Counter {
+            name: name.clone(),
+            bound: n,
+        });
+        self.vec_block_with(depth + 1, &format!("{name} += 1"));
+        self.counters.pop();
+    }
+
+    fn vec_if(&mut self, depth: usize) {
+        let cnd = self.boolean(1);
+        self.line(&format!("if {}:", cnd.s));
+        self.vec_block(depth + 1);
+        if self.c.chance(45) {
+            self.line("else:");
+            self.vec_block(depth + 1);
+        }
+    }
+
+    fn vec_block(&mut self, depth: usize) {
+        self.vec_block_with(depth, "");
+    }
+
+    /// An indented block of array statements, then `tail` if not empty.
+    fn vec_block_with(&mut self, depth: usize, tail: &str) {
+        let mark = self.vars.len();
+        self.ind += 1;
+        for _ in 0..1 + self.c.below(3) {
+            if self.budget <= 0 || self.c.exhausted() {
+                break;
+            }
+            self.vec_stmt(depth);
+        }
+        if !tail.is_empty() {
+            self.line(tail);
+        } else if self.out.ends_with(":\n") {
+            self.line("pass");
+        }
+        self.ind -= 1;
+        self.vars.truncate(mark);
+    }
+
+    fn vec_stmt(&mut self, depth: usize) {
+        self.budget -= 1;
+        let nested = depth < 3 && self.budget > 3;
+        let top = self.ind == 0 || (self.in_fn && self.ind == 1);
+        let w = [
+            10, // 0 declaration (top only)
+            28, // 1 assignment
+            14, // 2 print
+            if nested && self.counters.len() < 2 {
+                9
+            } else {
+                0
+            }, // 3 for
+            if nested && self.counters.len() < 2 {
+                6
+            } else {
+                0
+            }, // 4 while
+            if nested { 9 } else { 0 }, // 5 if
+            8,  // 6 a scalar statement
+            3,  // 7 assert
+            if top && !self.in_fn && self.vfns.len() < 3 {
+                7
+            } else {
+                0
+            }, // 8 function
+            if top && !self.in_fn && !self.vfns.is_empty() {
+                6
+            } else {
+                0
+            }, // 9 typed call
+            if top && !self.in_fn { 3 } else { 0 }, // 10 an untyped function
+        ];
+        match self.c.weighted(&w) {
+            0 if top => self.vec_decl(),
+            0 | 1 => self.vec_assign(),
+            2 => self.vec_print(),
+            3 => self.vec_for(depth),
+            4 => self.vec_while(depth),
+            5 => self.vec_if(depth),
+            6 => {
+                // A scalar name from arrays, or the scalar generator's own.
+                if top || self.c.chance(50) {
+                    let d = self.vec_dim();
+                    let name = self.fresh_name();
+                    let e = self.num(d, 3);
+                    self.line(&format!("{name} = {}", e.s));
+                    self.bind(name, Ty::Num(d), true);
+                } else {
+                    self.assign();
+                }
+            }
+            7 => self.vec_assert(),
+            8 => self.vec_function(),
+            9 => {
+                let i = self.c.below(self.vfns.len());
+                let call = self.vec_call(i, 2);
+                let f = self.vfns[i].clone();
+                let name = self.fresh_name();
+                let ann = self.vty_text(f.ret);
+                self.line(&format!("{name}: {ann} = {}", call.s));
+                match f.ret {
+                    VTy::Scalar(d) => self.bind(name, Ty::Num(d), false),
+                    VTy::Arr(d, r, c) => self.vecs.push(VecVar { name, d, r, c }),
+                }
+            }
+            _ => self.vec_untyped_function(),
+        }
+    }
+
+    // ----- functions -----
+
+    /// A function with array parameters and result, all annotated: its body
+    /// is a few array statements and a `return` of an expression over the
+    /// parameters.
+    fn vec_function(&mut self) {
+        let name = self.fresh("vf");
+        let nparams = 1 + self.c.below(3);
+        let mut params = Vec::new();
+        for _ in 0..nparams {
+            params.push(if self.c.chance(22) {
+                VTy::Scalar(self.vec_dim())
+            } else {
+                let (r, c) = self.vec_shape();
+                VTy::Arr(self.vec_dim(), r, c)
+            });
+        }
+        let ret = if self.c.chance(15) {
+            VTy::Scalar(self.vec_dim())
+        } else {
+            let (r, c) = self.vec_shape();
+            VTy::Arr(self.vec_dim(), r, c)
+        };
+        let pnames: Vec<String> = (0..nparams).map(|_| self.fresh("p")).collect();
+        let mut header = Vec::new();
+        for (n, t) in pnames.iter().zip(&params) {
+            let ann = self.vty_text(*t);
+            header.push(format!("{n}: {ann}"));
+        }
+        let ret_ann = self.vty_text(ret);
+        self.line(&format!("def {name}({}) -> {ret_ann}:", header.join(", ")));
+
+        // Enter the function: only its parameters (and scalars) are in scope.
+        let saved_vars = std::mem::take(&mut self.vars);
+        let saved_vecs = std::mem::take(&mut self.vecs);
+        let saved_counters = std::mem::take(&mut self.counters);
+        let saved_fns = std::mem::take(&mut self.fns);
+        let saved_in_fn = std::mem::replace(&mut self.in_fn, true);
+        let saved_ret = self.ret.take();
+        self.ind = 1;
+        for (n, t) in pnames.iter().zip(&params) {
+            match *t {
+                VTy::Scalar(d) => self.vars.push(Var {
+                    name: n.clone(),
+                    ty: Ty::Num(d),
+                    assign: false,
+                    update: false,
+                    module: false,
+                    retype: false,
+                }),
+                VTy::Arr(d, r, c) => self.vecs.push(VecVar {
+                    name: n.clone(),
+                    d,
+                    r,
+                    c,
+                }),
+            }
+        }
+        // Locals, bound at the top of the body.
+        for _ in 0..self.c.below(3) {
+            self.vec_decl();
+        }
+        if self.c.chance(30) {
+            self.vec_for(1);
+        }
+        let ret_expr = match ret {
+            VTy::Scalar(d) => self.num(d, 3),
+            VTy::Arr(d, r, c) => self.vec_expr(d, r, c, 3),
+        };
+        self.line(&format!("return {}", ret_expr.s));
+        self.ind = 0;
+        self.vars = saved_vars;
+        self.vecs = saved_vecs;
+        self.counters = saved_counters;
+        self.fns = saved_fns;
+        self.in_fn = saved_in_fn;
+        self.ret = saved_ret;
+        self.vfns.push(VecFn { name, params, ret });
+    }
+
+    /// `def f(x): return x * 2 + x`-like functions with no annotations: their
+    /// parameters and results are `unknown` to the checker, so the values are
+    /// boxed on the way in and checked on the way out. Called with an array
+    /// of the shape it was written for, into a typed declaration.
+    fn vec_untyped_function(&mut self) {
+        let name = self.fresh("uf");
+        let (r, c) = self.vec_shape();
+        let d = self.vec_dim();
+        let k = self.num(ZERO, 1);
+        let body = match self.c.below(4) {
+            0 => format!("x * {}", par(k)),
+            1 => "x + x".to_string(),
+            2 => format!("-x * {} + x", par(k)),
+            _ => "x - x * 0.5".to_string(),
+        };
+        self.line(&format!("def {name}(x):"));
+        self.line(&format!("    return {body}"));
+        let arg = self.vec_expr(d, r, c, 2);
+        let out = self.fresh_name();
+        let ann = self.vec_type_text(d, r, c);
+        self.line(&format!("{out}: {ann} = {name}({})", arg.s));
+        self.vecs.push(VecVar { name: out, d, r, c });
+    }
+}
+
+/// A program of small arrays for `data` (see the notes above).
+pub fn generate_vectors(data: &[u8]) -> String {
+    let mut c = Choices::new(data);
+    let risk = *c.pick(&[0, 0, 2, 5, 10, 25]);
+    let mut g = Gen {
+        c,
+        out: String::new(),
+        ind: 0,
+        vars: Vec::new(),
+        fns: Vec::new(),
+        counter: 0,
+        risk,
+        budget: 40,
+        in_fn: false,
+        ret: None,
+        loops: 0,
+        mult: 1,
+        weight: 0,
+        rec: None,
+        cur: None,
+        shadowed: Vec::new(),
+        shadow_consts: false,
+        no_math: false,
+        unknown: None,
+        vecs: Vec::new(),
+        vfns: Vec::new(),
+        counters: Vec::new(),
+        vec_depth: 0,
+    };
+    for _ in 0..1 + g.c.below(3) {
+        g.new_name(Some(Ty::Num(ZERO)));
+    }
+    for _ in 0..2 + g.c.below(3) {
+        g.vec_decl();
+    }
+    while g.budget > 0 && !g.c.exhausted() {
+        g.vec_stmt(0);
+    }
+    let shown: Vec<String> = g.vecs.iter().take(6).map(|v| v.name.clone()).collect();
     if !shown.is_empty() {
         g.line(&format!("print({})", shown.join(", ")));
     }
@@ -2264,11 +3231,23 @@ fn is_contract_failure(msg: &str) -> bool {
 
 /// Where the engines stop is part of the failure of a contract: both point
 /// at the condition. (The other errors' spans are the tests' business.)
-fn check_contract_span(ast: &sky_ast::Module, src: &str, m: &sky_ir::Module) -> Result<(), String> {
+fn check_contract_span(
+    ast: &sky_ast::Module,
+    src: &str,
+    checked: &sky_types::Checked,
+    m: &sky_ir::Module,
+) -> Result<(), String> {
     let mut env = sky_interp::RuntimeEnv::with_prelude();
-    let walker = sky_interp::run_module(ast, src, &mut env, &mut Vec::new())
-        .err()
-        .map(|e| (e.message.clone(), e.span));
+    env.add_chain_plans(&checked.chains);
+    let walker = sky_interp::run_module_with(
+        ast,
+        src,
+        &mut env,
+        &mut Vec::new(),
+        &checked.cholesky_solves,
+    )
+    .err()
+    .map(|e| (e.message.clone(), e.span));
     let sir = sky_ir_interp::run(m, &mut Vec::new())
         .err()
         .map(|e| (e.message.clone(), e.span));
@@ -2282,10 +3261,17 @@ fn check_contract_span(ast: &sky_ast::Module, src: &str, m: &sky_ir::Module) -> 
 }
 
 /// What the AST interpreter (`sky run`) does.
-fn interpret(ast: &sky_ast::Module, src: &str) -> (String, Result<(), Failure>) {
+fn interpret(
+    ast: &sky_ast::Module,
+    src: &str,
+    checked: &sky_types::Checked,
+) -> (String, Result<(), Failure>) {
     let mut env = sky_interp::RuntimeEnv::with_prelude();
+    // What `sky run` does after checking: it follows the checker's rewrites
+    // (the association of an `@` chain, Cholesky solves), as lowering does.
+    env.add_chain_plans(&checked.chains);
     let mut out = Vec::new();
-    let r = sky_interp::run_module(ast, src, &mut env, &mut out);
+    let r = sky_interp::run_module_with(ast, src, &mut env, &mut out, &checked.cholesky_solves);
     (
         String::from_utf8_lossy(&out).into_owned(),
         r.map(|_| ())
@@ -2410,11 +3396,11 @@ fn check_inner(src: &str, strict: bool) -> Result<Outcome, String> {
         return Err(format!("the lowered SIR does not verify: {ms:?}"));
     }
 
-    let (want_out, want) = interpret(&ast, src);
+    let (want_out, want) = interpret(&ast, src, &checked);
     let (got_out, got) = run_sir(&m, src);
     if let Err(msg) = &want {
         if is_contract_failure(&msg.message) {
-            check_contract_span(&ast, src, &m)?;
+            check_contract_span(&ast, src, &checked, &m)?;
         }
     }
     let dump = |m: &sky_ir::Module| sky_ir::print(m);
@@ -2504,6 +3490,15 @@ fn check_inner(src: &str, strict: bool) -> Result<Outcome, String> {
     }
 
     Ok(outcome(known))
+}
+
+/// [`check`] on a program of small arrays ([`generate_vectors`]).
+pub fn check_vectors(data: &[u8]) -> Outcome {
+    let src = generate_vectors(data);
+    match check_source(&src) {
+        Ok(o) => o,
+        Err(msg) => panic!("{msg}\n--- program ---\n{src}"),
+    }
 }
 
 /// The fuzz check: generate a program from `data` and require the engines to

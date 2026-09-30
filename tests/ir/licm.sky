@@ -1,0 +1,15 @@
+# Loop-invariant code motion (`licm`). `inv(K)` and `Aᵀ` do not change in the
+# loop, so they are computed once, before it. `Aᵀ` cannot fail, so it moves
+# as it is. `inv(K)` can fail (a singular K), so it may not run when the loop
+# does not: `steps` is unknown here, and the inverse moves behind a guard, the
+# loop's own first test, computed before the loop.
+K: Matrix[2, 2]
+A: Matrix[2, 2]
+steps: Scalar
+u = [1, 2]
+i = 0
+while i < steps:
+    Kinv = inv(K)
+    u = Kinv @ u + Aᵀ @ u
+    i += 1
+print(u)

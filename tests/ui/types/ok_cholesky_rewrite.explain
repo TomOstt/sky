@@ -12,6 +12,16 @@ tests/ui/types/ok_cholesky_rewrite.sky:9:5: note: `inv(A) @ b` is rewritten to a
   |         - positive definite
   = note: rewrite `A⁻¹ @ b` to a Cholesky solve: A is Matrix[3,3] and PositiveDefinite, b is Vector[3]. Factor A = L·Lᵀ (L lower-triangular), solve L·y = b, then Lᵀ·x = y. x = A⁻¹·b is Vector[3], and A⁻¹ is never formed.
 
+tests/ui/types/ok_cholesky_rewrite.sky:9:5: note: [GVN-001] `inv(A) @ b` at line 9 reuses the value computed at line 8
+  |
+9 | y = inv(A) @ b
+  |     ^^^^^^^^^^
+8 | x = A⁻¹ @ b
+  |     ------- computed here first
+  = note: applied by the `gvn` pass
+  = note: because the earlier `solve` has the same operands and runs first on every path to this one, so both compute the same value
+  = note: because `solve` can fail, but with the same operands the earlier one has failed already if this one would, and Sky reports the first failure, so this one can never be the failure that is reported
+
 tests/ui/types/ok_cholesky_rewrite.sky:10:5: note: `K⁻¹ @ f` is rewritten to a Cholesky solve
    |
 10 | u = K⁻¹ @ f

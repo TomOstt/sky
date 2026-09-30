@@ -99,8 +99,10 @@
 //!   with them, so they are the tree-walker's.
 //! * `for i in range(a, b, s)` is that `while` over a hidden carried index
 //!   (`<i1>`, `<i2>`, ...) that the body's first operations copy into `i`
-//!   and advance; see `for_loop.rs`. `for x in v` over an array is a
-//!   [`LowerError`] until SIR has array values.
+//!   and advance; see `for_loop.rs`. A bound or step that is not a literal
+//!   is checked at run time by `expect.range[bound|step]`, as the
+//!   interpreter does. `for x in v` over an array is a [`LowerError`] until
+//!   SIR has array values.
 //!
 //! # Flat chains
 //!
@@ -317,7 +319,7 @@ pub fn lower_with_defs(
     src: &str,
     checked: &Checked,
 ) -> Result<(Module, HashMap<Span, String>), LowerError> {
-    lower_impl(module, src, checked, false, false).map(|(m, d, _)| (m, d))
+    lower_impl(module, src, checked, false).map(|(m, d, _)| (m, d))
 }
 
 /// [`lower_with_defs`] for the `def`s alone: `<main>` is empty, and the
@@ -333,7 +335,7 @@ pub fn lower_defs(
     src: &str,
     checked: &Checked,
 ) -> Result<(Module, HashMap<Span, String>), LowerError> {
-    lower_impl(module, src, checked, false, true).map(|(m, d, _)| (m, d))
+    lower_impl(module, src, checked, true).map(|(m, d, _)| (m, d))
 }
 
 /// [`lower`], and the `accuracy` declarations of the program as goals for
@@ -345,20 +347,18 @@ pub fn lower_with_accuracy(
     src: &str,
     checked: &Checked,
 ) -> Result<(Module, Vec<sky_ir::roundoff::Goal>), LowerError> {
-    lower_impl(module, src, checked, false, false).map(|(m, _, g)| (m, g))
+    lower_impl(module, src, checked, false).map(|(m, _, g)| (m, g))
 }
 
 /// [`lower`] for a module that is about to be executed in place of the tree
 /// walker (`sky run`'s SIR engine), which must behave exactly as the tree
-/// walker does. It refuses, with a [`LowerError`], the programs whose SIR
-/// would run differently because SIR cannot express a check the tree walker
-/// makes at run time: today, a `for` over `range` with a bound or step
-/// computed at run time (see `for_loop.rs`). Everything else is [`lower`].
-///
-/// Tools that only look at the IR (`sky check --emit-ir`) keep using
-/// [`lower`], which lowers such a loop as far as `f64` arithmetic goes.
+/// walker does. SIR expresses every run-time check the tree walker makes
+/// (a computed `range` bound or step has `expect.range`; a tag promise has
+/// the failing operation that relies on it), so this is [`lower`]; it stays
+/// the one entry point execution uses, so that a check SIR cannot express
+/// can be refused here, with a [`LowerError`], rather than run differently.
 pub fn lower_for_run(module: &Ast, src: &str, checked: &Checked) -> Result<Module, LowerError> {
-    lower_impl(module, src, checked, true, false).map(|(m, _, _)| m)
+    lower_impl(module, src, checked, false).map(|(m, _, _)| m)
 }
 
 /// Everything one lowering produces: the module, which SIR function each
@@ -369,7 +369,6 @@ fn lower_impl(
     module: &Ast,
     src: &str,
     checked: &Checked,
-    for_run: bool,
     defs_only: bool,
 ) -> Result<Lowered, LowerError> {
     let main = FnState {
@@ -395,7 +394,6 @@ fn lower_impl(
         st: main,
         stack: Vec::new(),
         derivatives: Vec::new(),
-        for_run,
         goals: Vec::new(),
     };
     lw.collect_defs(&module.stmts);

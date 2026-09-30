@@ -16,6 +16,10 @@
 //! same. The generator and the oracle are in `fuzz/harness/differential.rs`,
 //! which a stable sky-ir-interp test also runs, on fixed seeds.
 //!
+//! A second generator (`generate_vectors`) writes programs of small vectors and
+//! matrices, loops and typed functions over them, which native code holds as
+//! separate numbers; the top bit of the first input byte chooses it.
+//!
 //! The oracle runs the engines under `sky_ast::with_deep_stack`, as `sky
 //! run` does, so this target needs no worker thread of its own. Bugs already
 //! reported are listed (and, where the generator can steer around them,
@@ -28,5 +32,15 @@ use libfuzzer_sys::fuzz_target;
 mod harness;
 
 fuzz_target!(|data: &[u8]| {
-    harness::check(data);
+    // The top bit of the first byte picks the generator: the general one, or
+    // the one for programs of small arrays (the native engine keeps those in
+    // registers and must agree on every operation and error of them).
+    match data.split_first() {
+        Some((first, rest)) if first & 0x80 != 0 => {
+            harness::check_vectors(rest);
+        }
+        _ => {
+            harness::check(data);
+        }
+    }
 });

@@ -56,6 +56,8 @@ fn all_ops_module_uses_every_mnemonic() {
         "show",
         "expect.bool",
         "expect.number",
+        "assume",
+        "expect.range",
         "fused",
         "if",
         "while",

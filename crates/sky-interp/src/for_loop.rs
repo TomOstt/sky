@@ -16,11 +16,10 @@
 
 use sky_ast::{Block, Expr, ExprKind, Ident};
 use sky_diag::Span;
-use sky_types::MAX_RANGE_BOUND;
 
 use super::{Flow, Interp};
-use crate::arith::{describe, R};
-use crate::{format_number, RuntimeError, Value};
+use crate::arith::{range_int, zero_step, R};
+use crate::{RuntimeError, Value};
 
 impl Interp<'_> {
     /// `for var in iter: body`.
@@ -102,53 +101,8 @@ impl Interp<'_> {
             _ => unreachable!("1 to 3 arguments"),
         };
         if step == 0 {
-            let at = args.last().map_or(call, |a| a.span);
-            return Err(RuntimeError::new("the step of `range` cannot be zero", at)
-                .with_label("zero step")
-                .with_note("the index would never move, so the loop would never end"));
+            return Err(zero_step(args.last().map_or(call, |a| a.span)));
         }
         Ok((start, stop, step))
     }
-}
-
-/// A bound or step of `range`: a dimensionless integer of magnitude at
-/// most [`MAX_RANGE_BOUND`].
-fn range_int(v: &Value, span: Span) -> R<i64> {
-    let Value::Number { value, dim } = v else {
-        return Err(RuntimeError::new(
-            format!("`range` needs an integer, found {}", v.kind()),
-            span,
-        )
-        .with_label(format!("this is {}", v.kind())));
-    };
-    if !dim.is_dimensionless() {
-        return Err(RuntimeError::new(
-            format!(
-                "`range` needs a dimensionless integer, found {}",
-                describe(dim)
-            ),
-            span,
-        )
-        .with_label(format!("this is {}", describe(dim)))
-        .with_note("a count of steps has no unit"));
-    }
-    if value.fract() != 0.0 {
-        return Err(RuntimeError::new(
-            format!("`range` needs an integer, found {}", format_number(*value)),
-            span,
-        )
-        .with_label("not an integer"));
-    }
-    if value.abs() > MAX_RANGE_BOUND as f64 {
-        return Err(RuntimeError::new(
-            format!(
-                "the bound {} of `range` is too large",
-                format_number(*value)
-            ),
-            span,
-        )
-        .with_label("too large")
-        .with_note("a bound may be at most 2^53 in size"));
-    }
-    Ok(*value as i64)
 }

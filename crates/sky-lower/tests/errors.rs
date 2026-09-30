@@ -135,15 +135,23 @@ fn try_lower_for_run(src: &str) -> Result<sky_ir::Module, sky_lower::LowerError>
 }
 
 #[test]
-fn a_computed_range_bound_lowers_for_reading_but_not_for_running() {
+fn a_computed_range_bound_or_step_lowers_with_run_time_checks() {
     // The interpreter stops `range(5 / 2)` with an error when the loop
-    // starts and SIR cannot, so lowering for execution refuses it (the tree
-    // walker runs it), while the IR of it can still be looked at.
+    // starts; SIR makes the same checks with `expect.range`, after each
+    // argument, on the argument's span.
     let src = "n = 5 / 2\nfor i in range(n):\n    print(i)\n";
-    assert!(try_lower(src).is_ok());
-    let e = try_lower_for_run(src).expect_err("must be refused for running");
-    assert!(e.message.contains("computed at run time"), "{}", e.message);
-    assert_eq!(&src[e.span.range()], "range(n)");
-    // Constants are checked by the checker, so those loops run on SIR.
-    assert!(try_lower_for_run("for i in range(2, 10, 3):\n    print(i)\n").is_ok());
+    for lowered in [try_lower(src), try_lower_for_run(src)] {
+        let m = lowered.expect("lowers");
+        let text = sky_ir::print(&m);
+        assert!(text.contains("expect.range[bound]"), "{text}");
+        assert!(!text.contains("expect.range[step]"), "{text}");
+    }
+    let src = "a = 2\nb = 8\ns = 3\nfor i in range(a, b, s):\n    print(i)\n";
+    let text = sky_ir::print(&try_lower_for_run(src).expect("lowers"));
+    assert_eq!(text.matches("expect.range[bound]").count(), 3, "{text}");
+    assert_eq!(text.matches("expect.range[step]").count(), 1, "{text}");
+    // Literals are checked by the checker: no run-time check.
+    let literals = try_lower_for_run("for i in range(2, 10, 3):\n    print(i)\n");
+    let text = sky_ir::print(&literals.expect("lowers"));
+    assert!(!text.contains("expect.range"), "{text}");
 }

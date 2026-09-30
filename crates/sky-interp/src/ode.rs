@@ -137,6 +137,7 @@ impl Conserve {
             }],
             stack: StackMeter::new(),
             derivatives: None,
+            consume: None,
         };
         it.eval(&self.expr)
     }

@@ -22,13 +22,12 @@
 //! negative one; for a step known only at run time it is
 //! `(<idx> - b) * s < 0`, which is both at once and is false for a zero
 //! step. The interpreter also rejects a bound that is not an integer or
-//! is larger than 2^53 in size, and a zero step; SIR has no operation that
-//! stops a program with a message yet, so those checks are made by the
-//! checker for constants and only by the tree walker for computed values. A
-//! lowered loop with such a value counts as far as `f64` arithmetic goes
-//! (`range(5 / 2)` counts 0, 1, 2), which is fine for looking at the IR and
-//! wrong for running it: [`crate::lower_for_run`], which `sky run` lowers
-//! with, refuses such a loop, and the tree walker runs the program.
+//! is larger than 2^53 in size, a bound with a unit, and a zero step. The
+//! checker makes those checks for literals; for any other bound or step
+//! lowering makes them at run time, as the interpreter does: an
+//! `expect.range[bound]` right after each argument is evaluated, left to
+//! right, and an `expect.range[step]` on the step, with the interpreter's
+//! own errors on the argument's span.
 //!
 //! `for x in v` over an array needs array values, which SIR does not have
 //! yet, so it is a [`LowerError`] that says so.
@@ -44,7 +43,7 @@ use std::collections::BTreeSet;
 
 use sky_ast::{Block, Expr, ExprKind, Ident};
 use sky_diag::Span;
-use sky_ir::{BoolContext, CmpOp, OpKind, Type, ValueId};
+use sky_ir::{BoolContext, CmpOp, OpKind, RangePart, Type, ValueId};
 use sky_types::{range_constants, range_runs_at_least_once};
 use sky_units::Dimension;
 
@@ -169,30 +168,21 @@ impl Lower<'_> {
             [start, stop, step] => (Some(start), stop, Some(step)),
             _ => return self.err("`range` takes 1 to 3 arguments", iter.span),
         };
-        // Evaluated once, before the loop, left to right.
+        // Evaluated once, before the loop, left to right; the interpreter
+        // checks each one as it reads it.
         let start_v = match start {
-            Some(a) => self.expr(a)?,
+            Some(a) => self.range_arg(a)?,
             None => self.const_float(0.0, index_ty(), iter.span),
         };
-        let stop_v = self.expr(stop)?;
+        let stop_v = self.range_arg(stop)?;
         let step_v = match step {
-            Some(a) => self.expr(a)?,
+            Some(a) => {
+                let v = self.range_arg(a)?;
+                self.range_step(a, v)
+            }
             None => self.const_float(1.0, index_ty(), iter.span),
         };
         let constants = range_constants(self.src, args);
-        // The interpreter checks a computed bound or step when the loop
-        // starts (a whole number of sane size, a step that is not zero) and
-        // stops with an error otherwise; only constants are checked before
-        // the run. SIR cannot make that check, so a program that is to be
-        // executed would run on where `sky run` must fail: it stays on the
-        // tree walker until SIR can stop with a message.
-        if self.for_run && constants.is_none() {
-            return Err(LowerError::new(
-                "a `range` bound or step computed at run time is checked by the tree-walking interpreter",
-                iter.span,
-            )
-            .with_note(RANGE_CHECKS));
-        }
         let step_sign = match (step, constants) {
             (None, _) => Some(1),
             (Some(_), Some((_, _, s))) => Some(s.signum()),
@@ -225,6 +215,40 @@ impl Lower<'_> {
         Ok(())
     }
 
+    /// One argument of `range`, evaluated, and checked at run time unless
+    /// it is a literal (the checker did): a whole number of magnitude at
+    /// most 2^53 with no unit, as an `expect.range[bound]` on the argument.
+    fn range_arg(&mut self, a: &Expr) -> R<ValueId> {
+        let v = self.expr(a)?;
+        if sky_types::const_exponent(self.src, a).is_some() {
+            return Ok(v);
+        }
+        Ok(self.op1(
+            OpKind::ExpectRange {
+                part: RangePart::Bound,
+            },
+            vec![v],
+            index_ty(),
+            a.span,
+        ))
+    }
+
+    /// The step `v` of `range(.., step)`, which is not zero: an
+    /// `expect.range[step]` unless the step is a literal.
+    fn range_step(&mut self, a: &Expr, v: ValueId) -> ValueId {
+        if sky_types::const_exponent(self.src, a).is_some() {
+            return v;
+        }
+        self.op1(
+            OpKind::ExpectRange {
+                part: RangePart::Step,
+            },
+            vec![v],
+            index_ty(),
+            a.span,
+        )
+    }
+
     /// The arguments if `iter` calls the builtin `range`: the checker never
     /// typed the callee (it types a user's own `range`).
     fn range_args<'e>(&self, iter: &'e Expr) -> Option<&'e [Expr]> {
@@ -242,9 +266,6 @@ impl Lower<'_> {
         }
     }
 }
-
-/// Why a computed `range` bound is not lowered for execution.
-const RANGE_CHECKS: &str = "`sky run` checks a computed `range` bound at run time (a whole number, not too large, a step that is not zero) and SIR has no operation to stop with that message yet";
 
 /// The type of an index: a dimensionless scalar.
 fn index_ty() -> Type {

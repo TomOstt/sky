@@ -327,3 +327,147 @@ fn clif_text_has_every_function_and_the_status_convention() {
     assert!(text.contains("(i32, i64, i32) -> i32"), "{text}");
     assert!(text.contains("fmul"), "{text}");
 }
+
+// ----- checks that native code makes cheaply -----
+//
+// Native code checks finiteness as `x - x` ordered, skips checks the
+// exactness analysis proves unnecessary, runs the arms of a comparison-only
+// `if` on both paths, and calls the math core directly. None of it may move,
+// merge or drop an error: the first failing operation in program order is
+// reported, after the output before it and before any output after it.
+
+#[test]
+fn an_overflow_after_prints_reports_the_first_failing_operation() {
+    for src in [
+        // The first overflow is `y`; the second (`z`) never runs.
+        "print(1)\nx = 1e200\nprint(x)\ny = x * x\nprint(y)\nz = y * y\nprint(z)\n",
+        // Two failing operations in a row: the earlier one is reported.
+        "x = 1e300\nprint(7)\na = x * 1e10\nb = a * a\nprint(a, b)\n",
+        // An overflow that a later operation would hide (1 / inf is 0).
+        "x = 1e300\nprint(1)\ny = 1 / (x * x)\nprint(y)\n",
+        // Sums and differences.
+        "x = 1.7e308\nprint(0)\ny = x + x\nprint(y)\n",
+        "x = 1.7e308\nprint(0)\ny = 0 - x - x\nprint(y)\n",
+        // A power and a negative power of zero.
+        "x = 1e200\nprint(2)\nprint(x^2)\nprint(3)\n",
+        "x = 0\nprint(2)\nprint(x^-2)\nprint(3)\n",
+    ] {
+        let r = agree(src);
+        assert!(r.failure.is_some(), "expected an error from:\n{src}");
+    }
+}
+
+#[test]
+fn an_overflow_inside_a_loop_reports_the_iteration_the_interpreter_stops_at() {
+    for src in [
+        // Doubling overflows after about 1000 steps.
+        "x = 1.0\nfor i in range(2000):\n    x = x * 2\n    if i / 250 == floor(i / 250):\n        print(i, x)\nprint(x)\n",
+        // The failing operation is inside a while, after a print.
+        "x = 1.0\nn = 0\nwhile n < 5000:\n    print(n)\n    x = x * 3\n    n = n + 1\n",
+        // Two accumulators; the second overflows first.
+        "a = 1.0\nb = 1.0\nfor i in range(400):\n    a = a + 1\n    b = b * b + 1\n    print(a)\nprint(b)\n",
+        // A nested loop with a break flag around the overflow.
+        "t = 1.0\nfor i in range(50):\n    for j in range(50):\n        if j > 40:\n            break\n        t = t * 1.5\n        print(t)\n",
+        // A division by zero that appears mid-loop.
+        "n = 5\nfor i in range(10):\n    print(100 / (n - i))\n",
+    ] {
+        let r = agree(src);
+        assert!(r.failure.is_some(), "expected an error from:\n{src}");
+        assert!(
+            !r.stdout.is_empty(),
+            "nothing was printed before the failure:\n{src}"
+        );
+    }
+}
+
+#[test]
+fn comparison_only_ifs_and_break_flags_agree() {
+    for src in [
+        // `and`/`or` chains (short-circuit ifs) over numbers and Bools.
+        "n = 0\nc = 0\nwhile n < 100 and c < 30:\n    if n / 3 == floor(n / 3) or n / 7 == floor(n / 7):\n        c = c + 1\n    n = n + 1\nprint(n, c)\n",
+        "a = 3\nb = 0 - 2\nprint(a > 0 and b < 0, a > 0 and b > 0, a < 0 or b < 0, not (a < 0 or b > 0))\n",
+        // `break` and `continue` flags in nested loops.
+        "s = 0\nfor i in range(20):\n    if i / 2 == floor(i / 2):\n        continue\n    for j in range(20):\n        if i * j > 50:\n            break\n        s = s + i * j\nprint(s)\n",
+        // A Mandelbrot escape loop, small.
+        "total = 0\nfor py in range(20):\n    ci = 0 - 1.5 + py * 0.15\n    for px in range(20):\n        cr = 0 - 2.0 + px * 0.15\n        zr = 0.0\n        zi = 0.0\n        i = 0\n        while i < 60:\n            zr2 = zr * zr\n            zi2 = zi * zi\n            if zr2 + zi2 > 4.0:\n                break\n            zi = 2.0 * zr * zi + ci\n            zr = zr2 - zi2 + cr\n            i = i + 1\n        total = total + i\nprint(total)\n",
+        // The failing operation sits after a taken break: it must not run.
+        "for i in range(10):\n    if i > 3:\n        break\n    print(1 / (3 - i))\nprint(9)\n",
+        // ... and one that is reached: 1 / 0 at i = 3.
+        "for i in range(10):\n    print(1 / (3 - i))\n",
+    ] {
+        agree(src);
+    }
+}
+
+#[test]
+fn math_domain_and_overflow_edges_are_the_interpreters() {
+    let inputs = [
+        "0",
+        "0 - 0.0",
+        "1",
+        "0 - 1",
+        "0.5",
+        "0 - 0.5",
+        "2",
+        "0 - 2",
+        "1e-300",
+        "710",
+        "1000",
+        "1e308",
+        "0 - 1e308",
+        "709.7",
+        "0 - 745",
+        "1e5",
+    ];
+    for x in inputs {
+        for f in [
+            "log", "log10", "log2", "log1p", "acosh", "atanh", "asin", "acos", "exp", "expm1",
+            "sinh", "cosh", "tanh", "asinh", "cbrt", "erf", "sign", "round", "sqrt", "tan", "atan",
+            "sin", "cos",
+        ] {
+            agree(&format!("x = {x}\nprint(1)\nprint({f}(x))\nprint(2)\n"));
+        }
+        for f in ["atan2", "hypot"] {
+            for y in ["0", "0 - 1", "3", "1e308"] {
+                agree(&format!(
+                    "x = {x}\nprint(1)\nprint({f}(x, {y}))\nprint(2)\n"
+                ));
+            }
+        }
+    }
+}
+
+#[test]
+fn operations_the_analysis_proves_cannot_fail_still_compute_the_same_bits() {
+    for src in [
+        "x = 1e308\nprint(x / 2, x / 3, 0.5 * x)\n",
+        "x = 0 - 1e308\nprint(x / 2, x * 0.5, x / 7)\n",
+        "print(sqrt(2), log(3), exp(1), 2 / 3, 10 / 4, 3^2)\n",
+        "x = 1e-320\nprint(x / 2, x * 0.5)\n",
+        "d = 0\nx = 5\nprint(1)\nprint(x / d)\n",
+    ] {
+        agree(src);
+    }
+}
+
+/// Small vectors and matrices are scalars in native code: a loop over them
+/// (literals, arithmetic, indexing, `dot`, products, calls with
+/// vector parameters and vector and matrix results) makes no runtime call
+/// that returns a handle (`sky_rt_op`, `sky_rt_box_*`), so it allocates
+/// nothing. (`norm` keeps a runtime call for entries beyond 1e+-100, in a cold
+/// block.)
+#[test]
+fn small_array_loops_make_no_handles() {
+    let src = "def cross(a: Vector[3], b: Vector[3]) -> Vector[3]:\n    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]\n\
+               def outer(a: Vector[3]) -> Matrix[3, 3]:\n    return [[a[0] * a[0], a[0] * a[1], a[0] * a[2]], [a[1] * a[0], a[1] * a[1], a[1] * a[2]], [a[2] * a[0], a[2] * a[1], a[2] * a[2]]]\n\
+               x = [1.0, 0.5, 0.25]\nv = [0.0, 1.0, 0.0]\nA = [[1.0, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.25]]\ns = 0.0\ni = 0\n\
+               d = x\nwhile i < 100:\n    d = cross(x, v)\n    x = x + v * 0.01 + A @ d * 0.001\n    v = v - x * (0.01 / (1 + dot(x, x)))\n    s = s + dot(x, x) + x[2] + (outer(v) @ x)[0]\n    i += 1\nprint(s)\n";
+    let m = lower(src);
+    let clif = emit_clif(&m).expect("emits");
+    let handle_calls: Vec<&str> = clif
+        .lines()
+        .filter(|l| l.trim_start().starts_with("sig") && l.contains("-> i64"))
+        .collect();
+    assert!(handle_calls.is_empty(), "{handle_calls:#?}\n{clif}");
+    agree(src);
+}

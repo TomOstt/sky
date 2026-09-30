@@ -6,11 +6,38 @@
 //!
 //! A value's *representation* follows from its static type. A scalar number
 //! is an `f64` (its dimension is the type's: it is not stored), a Bool is an
-//! `i8`, and everything else (arrays, strings, `none`, and any value of type
-//! `unknown`) is an opaque handle to a value the runtime owns
-//! ([`crate::runtime`]). Scalar arithmetic, comparisons, `if`, `while` and
-//! calls between functions are inline machine code; anything else is a call
-//! into the runtime, which runs the same functions the SIR interpreter does.
+//! `i8`, a *small array* is `N` `f64`s (see below), and everything else
+//! (larger arrays, strings, `none`, and any value of type `unknown`) is an
+//! opaque handle to a value the runtime owns ([`crate::runtime`]). Scalar
+//! arithmetic, comparisons, `if`, `while` and calls between functions are
+//! inline machine code; anything else is a call into the runtime, which runs
+//! the same functions the SIR interpreter does.
+//!
+//! # Small arrays
+//!
+//! A vector or matrix whose shape is known at compile time and has at most
+//! [`small::MAX_SMALL`] entries is *scalar replaced*: it is `N` separate
+//! `f64` values, in row-major order, and there is no handle, no allocation
+//! and no runtime call. The dimension is the type's, as for scalars. The
+//! operations on them (`array.literal`, `add`, `sub`, `neg`, scaling, `index`,
+//! `dot`, `norm`, `matmul`, `transpose`, `fused`, `zeros`, `identity`, `len`)
+//! are inline code, in [`small`]; the arithmetic of every entry is the shared
+//! kernels' (same operations in the same order, no fused multiply-add), and
+//! a failure re-runs the operation on the whole operands in the runtime, so
+//! the diagnostic is the interpreter's.
+//!
+//! **ABI.** A small array is passed exactly as its `N` entries would be as
+//! `N` consecutive `f64` scalars: as `N` parameters of a function, `N`
+//! results of a function, `N` parameters of a block (`if` results, `while`
+//! loop-carried values), in row-major order. A function with a `Vector[3]`
+//! parameter therefore has three `f64` parameters in its native signature. A
+//! small array is *materialized* (boxed into a runtime handle) when it goes
+//! where only a handle can: a runtime-only operation (a solve, `show`, an
+//! operation on an operand of unknown type), `print`, an `assert` message, a
+//! slot of `unknown` type (a call argument, result or loop value). A handle
+//! flowing back into a slot typed as a small array is *unpacked* with a
+//! check that its shape and dimension are what the type says; if they are
+//! not, the run deoptimizes, as for a scalar.
 //!
 //! # Exactness
 //!
@@ -85,8 +112,8 @@ use std::sync::Arc;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
-    self, types, AbiParam, Block, BlockArg, FuncRef, InstBuilder, Signature, UserFuncName,
-    Value as Cv,
+    self, types, AbiParam, Block, BlockArg, FuncRef, InstBuilder, MemFlags, Signature,
+    StackSlotData, StackSlotKind, UserFuncName, Value as Cv,
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
@@ -94,12 +121,16 @@ use cranelift_module::{FuncId, Linkage, Module as ClModule};
 use sky_diag::Span;
 use sky_interp::arith::{ArithOp, MAX_CALL_DEPTH, STACK_BUDGET};
 use sky_interp::RuntimeError;
+use sky_ir::exact::{self, Analysis};
 use sky_ir::{
     BlockId, CmpOp, Function, MathFn, Module as SirModule, OpData, OpId, OpKind, Type, ValueId,
 };
 use sky_units::Dimension;
 
 use crate::runtime::{self, Program, Rt, Site, Ty, FUNC_SITE};
+
+mod small;
+use small::{small_shape, Sh};
 
 /// A program native code cannot run (yet): what `sky run --engine=native`
 /// reports, and `--engine=auto` answers by falling back.
@@ -303,21 +334,27 @@ enum Rep {
     Bool,
     /// A handle to a runtime-owned value: an `i64`, never 0.
     Ref,
+    /// A small array of known shape: one `f64` per entry, row-major (see the
+    /// module docs).
+    Small(Sh),
 }
 
 fn rep_of(t: &Type) -> Rep {
     match t {
         Type::Number(n) if n.shape.rank() == 0 => Rep::F64,
+        Type::Number(_) => small_shape(t).map_or(Rep::Ref, Rep::Small),
         Type::Bool => Rep::Bool,
         _ => Rep::Ref,
     }
 }
 
-fn rep_ty(r: Rep) -> ir::Type {
+/// The native types a value of representation `r` is held (and passed) as.
+fn rep_tys(r: Rep) -> Vec<ir::Type> {
     match r {
-        Rep::F64 => types::F64,
-        Rep::Bool => types::I8,
-        Rep::Ref => types::I64,
+        Rep::F64 => vec![types::F64],
+        Rep::Bool => vec![types::I8],
+        Rep::Ref => vec![types::I64],
+        Rep::Small(sh) => vec![types::F64; sh.len()],
     }
 }
 
@@ -337,15 +374,25 @@ fn dim_of_type(t: &Type) -> Option<Dimension> {
     }
 }
 
+/// The dimension of a number type of any shape.
+fn number_dim(t: &Type) -> Option<Dimension> {
+    match t {
+        Type::Number(n) => Some(n.dim),
+        _ => None,
+    }
+}
+
 /// A value while it is being defined: what an operation computed, before it
 /// is held as the representation its result's type asks for.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Comp {
     F64(Cv, Dimension),
     Bool(Cv),
     /// A fresh handle (the definer owns it). If the result is typed as a
     /// scalar it is unpacked with a check (see the module docs).
     Ref(Cv),
+    /// The entries of a small array, row-major, and its dimension.
+    Small(Vec<Cv>, Sh, Dimension),
 }
 
 /// A defined value.
@@ -497,19 +544,45 @@ fn symbol_name(i: usize, name: &str) -> String {
     format!("sky_f{i}_{clean}")
 }
 
-/// `(depth: i32, stack limit: i64, call site: i32, params...) -> (status:
-/// i32, results...)`.
+/// Whether `f` returns its results through memory: a function with a small
+/// array result has more result values than the machine returns in registers
+/// (a 3 by 3 matrix is nine `f64`s; Cranelift refuses more than the ABI's
+/// return registers), so its caller passes the address of an area of 8 bytes
+/// per value as one more parameter, after the others, and the function stores
+/// its results there, in order, before it returns `status` 0. Everything
+/// else, including every function without a small array result, returns its
+/// results in registers, as always.
+fn results_in_memory(f: &Function) -> bool {
+    f.results.iter().any(|r| matches!(rep_of(r), Rep::Small(_)))
+        && f.results
+            .iter()
+            .map(|r| rep_tys(rep_of(r)).len())
+            .sum::<usize>()
+            > 1
+}
+
+/// `(depth: i32, stack limit: i64, call site: i32, params..., [result area:
+/// i64]) -> (status: i32, results...)`; the result area and the results in
+/// registers are as [`results_in_memory`] says.
 fn function_signature(f: &Function, call_conv: cranelift_codegen::isa::CallConv) -> Signature {
     let mut sig = Signature::new(call_conv);
     sig.params.push(AbiParam::new(types::I32));
     sig.params.push(AbiParam::new(types::I64));
     sig.params.push(AbiParam::new(types::I32));
     for p in &f.params {
-        sig.params.push(AbiParam::new(rep_ty(rep_of(p))));
+        sig.params
+            .extend(rep_tys(rep_of(p)).into_iter().map(AbiParam::new));
+    }
+    let in_memory = results_in_memory(f);
+    if in_memory {
+        sig.params.push(AbiParam::new(types::I64));
     }
     sig.returns.push(AbiParam::new(types::I32));
-    for r in &f.results {
-        sig.returns.push(AbiParam::new(rep_ty(rep_of(r))));
+    if !in_memory {
+        for r in &f.results {
+            sig.returns
+                .extend(rep_tys(rep_of(r)).into_iter().map(AbiParam::new));
+        }
     }
     sig
 }
@@ -526,6 +599,11 @@ struct FnTx<'a, 'm> {
     f: &'m Function,
     fidx: u32,
     vals: Vec<Option<Slot>>,
+    /// The entries of each value held as a small array (`Rep::Small`), by
+    /// value.
+    smalls: Vec<Option<Vec<Cv>>>,
+    /// The number each value is known to be (a constant's), by value.
+    consts: Vec<Option<f64>>,
     /// The handle values owned by each block being translated, innermost
     /// last.
     owned: Vec<Vec<ValueId>>,
@@ -537,6 +615,9 @@ struct FnTx<'a, 'm> {
     rt_refs: HashMap<Rt, FuncRef>,
     fn_refs: HashMap<usize, FuncRef>,
     site_ids: HashMap<u32, i32>,
+    /// What the exactness analysis proves about the function: an operation
+    /// that can fail by kind and provably cannot needs no check.
+    facts: Analysis,
 }
 
 impl<'a, 'm> FnTx<'a, 'm> {
@@ -561,6 +642,8 @@ impl<'a, 'm> FnTx<'a, 'm> {
             f,
             fidx,
             vals: vec![None; f.values.len()],
+            smalls: vec![None; f.values.len()],
+            consts: vec![None; f.values.len()],
             owned: Vec::new(),
             err,
             depth: params[0],
@@ -569,20 +652,12 @@ impl<'a, 'm> FnTx<'a, 'm> {
             rt_refs: HashMap::new(),
             fn_refs: HashMap::new(),
             site_ids: HashMap::new(),
+            facts: exact::analyze(f),
         };
         let limit = params[1];
         tx.owned.push(Vec::new());
         let entry_block = f.entry();
-        for (i, &p) in f.param_values().iter().enumerate() {
-            let rep = rep_of(f.ty(p));
-            tx.bind(
-                p,
-                Slot {
-                    v: params[3 + i],
-                    rep,
-                },
-            );
-        }
+        tx.bind_all(f.param_values(), &params[3..]);
         if tx.has_calls() {
             tx.stack_check(limit);
         }
@@ -594,9 +669,19 @@ impl<'a, 'm> FnTx<'a, 'm> {
             );
         }
         let mut outs = vec![tx.iconst(types::I32, 0)];
+        let mut values = Vec::new();
         for (i, &v) in term.operands.iter().enumerate() {
             let out = tx.transfer(term, v, &f.results[i], "a returned value")?;
-            outs.push(out);
+            values.extend(out);
+        }
+        if results_in_memory(f) {
+            let area = params[params.len() - 1];
+            for (i, v) in values.into_iter().enumerate() {
+                tx.b.ins()
+                    .store(MemFlags::trusted(), v, area, (8 * i) as i32);
+            }
+        } else {
+            outs.extend(values);
         }
         tx.release_owned();
         tx.b.ins().return_(&outs);
@@ -605,9 +690,11 @@ impl<'a, 'm> FnTx<'a, 'm> {
         tx.b.switch_to_block(tx.err);
         tx.b.set_cold_block(tx.err);
         let mut outs = vec![tx.iconst(types::I32, 1)];
-        for r in &f.results {
-            let z = tx.zero(rep_of(r));
-            outs.push(z);
+        if !results_in_memory(f) {
+            for r in &f.results {
+                let z = tx.zeros(rep_of(r));
+                outs.extend(z);
+            }
         }
         tx.b.ins().return_(&outs);
         tx.b.seal_all_blocks();
@@ -630,10 +717,15 @@ impl<'a, 'm> FnTx<'a, 'm> {
 
     fn zero(&mut self, rep: Rep) -> Cv {
         match rep {
-            Rep::F64 => self.b.ins().f64const(0.0),
+            Rep::F64 | Rep::Small(_) => self.b.ins().f64const(0.0),
             Rep::Bool => self.iconst(types::I8, 0),
             Rep::Ref => self.iconst(types::I64, 0),
         }
+    }
+
+    /// A zero of every native value `rep` is held as.
+    fn zeros(&mut self, rep: Rep) -> Vec<Cv> {
+        (0..rep_tys(rep).len()).map(|_| self.zero(rep)).collect()
     }
 
     fn rt(&mut self, rt: Rt) -> FuncRef {
@@ -742,13 +834,33 @@ impl<'a, 'm> FnTx<'a, 'm> {
         self.fail_if(bad);
     }
 
+    /// Whether the exactness analysis proves that the operation `id`, which
+    /// can fail by kind, cannot with these operands: no check is needed.
+    fn proven(&self, id: OpId) -> bool {
+        self.facts.proof(id).is_some()
+    }
+
+    /// Whether the analysis proves the scalar `v` is never zero.
+    fn nonzero(&self, v: ValueId) -> bool {
+        self.facts.known(v).is_some_and(|k| k.is_nonzero())
+    }
+
+    /// Whether `x` is finite (an `i8`): false for infinity and for NaN.
+    ///
+    /// `x - x` is 0 for a finite `x` and NaN for the rest, and "ordered"
+    /// (not NaN) is one flag test on both machines this runs on. Testing
+    /// `|x| < inf` instead needs the infinity in a register, which the
+    /// register allocator rebuilds in every block (two more instructions
+    /// per check, and a `fabs`).
+    fn is_finite(&mut self, x: Cv) -> Cv {
+        let d = self.b.ins().fsub(x, x);
+        self.b.ins().fcmp(FloatCC::Ordered, d, d)
+    }
+
     /// Fails if `x` (a result that must be finite) is not: the overflow
     /// check of `sky_interp::arith::finite`.
     fn finite_or(&mut self, x: Cv, rt: Rt, args: &[Cv]) {
-        let abs = self.b.ins().fabs(x);
-        let inf = self.b.ins().f64const(f64::INFINITY);
-        // False for infinity and for NaN (an ordered comparison).
-        let ok = self.b.ins().fcmp(FloatCC::LessThan, abs, inf);
+        let ok = self.is_finite(x);
         let (cold, cont) = (self.b.create_block(), self.b.create_block());
         self.b.ins().brif(ok, cont, &[], cold, &[]);
         self.b.set_cold_block(cold);
@@ -777,6 +889,42 @@ impl<'a, 'm> FnTx<'a, 'm> {
             }
         }
         self.vals[v.index()] = Some(s);
+    }
+
+    /// Binds `v` to the native values `cvs` a value of its type is held as
+    /// (one for a scalar, a Bool or a handle, `N` for a small array).
+    fn bind_flat(&mut self, v: ValueId, cvs: &[Cv]) {
+        match rep_of(self.f.ty(v)) {
+            Rep::Small(sh) => self.bind_small(v, sh, cvs.to_vec()),
+            rep => self.bind(v, Slot { v: cvs[0], rep }),
+        }
+    }
+
+    /// Binds each of `values` to its share of the flat list `cvs`.
+    fn bind_all(&mut self, values: &[ValueId], cvs: &[Cv]) {
+        let mut at = 0;
+        for &v in values {
+            let n = rep_tys(rep_of(self.f.ty(v))).len();
+            self.bind_flat(v, &cvs[at..at + n]);
+            at += n;
+        }
+    }
+
+    /// Holds `v` as the small array with entries `elems`.
+    fn bind_small(&mut self, v: ValueId, sh: Sh, elems: Vec<Cv>) {
+        self.vals[v.index()] = Some(Slot {
+            v: elems[0],
+            rep: Rep::Small(sh),
+        });
+        self.smalls[v.index()] = Some(elems);
+    }
+
+    /// The entries of the small array `v`.
+    fn small_elems(&self, v: ValueId, op: &OpData) -> Res<Vec<Cv>> {
+        match self.smalls.get(v.index()).cloned().flatten() {
+            Some(e) => Ok(e),
+            None => refuse(format!("{v} is not a small array"), Some(op.span)),
+        }
     }
 
     fn slot(&self, v: ValueId, op: &OpData) -> Res<Slot> {
@@ -866,7 +1014,35 @@ impl<'a, 'm> FnTx<'a, 'm> {
                     rep: Rep::Bool,
                 }
             }
-            (Comp::F64(..), Rep::Bool) | (Comp::Bool(_), Rep::F64) => {
+            (Comp::Small(elems, sh, d), Rep::Small(want)) => {
+                if sh != want || number_dim(ty) != Some(d) {
+                    return refuse(
+                        format!(
+                            "the result of `{}` is typed with a different shape or dimension than it computes",
+                            op.kind.mnemonic()
+                        ),
+                        Some(op.span),
+                    );
+                }
+                self.bind_small(r, sh, elems);
+                return Ok(());
+            }
+            (Comp::Small(elems, sh, d), Rep::Ref) => {
+                let h = self.box_small(&elems, sh, d);
+                Slot {
+                    v: h,
+                    rep: Rep::Ref,
+                }
+            }
+            (Comp::Ref(h), Rep::Small(sh)) => {
+                let d = number_dim(ty).unwrap_or(Dimension::DIMENSIONLESS);
+                let elems = self.unpack_small(h, sh, d, true);
+                self.bind_small(r, sh, elems);
+                return Ok(());
+            }
+            (Comp::F64(..), Rep::Bool | Rep::Small(_))
+            | (Comp::Bool(_), Rep::F64 | Rep::Small(_))
+            | (Comp::Small(..), Rep::F64 | Rep::Bool) => {
                 return refuse(
                     format!("the result of `{}` has the wrong type", op.kind.mnemonic()),
                     Some(op.span),
@@ -886,7 +1062,10 @@ impl<'a, 'm> FnTx<'a, 'm> {
     /// The value `v` (an operand of `op`) as a value of type `to` that its
     /// receiver owns: a handle is retained, a scalar boxed if `to` is a
     /// handle type. `what` names the place, for a refusal.
-    fn transfer(&mut self, op: &OpData, v: ValueId, to: &Type, what: &str) -> Res<Cv> {
+    ///
+    /// The result is the flat list of native values the receiver holds it
+    /// as: one, or `N` for a small array.
+    fn transfer(&mut self, op: &OpData, v: ValueId, to: &Type, what: &str) -> Res<Vec<Cv>> {
         let s = self.slot(v, op)?;
         let want = rep_of(to);
         match (s.rep, want) {
@@ -897,12 +1076,31 @@ impl<'a, 'm> FnTx<'a, 'm> {
                         Some(op.span),
                     );
                 }
-                Ok(s.v)
+                Ok(vec![s.v])
             }
-            (Rep::Bool, Rep::Bool) => Ok(s.v),
+            (Rep::Bool, Rep::Bool) => Ok(vec![s.v]),
             (Rep::Ref, Rep::Ref) => {
                 self.call(Rt::Retain, &[s.v]);
-                Ok(s.v)
+                Ok(vec![s.v])
+            }
+            (Rep::Small(a), Rep::Small(b)) => {
+                if a != b || number_dim(self.f.ty(v)) != number_dim(to) {
+                    return refuse(
+                        format!("{what} has a different shape or dimension than its destination"),
+                        Some(op.span),
+                    );
+                }
+                self.small_elems(v, op)
+            }
+            (Rep::Small(sh), Rep::Ref) => {
+                let d = number_dim(self.f.ty(v)).unwrap_or(Dimension::DIMENSIONLESS);
+                let elems = self.small_elems(v, op)?;
+                Ok(vec![self.box_small(&elems, sh, d)])
+            }
+            // A value of unknown type where a typed one is expected: check it.
+            (Rep::Ref, Rep::Small(sh)) => {
+                let d = number_dim(to).unwrap_or(Dimension::DIMENSIONLESS);
+                Ok(self.unpack_small(s.v, sh, d, false))
             }
             (Rep::F64, Rep::Ref) => {
                 let d = dim_of_type(self.f.ty(v)).unwrap_or(Dimension::DIMENSIONLESS);
@@ -910,13 +1108,13 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 let d = self.c32(d);
                 let h = self.call1(Rt::BoxNum, &[d, s.v]);
                 self.check_handle(h);
-                Ok(h)
+                Ok(vec![h])
             }
             (Rep::Bool, Rep::Ref) => {
                 let w = self.b.ins().uextend(types::I32, s.v);
                 let h = self.call1(Rt::BoxBool, &[w]);
                 self.check_handle(h);
-                Ok(h)
+                Ok(vec![h])
             }
             // A value of unknown type where a typed one is expected: check it.
             (Rep::Ref, Rep::F64) => {
@@ -925,13 +1123,13 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 let d = self.c32(d);
                 let x = self.call1(Rt::PeekNum, &[s.v, d]);
                 self.nan_fail(x);
-                Ok(x)
+                Ok(vec![x])
             }
             (Rep::Ref, Rep::Bool) => {
                 let x = self.call1(Rt::PeekBool, &[s.v]);
                 let bad = self.b.ins().icmp_imm(IntCC::SignedLessThan, x, 0);
                 self.fail_if(bad);
-                Ok(self.b.ins().icmp_imm(IntCC::NotEqual, x, 0))
+                Ok(vec![self.b.ins().icmp_imm(IntCC::NotEqual, x, 0)])
             }
             _ => refuse(
                 format!("{what} has a different type than its destination"),
@@ -1002,12 +1200,23 @@ impl<'a, 'm> FnTx<'a, 'm> {
             }
             Rep::Bool => Comp::Bool(self.iconst(types::I8, 0)),
             Rep::Ref => Comp::Ref(self.iconst(types::I64, 0)),
+            Rep::Small(sh) => {
+                let elems = self.zeros(Rep::Small(sh));
+                Comp::Small(
+                    elems,
+                    sh,
+                    number_dim(ty).unwrap_or(Dimension::DIMENSIONLESS),
+                )
+            }
         }
     }
 
     fn op(&mut self, id: OpId) -> Res<()> {
         let f = self.f;
         let op = f.op(id);
+        if self.small_op(id, op)? {
+            return Ok(());
+        }
         match &op.kind {
             OpKind::ConstFloat { bits } => {
                 let x = f64::from_bits(*bits);
@@ -1016,6 +1225,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 }
                 let d = self.const_dim(op)?;
                 let v = self.b.ins().f64const(x);
+                self.note_const(op, x);
                 self.define(op, 0, Comp::F64(v, d))
             }
             OpKind::ConstRational(q) => {
@@ -1025,6 +1235,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 }
                 let d = self.const_dim(op)?;
                 let v = self.b.ins().f64const(x);
+                self.note_const(op, x);
                 self.define(op, 0, Comp::F64(v, d))
             }
             OpKind::ConstBool(x) => {
@@ -1088,6 +1299,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 }
                 self.generic(id, op)
             }
+            OpKind::ExpectRange { .. } => self.generic(id, op),
             OpKind::ExpectNumber { .. } => {
                 let a = self.operand(op, 0)?;
                 if let (Rep::F64, Some(d)) = (a.rep, self.operand_dim(op, 0)) {
@@ -1101,6 +1313,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
             | OpKind::Norm
             | OpKind::Dot
             | OpKind::Transpose
+            | OpKind::Assume
             | OpKind::Solve { .. }
             | OpKind::SolveRight { .. }
             | OpKind::MatMulEx { .. }
@@ -1168,6 +1381,12 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 Rep::Ref => {
                     self.call(Rt::PushRef, &[s.v]);
                 }
+                Rep::Small(sh) => {
+                    let v = op.operands[i];
+                    let d = number_dim(self.f.ty(v)).unwrap_or(Dimension::DIMENSIONLESS);
+                    let elems = self.small_elems(v, op)?;
+                    self.push_small(&elems, sh, d);
+                }
             }
         }
         Ok(())
@@ -1196,18 +1415,23 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 let site = self.site(id);
                 let site = self.c32(site);
                 let fail = [site, a.v, b.v];
+                let proven = self.proven(id);
                 let r = match kind {
                     ArithOp::Add => self.b.ins().fadd(a.v, b.v),
                     ArithOp::Sub => self.b.ins().fsub(a.v, b.v),
                     ArithOp::Mul => self.b.ins().fmul(a.v, b.v),
                     ArithOp::Div => {
-                        let zero = self.b.ins().f64const(0.0);
-                        let bad = self.b.ins().fcmp(FloatCC::Equal, b.v, zero);
-                        self.fail_with(bad, Rt::Fail2, &fail);
+                        if !proven && !self.nonzero(op.operands[1]) {
+                            let zero = self.b.ins().f64const(0.0);
+                            let bad = self.b.ins().fcmp(FloatCC::Equal, b.v, zero);
+                            self.fail_with(bad, Rt::Fail2, &fail);
+                        }
                         self.b.ins().fdiv(a.v, b.v)
                     }
                 };
-                self.finite_or(r, Rt::Fail2, &fail);
+                if !proven {
+                    self.finite_or(r, Rt::Fail2, &fail);
+                }
                 return self.define(op, 0, Comp::F64(r, dim));
             }
         }
@@ -1262,13 +1486,16 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 let site = self.site(id);
                 let site = self.c32(site);
                 let r = if x.fract() == 0.0 && x.abs() <= sky_interp::arith::POWI_MAX {
-                    if x < 0.0 {
+                    let proven = self.proven(id);
+                    if x < 0.0 && !proven && !self.nonzero(op.operands[0]) {
                         let zero = self.b.ins().f64const(0.0);
                         let bad = self.b.ins().fcmp(FloatCC::Equal, a.v, zero);
                         self.fail_with(bad, Rt::Fail1, &[site, a.v]);
                     }
                     let r = self.powi(a.v, x as i32);
-                    self.finite_or(r, Rt::Fail1, &[site, a.v]);
+                    if !proven {
+                        self.finite_or(r, Rt::Fail1, &[site, a.v]);
+                    }
                     r
                 } else {
                     let xv = self.b.ins().f64const(x);
@@ -1309,12 +1536,17 @@ impl<'a, 'm> FnTx<'a, 'm> {
             if let Ok(dim) = da.inverse() {
                 let site = self.site(id);
                 let site = self.c32(site);
-                let zero = self.b.ins().f64const(0.0);
-                let bad = self.b.ins().fcmp(FloatCC::Equal, a.v, zero);
-                self.fail_with(bad, Rt::Fail1, &[site, a.v]);
+                let proven = self.proven(id);
+                if !proven && !self.nonzero(op.operands[0]) {
+                    let zero = self.b.ins().f64const(0.0);
+                    let bad = self.b.ins().fcmp(FloatCC::Equal, a.v, zero);
+                    self.fail_with(bad, Rt::Fail1, &[site, a.v]);
+                }
                 let one = self.b.ins().f64const(1.0);
                 let r = self.b.ins().fdiv(one, a.v);
-                self.finite_or(r, Rt::Fail1, &[site, a.v]);
+                if !proven {
+                    self.finite_or(r, Rt::Fail1, &[site, a.v]);
+                }
                 return self.define(op, 0, Comp::F64(r, dim));
             }
         }
@@ -1344,6 +1576,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
         };
         let site = self.site(id);
         let site = self.c32(site);
+        let proven = self.proven(id);
         // `apply` ends with `+ 0.0`, which turns `-0` into `0`.
         let plus_zero = |tx: &mut Self, r: Cv| {
             let z = tx.b.ins().f64const(0.0);
@@ -1351,9 +1584,11 @@ impl<'a, 'm> FnTx<'a, 'm> {
         };
         let r = match m {
             MathFn::Sqrt => {
-                let zero = self.b.ins().f64const(0.0);
-                let bad = self.b.ins().fcmp(FloatCC::LessThan, xs[0], zero);
-                self.fail_with(bad, Rt::Fail1, &[site, xs[0]]);
+                if !proven {
+                    let zero = self.b.ins().f64const(0.0);
+                    let bad = self.b.ins().fcmp(FloatCC::LessThan, xs[0], zero);
+                    self.fail_with(bad, Rt::Fail1, &[site, xs[0]]);
+                }
                 let r = self.b.ins().sqrt(xs[0]);
                 plus_zero(self, r)
             }
@@ -1378,16 +1613,77 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 plus_zero(self, r)
             }
             _ => {
-                let r = if n == 1 {
-                    self.call1(Rt::Math1, &[site, xs[0]])
+                // The domain first, as `apply_f64` checks it, then the value
+                // (`core_f64`, the same function), then the finiteness check.
+                // A failure re-runs the operation the interpreter's way for
+                // its diagnostic.
+                let fail = [site, xs[0], xs.get(1).copied().unwrap_or(xs[0])];
+                let fail = &fail[..=n.min(2)];
+                let outside = if proven {
+                    None
                 } else {
-                    self.call1(Rt::Math2, &[site, xs[0], xs[1]])
+                    self.math_domain(m, &xs)
                 };
-                self.nan_fail(r);
-                r
+                if let Some(bad) = outside {
+                    let rt = if n == 1 { Rt::Fail1 } else { Rt::Fail2 };
+                    self.fail_with(bad, rt, fail);
+                }
+                let fid = MathFn::ALL
+                    .iter()
+                    .position(|x| *x == m)
+                    .unwrap_or(usize::MAX);
+                let fid = self.c32(fid as i32);
+                let r = if n == 1 {
+                    self.call1(Rt::Libm1, &[fid, xs[0]])
+                } else {
+                    self.call1(Rt::Libm2, &[fid, xs[0], xs[1]])
+                };
+                if !proven {
+                    let rt = if n == 1 { Rt::Fail1 } else { Rt::Fail2 };
+                    self.finite_or(r, rt, fail);
+                }
+                plus_zero(self, r)
             }
         };
         self.define(op, 0, Comp::F64(r, dim))
+    }
+
+    /// Whether `m(xs)` is outside its domain (an `i8`, nonzero if so): the
+    /// conditions of `sky_interp::math::apply_f64`, which says which error.
+    /// `None` for a function defined on every finite number.
+    fn math_domain(&mut self, m: MathFn, xs: &[Cv]) -> Option<Cv> {
+        let konst = |tx: &mut Self, x: f64| tx.b.ins().f64const(x);
+        Some(match m {
+            MathFn::Log | MathFn::Log10 | MathFn::Log2 => {
+                let zero = konst(self, 0.0);
+                self.b.ins().fcmp(FloatCC::LessThanOrEqual, xs[0], zero)
+            }
+            MathFn::Log1p => {
+                let lo = konst(self, -1.0);
+                self.b.ins().fcmp(FloatCC::LessThanOrEqual, xs[0], lo)
+            }
+            MathFn::Acosh => {
+                let one = konst(self, 1.0);
+                self.b.ins().fcmp(FloatCC::LessThan, xs[0], one)
+            }
+            MathFn::Asin | MathFn::Acos => {
+                let a = self.b.ins().fabs(xs[0]);
+                let one = konst(self, 1.0);
+                self.b.ins().fcmp(FloatCC::GreaterThan, a, one)
+            }
+            MathFn::Atanh => {
+                let a = self.b.ins().fabs(xs[0]);
+                let one = konst(self, 1.0);
+                self.b.ins().fcmp(FloatCC::GreaterThanOrEqual, a, one)
+            }
+            MathFn::Atan2 => {
+                let zero = konst(self, 0.0);
+                let x0 = self.b.ins().fcmp(FloatCC::Equal, xs[0], zero);
+                let y0 = self.b.ins().fcmp(FloatCC::Equal, xs[1], zero);
+                self.b.ins().band(x0, y0)
+            }
+            _ => return None,
+        })
     }
 
     fn cmp(&mut self, id: OpId, op: &OpData, c: CmpOp) -> Res<()> {
@@ -1445,21 +1741,126 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 self.fail_if(bad);
                 Ok(self.b.ins().icmp_imm(IntCC::NotEqual, r, 0))
             }
-            Rep::F64 => refuse("a condition is a number", Some(op.span)),
+            Rep::F64 | Rep::Small(_) => refuse("a condition is a number", Some(op.span)),
         }
+    }
+
+    /// Whether `id` can run whether or not its branch is taken: it cannot
+    /// fail, print or call, and it reads and makes only numbers and Bools
+    /// that native code holds unboxed (a comparison of same-dimension
+    /// scalars or of Bools, a `not`, a negation, a constant).
+    fn speculable(&self, id: OpId) -> bool {
+        let f = self.f;
+        let op = f.op(id);
+        let scalar = |v: &ValueId| matches!(rep_of(f.ty(*v)), Rep::F64 | Rep::Bool);
+        if !op.operands.iter().chain(&op.results).all(scalar) {
+            return false;
+        }
+        let same_dim = |op: &OpData| {
+            let d = |i: usize| dim_of_type(f.ty(op.operands[i]));
+            d(0).is_some() && d(0) == d(1)
+        };
+        match &op.kind {
+            OpKind::ConstFloat { bits } => f64::from_bits(*bits).is_finite(),
+            OpKind::ConstBool(_) => true,
+            OpKind::Cmp(c) => match op.operands[..] {
+                [a, b] if matches!(f.ty(a), Type::Bool) => {
+                    matches!(f.ty(b), Type::Bool) && matches!(c, CmpOp::Eq | CmpOp::Ne)
+                }
+                [_, _] => same_dim(op),
+                _ => false,
+            },
+            OpKind::Not => op.operands.len() == 1 && matches!(f.ty(op.operands[0]), Type::Bool),
+            OpKind::Neg => op.operands.len() == 1 && dim_of_type(f.ty(op.operands[0])).is_some(),
+            _ => false,
+        }
+    }
+
+    /// An `if` whose arms only compute comparisons and constants (what a
+    /// short-circuit `and`, `or`, or `break` flag lowers to) as straight-line
+    /// code: both arms run, and each result is a `select`. There is no branch
+    /// to mispredict and no `i8` handed through a merge block for the next
+    /// branch to test again. Nothing observable changes, since an arm that
+    /// runs when it should not can neither fail nor print. `Ok(false)` if
+    /// the `if` is not of that shape.
+    fn if_select(&mut self, op: &'m OpData, cond: Cv) -> Res<bool> {
+        /// More work than this is not worth doing on both paths.
+        const MAX_OPS: usize = 6;
+        let f = self.f;
+        let [then_r, else_r] = op.regions[..] else {
+            return Ok(false);
+        };
+        let (Ok(then_b), Ok(else_b)) =
+            (self.single_block(then_r, op), self.single_block(else_r, op))
+        else {
+            return Ok(false);
+        };
+        let mut arms = Vec::new();
+        for bid in [then_b, else_b] {
+            let Some((term, body)) = f.block(bid).ops.split_last() else {
+                return Ok(false);
+            };
+            let term = f.op(*term);
+            if !matches!(term.kind, OpKind::Yield)
+                || term.operands.len() != op.results.len()
+                || body.len() > MAX_OPS
+                || !body.iter().all(|o| self.speculable(*o))
+            {
+                return Ok(false);
+            }
+            // The results are unboxed scalars of the type each arm yields.
+            for (&y, &r) in term.operands.iter().zip(&op.results) {
+                let (ty, want) = (f.ty(y), f.ty(r));
+                let ok = match (rep_of(ty), rep_of(want)) {
+                    (Rep::F64, Rep::F64) => dim_of_type(ty) == dim_of_type(want),
+                    (Rep::Bool, Rep::Bool) => true,
+                    _ => false,
+                };
+                if !ok {
+                    return Ok(false);
+                }
+            }
+            arms.push((body, term));
+        }
+        let mut chosen: Vec<Vec<Cv>> = Vec::new();
+        for (body, term) in arms {
+            for id in body {
+                self.op(*id)?;
+            }
+            let mut vs = Vec::new();
+            for &y in &term.operands {
+                vs.push(self.slot(y, term)?.v);
+            }
+            chosen.push(vs);
+        }
+        for (i, &r) in op.results.iter().enumerate() {
+            let v = self.b.ins().select(cond, chosen[0][i], chosen[1][i]);
+            self.bind(
+                r,
+                Slot {
+                    v,
+                    rep: rep_of(f.ty(r)),
+                },
+            );
+        }
+        Ok(true)
     }
 
     fn if_op(&mut self, id: OpId, op: &'m OpData) -> Res<()> {
         let f = self.f;
         let c = self.operand(op, 0)?;
         let cond = self.condition(id, op, c)?;
+        if c.rep == Rep::Bool && self.if_select(op, cond)? {
+            return Ok(());
+        }
         let [then_r, else_r] = op.regions[..] else {
             return refuse("an `if` needs two regions", Some(op.span));
         };
-        let reps: Vec<Rep> = op.results.iter().map(|r| rep_of(f.ty(*r))).collect();
         let merge = self.b.create_block();
-        for r in &reps {
-            self.b.append_block_param(merge, rep_ty(*r));
+        for r in &op.results {
+            for t in rep_tys(rep_of(f.ty(*r))) {
+                self.b.append_block_param(merge, t);
+            }
         }
         let (then_b, else_b) = (self.b.create_block(), self.b.create_block());
         self.b.ins().brif(cond, then_b, &[], else_b, &[]);
@@ -1473,16 +1874,14 @@ impl<'a, 'm> FnTx<'a, 'm> {
             }
             let mut outs = Vec::new();
             for (i, &v) in term.operands.iter().enumerate() {
-                outs.push(self.transfer(term, v, f.ty(op.results[i]), "a yielded value")?);
+                outs.extend(self.transfer(term, v, f.ty(op.results[i]), "a yielded value")?);
             }
             self.release_owned();
             self.b.ins().jump(merge, &args_of(&outs));
         }
         self.b.switch_to_block(merge);
         let params = self.b.block_params(merge).to_vec();
-        for (i, (&r, p)) in op.results.iter().zip(params).enumerate() {
-            self.bind(r, Slot { v: p, rep: reps[i] });
-        }
+        self.bind_all(&op.results, &params);
         Ok(())
     }
 
@@ -1507,11 +1906,13 @@ impl<'a, 'm> FnTx<'a, 'm> {
         }
         let header = self.b.create_block();
         for &a in bargs {
-            self.b.append_block_param(header, rep_ty(rep_of(f.ty(a))));
+            for t in rep_tys(rep_of(f.ty(a))) {
+                self.b.append_block_param(header, t);
+            }
         }
         let mut inits = Vec::new();
         for (i, &v) in op.operands.iter().enumerate() {
-            inits.push(self.transfer(op, v, f.ty(bargs[i]), "a loop-carried value")?);
+            inits.extend(self.transfer(op, v, f.ty(bargs[i]), "a loop-carried value")?);
         }
         self.b.ins().jump(header, &args_of(&inits));
 
@@ -1519,15 +1920,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
         self.b.switch_to_block(header);
         self.owned.push(Vec::new());
         let params = self.b.block_params(header).to_vec();
-        for (&a, p) in bargs.iter().zip(params) {
-            self.bind(
-                a,
-                Slot {
-                    v: p,
-                    rep: rep_of(f.ty(a)),
-                },
-            );
-        }
+        self.bind_all(bargs, &params);
         let term = self.block_body(before)?;
         if !matches!(term.kind, OpKind::Condition) || term.operands.is_empty() {
             return refuse(
@@ -1547,24 +1940,27 @@ impl<'a, 'm> FnTx<'a, 'm> {
         let (after_pre, exit_pre) = (self.b.create_block(), self.b.create_block());
         let (after_b, exit_b) = (self.b.create_block(), self.b.create_block());
         for &a in aargs {
-            self.b.append_block_param(after_b, rep_ty(rep_of(f.ty(a))));
+            for t in rep_tys(rep_of(f.ty(a))) {
+                self.b.append_block_param(after_b, t);
+            }
         }
-        let res_reps: Vec<Rep> = op.results.iter().map(|r| rep_of(f.ty(*r))).collect();
-        for r in &res_reps {
-            self.b.append_block_param(exit_b, rep_ty(*r));
+        for &r in &op.results {
+            for t in rep_tys(rep_of(f.ty(r))) {
+                self.b.append_block_param(exit_b, t);
+            }
         }
         self.b.ins().brif(cond, after_pre, &[], exit_pre, &[]);
         self.b.switch_to_block(after_pre);
         let mut outs = Vec::new();
         for (i, &v) in fwd.iter().enumerate() {
-            outs.push(self.transfer(term, v, f.ty(aargs[i]), "a forwarded value")?);
+            outs.extend(self.transfer(term, v, f.ty(aargs[i]), "a forwarded value")?);
         }
         self.emit_release_owned();
         self.b.ins().jump(after_b, &args_of(&outs));
         self.b.switch_to_block(exit_pre);
         let mut outs = Vec::new();
         for (i, &v) in fwd.iter().enumerate() {
-            outs.push(self.transfer(term, v, f.ty(op.results[i]), "a loop result")?);
+            outs.extend(self.transfer(term, v, f.ty(op.results[i]), "a loop result")?);
         }
         self.emit_release_owned();
         self.b.ins().jump(exit_b, &args_of(&outs));
@@ -1574,15 +1970,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
         self.b.switch_to_block(after_b);
         self.owned.push(Vec::new());
         let params = self.b.block_params(after_b).to_vec();
-        for (&a, p) in aargs.iter().zip(params) {
-            self.bind(
-                a,
-                Slot {
-                    v: p,
-                    rep: rep_of(f.ty(a)),
-                },
-            );
-        }
+        self.bind_all(aargs, &params);
         let term = self.block_body(after)?;
         if !matches!(term.kind, OpKind::Yield) || term.operands.len() != bargs.len() {
             return refuse(
@@ -1592,7 +1980,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
         }
         let mut outs = Vec::new();
         for (i, &v) in term.operands.iter().enumerate() {
-            outs.push(self.transfer(term, v, f.ty(bargs[i]), "a loop-carried value")?);
+            outs.extend(self.transfer(term, v, f.ty(bargs[i]), "a loop-carried value")?);
         }
         self.release_owned();
         self.b.ins().jump(header, &args_of(&outs));
@@ -1600,15 +1988,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
         // After the loop.
         self.b.switch_to_block(exit_b);
         let params = self.b.block_params(exit_b).to_vec();
-        for (i, (&r, p)) in op.results.iter().zip(params).enumerate() {
-            self.bind(
-                r,
-                Slot {
-                    v: p,
-                    rep: res_reps[i],
-                },
-            );
-        }
+        self.bind_all(&op.results, &params);
         Ok(())
     }
 
@@ -1641,7 +2021,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
         let depth = self.b.ins().iadd_imm(self.depth, 1);
         let mut args = vec![depth, self.stack_limit, site_v];
         for (i, &v) in op.operands.iter().enumerate() {
-            args.push(self.transfer(
+            args.extend(self.transfer(
                 op,
                 v,
                 &g.params[i],
@@ -1658,16 +2038,49 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 r
             }
         };
+        // A callee that returns through memory gets the address of a stack
+        // area for its results (see `results_in_memory`).
+        let area = if results_in_memory(g) {
+            let n: usize = g.results.iter().map(|r| rep_tys(rep_of(r)).len()).sum();
+            let slot = self.b.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                8 * n as u32,
+                3,
+            ));
+            let addr = self.b.ins().stack_addr(types::I64, slot, 0);
+            args.push(addr);
+            Some(addr)
+        } else {
+            None
+        };
         let inst = self.b.ins().call(fref, &args);
-        let results = self.b.inst_results(inst).to_vec();
+        let mut results = self.b.inst_results(inst).to_vec();
         self.status_fail(results[0]);
+        if let Some(addr) = area {
+            let tys: Vec<ir::Type> = g.results.iter().flat_map(|r| rep_tys(rep_of(r))).collect();
+            for (i, t) in tys.into_iter().enumerate() {
+                let v = self
+                    .b
+                    .ins()
+                    .load(t, MemFlags::trusted(), addr, (8 * i) as i32);
+                results.push(v);
+            }
+        }
+        let mut at = 1;
         for (i, ty) in g.results.iter().enumerate() {
-            let v = results[1 + i];
-            let c = match rep_of(ty) {
+            let v = results[at];
+            let rep = rep_of(ty);
+            let c = match rep {
                 Rep::F64 => Comp::F64(v, dim_of_type(ty).unwrap_or(Dimension::DIMENSIONLESS)),
                 Rep::Bool => Comp::Bool(v),
                 Rep::Ref => Comp::Ref(v),
+                Rep::Small(sh) => Comp::Small(
+                    results[at..at + sh.len()].to_vec(),
+                    sh,
+                    number_dim(ty).unwrap_or(Dimension::DIMENSIONLESS),
+                ),
             };
+            at += rep_tys(rep).len();
             self.define(op, i, c)?;
         }
         Ok(())
@@ -1689,6 +2102,12 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 }
                 Rep::Ref => {
                     self.call(Rt::PrintRef, &[s.v]);
+                }
+                Rep::Small(sh) => {
+                    let v = op.operands[i];
+                    let d = number_dim(self.f.ty(v)).unwrap_or(Dimension::DIMENSIONLESS);
+                    let elems = self.small_elems(v, op)?;
+                    self.print_small(&elems, sh, d);
                 }
             }
         }
@@ -1717,7 +2136,9 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 let holds = self.b.ins().icmp_imm(IntCC::Equal, r, 1);
                 self.b.ins().brif(holds, cont, &[], fail_b, &[]);
             }
-            Rep::F64 => return refuse("an `assert` condition is a number", Some(op.span)),
+            Rep::F64 | Rep::Small(_) => {
+                return refuse("an `assert` condition is a number", Some(op.span))
+            }
         }
         self.b.set_cold_block(fail_b);
         self.b.switch_to_block(fail_b);

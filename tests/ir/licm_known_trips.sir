@@ -1,0 +1,21 @@
+sir edition 2026
+
+fn @<main>() -> () effects(io, fail) @ 0..421 {
+  %d = input "d" : num[1; ()] @ 322..331
+  %i = const.float 0 : num[1; ()] @ 336..337
+  %2 = const.float 3 : num[1; ()] @ 358..359
+  %3 = const.float 1 : num[1; ()] @ 369..370
+  %t = div %3, %d : num[1; ()] @ 369..374 (369..370, 373..374)
+  %i_1, %total = while %i, %i : num[1; ()], num[1; ()] {
+    ^1(%i_2: num[1; ()], %total_1: num[1; ()]):
+      %9 = cmp.lt %i_2, %2 : bool @ 354..359 (354..355, 358..359)
+      condition %9, %i_2, %total_1 @ 354..359
+  } {
+    ^2(%i_3: num[1; ()], %total_2: num[1; ()]):
+      %total_3 = add %total_2, %t : num[1; ()] @ 387..396 (387..392, 395..396)
+      %i_4 = add %i_3, %3 : num[1; ()] @ 401..407 (401..402, 406..407)
+      yield %i_4, %total_3 @ 348..407
+  } @ 348..407
+  print %total @ 408..420
+  return @ 0..421
+}

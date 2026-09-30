@@ -29,11 +29,25 @@ tests/ir/fusion.sky:8:5: note: [PAR-003] this elementwise kernel over 3 elements
   |     ^^^^^
   = note: because 3 elements is under the threshold of 2048: splitting it across threads costs more than it saves
 
+tests/ir/fusion.sky:9:5: note: [MEM-001] `t + b` reuses `b`'s buffer: no allocation for this result
+  |
+9 | y = t + b
+  |     ^^^^^
+  = note: `b` is not used again after this on any path, and has the shape of the result
+  = note: applied by the `lifetimes` analysis of the SIR interpreter
+
 tests/ir/fusion.sky:10:5: note: [PAR-003] this elementwise `sub` over 3 elements is not parallelized: it may fail and is small
    |
 10 | w = a - d
    |     ^^^^^
    = note: because 3 elements is under the threshold of 262144: splitting it across threads costs more than it saves
+
+tests/ir/fusion.sky:10:5: note: [MEM-001] `a - d` reuses `a`'s buffer: no allocation for this result
+   |
+10 | w = a - d
+   |     ^^^^^
+   = note: `a` is not used again after this on any path, and has the shape of the result
+   = note: applied by the `lifetimes` analysis of the SIR interpreter
 
 tests/ir/fusion.sky:11:5: note: [FUSE-001] `w * 2 + w` is rewritten to `fused(w, 2)`
    |
@@ -49,3 +63,10 @@ tests/ir/fusion.sky:11:5: note: [PAR-003] this elementwise kernel over 3 element
 11 | z = w * 2 + w
    |     ^^^^^^^^^
    = note: because 3 elements is under the threshold of 2048: splitting it across threads costs more than it saves
+
+tests/ir/fusion.sky:11:5: note: [MEM-001] `w * 2 + w` reuses `w`'s buffer: no allocation for this result
+   |
+11 | z = w * 2 + w
+   |     ^^^^^^^^^
+   = note: `w` is not used again after this on any path, and has the shape of the result
+   = note: applied by the `lifetimes` analysis of the SIR interpreter

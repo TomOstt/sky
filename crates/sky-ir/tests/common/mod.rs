@@ -406,6 +406,11 @@ pub fn all_ops() -> Module {
         sp(0, 0),
     );
     let not = b.op1(OpKind::Not, vec![checked], Type::Bool, sp(0, 0));
+    b.op1(OpKind::Assume, vec![x], len(), sp(3, 4));
+    for part in sky_ir::RangePart::ALL {
+        let checked = b.op1(OpKind::ExpectRange { part }, vec![x], one(), sp(3, 4));
+        b.set_name(checked, format!("range_{}", part.text()));
+    }
     for context in sky_ir::NumberContext::ALL {
         let same = b.op1(OpKind::ExpectNumber { context }, vec![x], len(), sp(3, 4));
         b.set_name(same, format!("num_{}", context.text()));

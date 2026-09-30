@@ -1,0 +1,9 @@
+tests/ir/licm_known_trips.sky:10:9: note: [LICM-001] `1 / d` is computed once before the loop (line 9)
+   |
+10 |     t = 1 / d
+   |         ^^^^^
+ 9 | while i < 3:
+   | ------------ the loop
+   = note: applied by the `licm` pass
+   = note: because `d` is defined outside the loop, so `div` computes the same value on every iteration
+   = note: because `div` can fail, so it moves only to a place the loop reaches first: on the first iteration nothing before it can print or fail, and the loop's first test is known to be true, so if it fails, the error is the same and comes at the same point

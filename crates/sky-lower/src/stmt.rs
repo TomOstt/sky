@@ -127,7 +127,7 @@ impl Lower<'_> {
             for s in group {
                 self.stmt(s, needed)?;
             }
-            self.close_guard(frame, &assigned);
+            self.close_guard(frame, &assigned)?;
             if stmt_diverges(&group[group.len() - 1]) {
                 break;
             }
@@ -170,7 +170,7 @@ impl Lower<'_> {
         })
     }
 
-    fn close_guard(&mut self, f: GuardFrame, needed: &Needed) {
+    fn close_guard(&mut self, f: GuardFrame, needed: &Needed) -> R<()> {
         self.st.nest -= 1;
         let then_end = std::mem::take(&mut self.st.scope);
         let paths = vec![
@@ -187,9 +187,10 @@ impl Lower<'_> {
                 falls: true,
             },
         ];
-        let merged = self.close_if(f.op, f.span, paths, &f.base, Mode::Guard(needed));
+        let merged = self.close_if(f.op, f.span, paths, &f.base, Mode::Guard(needed))?;
         self.st.b.set_at(f.outer);
         self.st.scope = merged;
+        Ok(())
     }
 
     fn stmt(&mut self, s: &Stmt, needed: &Needed) -> R<()> {
@@ -485,7 +486,7 @@ impl Lower<'_> {
                 falls: else_block.is_none_or(|b| !block_diverges(&b.stmts)),
             },
         ];
-        let merged = self.close_if(op, span, paths, &base, Mode::User(&arm_needed));
+        let merged = self.close_if(op, span, paths, &base, Mode::User(&arm_needed))?;
         self.st.b.set_at(outer);
         self.st.scope = merged;
         Ok(())
@@ -570,7 +571,7 @@ impl Lower<'_> {
                     falls: true,
                 },
             ];
-            let merged = self.close_if(op, span, paths, &base, Mode::Guard(all));
+            let merged = self.close_if(op, span, paths, &base, Mode::Guard(all))?;
             self.st.b.set_at(outer);
             self.st.scope = merged;
         }
@@ -603,7 +604,7 @@ impl Lower<'_> {
                     falls: true,
                 },
             ];
-            let merged = self.close_if(op, span, paths, &base, Mode::Guard(all));
+            let merged = self.close_if(op, span, paths, &base, Mode::Guard(all))?;
             self.st.b.set_at(outer);
             self.st.scope = merged;
         }
@@ -647,7 +648,7 @@ impl Lower<'_> {
         paths: Vec<Path>,
         base: &Scope,
         mode: Mode<'_>,
-    ) -> Scope {
+    ) -> R<Scope> {
         let mut cand: BTreeSet<&String> = BTreeSet::new();
         for p in &paths {
             for (name, v) in &p.scope {
@@ -700,7 +701,7 @@ impl Lower<'_> {
             for (name, ty) in &results {
                 let v = match p.scope.get(name) {
                     Some(v) if assignable(self.st.b.ty(*v), ty) => *v,
-                    _ => self.placeholder(ty, span),
+                    _ => self.stand_in(ty, span, base)?,
                 };
                 vals.push(v);
             }
@@ -714,7 +715,7 @@ impl Lower<'_> {
             }
             merged.insert(name, v);
         }
-        merged
+        Ok(merged)
     }
 
     /// `while cond: body` as `scf.while`: the loop-carried values are the
@@ -836,7 +837,7 @@ impl Lower<'_> {
                 Some(v) => *v,
                 None => {
                     let ty = self.st.b.ty(after_args[i]).clone();
-                    self.placeholder(&ty, span)
+                    self.stand_in(&ty, span, &base)?
                 }
             };
             next.push(v);
@@ -856,8 +857,11 @@ impl Lower<'_> {
             self.st.b.set_ty(before_args[i], ty.clone());
             self.st.b.set_ty(after_args[i], ty.clone());
             if init[i].is_none() {
-                let (kind, vty) = Self::placeholder_kind(&ty);
-                let v = self.st.b.op1_before(wop, kind, vty, span);
+                // Built after the loop, where the type is known, and moved
+                // to before it.
+                let mark = self.st.b.block_len(outer);
+                let v = self.stand_in(&ty, span, &after_scope)?;
+                self.st.b.hoist_before(outer, mark, wop);
                 self.st.b.set_operand(wop, i, v);
             }
             let res = self.st.b.add_result(wop, ty);

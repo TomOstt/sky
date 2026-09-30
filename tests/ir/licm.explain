@@ -1,0 +1,32 @@
+tests/ir/licm.sky:12:12: note: [LICM-002] `inv(K)` is computed once before the loop, if the loop runs at all (line 11)
+   |
+12 |     Kinv = inv(K)
+   |            ^^^^^^
+11 | while i < steps:
+   | ---------------- the loop
+   = note: applied by the `licm` pass
+   = note: because `K` is defined outside the loop, so `inverse` computes the same value on every iteration
+   = note: because the loop may run zero times, and a loop that never runs must not start failing, so `inverse` is computed only if the loop's first test is true: the test (which cannot print or fail) is computed before the loop and again by the loop
+
+tests/ir/licm.sky:13:9: note: [PAR-003] this elementwise `add` over 2 elements is not parallelized: it may fail and is small
+   |
+13 |     u = Kinv @ u + Aᵀ @ u
+   |         ^^^^^^^^^^^^^^^^^
+   = note: because 2 elements is under the threshold of 262144: splitting it across threads costs more than it saves
+
+tests/ir/licm.sky:13:9: note: [MEM-001] `Kinv @ u + Aᵀ @ u` reuses `Kinv @ u`'s buffer: no allocation in this loop
+   |
+13 |     u = Kinv @ u + Aᵀ @ u
+   |         ^^^^^^^^^^^^^^^^^
+   = note: `Kinv @ u` is not used again after this on any path, and has the shape of the result
+   = note: applied by the `lifetimes` analysis of the SIR interpreter
+
+tests/ir/licm.sky:13:20: note: [LICM-001] `Aᵀ` is computed once before the loop (line 11)
+   |
+13 |     u = Kinv @ u + Aᵀ @ u
+   |                    ^^
+11 | while i < steps:
+   | ---------------- the loop
+   = note: applied by the `licm` pass
+   = note: because `A` is defined outside the loop, so `transpose` computes the same value on every iteration
+   = note: because `transpose` cannot print or fail, so computing it before the loop (even if the loop never runs) cannot change what the program does

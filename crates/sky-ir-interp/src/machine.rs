@@ -8,15 +8,42 @@
 //! Every access to IR data goes through a checked accessor (`Act::op`,
 //! `Act::get`, `fixed`, ...) that reports `malformed IR` instead of
 //! indexing, so no input can make this module panic.
+//!
+//! # Buffers are moved at their last use
+//!
+//! Arrays are immutable values, and [`Value::Array`] owns its `Vec`. So an
+//! operand is never *shared*: it is either cloned or moved out of its slot.
+//! The last-use analysis of `sky_ir::lifetime` says which operands die at
+//! their operation, and the interpreter moves exactly those (a slot that is
+//! read again after a move would report `used before it is defined`, so an
+//! analysis bug is loud, not a silently wrong number). An elementwise
+//! operation, or a `fused` one, whose operand is an owned array of the
+//! result's shape writes the result into that buffer: `v = v + dt * a` in a
+//! loop allocates no array. Values that are not consumed by an operation are
+//! dropped right after it, so a dead array does not keep its memory until
+//! the function returns.
+//!
+//! The rest of the machine avoids allocating per operation as well, so a
+//! loop over arrays runs without allocating in steady state: results are
+//! defined without a temporary `Vec`, the values a region hands out travel in
+//! a buffer that is reused, and a `fused` body runs in a value table that is
+//! reused. (A call still allocates its argument list and its frame.)
+//!
+//! Nothing is moved while a call group runs (see `Machine::run_group`): its
+//! operations run out of program order, so "the last use" is not a place in
+//! the order they run in. The dying operands of the group are dropped when
+//! it is done.
 
+use std::collections::HashMap;
 use std::io::Write;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use rayon::prelude::*;
 use sky_diag::Span;
 use sky_interp::arith::{
-    arith, arity_mismatch, equal, expect_bool, expect_number, order, pow, reciprocal,
-    recursion_too_deep, sign, ArithOp, StackMeter, MAX_CALL_DEPTH, STACK_BUDGET,
+    arith_owned, arity_mismatch, equal, expect_bool, expect_number, order, pow, range_bound,
+    range_step, reciprocal, recursion_too_deep, sign, ArithOp, Operand, StackMeter, MAX_CALL_DEPTH,
+    STACK_BUDGET,
 };
 use sky_interp::array::{self, Ix};
 use sky_interp::contract;
@@ -24,24 +51,31 @@ use sky_interp::solve;
 use sky_interp::Value;
 use sky_ir::parallel::{CallGroup, Config, FnPlan, Role};
 use sky_ir::{
-    BlockData, BlockId, CmpOp, Function, Module, NumberType, OpData, OpId, OpKind, RegionId,
-    SliceAxis, Type, ValueId,
+    BlockData, BlockId, CmpOp, Function, Lifetimes, Module, NumberType, OpData, OpId, OpKind,
+    RangePart, RegionId, SliceAxis, Type, ValueId,
 };
 use sky_units::{Dimension, Rational};
 
-use crate::native::{Jit, JitOptions, Native};
+use crate::kernel::{ScalarKernel, MAX_ARGS};
+use crate::native::{Jit, JitOptions, Native, MAX_INLINE};
 use crate::par::ParRt;
 use crate::IrRuntimeError;
 
 type R<T> = Result<T, IrRuntimeError>;
 
-/// How a block finished: by the terminator it ended in, with its operands'
-/// values.
+/// How a block finished: by the terminator it ended in. The terminator's
+/// operands are in the buffer the block was given (see [`Machine::block`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Exit {
-    Yield(Vec<Value>),
-    Condition(Vec<Value>),
-    Return(Vec<Value>),
+    Yield,
+    Condition,
+    Return,
 }
+
+/// The last-use analysis of every function of a module, by position, made the
+/// first time a function runs. Shared by the machines of a parallel run (the
+/// analysis is plain data).
+type LifeTable = Arc<Vec<OnceLock<Arc<Lifetimes>>>>;
 
 /// One function activation: the function and its value table, indexed by
 /// [`ValueId`]. `None` is a value not defined (yet), which reading reports
@@ -57,15 +91,38 @@ struct Act<'m> {
     /// The call groups of `func` (see `sky_ir::parallel`), when the run is
     /// parallel and the function has any.
     plan: Option<&'m FnPlan>,
+    /// The function's position in the module.
+    fidx: usize,
+    /// Which operands die where (see `sky_ir::lifetime`); `None` for a value
+    /// table that only runs `fused` bodies, which are not analyzed.
+    life: Option<Arc<Lifetimes>>,
+    /// The operation that is running, if its operands' deaths apply.
+    owner: Option<OpId>,
+    /// Nothing is moved while set: operations are running out of program
+    /// order (a call group).
+    frozen: bool,
+    /// The shape and entries of the arrays [`Act::release`] dropped since
+    /// the machine last took them (see `Machine::reclaim`).
+    spent: Vec<(Vec<usize>, Vec<f64>)>,
 }
 
 impl<'m> Act<'m> {
-    fn new(func: &'m Function, call: Option<Span>) -> Self {
+    fn new(
+        func: &'m Function,
+        fidx: usize,
+        call: Option<Span>,
+        life: Option<Arc<Lifetimes>>,
+    ) -> Self {
         Act {
             func,
             vals: vec![None; func.values.len()],
             call,
             plan: None,
+            fidx,
+            life,
+            owner: None,
+            frozen: false,
+            spent: Vec::new(),
         }
     }
 
@@ -73,6 +130,16 @@ impl<'m> Act<'m> {
         self.vals
             .get(v.index())
             .and_then(Option::as_ref)
+            .ok_or_else(|| {
+                IrRuntimeError::malformed(format!("{v} is used before it is defined"), span)
+            })
+    }
+
+    /// Moves `v` out of its slot: the caller is at its last use.
+    fn take(&mut self, v: ValueId, span: Span) -> R<Value> {
+        self.vals
+            .get_mut(v.index())
+            .and_then(Option::take)
             .ok_or_else(|| {
                 IrRuntimeError::malformed(format!("{v} is used before it is defined"), span)
             })
@@ -93,6 +160,101 @@ impl<'m> Act<'m> {
 
     fn values(&self, vs: &[ValueId], span: Span) -> R<Vec<Value>> {
         vs.iter().map(|v| self.get(*v, span).cloned()).collect()
+    }
+
+    /// Whether operand `i` of the running operation is at its last use.
+    fn dies(&self, i: usize) -> bool {
+        !self.frozen
+            && match (self.owner, &self.life) {
+                (Some(o), Some(l)) => l.dies(o, i),
+                _ => false,
+            }
+    }
+
+    /// Operand `i` of `op` by value: moved out of its slot if it dies at
+    /// `op`, else cloned.
+    fn operand(&mut self, op: &OpData, i: usize) -> R<Value> {
+        let Some(&v) = op.operands.get(i) else {
+            return Err(IrRuntimeError::malformed(
+                format!("`{}` has no operand {i}", op.kind.mnemonic()),
+                op.span,
+            ));
+        };
+        if self.dies(i) {
+            self.take(v, op.span)
+        } else {
+            self.get(v, op.span).cloned()
+        }
+    }
+
+    /// Operand `i` of `op`, moved out of its slot if it dies at `op` and is
+    /// an array (a scalar is as cheap to read as to move), else `None`: the
+    /// caller borrows it with [`Act::get`].
+    fn take_array_if_dies(&mut self, op: &OpData, i: usize) -> R<Option<Value>> {
+        let Some(&v) = op.operands.get(i) else {
+            return Ok(None);
+        };
+        if self.dies(i) && matches!(self.get(v, op.span)?, Value::Array { .. }) {
+            return self.take(v, op.span).map(Some);
+        }
+        Ok(None)
+    }
+
+    /// Binds `op`'s only result to `value`.
+    fn define1(&mut self, op: &OpData, value: Value) -> R<()> {
+        match op.results[..] {
+            [r] => self.set(r, value, op.span),
+            _ => Err(IrRuntimeError::malformed(
+                format!(
+                    "`{}` has {} results, expected 1",
+                    op.kind.mnemonic(),
+                    op.results.len()
+                ),
+                op.span,
+            )),
+        }
+    }
+
+    /// Binds `op`'s results to the values in `values` (which are taken out
+    /// of it), which must match in number.
+    fn define_from(&mut self, op: &OpData, values: &mut Vec<Value>) -> R<()> {
+        if op.results.len() != values.len() {
+            return Err(IrRuntimeError::malformed(
+                format!(
+                    "`{}` has {} results, expected {}",
+                    op.kind.mnemonic(),
+                    op.results.len(),
+                    values.len()
+                ),
+                op.span,
+            ));
+        }
+        for (r, v) in op.results.iter().zip(values.drain(..)) {
+            self.set(*r, v, op.span)?;
+        }
+        Ok(())
+    }
+
+    /// Drops the operands of `op` that die at it and are still in their
+    /// slots (an operation that only borrowed them), so a dead array does
+    /// not keep its memory until the function returns. The buffers of the
+    /// arrays go to `spent`, for `Machine::reclaim`.
+    fn release(&mut self, op_id: OpId, op: &OpData) {
+        if self.frozen {
+            return;
+        }
+        let Some(life) = &self.life else {
+            return;
+        };
+        for (i, v) in op.operands.iter().enumerate() {
+            if life.dies(op_id, i) {
+                if let Some(slot) = self.vals.get_mut(v.index()) {
+                    if let Some(Value::Array { dims, data, .. }) = slot.take() {
+                        self.spent.push((dims, data));
+                    }
+                }
+            }
+        }
     }
 
     /// Binds `op`'s results to `values`, which must match in number.
@@ -219,11 +381,71 @@ struct Machine<'m, 'w> {
     jit: Jit,
     /// The parallel runtime, when the run may use more than one thread.
     par: Option<&'m ParRt>,
+    /// The last-use analysis of each function of the module.
+    lifetimes: LifeTable,
+    /// Buffers for the values a region hands out (`yield`, `condition`,
+    /// `return`) and for call arguments, so a loop reuses them.
+    bufs: Vec<Vec<Value>>,
+    /// Value tables for `fused` bodies, so a loop reuses them.
+    frames: Vec<Vec<Option<Value>>>,
+    /// Register files for the scalar kernels of `fused` bodies, reused.
+    regs: Vec<Vec<f64>>,
+    /// The entries and shapes of arrays that died, for a result to be built
+    /// in (the native kernels do not overlap their inputs, so they cannot
+    /// use the operand's own buffer: they take one of these). A loop that
+    /// kills as many arrays as it makes allocates nothing.
+    spare: Vec<Vec<f64>>,
+    spare_dims: Vec<Vec<usize>>,
+    /// The scalar kernel of each `fused` operation that has one (function
+    /// position and operation index), compiled the first time it runs.
+    kernels: HashMap<(usize, usize), Option<Arc<ScalarKernel>>>,
     /// Ops left to run, in tests only: random malformed IR (a `while` whose
     /// condition is always true) must not hang the suite. Production has no
     /// step limit.
     #[cfg(test)]
     fuel: u64,
+}
+
+impl<'m, 'w> Machine<'m, 'w> {
+    /// A machine for a run of `module`. Each machine has its own buffers and
+    /// kernels (none of it crosses threads: the machines of a parallel run
+    /// are made inside the threads that use them); only the last-use
+    /// analysis, which is plain data, is shared.
+    fn new(
+        module: &'m Module,
+        out: &'w mut dyn Write,
+        stack: StackMeter,
+        jit: JitOptions,
+        par: Option<&'m ParRt>,
+        lifetimes: LifeTable,
+    ) -> Self {
+        Machine {
+            module,
+            out,
+            depth: 0,
+            stack,
+            jit: Jit::new(jit),
+            par,
+            lifetimes,
+            bufs: Vec::new(),
+            frames: Vec::new(),
+            regs: Vec::new(),
+            spare: Vec::new(),
+            spare_dims: Vec::new(),
+            kernels: HashMap::new(),
+            #[cfg(test)]
+            fuel: u64::MAX,
+        }
+    }
+}
+
+/// An empty analysis table for `module`.
+fn life_table(module: &Module) -> LifeTable {
+    Arc::new(
+        (0..module.functions.len())
+            .map(|_| OnceLock::new())
+            .collect(),
+    )
 }
 
 /// Calls `name` in `module` with `args`. Sequential: see [`run_par`].
@@ -246,16 +468,14 @@ pub(crate) fn call_par(
     cfg: &Config,
 ) -> R<Vec<Value>> {
     let rt = ParRt::new(module, cfg);
-    let mut m = Machine {
+    let mut m = Machine::new(
         module,
         out,
-        depth: 0,
-        stack: StackMeter::new(),
-        jit: Jit::new(JitOptions::default()),
-        par: rt.as_ref(),
-        #[cfg(test)]
-        fuel: u64::MAX,
-    };
+        StackMeter::new(),
+        JitOptions::default(),
+        rt.as_ref(),
+        life_table(module),
+    );
     m.entry(name, args, Span::point(0), None)
 }
 
@@ -282,16 +502,7 @@ pub(crate) fn call_with_jit(
     call: Option<Span>,
     jit: JitOptions,
 ) -> R<Vec<Value>> {
-    let mut m = Machine {
-        module,
-        out,
-        depth: 0,
-        stack,
-        jit: Jit::new(jit),
-        par: None,
-        #[cfg(test)]
-        fuel: u64::MAX,
-    };
+    let mut m = Machine::new(module, out, stack, jit, None, life_table(module));
     m.entry(name, args, Span::point(0), call)
 }
 
@@ -304,32 +515,59 @@ pub(crate) fn call_with_fuel(
     out: &mut dyn Write,
     fuel: u64,
 ) -> R<Vec<Value>> {
-    let mut m = Machine {
+    let mut m = Machine::new(
         module,
         out,
-        depth: 0,
-        stack: StackMeter::new(),
-        jit: Jit::new(JitOptions::default()),
-        par: None,
-        fuel,
-    };
+        StackMeter::new(),
+        JitOptions::default(),
+        None,
+        life_table(module),
+    );
+    m.fuel = fuel;
     m.entry(name, args, Span::point(0), None)
 }
 
 impl<'m> Machine<'m, '_> {
-    /// Looks `name` up for a call with `argc` arguments made at `span`.
-    fn resolve(&self, name: &str, argc: usize, span: Span) -> R<&'m Function> {
+    /// Looks `name` up for a call with `argc` arguments made at `span`: its
+    /// position in the module, and the function.
+    fn resolve(&self, name: &str, argc: usize, span: Span) -> R<(usize, &'m Function)> {
         let module = self.module;
-        let Some(func) = module.function(name) else {
+        let Some(index) = module.functions.iter().position(|f| f.name == name) else {
             return Err(IrRuntimeError::malformed(
                 format!("call to unknown function `{name}`"),
                 span,
             ));
         };
+        let func = &module.functions[index];
         if argc != func.params.len() {
             return Err(arity_mismatch(name, func.params.len(), argc, span).into());
         }
-        Ok(func)
+        Ok((index, func))
+    }
+
+    /// Keeps the buffers of the arrays `act` dropped (`Act::release`), a few,
+    /// for `Machine::fused_op` to build results in.
+    fn reclaim(&mut self, act: &mut Act<'_>) {
+        const KEEP: usize = 16;
+        for (dims, data) in act.spent.drain(..) {
+            if self.spare.len() < KEEP {
+                self.spare.push(data);
+            }
+            if self.spare_dims.len() < KEEP {
+                self.spare_dims.push(dims);
+            }
+        }
+    }
+
+    /// A buffer for values in transit, empty.
+    fn take_buf(&mut self) -> Vec<Value> {
+        self.bufs.pop().unwrap_or_default()
+    }
+
+    /// Returns a buffer for [`Machine::take_buf`] to hand out again.
+    fn give_buf(&mut self, mut buf: Vec<Value>) {
+        buf.clear();
+        self.bufs.push(buf);
     }
 
     /// The entry call of a run. Like `sky run`'s top level, it is not a
@@ -341,62 +579,80 @@ impl<'m> Machine<'m, '_> {
         span: Span,
         call: Option<Span>,
     ) -> R<Vec<Value>> {
-        let func = self.resolve(name, args.len(), span)?;
-        self.activate(func, args, call)
+        let (index, func) = self.resolve(name, args.len(), span)?;
+        self.activate(index, func, args, call)
     }
 
     /// A call made by a `call` op.
     fn call_named(&mut self, name: &str, args: Vec<Value>, span: Span) -> R<Vec<Value>> {
-        let func = self.resolve(name, args.len(), span)?;
+        let (index, func) = self.resolve(name, args.len(), span)?;
         if self.depth >= MAX_CALL_DEPTH {
             // A specialization `f[N=3]` is still `f` to the user.
             return Err(recursion_too_deep(sky_ir::source_name(name), span).into());
         }
         self.depth += 1;
-        let result = self.activate(func, args, Some(span));
+        let result = self.activate(index, func, args, Some(span));
         self.depth -= 1;
         result
     }
 
-    /// Runs `func`'s body in a new activation.
-    fn activate(&mut self, func: &Function, args: Vec<Value>, call: Option<Span>) -> R<Vec<Value>> {
-        let mut act = Act::new(func, call);
+    /// Runs the function at position `index` in a new activation. `args`
+    /// becomes the buffer of the results.
+    fn activate(
+        &mut self,
+        index: usize,
+        func: &Function,
+        mut args: Vec<Value>,
+        call: Option<Span>,
+    ) -> R<Vec<Value>> {
+        let life = match self.lifetimes.get(index) {
+            Some(cell) => Arc::clone(cell.get_or_init(|| Arc::new(Lifetimes::analyze(func)))),
+            None => Arc::new(Lifetimes::default()),
+        };
+        let mut act = Act::new(func, index, call, Some(life));
         act.plan = self.par.and_then(|p| p.plan.function(&func.name));
         let entry = act.entry_of(func.body, func.span)?;
-        match self.block(&mut act, entry, args, func.span)? {
-            Exit::Return(values) if values.len() == func.results.len() => Ok(values),
-            Exit::Return(values) => Err(IrRuntimeError::malformed(
+        match self.block(&mut act, entry, &mut args, func.span)? {
+            Exit::Return if args.len() == func.results.len() => Ok(args),
+            Exit::Return => Err(IrRuntimeError::malformed(
                 format!(
                     "`{}` returns {} values, its signature has {}",
                     func.name,
-                    values.len(),
+                    args.len(),
                     func.results.len()
                 ),
                 func.span,
             )),
-            Exit::Yield(_) | Exit::Condition(_) => Err(IrRuntimeError::malformed(
+            Exit::Yield | Exit::Condition => Err(IrRuntimeError::malformed(
                 format!("the body of `{}` must end in `return`", func.name),
                 func.span,
             )),
         }
     }
 
-    /// Runs a block: binds its arguments, runs its ops in order, and
-    /// returns how it ended.
-    fn block(&mut self, act: &mut Act<'_>, id: BlockId, args: Vec<Value>, span: Span) -> R<Exit> {
+    /// Runs a block: binds its arguments (the values in `io`, which is left
+    /// empty), runs its ops in order, and returns how it ended, with the
+    /// terminator's operands in `io`.
+    fn block(
+        &mut self,
+        act: &mut Act<'_>,
+        id: BlockId,
+        io: &mut Vec<Value>,
+        span: Span,
+    ) -> R<Exit> {
         self.stack.check(span)?;
         let block = act.block(id, span)?;
-        if block.args.len() != args.len() {
+        if block.args.len() != io.len() {
             return Err(IrRuntimeError::malformed(
                 format!(
                     "{id} takes {} arguments, given {}",
                     block.args.len(),
-                    args.len()
+                    io.len()
                 ),
                 span,
             ));
         }
-        for (a, v) in block.args.iter().zip(args) {
+        for (a, v) in block.args.iter().zip(io.drain(..)) {
             act.set(*a, v, span)?;
         }
         let mut pos = 0;
@@ -420,14 +676,23 @@ impl<'m> Machine<'m, '_> {
                     continue;
                 }
             }
-            match op.kind {
-                OpKind::Yield => return Ok(Exit::Yield(act.values(&op.operands, op.span)?)),
-                OpKind::Condition => {
-                    return Ok(Exit::Condition(act.values(&op.operands, op.span)?))
+            act.owner = Some(op_id);
+            let exit = match op.kind {
+                OpKind::Yield => Exit::Yield,
+                OpKind::Condition => Exit::Condition,
+                OpKind::Return => Exit::Return,
+                _ => {
+                    self.op(act, op)?;
+                    act.release(op_id, op);
+                    self.reclaim(act);
+                    continue;
                 }
-                OpKind::Return => return Ok(Exit::Return(act.values(&op.operands, op.span)?)),
-                _ => self.op(act, op)?,
+            };
+            // A terminator hands its operands on, moving the ones that die.
+            for i in 0..op.operands.len() {
+                io.push(act.operand(op, i)?);
             }
+            return Ok(exit);
         }
         Err(IrRuntimeError::malformed(
             format!("{id} does not end in a terminator"),
@@ -435,10 +700,16 @@ impl<'m> Machine<'m, '_> {
         ))
     }
 
-    /// Runs the (single) block of `region` with `args`.
-    fn region(&mut self, act: &mut Act<'_>, id: RegionId, args: Vec<Value>, span: Span) -> R<Exit> {
+    /// Runs the (single) block of `region` with the arguments in `io`.
+    fn region(
+        &mut self,
+        act: &mut Act<'_>,
+        id: RegionId,
+        io: &mut Vec<Value>,
+        span: Span,
+    ) -> R<Exit> {
         let entry = act.entry_of(id, span)?;
-        self.block(act, entry, args, span)
+        self.block(act, entry, io, span)
     }
 
     /// Runs one operation that is not a terminator. Only operations that
@@ -451,12 +722,19 @@ impl<'m> Machine<'m, '_> {
             OpKind::If => self.if_op(act, op),
             OpKind::While => self.while_op(act, op),
             OpKind::Call { callee } => {
-                let args = act.values(&op.operands, op.span)?;
-                let results = self.call_named(callee, args, op.span)?;
-                act.define(op, results)
+                // The arguments die at the call if the caller is done with
+                // them, and then the callee owns their buffers.
+                let mut args = self.take_buf();
+                for i in 0..op.operands.len() {
+                    args.push(act.operand(op, i)?);
+                }
+                let mut results = self.call_named(callee, args, op.span)?;
+                let defined = act.define_from(op, &mut results);
+                self.give_buf(results);
+                defined
             }
             OpKind::Print => self.print(act, op),
-            OpKind::Fused => fused_op(act, op, &mut self.jit, self.par),
+            OpKind::Fused => self.fused_op(act, op),
             OpKind::Add | OpKind::Sub | OpKind::Mul | OpKind::Div | OpKind::Neg => match self.par {
                 Some(rt) if elementwise(act, op, rt)? => Ok(()),
                 _ => pure_op(act, op),
@@ -481,6 +759,17 @@ impl<'m> Machine<'m, '_> {
     /// Returns `false`, having done nothing, when the group must run
     /// sequentially: the caller is deep in the stack (see the module
     /// documentation of `sky_ir::parallel`).
+    ///
+    /// # Nothing is moved inside a group
+    ///
+    /// The operations of a group do not run in program order: the in-place
+    /// ones run first, the deferred ones after the started calls are done. A
+    /// value that dies at an in-place operation may be read by a deferred
+    /// one that comes before it in the program, and it would be gone by then.
+    /// So the activation is frozen while the group runs (no operand is moved,
+    /// nested regions included, and the arguments of a started call are
+    /// cloned), and when the group is done, and every one of its operations
+    /// with it, the operands that die at them are dropped.
     fn run_group(&mut self, act: &mut Act<'_>, group: &CallGroup) -> R<bool> {
         let Some((rt, pool)) = self.par.and_then(|rt| Some((rt, rt.pool()?))) else {
             return Ok(false);
@@ -488,11 +777,34 @@ impl<'m> Machine<'m, '_> {
         if self.stack.used() > STACK_BUDGET / 2 {
             return Ok(false);
         }
+        let was_frozen = std::mem::replace(&mut act.frozen, true);
+        let result = self.run_group_frozen(act, group, rt, pool);
+        act.frozen = was_frozen;
+        if let Ok(true) = result {
+            for &op_id in &group.ops {
+                if let Ok(op) = act.op(op_id, act.func.span) {
+                    act.release(op_id, op);
+                }
+            }
+            self.reclaim(act);
+        }
+        result
+    }
+
+    /// [`Machine::run_group`] with the activation frozen.
+    fn run_group_frozen(
+        &mut self,
+        act: &mut Act<'_>,
+        group: &CallGroup,
+        rt: &'m ParRt,
+        pool: &rayon::ThreadPool,
+    ) -> R<bool> {
         let s = act.func.span;
         let started = group.roles.iter().filter(|&&r| r == Role::Start).count();
         let slots: Vec<Mutex<Option<R<Vec<Value>>>>> =
             (0..started).map(|_| Mutex::new(None)).collect();
         let (module, depth) = (self.module, self.depth);
+        let table = Arc::clone(&self.lifetimes);
         // The position and error of the first in-place operation that failed.
         let mut here: Option<(usize, IrRuntimeError)> = None;
         pool.in_place_scope(|scope| {
@@ -502,7 +814,10 @@ impl<'m> Machine<'m, '_> {
                     let op = act.op(op_id, s)?;
                     match role {
                         Role::Deferred => Ok(()),
-                        Role::InPlace => self.op(act, op),
+                        Role::InPlace => {
+                            act.owner = Some(op_id);
+                            self.op(act, op)
+                        }
                         Role::Start => {
                             let OpKind::Call { callee } = &op.kind else {
                                 return Err(IrRuntimeError::malformed(
@@ -514,19 +829,21 @@ impl<'m> Machine<'m, '_> {
                             let slot = &slots[next];
                             next += 1;
                             let span = op.span;
+                            let table = Arc::clone(&table);
                             scope.spawn(move |_| {
                                 // The callee has no `io`: nothing is written.
                                 let mut sink = std::io::sink();
-                                let mut child = Machine {
+                                // Made here, in the thread that uses it: its
+                                // buffers never cross threads.
+                                let mut child = Machine::new(
                                     module,
-                                    out: &mut sink,
-                                    depth,
-                                    stack: StackMeter::new(),
-                                    jit: Jit::new(JitOptions::default()),
-                                    par: Some(rt),
-                                    #[cfg(test)]
-                                    fuel: u64::MAX,
-                                };
+                                    &mut sink,
+                                    StackMeter::new(),
+                                    JitOptions::default(),
+                                    Some(rt),
+                                    table,
+                                );
+                                child.depth = depth;
                                 let r = child.call_named(callee, args, span);
                                 *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(r);
                             });
@@ -550,7 +867,10 @@ impl<'m> Machine<'m, '_> {
             let op = act.op(op_id, s)?;
             match role {
                 Role::InPlace => {}
-                Role::Deferred => self.op(act, op)?,
+                Role::Deferred => {
+                    act.owner = Some(op_id);
+                    self.op(act, op)?
+                }
                 Role::Start => match results.next().flatten() {
                     Some(Ok(values)) => act.define(op, values)?,
                     Some(Err(e)) => return Err(e),
@@ -575,9 +895,14 @@ impl<'m> Machine<'m, '_> {
         } else {
             els
         };
-        match self.region(act, arm, Vec::new(), s)? {
-            Exit::Yield(values) => act.define(op, values),
-            Exit::Condition(_) | Exit::Return(_) => Err(IrRuntimeError::malformed(
+        let mut io = self.take_buf();
+        match self.region(act, arm, &mut io, s)? {
+            Exit::Yield => {
+                let defined = act.define_from(op, &mut io);
+                self.give_buf(io);
+                defined
+            }
+            Exit::Condition | Exit::Return => Err(IrRuntimeError::malformed(
                 "an `if` region must end in `yield`",
                 s,
             )),
@@ -586,56 +911,329 @@ impl<'m> Machine<'m, '_> {
 
     /// `while` (see `OpKind::While`): `before` computes the condition and
     /// the forwarded values; if true, `after` computes the next loop-carried
-    /// values; if false, the forwarded values are the results.
+    /// values; if false, the forwarded values are the results. The
+    /// loop-carried values travel in one buffer, and are moved from an
+    /// iteration to the next.
     fn while_op(&mut self, act: &mut Act<'_>, op: &OpData) -> R<()> {
         let s = op.span;
         let [before, after] = regions(op)?;
-        let mut carried = act.values(&op.operands, s)?;
+        let mut io = self.take_buf();
+        for i in 0..op.operands.len() {
+            io.push(act.operand(op, i)?);
+        }
         loop {
-            let Exit::Condition(mut forwarded) = self.region(act, before, carried, s)? else {
+            if self.region(act, before, &mut io, s)? != Exit::Condition {
                 return Err(IrRuntimeError::malformed(
                     "a `while` `before` region must end in `condition`",
                     s,
                 ));
-            };
-            if forwarded.is_empty() {
+            }
+            if io.is_empty() {
                 return Err(IrRuntimeError::malformed(
                     "`condition` needs a Bool operand",
                     s,
                 ));
             }
-            let flag = forwarded.remove(0);
+            let flag = io.remove(0);
             if !expect_bool("while", &flag, s)? {
-                return act.define(op, forwarded);
+                let defined = act.define_from(op, &mut io);
+                self.give_buf(io);
+                return defined;
             }
-            match self.region(act, after, forwarded, s)? {
-                Exit::Yield(next) => carried = next,
-                Exit::Condition(_) | Exit::Return(_) => {
-                    return Err(IrRuntimeError::malformed(
-                        "a `while` `after` region must end in `yield`",
-                        s,
-                    ));
-                }
+            if self.region(act, after, &mut io, s)? != Exit::Yield {
+                return Err(IrRuntimeError::malformed(
+                    "a `while` `after` region must end in `yield`",
+                    s,
+                ));
             }
         }
     }
 
     /// `print(a, b, ...)`: the values separated by single spaces, then a
-    /// newline, written in one piece as `sky run` does.
+    /// newline, written in one piece as `sky run` does. The values are only
+    /// read: text is written straight from them, nothing is cloned.
+    #[inline(never)]
     fn print(&mut self, act: &mut Act<'_>, op: &OpData) -> R<()> {
+        use std::fmt::Write as _;
         let s = op.span;
         let mut line = String::new();
         for (i, v) in op.operands.iter().enumerate() {
             if i > 0 {
                 line.push(' ');
             }
-            line.push_str(&act.get(*v, s)?.print_text());
+            // `Value::print_text`, without its intermediate `String`.
+            match act.get(*v, s)? {
+                Value::Str(text) => line.push_str(text),
+                other => {
+                    let _ = write!(line, "{other}");
+                }
+            }
         }
         line.push('\n');
         self.out
             .write_all(line.as_bytes())
             .map_err(|e| sky_interp::RuntimeError::new(format!("cannot write output: {e}"), s))?;
-        act.define(op, Vec::new())
+        act.define_from(op, &mut Vec::new())
+    }
+
+    /// `fused` (see `OpKind::Fused`): runs the scalar body once per element.
+    ///
+    /// Each body operation is [`pure_op`], the code an unfused scalar operation
+    /// runs, which calls `sky_interp::arith`: for a finite `f64` every array
+    /// operation there is that same scalar computation per entry, so the
+    /// entries are bit-identical. The one exception is `neg`, which on arrays is
+    /// `0 - x` (see [`body_op`]).
+    ///
+    /// The failure a chain of array operations reports is that of the first
+    /// operation, in program order, that fails at any element. Visiting elements
+    /// in order and stopping at the first failure could report a later
+    /// operation's failure at an earlier element instead. So a failure at body
+    /// operation `k` is remembered, and the remaining elements are run only up
+    /// to operation `k` (`limit`): an earlier operation failing at a later
+    /// element replaces it. The error left at the end is the earliest failing
+    /// operation's, which is the unfused chain's. (An error names its operation's
+    /// message and span, never an element.)
+    ///
+    /// # Which loop runs it
+    ///
+    /// In this order:
+    ///
+    /// 1. **Native**, once the interpreter has run enough elements of this
+    ///    operation to pay for compiling (`crate::native`): compiled vector
+    ///    code, whose result and error are this loop's. The compiled loop may
+    ///    not overlap its input, so it cannot write into a dying operand's
+    ///    buffer; it builds the result in the buffer of an array that died
+    ///    earlier (`Machine::spare`), so a loop that kills as many arrays as
+    ///    it makes still allocates nothing. Measured on the N-body loop
+    ///    (32 elements) it is 3.3 times faster than the scalar kernel below.
+    /// 2. **Parallel**, when the run is parallel and the kernel big
+    ///    (`Config::fused_work`): contiguous chunks run the interpreted loop
+    ///    on value tables of their own (below).
+    /// 3. **Here**: the scalar kernel for a body of `+ - * /`, negation and
+    ///    constants (`crate::kernel`), else the interpreted loop. These write
+    ///    into a dying operand's buffer, and are what runs until the native
+    ///    kernel is compiled, when it is off (`SKY_JIT=off`) or when the body
+    ///    is refused.
+    ///
+    /// The scalar kernel comes after the parallel path because it is
+    /// sequential: a kernel big enough to be worth chunks is worth more spread
+    /// over the threads than run faster on one.
+    ///
+    /// # Buffers
+    ///
+    /// The body runs in a value table of its own, reused from one `fused` to
+    /// the next, so the operands are read where they are: no array is copied
+    /// to run a kernel. If an array operand dies here (the last use), its
+    /// buffer holds the result: element `i` is read from every operand
+    /// before element `i` of the result is written, so the write cannot be
+    /// seen by a later read.
+    ///
+    /// # In parallel
+    ///
+    /// A big kernel is cut into contiguous chunks that run the interpreted
+    /// loop on a value table of their own. Each chunk ends with what the loop
+    /// over its elements leaves: its data, and its failure, if any, as the
+    /// index of the failing body operation and the error at the lowest element
+    /// of the chunk that fails it. The kernel's error is then the smallest
+    /// operation index, and among chunks that fail the same operation the
+    /// lowest chunk: the element the sequential loop meets first. So neither
+    /// the chunks nor the order the threads finish in can change the bits or
+    /// the error.
+    #[inline(never)]
+    fn fused_op(&mut self, act: &mut Act<'_>, op: &OpData) -> R<()> {
+        let s = op.span;
+        let [region] = regions(op)?;
+        let entry = act.entry_of(region, s)?;
+        let block = act.block(entry, s)?;
+        let Some((&last, body)) = block.ops.split_last() else {
+            return Err(IrRuntimeError::malformed("the body of `fused` is empty", s));
+        };
+        let last = act.op(last, s)?;
+        let (OpKind::Yield, &[yielded]) = (&last.kind, &last.operands[..]) else {
+            return Err(IrRuntimeError::malformed(
+                "the body of `fused` must end in a `yield` of one value",
+                s,
+            ));
+        };
+        if block.args.len() != op.operands.len() {
+            return Err(IrRuntimeError::malformed(
+                format!(
+                    "the body of `fused` takes {} arguments, given {}",
+                    block.args.len(),
+                    op.operands.len()
+                ),
+                s,
+            ));
+        }
+        // The shape of the arrays; scalars broadcast.
+        let mut shape: Option<&Vec<usize>> = None;
+        for &v in &op.operands {
+            match act.get(v, s)? {
+                Value::Array { dims, .. } => match shape {
+                    Some(d) if d != dims => {
+                        return Err(IrRuntimeError::malformed(
+                            "the array operands of `fused` differ in shape",
+                            s,
+                        ))
+                    }
+                    _ => shape = Some(dims),
+                },
+                Value::Number { .. } => {}
+                other => {
+                    return Err(IrRuntimeError::malformed(
+                        format!("`fused` takes numbers, found {}", other.kind()),
+                        s,
+                    ))
+                }
+            }
+        }
+        let Some(dims) = shape else {
+            return Err(IrRuntimeError::malformed(
+                "`fused` needs an array operand",
+                s,
+            ));
+        };
+        let count: usize = dims.iter().product();
+        // Native or parallel: these read the operands as a slice and build a
+        // result of their own.
+        let parallel = match self.par {
+            Some(rt) if count >= 2 && count.saturating_mul(body.len()) >= rt.cfg.fused_work => {
+                rt.pool().map(|pool| (rt, pool))
+            }
+            _ => None,
+        };
+        let native = self.jit.enabled();
+        if native || parallel.is_some() {
+            // The result's shape and entries are built in buffers of arrays
+            // that died, when there are any.
+            let mut shape = self.spare_dims.pop().unwrap_or_default();
+            shape.clear();
+            shape.extend_from_slice(dims);
+            let mut out = if native {
+                self.spare.pop().unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let done = {
+                // The operands, on the stack unless there are many.
+                let first = act.get(op.operands[0], s)?;
+                let mut stack = [first; MAX_INLINE];
+                let heap: Vec<&Value>;
+                let inputs: &[&Value] = if op.operands.len() <= MAX_INLINE {
+                    for (slot, &v) in stack.iter_mut().zip(&op.operands) {
+                        *slot = act.get(v, s)?;
+                    }
+                    &stack[..op.operands.len()]
+                } else {
+                    heap = op
+                        .operands
+                        .iter()
+                        .map(|&v| act.get(v, s))
+                        .collect::<R<Vec<&Value>>>()?;
+                    &heap
+                };
+                let outcome = if native {
+                    self.jit.run_into(act.func, op, inputs, count, &mut out)
+                } else {
+                    Native::Declined
+                };
+                match outcome {
+                    Native::Done(data, dim) => Some((data, dim)),
+                    Native::Failed(e) => return Err(e),
+                    Native::Declined => match parallel {
+                        Some((rt, pool)) => {
+                            let kernel = Kernel {
+                                s,
+                                block,
+                                body,
+                                yielded,
+                                inputs,
+                            };
+                            let chunk = kernel.run_parallel(act.func, count, rt, pool)?;
+                            if let Some((_, e)) = chunk.failure {
+                                return Err(e);
+                            }
+                            let Some(dim) = chunk.out_dim else {
+                                return Err(IrRuntimeError::malformed(
+                                    "`fused` computed no element",
+                                    s,
+                                ));
+                            };
+                            Some((chunk.data, dim))
+                        }
+                        None => None,
+                    },
+                }
+            };
+            match done {
+                Some((data, dim)) => return act.define1(op, Value::array(shape, data, dim)),
+                None => {
+                    // Not run here: the buffers go back.
+                    self.spare_dims.push(shape);
+                    if native {
+                        self.spare.push(out);
+                    }
+                }
+            }
+        }
+        // The operand whose buffer holds the result: the first array that dies
+        // here. It is moved out of its slot, so the loop reads it from here.
+        let mut target: Option<(usize, Vec<usize>, Vec<f64>, Dimension)> = None;
+        for i in 0..op.operands.len() {
+            if let Some(Value::Array { dims, data, dim }) = act.take_array_if_dies(op, i)? {
+                target = Some((i, dims, data, dim));
+                break;
+            }
+        }
+        let mut fresh = Vec::new();
+        if target.is_none() {
+            fresh.reserve_exact(count);
+        }
+        let mut frame = Act {
+            func: act.func,
+            vals: self.frames.pop().unwrap_or_default(),
+            call: None,
+            plan: None,
+            fidx: act.fidx,
+            life: None,
+            owner: None,
+            frozen: false,
+            spent: Vec::new(),
+        };
+        let kernel = match act.owner {
+            Some(id) => self
+                .kernels
+                .entry((act.fidx, id.index()))
+                .or_insert_with(|| {
+                    ScalarKernel::compile(act.func, block, body, yielded).map(Arc::new)
+                })
+                .clone(),
+            None => None,
+        };
+        let mut regs = self.regs.pop().unwrap_or_default();
+        // Stale entries are fine: a body operation defines its result before
+        // any later operation reads it.
+        frame.vals.resize(act.func.values.len(), None);
+        let outcome = fused_loop(
+            act,
+            &mut frame,
+            op,
+            body,
+            yielded,
+            count,
+            &mut target,
+            &mut fresh,
+            kernel.as_deref(),
+            &mut regs,
+        );
+        self.frames.push(frame.vals);
+        self.regs.push(regs);
+        let out_dim = outcome?;
+        let (dims, data) = match target {
+            Some((_, dims, data, _)) => (dims, data),
+            None => (act_dims(act, op, s)?, fresh),
+        };
+        act.define1(op, Value::array(dims, data, out_dim))
     }
 }
 
@@ -649,7 +1247,7 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
                 return Err(IrRuntimeError::malformed("a constant is not finite", s));
             }
             let dim = const_dim(act, op)?;
-            act.define(op, vec![Value::number(x, dim)])
+            act.define1(op, Value::number(x, dim))
         }
         OpKind::ConstRational(q) => {
             let x = q.numer() as f64 / q.denom() as f64;
@@ -660,45 +1258,47 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
                 ));
             }
             let dim = const_dim(act, op)?;
-            act.define(op, vec![Value::number(x, dim)])
+            act.define1(op, Value::number(x, dim))
         }
-        OpKind::ConstBool(b) => act.define(op, vec![Value::Bool(*b)]),
-        OpKind::ConstStr(text) => act.define(op, vec![Value::Str(text.clone())]),
-        OpKind::ConstNothing => act.define(op, vec![Value::None]),
+        OpKind::ConstBool(b) => act.define1(op, Value::Bool(*b)),
+        OpKind::ConstStr(text) => act.define1(op, Value::Str(text.clone())),
+        OpKind::ConstNothing => act.define1(op, Value::None),
 
         OpKind::Add => arith_op(act, op, ArithOp::Add),
         OpKind::Sub => arith_op(act, op, ArithOp::Sub),
         OpKind::Mul => arith_op(act, op, ArithOp::Mul),
         OpKind::Div => arith_op(act, op, ArithOp::Div),
         OpKind::Neg => {
-            let [a] = fixed(op)?;
-            let v = sign(true, act.get(a, s)?.clone(), op.operand_span(0))?;
-            act.define(op, vec![v])
+            let [_] = fixed(op)?;
+            // An array that dies here is negated in its own buffer.
+            let v = sign(true, act.operand(op, 0)?, op.operand_span(0))?;
+            act.define1(op, v)
         }
         OpKind::Math(f) => {
-            let vals = act.values(&op.operands, s)?;
-            if vals.len() != f.arity() {
+            // At most two operands: on the stack, so a call in a loop
+            // allocates nothing.
+            let n = op.operands.len();
+            if n != f.arity() || n > 2 {
                 return Err(IrRuntimeError::malformed(
-                    format!(
-                        "`{}` takes {} operands, found {}",
-                        f.mnemonic(),
-                        f.arity(),
-                        vals.len()
-                    ),
+                    format!("`{}` takes {} operands, found {n}", f.mnemonic(), f.arity(),),
                     s,
                 ));
             }
-            let refs: Vec<&Value> = vals.iter().collect();
-            let spans: Vec<Span> = (0..refs.len()).map(|i| op.operand_span(i)).collect();
-            let v = crate::math::eval(*f, &refs, s, &spans)?;
-            act.define(op, vec![v])
+            let mut vals = [Value::None, Value::None];
+            let mut spans = [s; 2];
+            for (i, &o) in op.operands.iter().enumerate() {
+                vals[i] = act.get(o, s)?.clone();
+                spans[i] = op.operand_span(i);
+            }
+            let v = sky_interp::math::apply(*f, &vals[..n], s, &spans[..n])?;
+            act.define1(op, v)
         }
         // The same function `sky run` calls for `v as unit`, so both print
         // the same digits and fail the same way.
         OpKind::Show { unit } => {
             let [a] = fixed(op)?;
             let v = sky_interp::show_unit_text(unit, act.get(a, s)?, s)?;
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
         OpKind::PowConst { exponent } => {
             let [a] = fixed(op)?;
@@ -713,7 +1313,7 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
                 op.operand_span(0),
                 s,
             )?;
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
         OpKind::Pow => {
             let [a, e] = fixed(op)?;
@@ -721,7 +1321,7 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             // take the result's dimension from, as in `sky run`.
             let (l, r) = (op.operand_span(0), op.operand_span(1));
             let v = pow(act.get(a, s)?, act.get(e, s)?, || None::<Rational>, s, l, r)?;
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
         // The IR does not remember whether the source said `x⁻¹` or
         // `inv(x)`, so the (unreachable in checked programs) error for a
@@ -729,13 +1329,13 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
         OpKind::Inverse => {
             let [a] = fixed(op)?;
             let v = reciprocal("⁻¹", act.get(a, s)?, s, op.operand_span(0))?;
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
         OpKind::MatMul => {
             let [a, b] = fixed(op)?;
             let (l, r) = (op.operand_span(0), op.operand_span(1));
             let v = array::matmul(act.get(a, s)?, act.get(b, s)?, s, l, r)?;
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
         // The functions `sky run` calls for `norm(x)` and `dot(a, b)`, with
         // the call's span and the arguments' spans, so the results and the
@@ -743,18 +1343,18 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
         OpKind::Norm => {
             let [a] = fixed(op)?;
             let v = sky_interp::vecfn::norm(act.get(a, s)?, s, op.operand_span(0))?;
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
         OpKind::Dot => {
             let [a, b] = fixed(op)?;
             let (l, r) = (op.operand_span(0), op.operand_span(1));
             let v = sky_interp::vecfn::dot(act.get(a, s)?, act.get(b, s)?, s, l, r)?;
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
         OpKind::Transpose => {
             let [a] = fixed(op)?;
             let v = array::transpose(act.get(a, s)?, s)?;
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
         // The Cholesky solve `sky run` performs where the checker rewrote
         // `A⁻¹ @ b`: the same function, so the same bits and errors.
@@ -762,7 +1362,7 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             let [a, b] = fixed(op)?;
             let (l, r) = (op.operand_span(0), op.operand_span(1));
             let v = solve::solve(*method, act.get(a, s)?, act.get(b, s)?, s, l, r)?;
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
         // `x @ A⁻¹`, the transposed solve: the same functions as the
         // tree-walker runs for a chain the checker planned.
@@ -770,7 +1370,7 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             let [x, a] = fixed(op)?;
             let (l, r) = (op.operand_span(0), op.operand_span(1));
             let v = solve::solve_right(*method, act.get(x, s)?, act.get(a, s)?, s, l, r)?;
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
         OpKind::MatMulEx { ta, tb, algorithm } => {
             let [a, b] = fixed(op)?;
@@ -785,7 +1385,7 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
                 l,
                 r,
             )?;
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
         OpKind::DiagMul { side } => {
             let [a, b] = fixed(op)?;
@@ -801,7 +1401,7 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
                 (r, l)
             };
             let v = solve::diag_mul(*side, act.get(d, s)?, act.get(x, s)?, s, dspan, xspan)?;
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
         OpKind::ArrayLiteral { cols } => array_literal(act, op, *cols),
         OpKind::Index => {
@@ -817,7 +1417,7 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
                 });
             }
             let v = array::index(act.get(base, s)?, &items, s, op.operand_span(0))?;
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
         OpKind::Slice { axes } => slice(act, op, axes),
         OpKind::Zeros | OpKind::Identity => {
@@ -839,12 +1439,12 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
                     ))
                 }
             };
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
         OpKind::Len => {
             let [a] = fixed(op)?;
             let v = array::len(act.get(a, s)?, op.operand_span(0))?;
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
 
         OpKind::Cmp(c) => {
@@ -859,12 +1459,12 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
                 CmpOp::Gt => order(">", |x, y| x > y, l, r, s, ls, rs)?,
                 CmpOp::Ge => order(">=", |x, y| x >= y, l, r, s, ls, rs)?,
             };
-            act.define(op, vec![Value::Bool(holds)])
+            act.define1(op, Value::Bool(holds))
         }
         OpKind::Not => {
             let [a] = fixed(op)?;
             let b = expect_bool("not", act.get(a, s)?, op.operand_span(0))?;
-            act.define(op, vec![Value::Bool(!b)])
+            act.define1(op, Value::Bool(!b))
         }
         OpKind::LiteralError { error } => Err(match error {
             sky_ir::LiteralError::TooLarge => sky_interp::number_too_large(s),
@@ -875,17 +1475,36 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
         OpKind::ExpectBool { context } => {
             let [a] = fixed(op)?;
             let b = expect_bool(context.keyword(), act.get(a, s)?, s)?;
-            act.define(op, vec![Value::Bool(b)])
+            act.define1(op, Value::Bool(b))
         }
         OpKind::Assert { .. } => assert_op(act, op),
+
+        // The checks of a `range` bound or step computed at run time.
+        OpKind::ExpectRange { part } => {
+            let [a] = fixed(op)?;
+            let v = act.get(a, s)?.clone();
+            let out = match part {
+                RangePart::Bound => range_bound(&v, s)?,
+                RangePart::Step => range_step(&v, s)?,
+            };
+            act.define(op, vec![out])
+        }
+
+        // A tag promise: the value as it is (the retag is the type's).
+        OpKind::Assume => {
+            let [a] = fixed(op)?;
+            let v = act.get(a, s)?.clone();
+            act.define(op, vec![v])
+        }
 
         // `+x` of a value the checker could not type: a number or an array
         // passes as it is, anything else fails as in `sky run`.
         OpKind::ExpectNumber { context } => {
-            let [a] = fixed(op)?;
-            let v = act.get(a, s)?.clone();
+            let [_] = fixed(op)?;
+            // Passes its operand on: the buffer moves if it dies here.
+            let v = act.operand(op, 0)?;
             expect_number(context.keyword(), &v, s)?;
-            act.define(op, vec![v])
+            act.define1(op, v)
         }
 
         // Handled by `Machine::op` and `Machine::block`, which never send
@@ -937,136 +1556,144 @@ fn assert_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
     Err(err.into())
 }
 
-/// `fused` (see `OpKind::Fused`): runs the scalar body once per element.
-///
-/// Each body operation is [`pure_op`], the code an unfused scalar operation
-/// runs, which calls `sky_interp::arith`: for a finite `f64` every array
-/// operation there is that same scalar computation per entry, so the
-/// entries are bit-identical. The one exception is `neg`, which on arrays is
-/// `0 - x` (see [`body_op`]).
-///
-/// The failure a chain of array operations reports is that of the first
-/// operation, in program order, that fails at any element. Visiting elements
-/// in order and stopping at the first failure could report a later
-/// operation's failure at an earlier element instead. So a failure at body
-/// operation `k` is remembered, and the remaining elements are run only up
-/// to operation `k` (`limit`): an earlier operation failing at a later
-/// element replaces it. The error left at the end is the earliest failing
-/// operation's, which is the unfused chain's. (An error names its operation's
-/// message and span, never an element.)
-///
-/// # In parallel
-///
-/// A big kernel (`Config::fused_work`: elements times body operations) is
-/// cut into contiguous chunks that run that same loop on a value table of
-/// their own. Each chunk ends with
-/// what the loop over its elements leaves: its data, and its failure, if any,
-/// as the index of the failing body operation and the error at the lowest
-/// element of the chunk that fails it. The kernel's error is then the
-/// smallest operation index, and among chunks that fail the same operation
-/// the lowest chunk: the element the sequential loop meets first. So neither
-/// the chunks nor the order the threads finish in can change the bits or the
-/// error.
-fn fused_op(act: &mut Act<'_>, op: &OpData, jit: &mut Jit, par: Option<&ParRt>) -> R<()> {
-    let s = op.span;
-    let [region] = regions(op)?;
-    let entry = act.entry_of(region, s)?;
-    let block = act.block(entry, s)?;
-    let Some((&last, body)) = block.ops.split_last() else {
-        return Err(IrRuntimeError::malformed("the body of `fused` is empty", s));
-    };
-    let last = act.op(last, s)?;
-    let (OpKind::Yield, &[yielded]) = (&last.kind, &last.operands[..]) else {
-        return Err(IrRuntimeError::malformed(
-            "the body of `fused` must end in a `yield` of one value",
-            s,
-        ));
-    };
-    if block.args.len() != op.operands.len() {
-        return Err(IrRuntimeError::malformed(
-            format!(
-                "the body of `fused` takes {} arguments, given {}",
-                block.args.len(),
-                op.operands.len()
-            ),
-            s,
-        ));
+/// The shape of the first array operand of `op`.
+fn act_dims(act: &Act<'_>, op: &OpData, span: Span) -> R<Vec<usize>> {
+    for &v in &op.operands {
+        if let Value::Array { dims, .. } = act.get(v, span)? {
+            return Ok(dims.clone());
+        }
     }
-    let inputs = act.values(&op.operands, s)?;
-    // The shape of the arrays; scalars broadcast.
-    let mut shape: Option<&Vec<usize>> = None;
-    for input in &inputs {
-        match input {
-            Value::Array { dims, .. } => match shape {
-                Some(d) if d != dims => {
+    Err(IrRuntimeError::malformed(
+        "`fused` needs an array operand",
+        span,
+    ))
+}
+
+/// The element loop of [`Machine::fused_op`], sequential: reads the operands
+/// from `act` (and the one moved into `target`), runs `body` in `frame`, and
+/// writes each element into `target`'s buffer or pushes it on `fresh`. Returns
+/// the result's dimension.
+///
+/// The first element runs the body as SIR. If that succeeds and the body has
+/// a scalar `kernel` (see `crate::kernel`), the other elements run on `regs`
+/// instead, with the same rule for which failure is reported. (`Kernel::run`
+/// below is the same loop over a range of elements, which collects its data,
+/// for the parallel chunks.)
+#[allow(clippy::too_many_arguments)]
+fn fused_loop(
+    act: &Act<'_>,
+    frame: &mut Act<'_>,
+    op: &OpData,
+    body: &[OpId],
+    yielded: ValueId,
+    count: usize,
+    target: &mut Option<(usize, Vec<usize>, Vec<f64>, Dimension)>,
+    fresh: &mut Vec<f64>,
+    kernel: Option<&ScalarKernel>,
+    regs: &mut Vec<f64>,
+) -> R<Dimension> {
+    let s = op.span;
+    let entry = act.entry_of(op.regions[0], s)?;
+    let block = act.block(entry, s)?;
+    let mut out_dim = None;
+    let mut limit = body.len();
+    let mut failure: Option<IrRuntimeError> = None;
+    // Where the kernel reads each operand from: an array's entries (the
+    // target's are read from `target`), or a scalar already in `regs`.
+    let mut srcs: [Option<&[f64]>; MAX_ARGS] = [None; MAX_ARGS];
+    let mut fast: Option<&ScalarKernel> = None;
+    for i in 0..count {
+        let mut failed = false;
+        if let Some(kernel) = fast {
+            for (k, src) in srcs.iter().enumerate().take(kernel.nargs) {
+                if let Some(entries) = src {
+                    regs[k] = entries[i];
+                }
+            }
+            if let Some((t, _, data, _)) = target {
+                regs[*t] = data[i];
+            }
+            if let Err((k, e)) = kernel.run(regs, limit) {
+                (limit, failure, failed) = (k, Some(e), true);
+            }
+        } else {
+            for (k, (arg, &operand)) in block.args.iter().zip(&op.operands).enumerate() {
+                let element = match target {
+                    Some((t, _, data, dim)) if *t == k => Value::number(data[i], *dim),
+                    _ => match act.get(operand, s)? {
+                        Value::Array { data, dim, .. } => Value::number(data[i], *dim),
+                        scalar => scalar.clone(),
+                    },
+                };
+                frame.set(*arg, element, s)?;
+            }
+            for (k, id) in body[..limit].iter().enumerate() {
+                if let Err(e) = body_op(frame, act.op(*id, s)?) {
+                    (limit, failure, failed) = (k, Some(e), true);
+                    break;
+                }
+            }
+        }
+        if limit == 0 {
+            break;
+        }
+        if failed || failure.is_some() {
+            continue;
+        }
+        let value = match fast {
+            Some(kernel) => regs[kernel.yield_reg],
+            None => match frame.get(yielded, s)? {
+                Value::Number { value, dim } => {
+                    out_dim.get_or_insert(*dim);
+                    *value
+                }
+                other => {
                     return Err(IrRuntimeError::malformed(
-                        "the array operands of `fused` differ in shape",
+                        format!("`fused` must yield a number, found {}", other.kind()),
                         s,
                     ))
                 }
-                _ => shape = Some(dims),
             },
-            Value::Number { .. } => {}
-            other => {
-                return Err(IrRuntimeError::malformed(
-                    format!("`fused` takes numbers, found {}", other.kind()),
-                    s,
-                ))
+        };
+        match target {
+            Some((_, _, data, _)) => data[i] = value,
+            None => fresh.push(value),
+        }
+        // The first element went through: the rest can use the kernel.
+        if i == 0 {
+            if let (Some(kernel), None) = (kernel, &failure) {
+                regs.clear();
+                regs.resize(kernel.nregs, 0.0);
+                for (k, &operand) in op.operands.iter().enumerate() {
+                    // The target was moved out of its slot: `target` has it.
+                    if matches!(target, Some((t, ..)) if *t == k) {
+                        continue;
+                    }
+                    match act.get(operand, s)? {
+                        Value::Number { value, .. } => regs[k] = *value,
+                        Value::Array { data, .. } => srcs[k] = Some(data),
+                        _ => {}
+                    }
+                }
+                fast = Some(kernel);
             }
         }
     }
-    let Some(dims) = shape else {
-        return Err(IrRuntimeError::malformed(
-            "`fused` needs an array operand",
-            s,
-        ));
-    };
-    let count: usize = dims.iter().product();
-    // A long array: a native kernel first, whose result and error are this
-    // loop's (see `crate::native`); it declines what it does not compile,
-    // and the interpreted loop below runs it, in parallel chunks when big.
-    match jit.run(act.func, op, &inputs, count) {
-        Native::Done(data, dim) => {
-            let dims = dims.clone();
-            return act.define(op, vec![Value::array(dims, data, dim)]);
-        }
-        Native::Failed(e) => return Err(e),
-        Native::Declined => {}
-    }
-    let kernel = Kernel {
-        s,
-        block,
-        body,
-        yielded,
-        inputs: &inputs,
-    };
-    let chunk = match par {
-        Some(rt) if count >= 2 && count.saturating_mul(body.len()) >= rt.cfg.fused_work => {
-            match rt.pool() {
-                Some(pool) => kernel.run_parallel(act.func, count, rt, pool)?,
-                None => kernel.run(act, 0, count)?,
-            }
-        }
-        _ => kernel.run(act, 0, count)?,
-    };
-    if let Some((_, e)) = chunk.failure {
+    if let Some(e) = failure {
         return Err(e);
     }
-    let Some(dim) = chunk.out_dim else {
-        return Err(IrRuntimeError::malformed("`fused` computed no element", s));
-    };
-    let dims = dims.clone();
-    act.define(op, vec![Value::array(dims, chunk.data, dim)])
+    out_dim.ok_or_else(|| IrRuntimeError::malformed("`fused` computed no element", s))
 }
 
-/// A `fused` kernel ready to run: its body and its evaluated operands.
+/// A `fused` kernel ready to run in parallel chunks: its body and its
+/// evaluated operands.
 struct Kernel<'a> {
     s: Span,
     block: &'a BlockData,
     /// The body's operations, without the `yield`.
     body: &'a [OpId],
     yielded: ValueId,
-    inputs: &'a [Value],
+    inputs: &'a [&'a Value],
 }
 
 /// What running a range of elements of a kernel leaves.
@@ -1081,7 +1708,7 @@ struct Chunk {
 
 impl Kernel<'_> {
     /// Runs elements `lo..hi` in order, in `act`'s value table: the loop
-    /// described at [`fused_op`].
+    /// described at [`Machine::fused_op`].
     fn run(&self, act: &mut Act<'_>, lo: usize, hi: usize) -> R<Chunk> {
         let s = self.s;
         let mut data = Vec::with_capacity(hi - lo);
@@ -1092,7 +1719,7 @@ impl Kernel<'_> {
             for (arg, input) in self.block.args.iter().zip(self.inputs) {
                 let element = match input {
                     Value::Array { data, dim, .. } => Value::number(data[i], *dim),
-                    scalar => scalar.clone(),
+                    scalar => (*scalar).clone(),
                 };
                 act.set(*arg, element, s)?;
             }
@@ -1130,7 +1757,7 @@ impl Kernel<'_> {
     }
 
     /// Runs all `count` elements in chunks on the pool and merges them: see
-    /// [`fused_op`], "In parallel". A malformed-IR error of the lowest chunk
+    /// [`Machine::fused_op`], "In parallel". A malformed-IR error of the lowest chunk
     /// that has one is the result, as it is the first the loop meets.
     fn run_parallel(
         &self,
@@ -1155,7 +1782,7 @@ impl Kernel<'_> {
                     }
                     // The body uses only its own arguments and results: a
                     // table of its own is all a chunk needs.
-                    self.run(&mut Act::new(func, None), lo, hi)
+                    self.run(&mut Act::new(func, 0, None, None), lo, hi)
                 })
                 .collect()
         });
@@ -1219,7 +1846,7 @@ fn elementwise(act: &mut Act<'_>, op: &OpData, rt: &ParRt) -> R<bool> {
             return Ok(false);
         };
         let v = Value::array(dims.clone(), out, *dim);
-        act.define(op, vec![v])?;
+        act.define1(op, v)?;
         return Ok(true);
     }
     let [a, b] = fixed(op)?;
@@ -1273,7 +1900,7 @@ fn elementwise(act: &mut Act<'_>, op: &OpData, rt: &ParRt) -> R<bool> {
         return Err(sky_interp::arith::overflow(s).into());
     }
     let v = Value::array(dims.clone(), out, dim);
-    act.define(op, vec![v])?;
+    act.define1(op, v)?;
     Ok(true)
 }
 
@@ -1283,11 +1910,11 @@ fn elementwise(act: &mut Act<'_>, op: &OpData, rt: &ParRt) -> R<bool> {
 fn body_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
     if let OpKind::Neg = op.kind {
         let [a] = fixed(op)?;
-        let v = match act.get(a, op.span)?.clone() {
-            Value::Number { value, dim } => Value::number(0.0 - value, dim),
-            other => sign(true, other, op.operand_span(0))?,
+        let v = match act.get(a, op.span)? {
+            Value::Number { value, dim } => Value::number(0.0 - value, *dim),
+            other => sign(true, other.clone(), op.operand_span(0))?,
         };
-        return act.define(op, vec![v]);
+        return act.define1(op, v);
     }
     pure_op(act, op)
 }
@@ -1296,8 +1923,22 @@ fn arith_op(act: &mut Act<'_>, op: &OpData, kind: ArithOp) -> R<()> {
     let [a, b] = fixed(op)?;
     let s = op.span;
     let (l, r) = (op.operand_span(0), op.operand_span(1));
-    let v = arith(kind, act.get(a, s)?, act.get(b, s)?, s, l, r)?;
-    act.define(op, vec![v])
+    // An array operand that dies here may hold the result; see
+    // `sky_interp::array::arith_owned`.
+    let (owned_l, owned_r) = (
+        act.take_array_if_dies(op, 0)?,
+        act.take_array_if_dies(op, 1)?,
+    );
+    let lhs = match owned_l {
+        Some(v) => Operand::Owned(v),
+        None => Operand::Borrowed(act.get(a, s)?),
+    };
+    let rhs = match owned_r {
+        Some(v) => Operand::Owned(v),
+        None => Operand::Borrowed(act.get(b, s)?),
+    };
+    let v = arith_owned(kind, lhs, rhs, s, l, r)?;
+    act.define1(op, v)
 }
 
 /// `array.literal`: the operands, in row-major order, arranged as `cols`
@@ -1305,12 +1946,12 @@ fn arith_op(act: &mut Act<'_>, op: &OpData, kind: ArithOp) -> R<()> {
 /// rule, which checks that every entry is a number of one dimension.
 fn array_literal(act: &mut Act<'_>, op: &OpData, cols: Option<u64>) -> R<()> {
     let s = op.span;
-    let entries: Vec<(Value, Span)> = act
-        .values(&op.operands, s)?
-        .into_iter()
+    let entries = op
+        .operands
+        .iter()
         .enumerate()
-        .map(|(i, v)| (v, op.operand_span(i)))
-        .collect();
+        .map(|(i, &v)| Ok((act.get(v, s)?.clone(), op.operand_span(i))))
+        .collect::<R<Vec<(Value, Span)>>>()?;
     let width = match cols {
         None => entries.len(),
         Some(c) => usize::try_from(c).unwrap_or(0),
@@ -1326,7 +1967,7 @@ fn array_literal(act: &mut Act<'_>, op: &OpData, cols: Option<u64>) -> R<()> {
     }
     let rows: Vec<Vec<(Value, Span)>> = entries.chunks(width).map(<[_]>::to_vec).collect();
     let v = array::literal(rows, cols.is_none(), s)?;
-    act.define(op, vec![v])
+    act.define1(op, v)
 }
 
 /// `slice`: the base, then each item's operands in order.
@@ -1375,5 +2016,5 @@ fn slice(act: &mut Act<'_>, op: &OpData, axes: &[SliceAxis]) -> R<()> {
         ));
     }
     let v = array::index(act.get(base, s)?, &items, s, op.operand_span(0))?;
-    act.define(op, vec![v])
+    act.define1(op, v)
 }

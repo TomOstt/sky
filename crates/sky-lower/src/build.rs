@@ -161,24 +161,20 @@ impl Builder {
         self.f.ops[op.index()].operand_spans = spans;
     }
 
-    /// Inserts a constant-like operation with one result and no operands
-    /// right before `before`, in `before`'s block (for a value that
-    /// operation needs but that can only be built after lowering its
-    /// regions).
-    pub(crate) fn op1_before(
-        &mut self,
-        before: OpId,
-        kind: OpKind,
-        ty: Type,
-        span: Span,
-    ) -> ValueId {
-        let block = self.f.ops[before.index()].parent;
-        let op = self.push_op(kind, Vec::new(), span, block);
-        let v = self.add_result(op, ty);
+    /// How many operations `block` has.
+    pub(crate) fn block_len(&self, block: BlockId) -> usize {
+        self.f.blocks[block.index()].ops.len()
+    }
+
+    /// Moves the operations of `block` from position `from` on to right
+    /// before `before` (an operation of `block` that comes earlier), in the
+    /// same order: for values built after a region was lowered that the
+    /// operation with the region needs before it.
+    pub(crate) fn hoist_before(&mut self, block: BlockId, from: usize, before: OpId) {
         let ops = &mut self.f.blocks[block.index()].ops;
+        let moved: Vec<OpId> = ops.split_off(from);
         let pos = ops.iter().rposition(|o| *o == before).unwrap_or(ops.len());
-        ops.insert(pos, op);
-        v
+        ops.splice(pos..pos, moved);
     }
 
     /// Appends a result to an existing operation.

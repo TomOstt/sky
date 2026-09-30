@@ -62,15 +62,15 @@ use std::sync::Arc;
 
 use sky_diag::Span;
 use sky_interp::arith::{
-    arith, equal, expect_bool, expect_number, order, pow, pow_scalar, reciprocal,
-    recursion_too_deep, sign, stack_exhausted, ArithOp,
+    arith, equal, expect_bool, expect_number, order, pow, pow_scalar, range_bound, range_step,
+    reciprocal, recursion_too_deep, sign, stack_exhausted, ArithOp,
 };
 use sky_interp::array::{self, Ix};
 use sky_interp::contract;
 use sky_interp::solve;
 use sky_interp::{RuntimeError, Value};
-use sky_ir::{BlockData, CmpOp, Function, Module, OpData, OpKind, SliceAxis, Type};
-use sky_units::{Dimension, Rational};
+use sky_ir::{BlockData, CmpOp, Function, Module, OpData, OpKind, RangePart, SliceAxis, Type};
+use sky_units::{Dimension, MathFn, Rational};
 
 type R<T> = Result<T, RuntimeError>;
 
@@ -152,6 +152,12 @@ struct State {
     cells: Vec<Cell>,
     free: Vec<u32>,
     args: Vec<Arg>,
+    /// The entries of a small array being passed: pushed one by one
+    /// (`sky_rt_push_elem`), then made an array (`sky_rt_push_array`,
+    /// `sky_rt_box_array`, `sky_rt_print_array`).
+    raw: Vec<f64>,
+    /// The entries of the array `sky_rt_unpack` unpacked, for `sky_rt_elem`.
+    unpacked: Vec<f64>,
     /// The line `print` is building, and whether its next item is the first.
     line: String,
     first: bool,
@@ -206,6 +212,8 @@ pub(crate) fn begin(program: Arc<Program>, out: &mut dyn Write) -> RunGuard {
             cells: Vec::new(),
             free: Vec::new(),
             args: Vec::new(),
+            raw: Vec::new(),
+            unpacked: Vec::new(),
             line: String::new(),
             first: true,
             error: None,
@@ -640,6 +648,25 @@ pub(crate) extern "C" fn sky_rt_math2(site: i32, x: f64, y: f64) -> f64 {
     math(site, x, y)
 }
 
+/// `f(x)` for the math function number `f` (its place in `MathFn::ALL`):
+/// the value only, with no lookup of the site and no state. Native code has
+/// already checked the domain, and checks the result, inline.
+pub(crate) extern "C" fn sky_rt_libm1(f: i32, x: f64) -> f64 {
+    libm(f, x, 0.0)
+}
+
+/// [`sky_rt_libm1`] for a two-argument function.
+pub(crate) extern "C" fn sky_rt_libm2(f: i32, x: f64, y: f64) -> f64 {
+    libm(f, x, y)
+}
+
+fn libm(f: i32, x: f64, y: f64) -> f64 {
+    match MathFn::ALL.get(f as usize) {
+        Some(f) => sky_interp::math::core_f64(*f, x, y),
+        None => f64::NAN,
+    }
+}
+
 fn math(site: i32, x: f64, y: f64) -> f64 {
     with(f64::NAN, |st| {
         let span = st.program.span(site);
@@ -678,6 +705,136 @@ pub(crate) extern "C" fn sky_rt_pow_scalar(site: i32, b: f64, x: f64) -> f64 {
             }
         }
     })
+}
+
+// ----- small arrays -----
+//
+// Native code holds a small array as its entries (see `module.rs`, "Small
+// arrays"). These functions turn entries into a runtime array and back, for
+// the places that need a handle. An array's shape is passed as `rows` and
+// `cols`: `cols == 0` is a vector of `rows` entries.
+
+pub(crate) extern "C" fn sky_rt_push_elem(x: f64) {
+    with((), |st| st.raw.push(x));
+}
+
+/// The array made of the entries pushed since the last one was made.
+fn take_array(st: &mut State, dim: i32, rows: i32, cols: i32) -> Option<Value> {
+    let entries = std::mem::take(&mut st.raw);
+    let Some(d) = st.program.dims.get(dim as usize).copied() else {
+        st.fail(internal("unknown dimension"));
+        return None;
+    };
+    let dims = array_dims(rows, cols);
+    if dims.iter().product::<usize>() != entries.len() || entries.iter().any(|x| !x.is_finite()) {
+        st.fail(internal("a small array is not what its shape says"));
+        return None;
+    }
+    Some(Value::array(dims, entries, d))
+}
+
+fn array_dims(rows: i32, cols: i32) -> Vec<usize> {
+    if cols == 0 {
+        vec![rows as usize]
+    } else {
+        vec![rows as usize, cols as usize]
+    }
+}
+
+/// Pushes the array of the entries pushed as an operand of the next
+/// operation.
+pub(crate) extern "C" fn sky_rt_push_array(dim: i32, rows: i32, cols: i32) {
+    with((), |st| {
+        if let Some(v) = take_array(st, dim, rows, cols) {
+            st.args.push(Arg::Val(v));
+        }
+    });
+}
+
+/// A handle to the array of the entries pushed (0 on failure).
+pub(crate) extern "C" fn sky_rt_box_array(dim: i32, rows: i32, cols: i32) -> i64 {
+    with(0, |st| match take_array(st, dim, rows, cols) {
+        Some(v) => st.alloc(Rc::new(v)),
+        None => 0,
+    })
+}
+
+/// Prints the array of the entries pushed, as one item of the line.
+pub(crate) extern "C" fn sky_rt_print_array(dim: i32, rows: i32, cols: i32) {
+    let text = with(None, |st| {
+        take_array(st, dim, rows, cols).map(|v| v.print_text())
+    });
+    if let Some(text) = text {
+        print_item(text);
+    }
+}
+
+/// Unpacks the array in handle `h`, which must be an array of the shape and
+/// dimension given, so `sky_rt_elem` can read its entries: 0, or -1 and a
+/// deoptimization if it is not what the type says. With `release`, `h` is
+/// released either way.
+pub(crate) extern "C" fn sky_rt_unpack(
+    h: i64,
+    dim: i32,
+    rows: i32,
+    cols: i32,
+    release: i32,
+) -> i32 {
+    with(-1, |st| {
+        let want = st.program.dims.get(dim as usize).copied();
+        let v = st.value(h);
+        if release != 0 {
+            st.release(h);
+        }
+        match (v.as_deref(), want) {
+            (
+                Some(Value::Array {
+                    dims,
+                    data,
+                    dim: have,
+                }),
+                Some(want),
+            ) if *have == want && *dims == array_dims(rows, cols) => {
+                st.unpacked.clear();
+                st.unpacked.extend_from_slice(data);
+                0
+            }
+            _ => {
+                st.deopt = true;
+                -1
+            }
+        }
+    })
+}
+
+/// Entry `i` of the array [`sky_rt_unpack`] unpacked.
+pub(crate) extern "C" fn sky_rt_elem(i: i32) -> f64 {
+    with(f64::NAN, |st| {
+        st.unpacked.get(i as usize).copied().unwrap_or(f64::NAN)
+    })
+}
+
+/// The operation at `site`, which failed inline on the operands pushed
+/// (arrays and numbers), runs in the interpreters' own code to produce its
+/// error, as `sky_rt_fail1` does for one number.
+pub(crate) extern "C" fn sky_rt_fail_op(site: i32) {
+    with((), |st| {
+        let args = std::mem::take(&mut st.args);
+        let program = st.program.clone();
+        match program.op(site) {
+            Some((f, op)) => match eval_op(f, op, &args, &mut Vec::new(), &mut HashMap::new()) {
+                Err(e) => st.fail(e),
+                Ok(_) => st.fail(internal(format!(
+                    "`{}` failed inline but succeeds in the runtime",
+                    op.kind.mnemonic()
+                ))),
+            },
+            None => st.fail(internal("unknown site")),
+        }
+        let mut args = args;
+        args.clear();
+        st.args = args;
+    });
 }
 
 // ----- printing -----
@@ -923,6 +1080,11 @@ fn eval_op(
         OpKind::ExpectBool { context } => {
             Ok(Value::Bool(expect_bool(context.keyword(), arg(0)?, s)?))
         }
+        OpKind::Assume => Ok(arg(0)?.clone()),
+        OpKind::ExpectRange { part } => match part {
+            RangePart::Bound => range_bound(arg(0)?, s),
+            RangePart::Step => range_step(arg(0)?, s),
+        },
         OpKind::ExpectNumber { context } => {
             let v = arg(0)?;
             expect_number(context.keyword(), v, s)?;
@@ -1341,6 +1503,8 @@ pub(crate) enum Rt {
     FailAlways,
     Math1,
     Math2,
+    Libm1,
+    Libm2,
     PowScalar,
     PrintNum,
     PrintBool,
@@ -1348,10 +1512,17 @@ pub(crate) enum Rt {
     PrintEnd,
     AssertDyn,
     AssertFail,
+    PushElem,
+    PushArray,
+    BoxArray,
+    PrintArray,
+    Unpack,
+    Elem,
+    FailOp,
 }
 
 impl Rt {
-    pub const ALL: [Rt; 29] = [
+    pub const ALL: [Rt; 38] = [
         Rt::BoxNum,
         Rt::BoxBool,
         Rt::ConstStr,
@@ -1374,6 +1545,8 @@ impl Rt {
         Rt::FailAlways,
         Rt::Math1,
         Rt::Math2,
+        Rt::Libm1,
+        Rt::Libm2,
         Rt::PowScalar,
         Rt::PrintNum,
         Rt::PrintBool,
@@ -1381,6 +1554,13 @@ impl Rt {
         Rt::PrintEnd,
         Rt::AssertDyn,
         Rt::AssertFail,
+        Rt::PushElem,
+        Rt::PushArray,
+        Rt::BoxArray,
+        Rt::PrintArray,
+        Rt::Unpack,
+        Rt::Elem,
+        Rt::FailOp,
     ];
 
     /// The symbol name, also what `--emit=clif` shows.
@@ -1408,6 +1588,8 @@ impl Rt {
             Rt::FailAlways => "sky_rt_fail_always",
             Rt::Math1 => "sky_rt_math1",
             Rt::Math2 => "sky_rt_math2",
+            Rt::Libm1 => "sky_rt_libm1",
+            Rt::Libm2 => "sky_rt_libm2",
             Rt::PowScalar => "sky_rt_pow_scalar",
             Rt::PrintNum => "sky_rt_print_num",
             Rt::PrintBool => "sky_rt_print_bool",
@@ -1415,6 +1597,13 @@ impl Rt {
             Rt::PrintEnd => "sky_rt_print_end",
             Rt::AssertDyn => "sky_rt_assert_dyn",
             Rt::AssertFail => "sky_rt_assert_fail",
+            Rt::PushElem => "sky_rt_push_elem",
+            Rt::PushArray => "sky_rt_push_array",
+            Rt::BoxArray => "sky_rt_box_array",
+            Rt::PrintArray => "sky_rt_print_array",
+            Rt::Unpack => "sky_rt_unpack",
+            Rt::Elem => "sky_rt_elem",
+            Rt::FailOp => "sky_rt_fail_op",
         }
     }
 
@@ -1443,6 +1632,8 @@ impl Rt {
             Rt::FailAlways => sky_rt_fail_always as *const u8,
             Rt::Math1 => sky_rt_math1 as *const u8,
             Rt::Math2 => sky_rt_math2 as *const u8,
+            Rt::Libm1 => sky_rt_libm1 as *const u8,
+            Rt::Libm2 => sky_rt_libm2 as *const u8,
             Rt::PowScalar => sky_rt_pow_scalar as *const u8,
             Rt::PrintNum => sky_rt_print_num as *const u8,
             Rt::PrintBool => sky_rt_print_bool as *const u8,
@@ -1450,6 +1641,13 @@ impl Rt {
             Rt::PrintEnd => sky_rt_print_end as *const u8,
             Rt::AssertDyn => sky_rt_assert_dyn as *const u8,
             Rt::AssertFail => sky_rt_assert_fail as *const u8,
+            Rt::PushElem => sky_rt_push_elem as *const u8,
+            Rt::PushArray => sky_rt_push_array as *const u8,
+            Rt::BoxArray => sky_rt_box_array as *const u8,
+            Rt::PrintArray => sky_rt_print_array as *const u8,
+            Rt::Unpack => sky_rt_unpack as *const u8,
+            Rt::Elem => sky_rt_elem as *const u8,
+            Rt::FailOp => sky_rt_fail_op as *const u8,
         }
     }
 
@@ -1474,6 +1672,8 @@ impl Rt {
             Rt::FailDepth | Rt::FailStack | Rt::FailAlways => (&[I32], None),
             Rt::Math1 => (&[I32, F64], Some(F64)),
             Rt::Math2 => (&[I32, F64, F64], Some(F64)),
+            Rt::Libm1 => (&[I32, F64], Some(F64)),
+            Rt::Libm2 => (&[I32, F64, F64], Some(F64)),
             Rt::PowScalar => (&[I32, F64, F64], Some(F64)),
             Rt::PrintNum => (&[I32, F64], None),
             Rt::PrintBool => (&[I32], None),
@@ -1481,6 +1681,12 @@ impl Rt {
             Rt::PrintEnd => (&[I32], Some(I32)),
             Rt::AssertDyn => (&[I32, I64], Some(I32)),
             Rt::AssertFail => (&[I32, I32], None),
+            Rt::PushElem => (&[F64], None),
+            Rt::PushArray | Rt::PrintArray => (&[I32, I32, I32], None),
+            Rt::BoxArray => (&[I32, I32, I32], Some(I64)),
+            Rt::Unpack => (&[I64, I32, I32, I32, I32], Some(I32)),
+            Rt::Elem => (&[I32], Some(F64)),
+            Rt::FailOp => (&[I32], None),
         }
     }
 }

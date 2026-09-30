@@ -124,6 +124,31 @@ pub fn transposes(m: &mut Module) -> Vec<Rewrite> {
     out
 }
 
+/// The `while` operations `op` is inside of, innermost first.
+fn enclosing_loops(f: &Function, op: OpId) -> Vec<OpId> {
+    let mut out = Vec::new();
+    let mut block = f.op(op).parent;
+    while let Some(region) = f.block(block).parent {
+        let Some(owner) = f.region(region).parent else {
+            break;
+        };
+        if matches!(f.op(owner).kind, OpKind::While) {
+            out.push(owner);
+        }
+        block = f.op(owner).parent;
+    }
+    out
+}
+
+/// Whether `producer` is outside some loop that `user` is inside of: it is
+/// computed once for many runs of `user`.
+fn computed_outside_loop(f: &Function, producer: OpId, user: OpId) -> bool {
+    let around_producer = enclosing_loops(f, producer);
+    enclosing_loops(f, user)
+        .iter()
+        .any(|l| !around_producer.contains(l))
+}
+
 /// The transposed matrix `x` and the op, if `v` is `transpose(x)` of a
 /// matrix.
 fn transposed(f: &Function, v: ValueId) -> Option<(OpId, ValueId)> {
@@ -146,7 +171,15 @@ fn fold_transposes(f: &mut Function, id: OpId) -> Option<Rewrite> {
     let &[a, b] = &op.operands[..] else {
         return None;
     };
-    let (ta, tb) = (transposed(f, a), transposed(f, b));
+    // A transpose computed outside a loop that runs the product stays: it is
+    // computed once, and `matmul[ta]` inside the loop would make the copy on
+    // every iteration in an engine that materializes it (the reference
+    // interpreter does; a kernel that reads with swapped strides would not).
+    // `licm` produces exactly this shape, and so does a user who transposes
+    // before the loop.
+    let outside =
+        |t: Option<(OpId, ValueId)>| t.filter(|(tid, _)| !computed_outside_loop(f, *tid, id));
+    let (ta, tb) = (outside(transposed(f, a)), outside(transposed(f, b)));
     if ta.is_none() && tb.is_none() {
         return None;
     }

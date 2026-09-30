@@ -51,9 +51,10 @@ fn emit_clif_prints_every_function_on_stdout() {
     assert!(text.contains("sky_f0__main_"), "{text}");
     assert!(text.contains("sky_f1_area"), "{text}");
     // The product of two typed scalars is an inline multiplication with a
-    // finiteness check, not a call.
+    // finiteness check (`x - x` is not NaN), not a call.
     assert!(text.contains("fmul"), "{text}");
-    assert!(text.contains("fabs"), "{text}");
+    assert!(text.contains("fsub"), "{text}");
+    assert!(text.contains("fcmp ord"), "{text}");
     // Only the CLIF is on stdout; the `ok` line is on stderr.
     assert!(err(&o).contains(": ok"), "{}", err(&o));
     assert!(!text.contains("ok\n"), "{text}");

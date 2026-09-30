@@ -280,3 +280,49 @@ fn thresholds_decide_nothing_but_speed() {
     let above = run(&m, args, &Config::eager(8)).unwrap();
     assert_eq!(below, above);
 }
+
+/// The operations of a call group do not run in program order: `%b` reads
+/// `%a` after the started call is done, while `%c` (later in the program,
+/// and `%a`'s last use) runs first. A value moved at its last use would be
+/// gone when `%b` reads it, so nothing may be moved while a group runs, and
+/// the result is the sequential one on every configuration.
+#[test]
+fn a_deferred_operation_reads_what_a_later_one_would_move() {
+    let m = module(
+        "fn @g(%x: num[1; ()]) -> (num[1; ()]) effects(fail) {
+  %y = add %x, %x : num[1; ()]
+  return %y
+}
+fn @f(%a: num[1; (3)], %p: num[1; ()]) -> (num[1; (3)], num[1; (3)], num[1; ()]) effects(call, fail) {
+  %r1 = call @g(%p) : num[1; ()]
+  %b = mul %a, %r1 : num[1; (3)]
+  %c = neg %a : num[1; (3)]
+  %r2 = call @g(%p) : num[1; ()]
+  return %b, %c, %r2
+}
+",
+    );
+    // Calls in parallel, but every array operation on the interpreter's
+    // sequential paths, which are the ones that move an operand.
+    let calls_only = Config {
+        fused_work: usize::MAX,
+        array_elements: usize::MAX,
+        ..Config::eager(4)
+    };
+    let args = vec![vector(&[1.0, 2.0, 3.0]), Value::scalar(5.0)];
+    let want = run(&m, args.clone(), &Config::sequential()).unwrap();
+    assert_eq!(run(&m, args, &calls_only).unwrap(), want);
+    let out = same_everywhere(&m, &[vector(&[1.0, 2.0, 3.0]), Value::scalar(5.0)]).unwrap();
+    assert_eq!(
+        (bits(&out[0]), bits(&out[1]), bits(&out[2])),
+        (
+            vec![10.0f64.to_bits(), 20.0f64.to_bits(), 30.0f64.to_bits()],
+            vec![
+                (-1.0f64).to_bits(),
+                (-2.0f64).to_bits(),
+                (-3.0f64).to_bits()
+            ],
+            vec![10.0f64.to_bits()],
+        )
+    );
+}

@@ -19,8 +19,8 @@ use sky_syntax::lexer::unescape_str;
 use sky_units::MathFn;
 
 use crate::arith::{
-    arith, arity_mismatch, equal, expect_bool, order, pow, reciprocal, recursion_too_deep, sign,
-    ArithOp, StackMeter, MAX_CALL_DEPTH, R,
+    arith_owned, arity_mismatch, equal, expect_bool, order, pow, reciprocal, recursion_too_deep,
+    sign, ArithOp, Operand, StackMeter, MAX_CALL_DEPTH, R,
 };
 use crate::array::{self, Ix};
 use crate::contract;
@@ -50,7 +50,11 @@ enum Flow {
 ///
 /// On error, bindings made by earlier statements of this module remain in
 /// `env`; a caller that wants all-or-nothing (the REPL) snapshots and
-/// restores it. Run this under `sky_ast::with_deep_stack`.
+/// restores it. (The statement that failed may have moved its own target's
+/// array out of `env` to reuse the buffer, see [`Interp::count_reads`], and
+/// left it empty: the same rule covers that.)
+///
+/// Run this under `sky_ast::with_deep_stack`.
 pub fn run_module<W: Write>(
     module: &Module,
     src: &str,
@@ -108,6 +112,7 @@ fn run<'a, W: Write>(
         frames: Vec::new(),
         stack: StackMeter::new(),
         derivatives,
+        consume: None,
     };
     let mut last = None;
     for stmt in &module.stmts {
@@ -148,6 +153,10 @@ pub(crate) struct Interp<'a> {
     pub(crate) stack: StackMeter,
     /// What evaluates `derivative(f, x)(args)`, if the caller has one.
     pub(crate) derivatives: Option<&'a mut dyn DerivativeHook>,
+    /// The one read of a variable that moves the value out instead of
+    /// cloning it, while a reassignment `x = x + ...` evaluates its right
+    /// side (see [`Interp::count_reads`]).
+    consume: Option<Span>,
 }
 
 impl<'a> Interp<'a> {
@@ -225,11 +234,134 @@ impl<'a> Interp<'a> {
 
     fn assign(&mut self, name: &str, v: Value) {
         match self.frames.last_mut() {
-            Some(frame) => {
-                frame.vars.insert(name.to_string(), v);
-            }
-            None => self.env.set(name, v),
+            Some(frame) => match frame.vars.get_mut(name) {
+                Some(slot) => *slot = v,
+                None => {
+                    frame.vars.insert(name.to_string(), v);
+                }
+            },
+            None => self.env.assign(name, v),
         }
+    }
+
+    /// Moves the value of `name` out of the scope an assignment to it
+    /// writes to (the frame inside a function, the module at the top level),
+    /// leaving `Value::None` in its place until the assignment stores the
+    /// new one. `None` if `name` is not bound in that scope (a function
+    /// reading a module-level name and then assigning a local of the same
+    /// name reads the module's, which must stay).
+    fn take_own(&mut self, name: &str) -> Option<Value> {
+        match self.frames.last_mut() {
+            Some(frame) => frame
+                .vars
+                .get_mut(name)
+                .map(|slot| std::mem::replace(slot, Value::None)),
+            None => self.env.take(name),
+        }
+    }
+
+    /// Whether `name` is bound to an array in the scope an assignment to it
+    /// writes to: the only case where moving it out saves an allocation.
+    fn holds_array(&self, name: &str) -> bool {
+        let slot = match self.frames.last() {
+            Some(frame) => frame.vars.get(name),
+            None => self.env.get(name),
+        };
+        matches!(slot, Some(Value::Array { .. }))
+    }
+
+    /// How many times `e` reads the variable `name`, if evaluating `e` can
+    /// run no user code; `None` if it might (a call of a user function, or of
+    /// anything but a math function, whose body could read `name` as a
+    /// module-level name), or if `e` has a form this does not look into
+    /// (`and`, `or` and the conditional expression read their operands
+    /// conditionally; this is the conservative answer).
+    ///
+    /// With `Some(1)` (the read is then returned in `found`), the read is the
+    /// last one: nothing else in `e` looks at `name`, and no code runs that
+    /// could. So when the statement is `name = e`, the value can be moved
+    /// out of `name` at that read, instead of cloned, and the assignment
+    /// puts the result in its place. That is `x = x + dt * v` with no copy
+    /// of `x`. Values are never shared (each variable owns its array), so
+    /// nothing else can see the change.
+    fn count_reads(&self, e: &Expr, name: &str, found: &mut Option<Span>) -> Option<usize> {
+        let mut total = 0;
+        let mut add = |n: Option<usize>| -> Option<()> {
+            total += n?;
+            Some(())
+        };
+        match &e.kind {
+            ExprKind::Literal(_) | ExprKind::UnitLiteral { .. } => {}
+            ExprKind::Name(id) => {
+                if self.text(id.span) == name {
+                    *found = Some(id.span);
+                    total = 1;
+                }
+            }
+            ExprKind::Unary {
+                op: UnaryOp::Neg | UnaryOp::Pos,
+                operand,
+                ..
+            } => add(self.count_reads(operand, name, found))?,
+            ExprKind::Binary { lhs, rhs, .. } => {
+                add(self.count_reads(lhs, name, found))?;
+                add(self.count_reads(rhs, name, found))?;
+            }
+            ExprKind::Paren(inner) => add(self.count_reads(inner, name, found))?,
+            ExprKind::Inverse { operand, .. } | ExprKind::Transpose { operand, .. } => {
+                add(self.count_reads(operand, name, found))?
+            }
+            ExprKind::Array(elems) => {
+                for x in elems {
+                    add(self.count_reads(x, name, found))?;
+                }
+            }
+            ExprKind::Index { base, items } => {
+                add(self.count_reads(base, name, found))?;
+                for item in items {
+                    match item {
+                        IndexItem::Expr(x) => add(self.count_reads(x, name, found))?,
+                        IndexItem::Slice { start, stop, .. } => {
+                            for x in start.iter().chain(stop) {
+                                add(self.count_reads(x, name, found))?;
+                            }
+                        }
+                    }
+                }
+            }
+            ExprKind::Call { callee, args } => {
+                let ExprKind::Name(id) = &callee.kind else {
+                    return None;
+                };
+                let f = self.text(id.span);
+                if self.is_user_bound(f) || MathFn::from_name(f).is_none() {
+                    return None;
+                }
+                for x in args {
+                    add(self.count_reads(x, name, found))?;
+                }
+            }
+            ExprKind::BoolOp { .. }
+            | ExprKind::PlusMinus { .. }
+            | ExprKind::Attribute { .. }
+            | ExprKind::IfElse { .. }
+            | ExprKind::As { .. }
+            | ExprKind::Unary { .. } => return None,
+        }
+        Some(total)
+    }
+
+    /// `e` for the statement `name = e`: evaluates it, moving `name`'s array
+    /// out at its only read when that is safe (see [`Interp::count_reads`]:
+    /// `name` holds an array and `e` reads it exactly once).
+    fn eval_assigned(&mut self, e: &Expr, name: &str) -> R<Value> {
+        let mut found = None;
+        if self.holds_array(name) && self.count_reads(e, name, &mut found) == Some(1) {
+            self.consume = found;
+        }
+        let v = self.eval(e);
+        self.consume = None;
+        v
     }
 
     fn check_stack(&self, span: Span) -> R<()> {
@@ -335,8 +467,8 @@ impl<'a> Interp<'a> {
             }
             StmtKind::Assign { target, value } => match target {
                 AssignTarget::Name(id) => {
-                    let v = self.eval(value)?;
                     let name = self.text(id.span);
+                    let v = self.eval_assigned(value, name)?;
                     self.assign(name, v);
                     Ok(Flow::Normal(None))
                 }
@@ -354,14 +486,29 @@ impl<'a> Interp<'a> {
             } => match target {
                 AssignTarget::Name(id) => {
                     let name = self.text(id.span);
-                    let Some(cur) = self.lookup(name).cloned() else {
+                    if self.lookup(name).is_none() {
                         return Err(RuntimeError::new(
                             format!("cannot find `{name}` in this scope"),
                             id.span,
                         )
                         .with_label("not defined"));
+                    }
+                    // `x += e` where `e` does not read `x` (and runs no user
+                    // code): the array is taken after `e` is evaluated, not
+                    // cloned before.
+                    let mut found = None;
+                    let take_later = self.holds_array(name)
+                        && self.count_reads(value, name, &mut found) == Some(0);
+                    let cur = if take_later {
+                        None
+                    } else {
+                        self.lookup(name).cloned()
                     };
                     let rhs = self.eval(value)?;
+                    let cur = match cur.or_else(|| self.take_own(name)) {
+                        Some(cur) => cur,
+                        None => self.lookup(name).cloned().unwrap_or(Value::None),
+                    };
                     let whole = id.span.join(value.span);
                     let v = self.binary_values(op.binary(), cur, rhs, whole, id.span, value)?;
                     self.assign(name, v);
@@ -375,8 +522,8 @@ impl<'a> Interp<'a> {
             // binding is its value.
             StmtKind::Binding { name, ty: _, value } => match value {
                 Some(value) => {
-                    let v = self.eval(value)?;
                     let name = self.text(name.span);
+                    let v = self.eval_assigned(value, name)?;
                     self.assign(name, v);
                     Ok(Flow::Normal(None))
                 }
@@ -401,6 +548,12 @@ impl<'a> Interp<'a> {
             },
             ExprKind::Name(id) => {
                 let name = self.text(id.span);
+                if self.consume == Some(id.span) {
+                    self.consume = None;
+                    if let Some(v) = self.take_own(name) {
+                        return Ok(v);
+                    }
+                }
                 match self.lookup(name) {
                     Some(v) => Ok(v.clone()),
                     None => Err(RuntimeError::new(
@@ -871,10 +1024,24 @@ impl<'a> Interp<'a> {
             return crate::uncertain::binary(op, &l, &r, const_exp, whole, lspan, rspan);
         }
         match op {
-            BinaryOp::Add => arith(ArithOp::Add, &l, &r, whole, lspan, rspan),
-            BinaryOp::Sub => arith(ArithOp::Sub, &l, &r, whole, lspan, rspan),
-            BinaryOp::Mul => arith(ArithOp::Mul, &l, &r, whole, lspan, rspan),
-            BinaryOp::Div => arith(ArithOp::Div, &l, &r, whole, lspan, rspan),
+            // The operands are temporaries (or clones), owned by this call:
+            // an array among them holds the result, no new one is made.
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                let arith_op = match op {
+                    BinaryOp::Add => ArithOp::Add,
+                    BinaryOp::Sub => ArithOp::Sub,
+                    BinaryOp::Mul => ArithOp::Mul,
+                    _ => ArithOp::Div,
+                };
+                arith_owned(
+                    arith_op,
+                    Operand::Owned(l),
+                    Operand::Owned(r),
+                    whole,
+                    lspan,
+                    rspan,
+                )
+            }
             // The result's dimension comes from the constant rational
             // exponent in the source, exactly as the checker computes it.
             BinaryOp::Pow => pow(

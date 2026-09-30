@@ -1,0 +1,22 @@
+# Global value numbering (`gvn`): an operation identical to one that dominates
+# it reuses the earlier result, across blocks and regions. `y * x` is
+# `x * y` (a product commutes exactly), so it reuses `a`, and so does the one
+# after the `if`. The two divisions are the same operation on the same
+# values: if they fail, the first one fails first, so the second is never the
+# error. `x - y` and `y - x` are different, and the product computed only in
+# the `else` arm is not visible after the `if`, so the last `x * 2` is its
+# own operation.
+x: Scalar
+y: Scalar
+cond: Scalar
+a = x * y
+if cond > 0:
+    b = y * x
+    print(b)
+else:
+    print(x * 2)
+print(x * y + a)
+q = x / y
+print(x - y, y - x)
+print(x / y + q)
+print(x * 2)

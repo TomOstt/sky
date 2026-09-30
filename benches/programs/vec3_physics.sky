@@ -1,0 +1,29 @@
+# bench: N=20000 quick=20
+# A particle in a softened spring field, stepped with small helpers written
+# for vectors of any size (`Vector[K]`): a dot product that loops over
+# `len(v)`, and an acceleration. Every call passes a 3-vector, and `accel`
+# a constant stiffness, so specialization gives each helper a `K = 3` clone
+# whose loop is unrolled and whose `len` is a constant.
+N = 20000
+
+def dot(a: Vector[K], b: Vector[K]) -> Scalar:
+    s = 0
+    i = 0
+    while i < len(a):
+        s += a[i] * b[i]
+        i += 1
+    return s
+
+def accel(x: Vector[K], k: Scalar) -> Vector[K]:
+    return x * (-k / (1 + dot(x, x)))
+
+x = [1, 0, 0]
+v = [0, 1, 0]
+dt = 0.001
+e = 0
+for step in range(N):
+    a = accel(x, 2)
+    v = v + a * dt
+    x = x + v * dt
+    e = 0.5 * dot(v, v)
+print(x, v, e)

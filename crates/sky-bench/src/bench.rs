@@ -69,6 +69,10 @@ const SOURCES: &[(&str, &str)] = &[
         "gradient",
         include_str!("../../../benches/programs/gradient.sky"),
     ),
+    (
+        "vec3_physics",
+        include_str!("../../../benches/programs/vec3_physics.sky"),
+    ),
 ];
 
 /// One workload.

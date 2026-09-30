@@ -123,6 +123,31 @@ const UNKNOWN_ELEMENTS: u64 = 256;
 /// `docs/design/ir.md`).
 pub const NATIVE_CALL_COST_SCALE: u64 = 64;
 
+/// How many times more element-operations a `fused` kernel must have to be
+/// split across threads in native code than in the interpreter: a compiled
+/// kernel computes an element in a fraction of a nanosecond (a 4-operation
+/// kernel streams at memory speed), so splitting starts to win at about 130
+/// thousand elements where the interpreter's does at about 1000 (`sky-bench
+/// par --native` measures it, see `docs/design/ir.md`).
+pub const NATIVE_FUSED_WORK_SCALE: usize = 128;
+
+/// What `--explain` says about a parallel kernel and native code: `n` the
+/// number of elements if known, `threshold` the least number of elements
+/// native code splits a kernel of this kind at.
+fn native_kernel_note(threads: usize, n: Option<u64>, threshold: u64) -> String {
+    match n {
+        Some(n) if n < threshold => format!(
+            "native code runs it in one piece: a compiled kernel computes an element so fast that splitting pays only from {threshold} elements (it has {n})"
+        ),
+        Some(_) => format!(
+            "native code runs it on {threads} threads too, in the same chunks (the compiled kernel on each), and resolves a failure by the same rule, so its result and error are the same"
+        ),
+        None => format!(
+            "native code runs it on {threads} threads too from {threshold} elements (a compiled kernel computes an element so fast that splitting pays only from there), in the same chunks, and resolves a failure by the same rule, so its result and error are the same"
+        ),
+    }
+}
+
 /// The most threads `--threads` accepts.
 pub const MAX_THREADS: usize = 1024;
 
@@ -189,13 +214,18 @@ impl Config {
     }
 
     /// This configuration for native code: the same, with the least cost of a
-    /// started call multiplied by [`NATIVE_CALL_COST_SCALE`]. The cost is
+    /// started call multiplied by [`NATIVE_CALL_COST_SCALE`] and the least
+    /// work of a split `fused` kernel by [`NATIVE_FUSED_WORK_SCALE`]. Both are
     /// counted in interpreted operations; native code runs an operation in
-    /// about that fraction of the time, while starting a call elsewhere costs
-    /// the same microseconds, so a call must be that much bigger to pay.
+    /// about that fraction of the time, while starting a call or a chunk
+    /// elsewhere costs the same microseconds, so the work must be that much
+    /// bigger to pay. (The elementwise array operations run the same loops in
+    /// both, so their threshold is the same, and a threshold of zero, which
+    /// the tests use to exercise every path, stays zero.)
     pub fn for_native(&self) -> Config {
         Config {
             call_cost: self.call_cost.saturating_mul(NATIVE_CALL_COST_SCALE),
+            fused_work: self.fused_work.saturating_mul(NATIVE_FUSED_WORK_SCALE),
             ..self.clone()
         }
     }
@@ -916,6 +946,24 @@ fn group_note(g: &Graph<'_>, f: &Function, ops: &[OpId], w: &Window, cfg: &Confi
         "any of them may fail: every call is awaited and the error of the earliest one in program order is reported, as in a sequential run"
             .to_string(),
     );
+    // Native code runs an operation much faster than the interpreter, so what
+    // pays there is a bigger call.
+    let cheapest = w
+        .calls
+        .iter()
+        .map(|c| callee_cost(g, c.2))
+        .min()
+        .unwrap_or(0);
+    let native = cfg.for_native().call_cost;
+    because.push(if cheapest >= native {
+        format!(
+            "native code starts them on workers too: each is estimated at least {native} operations, the threshold for native code, which runs an operation {NATIVE_CALL_COST_SCALE} times faster than the interpreter"
+        )
+    } else {
+        format!(
+            "native code runs them in place: it runs an operation {NATIVE_CALL_COST_SCALE} times faster than the interpreter, so a call must be estimated at least {native} operations to pay for a thread (the smallest here is {cheapest})"
+        )
+    });
     Note {
         rule: CALLS_RULE,
         span,
@@ -1041,7 +1089,7 @@ fn kernel_notes(f: &Function, cfg: &Config, notes: &mut Vec<Note>) {
         let Some(op) = f.ops.get(id.index()) else {
             continue;
         };
-        let (what, threshold, may_fail) = match &op.kind {
+        let (what, threshold, native_threshold, may_fail) = match &op.kind {
             OpKind::Fused => {
                 let a = analysis.get_or_insert_with(|| exact::analyze(f));
                 let failing = fused_failing(f, op, a);
@@ -1050,6 +1098,7 @@ fn kernel_notes(f: &Function, cfg: &Config, notes: &mut Vec<Note>) {
                 (
                     "elementwise kernel".to_string(),
                     cfg.fused_work.div_ceil(ops.max(1)),
+                    cfg.for_native().fused_work.div_ceil(ops.max(1)),
                     Some(failing),
                 )
             }
@@ -1058,6 +1107,7 @@ fn kernel_notes(f: &Function, cfg: &Config, notes: &mut Vec<Note>) {
             {
                 (
                     format!("elementwise `{}`", op.kind.mnemonic()),
+                    cfg.array_elements,
                     cfg.array_elements,
                     None,
                 )
@@ -1110,6 +1160,7 @@ fn kernel_notes(f: &Function, cfg: &Config, notes: &mut Vec<Note>) {
                     "every element is independent, so the array is split into contiguous chunks (at most four per thread); the result is bit-identical to the sequential one whatever the split".to_string(),
                     "it does not print or call, so no output can change order".to_string(),
                     fail_text,
+                    native_kernel_note(t, Some(n), native_threshold as u64),
                 ],
             }
         } else {
@@ -1123,6 +1174,7 @@ fn kernel_notes(f: &Function, cfg: &Config, notes: &mut Vec<Note>) {
                     "its size is known only when the program runs; below the threshold splitting costs more than it saves".to_string(),
                     "every element is independent, so the result is bit-identical to the sequential one whatever the split".to_string(),
                     fail_text,
+                    native_kernel_note(t, n, native_threshold as u64),
                 ],
             }
         };

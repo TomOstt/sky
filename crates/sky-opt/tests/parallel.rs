@@ -207,11 +207,11 @@ fn the_analysis_does_not_depend_on_the_thread_count() {
             .iter()
             .map(|n| {
                 format!(
-                    "{} {} {:?}",
+                    "{} {} {}",
                     n.rule,
                     n.headline
                         .replace(&format!("up to {t} threads"), "up to N threads"),
-                    n.because
+                    format!("{:?}", n.because).replace(&format!("{t} threads"), "N threads")
                 )
             })
             .collect()

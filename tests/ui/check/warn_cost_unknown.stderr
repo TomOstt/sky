@@ -1,0 +1,26 @@
+tests/ui/check/warn_cost_unknown.sky:3:5: warning: cannot prove that `until` meets `cost flops <= 100 * N`
+  |
+3 |     cost flops <= 100 * N
+  |     ^^^^^^^^^^^^^^^^^^^^^ this contract is not proven
+4 |     while v[0] > 1:
+  |     --------------- this has no known bound on its cost
+  = note: the cost has no upper bound: loop at line 4
+  = note: the model bounds a counted loop (`for i in range(10)`, `range(len(v))`); a loop with another condition, a `break`, or a recursion has no bound
+
+tests/ui/check/warn_cost_unknown.sky:9:5: warning: cannot prove that `forever` meets `cost flops <= 5`
+   |
+ 9 |     cost flops <= 5
+   |     ^^^^^^^^^^^^^^^ this contract is not proven
+10 |     return forever(v)
+   |            ---------- this has no known bound on its cost
+   = note: the cost has no upper bound: recursive call to `forever` at line 10
+   = note: the model bounds a counted loop (`for i in range(10)`, `range(len(v))`); a loop with another condition, a `break`, or a recursion has no bound
+
+tests/ui/check/warn_cost_unknown.sky:13:5: warning: cannot prove that `anything` meets `cost flops <= 10`
+   |
+13 |     cost flops <= 10
+   |     ^^^^^^^^^^^^^^^^ this contract is not proven
+14 |     return x * y
+   |            ----- this has no known bound on its cost
+   = note: the cost has no upper bound: an operation at line 14 on a value of unknown shape
+   = note: the model bounds a counted loop (`for i in range(10)`, `range(len(v))`); a loop with another condition, a `break`, or a recursion has no bound

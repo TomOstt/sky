@@ -1,0 +1,40 @@
+tests/ui/check/ok_cost_report.sky:2:5: note: cost of `gram`: 2·M²·N flops, 2 allocations (M·N + M² floats in all)
+  |
+2 | def gram(A: Matrix[N, M]) -> Matrix[M, M]:
+  |     ^^^^
+3 |     return Aᵀ @ A
+  |            -- hot spot: `Aᵀ` costs 16·M·N bytes of memory traffic
+  |            ------ hot spot: `Aᵀ @ A` costs 2·M²·N flops
+  = note: memory traffic: 24·M·N bytes read, 8·M·N + 8·M² bytes written
+
+tests/ui/check/ok_cost_report.sky:5:5: note: cost of `step`: 2·N flops, 1 allocation of N floats
+  |
+5 | def step(v: Vector[N], w: Vector[N]) -> Vector[N]:
+  |     ^^^^
+  = note: memory traffic: 16·N bytes read, 8·N bytes written
+
+tests/ui/check/ok_cost_report.sky:6:12: note: [FUSE-001] `v + 2 * w` is rewritten to `fused(2, w, v)`
+  |
+6 |     return v + 2 * w
+  |            ^^^^^^^^^
+  = note: applied by the `fuse` pass
+  = note: because fused 2 elementwise operations into one kernel; saves 1 temporary array of shape Vector[N]
+  = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[N]
+  = note: because 2 of the operations can fail (`mul`, `add`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
+
+tests/ui/check/ok_cost_report.sky:8:5: note: cost of `relax`: N² flops, N allocations (N² floats in all)
+  |
+8 | def relax(v: Vector[N]) -> Vector[N]:
+  |     ^^^^^
+  = note: memory traffic: 8·N² bytes read, 8·N² bytes written
+
+tests/ui/check/ok_cost_report.sky:13:5: note: cost of `until`: unbounded (loop at line 14)
+   |
+13 | def until(v: Vector[N]) -> Vector[N]:
+   |     ^^^^^
+   = note: the static cost model has no bound for it
+
+tests/ui/check/ok_cost_report.sky:18:5: note: cost of `norm_ish`: 25 flops
+   |
+18 | def norm_ish(x: m/m, y: m/m) -> m/m:
+   |     ^^^^^^^^

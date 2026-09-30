@@ -1,0 +1,6 @@
+tests/ui/check/warn_cost_not_checked.sky:4:14: warning: the cost contracts were not checked: iteration over arrays lowers once SIR has array values
+  |
+4 |     for x in v:
+  |              ^
+  = note: the program checks, but lowering to SIR does not support it yet, and the cost model runs on SIR
+  = note: `sky run` cannot execute this either: arrays are immutable and attributes are not supported in v0.1

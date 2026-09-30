@@ -1,0 +1,32 @@
+# Performance contracts that the static cost model proves (`--explain` says so).
+def gram(A: Matrix[N, M]) -> Matrix[M, M]:
+    cost flops <= 2 * N * M^2
+    return Aᵀ @ A
+
+def step(v: Vector[N], w: Vector[N]) -> Vector[N]:
+    cost flops == 2 * N
+    cost allocations == 1
+    cost bytes_written == 8 * N
+    return v + 2 * w
+
+def solve_spd(A: PositiveDefinite Matrix[N, N], b: Vector[N]) -> Vector[N]:
+    cost flops <= N^3 + 2 * N^2
+    return A⁻¹ @ b
+
+def hyp(a: m, b: m) -> m:
+    cost flops <= 4
+    cost allocations == 0
+    return sqrt(a * a + b * b)
+
+def relax(v: Vector[N]) -> Vector[N]:
+    cost flops <= N^2
+    for i in range(len(v)):
+        v = v * 2
+    return v
+
+def pick(v: Vector[N], w: Vector[N]) -> Vector[N]:
+    cost flops <= 3 * N
+    r = v
+    if v[0] > 1:
+        r = v * 2 + w
+    return r

@@ -1,3 +1,8 @@
+tests/ir/contracts.sky:1:5: note: cost of `fall_time`: 3 flops
+  |
+1 | def fall_time(h: m) -> s:
+  |     ^^^^^^^^^
+
 tests/ir/contracts.sky:2:14: note: [CONTRACT-002] this `requires` always holds, so its check is removed: `h >= 0 m`
   |
 2 |     requires h >= 0 m
@@ -13,6 +18,11 @@ tests/ir/contracts.sky:3:13: note: [CONTRACT-003] this `ensures` always holds, s
   = note: applied by the `contracts` pass
   = note: because in every call of `fall_time` in this program, `h` is between 5 and 20
   = note: because the left side of the `>` is between 1.0098099885512761 and 2.0196199771025523 and the right side is 0, so it cannot be false
+
+tests/ir/contracts.sky:6:5: note: cost of `ratio`: 2 flops
+  |
+6 | def ratio(a: m, b: m) -> m:
+  |     ^^^^^
 
 tests/ir/contracts.sky:7:14: note: [CONTRACT-002] this `requires` always holds, so its check is removed: `b != 0 m and a > 0 m`
   |

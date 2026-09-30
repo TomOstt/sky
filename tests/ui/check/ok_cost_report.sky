@@ -1,0 +1,19 @@
+# Without any contract, `sky check --explain` reports what each function costs.
+def gram(A: Matrix[N, M]) -> Matrix[M, M]:
+    return Aᵀ @ A
+
+def step(v: Vector[N], w: Vector[N]) -> Vector[N]:
+    return v + 2 * w
+
+def relax(v: Vector[N]) -> Vector[N]:
+    for i in range(len(v)):
+        v = v * 2
+    return v
+
+def until(v: Vector[N]) -> Vector[N]:
+    while v[0] > 1:
+        v = v * 2
+    return v
+
+def norm_ish(x: m/m, y: m/m) -> m/m:
+    return sqrt(x * x + y * y) + exp(x)

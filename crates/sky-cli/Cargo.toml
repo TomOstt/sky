@@ -25,3 +25,4 @@ sky-project = { path = "../sky-project" }
 sky-syntax = { path = "../sky-syntax" }
 sky-tune = { path = "../sky-tune" }
 sky-types = { path = "../sky-types" }
+sky-units = { path = "../sky-units" }

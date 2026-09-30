@@ -7,6 +7,7 @@ use sky_project::{Project, SystemIdentity};
 use sky_syntax::Edition;
 
 mod accuracy;
+mod cost;
 mod frontend;
 mod hw;
 mod ir;

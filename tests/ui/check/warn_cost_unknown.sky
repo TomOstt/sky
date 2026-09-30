@@ -1,0 +1,20 @@
+# Performance contracts that the model cannot decide: a warning, not an error.
+def until(v: Vector[N]) -> Vector[N]:
+    cost flops <= 100 * N
+    while v[0] > 1:
+        v = v * 2
+    return v
+
+def forever(v: Vector[N]) -> Vector[N]:
+    cost flops <= 5
+    return forever(v)
+
+def anything(x, y):
+    cost flops <= 10
+    return x * y
+
+def counted(v: Vector[N]) -> Vector[N]:
+    cost flops <= N^2
+    for i in range(len(v)):
+        v = v * 2
+    return v

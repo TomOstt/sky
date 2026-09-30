@@ -112,6 +112,9 @@ pub fn analyze_ir(
                         explain,
                     ));
                 }
+                if budgets && !checked.has_errors() {
+                    diagnostics.extend(crate::cost::diagnostics(&module, src, &checked, explain));
+                }
                 if explain {
                     diagnostics.extend(checked.ode_notes.iter().cloned());
                     diagnostics.extend(checked.rewrites.iter().map(|r| r.to_diagnostic(src)));

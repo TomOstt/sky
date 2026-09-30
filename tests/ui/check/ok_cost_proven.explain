@@ -1,0 +1,129 @@
+tests/ui/check/ok_cost_proven.sky:2:5: note: cost of `gram`: 2·M²·N flops, 2 allocations (M·N + M² floats in all)
+  |
+2 | def gram(A: Matrix[N, M]) -> Matrix[M, M]:
+  |     ^^^^
+4 |     return Aᵀ @ A
+  |            -- hot spot: `Aᵀ` costs 16·M·N bytes of memory traffic
+  |            ------ hot spot: `Aᵀ @ A` costs 2·M²·N flops
+  = note: memory traffic: 24·M·N bytes read, 8·M·N + 8·M² bytes written
+
+tests/ui/check/ok_cost_proven.sky:3:5: note: `gram` costs 2·M²·N flops, within `2 * N * M^2`
+  |
+3 |     cost flops <= 2 * N * M^2
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: proven from the static cost model, for every size from 1 up
+  = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:6:5: note: cost of `step`: 2·N flops, 1 allocation of N floats
+  |
+6 | def step(v: Vector[N], w: Vector[N]) -> Vector[N]:
+  |     ^^^^
+  = note: memory traffic: 16·N bytes read, 8·N bytes written
+
+tests/ui/check/ok_cost_proven.sky:7:5: note: `step` costs exactly 2·N flops, as `cost flops == 2 * N` states
+  |
+7 |     cost flops == 2 * N
+  |     ^^^^^^^^^^^^^^^^^^^
+  = note: proven from the static cost model, for every size from 1 up
+  = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:8:5: note: `step` costs exactly 1 allocation, as `cost allocations == 1` states
+  |
+8 |     cost allocations == 1
+  |     ^^^^^^^^^^^^^^^^^^^^^
+  = note: proven from the static cost model, for every size from 1 up
+  = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:9:5: note: `step` costs exactly 8·N bytes written, as `cost bytes_written == 8 * N` states
+  |
+9 |     cost bytes_written == 8 * N
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: proven from the static cost model, for every size from 1 up
+  = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:10:12: note: [FUSE-001] `v + 2 * w` is rewritten to `fused(2, w, v)`
+   |
+10 |     return v + 2 * w
+   |            ^^^^^^^^^
+   = note: applied by the `fuse` pass
+   = note: because fused 2 elementwise operations into one kernel; saves 1 temporary array of shape Vector[N]
+   = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[N]
+   = note: because 2 of the operations can fail (`mul`, `add`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
+
+tests/ui/check/ok_cost_proven.sky:12:5: note: cost of `solve_spd`: N³/3 + 2·N² flops, 2 allocations (N² + N floats in all)
+   |
+12 | def solve_spd(A: PositiveDefinite Matrix[N, N], b: Vector[N]) -> Vector[N]:
+   |     ^^^^^^^^^
+   = note: memory traffic: 8·N² + 8·N bytes read, 8·N² + 8·N bytes written
+
+tests/ui/check/ok_cost_proven.sky:13:5: note: `solve_spd` costs N³/3 + 2·N² flops, within `N^3 + 2 * N^2`
+   |
+13 |     cost flops <= N^3 + 2 * N^2
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: proven from the static cost model, for every size from 1 up
+   = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:14:12: note: `A⁻¹ @ b` is rewritten to a Cholesky solve
+   |
+14 |     return A⁻¹ @ b
+   |            ^^^^^^^
+   |            - positive definite
+   = note: rewrite `A⁻¹ @ b` to a Cholesky solve: A is Matrix[N,N] and PositiveDefinite, b is Vector[N]. Factor A = L·Lᵀ (L lower-triangular), solve L·y = b, then Lᵀ·x = y. x = A⁻¹·b is Vector[N], and A⁻¹ is never formed.
+
+tests/ui/check/ok_cost_proven.sky:16:5: note: cost of `hyp`: 4 flops
+   |
+16 | def hyp(a: m, b: m) -> m:
+   |     ^^^
+
+tests/ui/check/ok_cost_proven.sky:17:5: note: `hyp` costs 4 flops, within `4`
+   |
+17 |     cost flops <= 4
+   |     ^^^^^^^^^^^^^^^
+   = note: proven from the static cost model, for every size from 1 up
+   = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:18:5: note: `hyp` costs exactly 0 allocations, as `cost allocations == 0` states
+   |
+18 |     cost allocations == 0
+   |     ^^^^^^^^^^^^^^^^^^^^^
+   = note: proven from the static cost model, for every size from 1 up
+   = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:21:5: note: cost of `relax`: N² flops, N allocations (N² floats in all)
+   |
+21 | def relax(v: Vector[N]) -> Vector[N]:
+   |     ^^^^^
+   = note: memory traffic: 8·N² bytes read, 8·N² bytes written
+
+tests/ui/check/ok_cost_proven.sky:22:5: note: `relax` costs N² flops, within `N^2`
+   |
+22 |     cost flops <= N^2
+   |     ^^^^^^^^^^^^^^^^^
+   = note: proven from the static cost model, for every size from 1 up
+   = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:27:5: note: cost of `pick`: at most 2·N flops, at most 1 allocation (N floats in all)
+   |
+27 | def pick(v: Vector[N], w: Vector[N]) -> Vector[N]:
+   |     ^^^^
+30 |     if v[0] > 1:
+   |        ---- hot spot: `v[0]` costs 8 bytes of memory traffic
+31 |         r = v * 2 + w
+   |             --------- hot spot: `v * 2 + w` costs 2·N flops
+   = note: memory traffic: at most 16·N + 8 bytes read, at most 8·N bytes written
+
+tests/ui/check/ok_cost_proven.sky:28:5: note: `pick` costs at most 2·N flops, within `3 * N`
+   |
+28 |     cost flops <= 3 * N
+   |     ^^^^^^^^^^^^^^^^^^^
+   = note: proven from the static cost model, for every size from 1 up
+   = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:31:13: note: [FUSE-001] `v * 2 + w` is rewritten to `fused(v, 2, w)`
+   |
+31 |         r = v * 2 + w
+   |             ^^^^^^^^^
+   = note: applied by the `fuse` pass
+   = note: because fused 2 elementwise operations into one kernel; saves 1 temporary array of shape Vector[N]
+   = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[N]
+   = note: because 2 of the operations can fail (`mul`, `add`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave

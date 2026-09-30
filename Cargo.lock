@@ -649,6 +649,7 @@ dependencies = [
  "sky-syntax",
  "sky-tune",
  "sky-types",
+ "sky-units",
 ]
 
 [[package]]

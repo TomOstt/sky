@@ -24,8 +24,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        # Linux on the self-hosted runner (GitHub-hosted minutes ran out on
+        # this private repo; macOS is checked locally before every push).
+        os: [sky-linux]
+    runs-on: [self-hosted, sky-linux]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -41,7 +43,7 @@ jobs:
   # fixture no longer match what the generator produces. Needs only python3,
   # which the runner image has.
   unicode-table:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, sky-linux]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -54,7 +56,7 @@ jobs:
   # ships with the runner image) for every name in
   # tools/release-symbol-denylist.txt.
   release-symbols:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, sky-linux]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -65,7 +67,7 @@ jobs:
       - run: tools/check_release_symbols.sh
 
   fmt:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, sky-linux]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -79,7 +81,7 @@ jobs:
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
 
   clippy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, sky-linux]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -93,7 +95,7 @@ jobs:
       - run: cargo clippy --manifest-path fuzz/Cargo.toml --locked --all-targets -- -D warnings
 
   deny:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, sky-linux]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -107,7 +109,7 @@ jobs:
           command: check advisories bans licenses sources
 
   fuzz:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, sky-linux]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

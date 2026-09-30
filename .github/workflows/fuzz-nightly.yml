@@ -21,7 +21,7 @@ jobs:
   # night (e.g. a crash) the same commit is fuzzed again the next night.
   # workflow_dispatch never skips.
   changed:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, sky-linux]
     timeout-minutes: 5
     permissions:
       actions: read
@@ -48,7 +48,7 @@ jobs:
   fuzz:
     needs: changed
     if: needs.changed.outputs.skip != 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, sky-linux]
     timeout-minutes: 18
     strategy:
       fail-fast: false

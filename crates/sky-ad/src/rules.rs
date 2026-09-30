@@ -1,4 +1,11 @@
-//! The tangent rule of every scalar operation, in one `match`.
+//! The tangent rule of every operation, in one `match`.
+//!
+//! The rules are written for numbers of any shape: the tangent of a value
+//! has the value's shape (a scalar for a scalar, an array of the same shape
+//! for an array) and dimension `dim(value)/dim(x)`. In `a * b` and `a / b`
+//! one operand may be an array and the other a scalar (the scaling of an
+//! array; SIR has no elementwise product of two arrays), and the rules are
+//! the same.
 //!
 //! Notation: for the operation `r = op(a, b)`, `ta` and `tb` are the
 //! tangents of `a` and `b` (`d/dx`), and the rule computes `tr`. A `None`
@@ -16,7 +23,15 @@
 //! | `a / b` | `(ta - r*tb) / b` |
 //! | `a ^ e` (constant `e`) | `(e * a^(e-1)) * ta` |
 //! | `a ^ e` (computed `e`) | `(e * a^(e-1)) * ta + (r * ln a) * te` |
-//! | `a⁻¹` | `-(r*r) * ta` |
+//! | `a⁻¹` (scalar) | `-(r*r) * ta` |
+//! | `A⁻¹` (matrix) | `-(r ta r)` |
+//! | `A @ B` | `tA @ B + A @ tB` |
+//! | `Aᵀ` | `tAᵀ` |
+//! | `solve(A, b)` = `A⁻¹ b` | `solve(A, tb - tA @ r)` |
+//! | `[a, b, ...]` (`array.literal`) | `[ta, tb, ...]`, a zero for an entry that does not depend on `x` |
+//! | `A[i]`, `A[lo:hi]` | `tA[i]`, `tA[lo:hi]` (the positions are integers: no tangent) |
+//! | `zeros`, `identity`, `len` | none (integers) |
+//! | `fused` | a second kernel over the operands and their tangents, in `emit.rs` |
 //! | comparisons, `not`, constants | none (Bool or constant) |
 //!
 //! # Math functions

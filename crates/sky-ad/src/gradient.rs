@@ -25,8 +25,7 @@ use crate::{derivative_name_for, AdError, Kind, Task};
 /// The most passes (entries of the parameter) this fallback unrolls.
 pub(crate) const MAX_PASSES: u64 = 256;
 
-pub(crate) fn build(module: &Module, f: &Function, wrt: usize) -> Res<(Function, Vec<Task>)> {
-    let _ = module;
+pub(crate) fn build(_module: &Module, f: &Function, wrt: usize) -> Res<(Function, Vec<Task>)> {
     let name = f.name.clone();
     let params = f.param_values();
     let Some(&x) = params.get(wrt) else {

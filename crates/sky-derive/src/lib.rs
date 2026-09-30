@@ -21,10 +21,21 @@
 //! # What can go wrong
 //!
 //! The whole module is lowered, so a program `sky run` accepts but SIR
-//! cannot express yet (arrays) cannot evaluate a derivative, and a function
-//! `sky-ad` has no rule for is an error. Both are runtime errors on the
-//! derivative call that say so; the checker cannot know, because `sky check`
-//! never lowers.
+//! cannot express yet (an input declaration inside a function, say) cannot
+//! evaluate a derivative, and a function `sky-ad` cannot differentiate (an
+//! unannotated parameter the derivative flows through, or the gradient of a
+//! loop over an array whose size is not known) is an error. Both are runtime
+//! errors on the derivative call that say so; the checker cannot know,
+//! because `sky check` never lowers.
+//!
+//! # Arrays
+//!
+//! The derivative with respect to an array parameter is its gradient: an
+//! array of the parameter's shape, which is the value this hook returns
+//! (`grad(U)(p)` for a potential `U` of a position vector `p`). `sky-ad`
+//! computes it in reverse mode, or by forward mode one entry at a time when
+//! the function loops; the function `d<f>/d<p>` has the same signature
+//! either way, so nothing here depends on which.
 
 #![forbid(unsafe_code)]
 

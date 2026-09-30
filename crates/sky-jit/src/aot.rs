@@ -147,7 +147,7 @@ pub fn compile_object(
         .map_err(|e| internal("the object writer", &e))?;
     let mut obj = ObjectModule::new(builder);
 
-    let done = translate_module(&module, &mut obj, call_conv, false)?;
+    let done = translate_module(&module, &mut obj, call_conv, false, false)?;
     let main_index = module
         .functions
         .iter()

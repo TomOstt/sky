@@ -86,4 +86,8 @@ pub(crate) const KERNEL_ARENA_BYTES: usize = 16 << 20;
 
 pub mod smoke;
 
-pub use module::{compile, emit_clif, CompileError, Compiled, RunFailure, SkipWriter};
+pub use module::{
+    compile, compile_with, emit_clif, emit_clif_with, fused_sums, CompileError, Compiled,
+    RunFailure, SkipWriter,
+};
+pub use sky_interp::linalg::Numerics;

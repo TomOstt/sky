@@ -84,6 +84,8 @@ pub(crate) struct Program {
     pub dims: Vec<Dimension>,
     /// The operations native code refers to by index.
     pub sites: Vec<Site>,
+    /// Relaxed numerics: kernels compiled while running fuse multiply-adds.
+    pub relaxed: bool,
 }
 
 /// One entry of [`Program::sites`]: an operation of a function, or (`op ==
@@ -171,7 +173,7 @@ struct State {
     /// Compiled `fused` kernels of this run, by the operation's address
     /// (stable while the run borrows the module; the state, and so the
     /// cache, is per run).
-    kernels: HashMap<usize, KernelEntry>,
+    kernels: Kernels,
     out: NonNull<dyn Write>,
 }
 
@@ -206,6 +208,7 @@ pub(crate) fn begin(program: Arc<Program>, out: &mut dyn Write) -> RunGuard {
             out,
         ))
     };
+    let relaxed = program.relaxed;
     STATE.with(|s| {
         *s.borrow_mut() = Some(State {
             program,
@@ -220,7 +223,10 @@ pub(crate) fn begin(program: Arc<Program>, out: &mut dyn Write) -> RunGuard {
             deopt: false,
             written: 0,
             scratch: Vec::new(),
-            kernels: HashMap::new(),
+            kernels: Kernels {
+                entries: HashMap::new(),
+                contract: relaxed,
+            },
             out,
         });
     });
@@ -584,7 +590,7 @@ fn fail_with(st: &mut State, site: i32, values: &[f64]) {
             .unwrap_or(Dimension::DIMENSIONLESS);
         args.push(Arg::Val(Value::number(*x, dim)));
     }
-    match eval_op(f, op, &args, &mut Vec::new(), &mut HashMap::new()) {
+    match eval_op(f, op, &args, &mut Vec::new(), &mut Kernels::default()) {
         Err(e) => st.fail(e),
         Ok(_) => st.fail(internal(format!(
             "`{}` failed inline but succeeds in the runtime",
@@ -1017,7 +1023,7 @@ fn eval_op(
     op: &OpData,
     a: &[Arg],
     scratch: &mut Vec<Option<Value>>,
-    kernels: &mut HashMap<usize, KernelEntry>,
+    kernels: &mut Kernels,
 ) -> R<Value> {
     let s = op.span;
     let arg = |i: usize| -> R<&Value> {
@@ -1208,6 +1214,15 @@ fn slice(op: &OpData, a: &[Arg], axes: &[SliceAxis]) -> R<Value> {
 /// (`fused_op` in `sky-ir-interp`): each body operation is the operation of
 /// the same kind on numbers, except `neg`, which is `0 - x`. This is the
 /// entry point a compiled kernel replaces.
+/// The kernels of a run: one entry per `fused` operation that ran often
+/// enough to be compiled.
+#[derive(Default)]
+pub(crate) struct Kernels {
+    entries: HashMap<usize, KernelEntry>,
+    /// Compile kernels with fused multiply-adds (relaxed numerics).
+    contract: bool,
+}
+
 /// What the run knows of one `fused` operation: the operand kinds its kernel
 /// was compiled (or refused) for, the kernel, and how many elements the
 /// interpreted loop has run for it.
@@ -1233,9 +1248,9 @@ fn fused_native(
     func: &Function,
     a: &[Arg],
     count: usize,
-    kernels: &mut HashMap<usize, KernelEntry>,
+    kernels: &mut Kernels,
 ) -> Option<R<(Vec<f64>, Dimension)>> {
-    use crate::kernel::{compile_kernel, Input, InputSig};
+    use crate::kernel::{compile_kernel_with, Input, InputSig, Options};
     let mut sigs = Vec::with_capacity(a.len());
     let mut args = Vec::with_capacity(a.len());
     for input in a {
@@ -1257,13 +1272,20 @@ fn fused_native(
             _ => return None,
         }
     }
-    let entry = kernels.entry(op as *const OpData as usize).or_default();
+    let entry = kernels
+        .entries
+        .entry(op as *const OpData as usize)
+        .or_default();
     if entry.sigs != sigs {
         entry.interpreted = entry.interpreted.saturating_add(count);
         if entry.interpreted < kernel_threshold() {
             return None;
         }
-        entry.kernel = compile_kernel(func, op, &sigs).ok();
+        let options = Options {
+            contract: kernels.contract,
+            ..Options::default()
+        };
+        entry.kernel = compile_kernel_with(func, op, &sigs, options).ok();
         entry.sigs = sigs;
     }
     let kernel = entry.kernel.as_ref()?;
@@ -1279,7 +1301,7 @@ fn fused(
     op: &OpData,
     a: &[Arg],
     vals: &mut Vec<Option<Value>>,
-    kernels: &mut HashMap<usize, KernelEntry>,
+    kernels: &mut Kernels,
 ) -> R<Value> {
     let s = op.span;
     let [region] = op.regions[..] else {
@@ -1473,7 +1495,7 @@ fn body_eval(func: &Function, op: &OpData, vals: &mut [Option<Value>]) -> R<()> 
             for v in &op.operands {
                 args.push(Arg::Val(value_of(vals, *v, s)?.clone()));
             }
-            eval_op(func, op, &args, &mut Vec::new(), &mut HashMap::new())?
+            eval_op(func, op, &args, &mut Vec::new(), &mut Kernels::default())?
         }
     };
     let [r] = op.results[..] else {

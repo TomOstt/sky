@@ -19,6 +19,8 @@ use sky_types::Checked;
 
 use sky_opt::CHOLESKY_RULE;
 
+use crate::frontend::Context;
+
 /// Which IR `--emit-ir` prints.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub enum Stage {
@@ -108,7 +110,8 @@ impl Ready {
 ///
 /// `print` keeps the IR text of every stage (for `--emit-ir`); `explain`
 /// turns the passes' explanations into notes, and adds what the parallelism
-/// analysis (`sky_ir::parallel`) decided for `threads` threads.
+/// analysis (`sky_ir::parallel`) decided for `context.threads` threads, and,
+/// for a relaxed run, where relaxed numerics apply (`crate::numerics`).
 ///
 /// # The Cholesky note is not shown twice
 ///
@@ -125,7 +128,7 @@ pub fn build(
     checked: &Checked,
     print: bool,
     explain: bool,
-    threads: usize,
+    context: Context,
 ) -> Outcome {
     let mut ir = match sky_lower::lower(module, src, checked) {
         Ok(ir) => ir,
@@ -154,7 +157,10 @@ pub fn build(
     };
     let notes = if explain {
         let mut notes = explanation_notes(&report, src, &checked.cholesky_solves);
-        notes.extend(parallel_notes(&ir, threads));
+        notes.extend(parallel_notes(&ir, context.threads));
+        if context.relaxed {
+            notes.extend(crate::numerics::notes(&ir, src));
+        }
         notes.extend(reuse_notes(&ir, src));
         notes
     } else {

@@ -30,6 +30,13 @@
 //! factorizations and solves) split their output across the same N threads,
 //! which changes no bit of any result.
 //!
+//! `--numerics=relaxed` (or `numerics = "relaxed"` in `sky.toml`) lets the
+//! array kernels of every engine fuse multiply-adds, reassociate sums and call
+//! the platform's BLAS/LAPACK, and lets native code fuse a scalar `a*b + c`;
+//! results then agree with the default's to rounding error, not bit for bit,
+//! and a relaxed run that printed something ends with a one-line note on
+//! stderr saying so. See `crate::numerics`.
+//!
 //! `--engine=auto` picks native code and falls back to SIR when the program
 //! does not compile natively, and to the tree-walker on a `LowerError`,
 //! silently: the program is valid, it is only that one engine cannot run it
@@ -52,6 +59,7 @@ use sky_syntax::Edition;
 
 use crate::frontend::analyze;
 use crate::ir::{prepare_run, Runnable};
+use crate::numerics::Mode;
 
 /// Which engine `sky run` executes on (`--engine=`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -88,7 +96,14 @@ impl Engine {
 /// Warnings are shown and the run continues. Program output goes to stdout,
 /// diagnostics (including a runtime error, with the span of the failing
 /// expression) to stderr. Exit 0 on success, 1 on any error.
-pub fn run(path: &str, file: &File, src: &str, engine: Engine, threads: Option<usize>) -> ExitCode {
+pub fn run(
+    path: &str,
+    file: &File,
+    src: &str,
+    engine: Engine,
+    threads: Option<usize>,
+    numerics: Option<sky_project::Numerics>,
+) -> ExitCode {
     // Same discovery as `sky check` (spec non-negotiable 2): the project
     // root comes only from walking up from the opened file.
     let discovery = match sky_project::discover_opened(Path::new(path), file, &SystemIdentity) {
@@ -100,7 +115,8 @@ pub fn run(path: &str, file: &File, src: &str, engine: Engine, threads: Option<u
     };
     // Front end and interpreter both run on the known-size stack, so the
     // parser's, checker's and evaluator's depth bounds hold.
-    sky_ast::with_deep_stack(|| run_source(path, src, discovery.edition, engine, threads))
+    let mode = Mode::resolve(numerics, &discovery);
+    sky_ast::with_deep_stack(|| run_source(path, src, discovery.edition, engine, threads, &mode))
 }
 
 /// Forwards to stdout and remembers whether the reader went away (`sky run
@@ -108,10 +124,13 @@ pub fn run(path: &str, file: &File, src: &str, engine: Engine, threads: Option<u
 struct Stdout<'a> {
     inner: io::StdoutLock<'a>,
     closed: bool,
+    /// Whether the program has printed anything.
+    wrote: bool,
 }
 
 impl Write for Stdout<'_> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.wrote |= !buf.is_empty();
         self.inner.write(buf).inspect_err(|e| {
             self.closed |= e.kind() == io::ErrorKind::BrokenPipe;
         })
@@ -122,13 +141,35 @@ impl Write for Stdout<'_> {
     }
 }
 
+/// Sets the process-wide numerics for the array kernels for as long as it
+/// lives (a run is a process, but tests and embedders call `run` more than
+/// once).
+struct NumericsGuard;
+
+impl NumericsGuard {
+    fn set(mode: &Mode) -> NumericsGuard {
+        sky_interp::linalg::set_numerics(mode.kernels());
+        NumericsGuard
+    }
+}
+
+impl Drop for NumericsGuard {
+    fn drop(&mut self) {
+        sky_interp::linalg::set_numerics(sky_interp::linalg::Numerics::Reproducible);
+    }
+}
+
 fn run_source(
     path: &str,
     src: &str,
     edition: Edition,
     engine: Engine,
     threads: Option<usize>,
+    mode: &Mode,
 ) -> ExitCode {
+    // Before anything runs, so every engine's array kernels see it (native
+    // code's runtime calls the interpreter's), and only for this run.
+    let _numerics = NumericsGuard::set(mode);
     // `--threads=N` also sizes the array kernels' pool (`SKY_THREADS` does
     // it without the flag): how fast an answer arrives, never which.
     if let Some(n) = threads {
@@ -175,25 +216,28 @@ fn run_source(
     // Native code is compiled before anything runs, for the same reason: a
     // program it refuses has printed nothing yet.
     let native = match (&sir, engine) {
-        (Some(ir), Engine::Native | Engine::Auto) => match sky_jit::compile(ir) {
-            Ok(c) => Some(c),
-            Err(e) if engine == Engine::Native => {
-                let span = e.span.unwrap_or(module.span);
-                let d = Diagnostic::error(format!("cannot run natively: {}", e.message), span)
-                    .with_note(
-                        "`--engine=native` runs only programs that compile to machine code"
-                            .to_string(),
-                    );
-                return fail_with(&d, &rendered, &file);
+        (Some(ir), Engine::Native | Engine::Auto) => {
+            match sky_jit::compile_with(ir, mode.kernels()) {
+                Ok(c) => Some(c),
+                Err(e) if engine == Engine::Native => {
+                    let span = e.span.unwrap_or(module.span);
+                    let d = Diagnostic::error(format!("cannot run natively: {}", e.message), span)
+                        .with_note(
+                            "`--engine=native` runs only programs that compile to machine code"
+                                .to_string(),
+                        );
+                    return fail_with(&d, &rendered, &file);
+                }
+                Err(_) => None,
             }
-            Err(_) => None,
-        },
+        }
         _ => None,
     };
     let stdout = io::stdout();
     let mut out = Stdout {
         inner: stdout.lock(),
         closed: false,
+        wrote: false,
     };
     let result = match (native, sir) {
         // A value the checker could not type that is not what a declaration
@@ -219,11 +263,17 @@ fn run_source(
             .map_err(|e| e.to_diagnostic()),
     };
     let _ = out.flush();
-    match result {
+    let code = match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(_) if out.closed => ExitCode::FAILURE,
         Err(d) => fail_with(&d, &rendered, &file),
+    };
+    // A relaxed run says so once, after its output and any diagnostic, and
+    // only if it printed results (stdout stays the program's alone).
+    if mode.relaxed() && out.wrote && !out.closed {
+        eprintln!("{}", mode.run_note());
     }
+    code
 }
 
 /// The SIR interpreter's thread configuration for `--threads` (default: the

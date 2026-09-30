@@ -116,6 +116,55 @@ fn alg_006_div_one_and_alg_007_neg_neg() {
     assert_eq!(kinds(&f), ["return"]);
 }
 
+/// An array's negation is `0 - x` per entry, so `-(-x)` turns `-0` into `+0`
+/// and is not `x`: ALG-007 is for numbers (and for arrays proven not `-0`).
+#[test]
+fn alg_007_does_not_apply_to_arrays_that_may_hold_minus_zero() {
+    let v = Type::Number(sky_ir::NumberType {
+        dim: Dimension::DIMENSIONLESS,
+        shape: sky_types::Shape::vector(3u64),
+        tags: TagSet::EMPTY,
+        repr: sky_ir::Repr::Unchosen,
+    });
+    let mk = || {
+        let mut t = T::new(vec![v.clone()], vec![v.clone()]);
+        let p = t.params()[0];
+        let n = t.op(OpKind::Neg, &[p], v.clone());
+        let r = t.op(OpKind::Neg, &[n], v.clone());
+        t.ret(&[r])
+    };
+    let input = vec![Value::array(
+        vec![3],
+        vec![-0.0, 0.0, 2.0],
+        Dimension::DIMENSIONLESS,
+    )];
+    let run_array = |f: &Function| {
+        let m = module(f);
+        sky_ast::with_deep_stack(|| {
+            sky_ir_interp::call(&m, "f", input.clone(), &mut Vec::new()).expect("runs")
+        })
+    };
+    let original = mk();
+    for cfg in [repro(), fast()] {
+        let mut g = original.clone();
+        assert!(fired(&mut g, &cfg).is_empty());
+        assert_eq!(kinds(&g), ["neg", "neg", "return"]);
+    }
+    // `-0.0` comes back as `+0.0`, which `x` itself would not be.
+    let Value::Array { data, .. } = &run_array(&original)[0] else {
+        panic!("not an array")
+    };
+    assert_eq!(data[0].to_bits(), 0.0f64.to_bits());
+
+    // The same program on numbers is still `x`.
+    let mut s = unary(|t, x| {
+        let n = t.un(OpKind::Neg, x);
+        t.un(OpKind::Neg, n)
+    });
+    assert_eq!(fired(&mut s, &repro()), ["ALG-007"]);
+    assert_eq!(value(&s, &[-0.0]).to_bits(), (-0.0f64).to_bits());
+}
+
 #[test]
 fn alg_008_sub_zero_only_for_positive_zero() {
     let mut f = unary(|t, x| {

@@ -21,6 +21,15 @@
 //!   failed (`exp(log x)` with `x <= 0`, an overflow, a singular matrix).
 //!   Enabled only under [`RewriteContract::Fast`].
 //!
+//! # Signs of zero
+//!
+//! Every exact rule is checked against `-0.0`. The negation of a *number*
+//! flips the sign bit (`-(+0.0)` is `-0.0`), but the negation of an *array*
+//! is `0 - x` entry by entry (the interpreter, the lowered code and the fused
+//! kernels all agree), which turns `-0.0` into `+0.0`. So the rules that
+//! remove or move a negation say which of the two they mean, and for an array
+//! ask the analysis to prove the entries are not `-0.0`.
+//!
 //! A rule that drops a subterm (`x - x → 0` drops `x`, the Pythagorean
 //! identity drops `x`) must not hide a failure of that subterm, so under
 //! [`RewriteContract::Reproducible`] the matcher requires the subterm to
@@ -216,6 +225,11 @@ fn is_dimensionless(eg: &Graph, id: Id) -> bool {
 /// A dimensionless constant equal to 1.
 fn is_one(eg: &Graph, id: Id) -> bool {
     value(eg, id) == Some(1.0) && is_dimensionless(eg, id) && is_scalar(eg, id)
+}
+
+/// Every entry of `id` is provably not `-0.0`.
+fn not_neg_zero(eg: &Graph, id: Id) -> bool {
+    eg[id].data.sign >= Sign::NonNeg
 }
 
 fn has_tag(eg: &Graph, id: Id, tag: Tag) -> bool {
@@ -428,11 +442,18 @@ fn match_div_one(eg: &Graph, root: Id, _: RewriteContract) -> Vec<Binds> {
         .collect()
 }
 
+/// `-(-x)`. A number's negation flips the sign bit, so it is an involution.
+/// An array's is `0 - x`: `-(-x)` is `0 - (0 - x)`, which is `x` except that
+/// `-0.0` comes back as `+0.0`. So for an array, `x` must be proven not to
+/// hold `-0.0`.
 fn match_neg_neg(eg: &Graph, root: Id, _: RewriteContract) -> Vec<Binds> {
     let mut out = Vec::new();
     for n in nodes(eg, root).iter().filter(|n| n.op == Op::Neg) {
         for inner in args_of(eg, n.args[0], Op::Neg) {
-            out.push(vec![inner[0]]);
+            let x = inner[0];
+            if is_scalar(eg, x) || not_neg_zero(eg, x) {
+                out.push(vec![x]);
+            }
         }
     }
     out
@@ -555,8 +576,8 @@ static RULES: &[Rule] = &[
         match_div_one, keep_first
     ),
     rule!(
-        "ALG-007", Exact, "-(-{0})" => "{0}",
-        "negation only flips the sign bit, so applying it twice restores every bit",
+        "ALG-007", Conditional, "-(-{0})" => "{0}",
+        "negating a number only flips its sign bit, so applying it twice restores every bit; negating an array is 0 - x per entry, which turns -0 into +0, so for an array the entries must be proven not -0",
         match_neg_neg, keep_first
     ),
     rule!(

@@ -152,6 +152,10 @@ fn a_times_x_plus_y_is_exact_on_every_length() {
             unroll: 3,
             ..Options::default()
         },
+        Options {
+            fma_check: false,
+            ..Options::default()
+        },
     ] {
         let kernel = compile(body, options);
         let mut rng = Rng(7);
@@ -269,6 +273,10 @@ fn failures_are_found_wherever_they_are_and_however_hidden() {
             Options::default(),
             Options {
                 simd: false,
+                ..Options::default()
+            },
+            Options {
+                fma_check: false,
                 ..Options::default()
             },
         ] {
@@ -446,6 +454,7 @@ fn random_bodies_agree_with_the_reference_bit_for_bit() {
             0 => Options::default(),
             1 => Options {
                 simd: false,
+                fma_check: false,
                 ..Options::default()
             },
             _ => Options {

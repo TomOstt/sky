@@ -141,6 +141,9 @@ pub struct Options {
     /// `inf` or `NaN` in the output, which Sky never allows. The interpreter
     /// integration never turns this off.
     pub check_finite: bool,
+    /// Collect the check with a fused multiply-add where the host has one
+    /// (one instruction instead of two). Off exercises the portable form.
+    pub fma_check: bool,
 }
 
 impl Default for Options {
@@ -149,6 +152,7 @@ impl Default for Options {
             simd: true,
             unroll: 4,
             check_finite: true,
+            fma_check: true,
         }
     }
 }
@@ -493,9 +497,22 @@ struct Pre {
     math: Option<cranelift_codegen::ir::FuncRef>,
 }
 
+/// Where an iteration reads and writes: the output pointer and the pointer
+/// of each array operand (by operand index).
+struct Cursor {
+    out: Cv,
+    ins: Vec<Option<Cv>>,
+}
+
 struct Gen<'p> {
     plan: &'p Plan,
-    opts: Options,
+    /// Accumulators per unrolled vector (0: no check in the loop, else 1
+    /// or 2, so that two checks do not wait on one another).
+    groups: usize,
+    /// The host has a fused multiply-add instruction, so a check is one
+    /// operation (`acc + r * 0`, which is NaN exactly if `r` is infinite or
+    /// NaN, and `acc` otherwise). Only the check uses it, never a value.
+    fma: bool,
 }
 
 impl Gen<'_> {
@@ -558,35 +575,43 @@ impl Gen<'_> {
         }
     }
 
+    /// Adds to `acc` something that is NaN if `r` is not finite and `+0`
+    /// if it is (see [`Gen::fma`]).
+    fn check(&self, b: &mut FunctionBuilder, pre: &Pre, mode: Mode, acc: Cv, r: Cv) -> Cv {
+        let zero = if mode.lanes() == 1 {
+            pre.zero_s
+        } else {
+            pre.zero_v
+        };
+        if self.fma {
+            b.ins().fma(r, zero, acc)
+        } else {
+            let d = b.ins().fsub(r, r);
+            b.ins().fadd(acc, d)
+        }
+    }
+
     /// One iteration's body for `slots` groups of `mode` values starting at
-    /// element `i`; returns the per-slot finiteness terms (`None` when no
-    /// value is checked).
+    /// the cursor (`out`, and for each array operand `k` the pointer
+    /// `ins[k]`). `accs` are the finiteness accumulators, `self.groups` per
+    /// slot; the updated ones are returned.
     fn iteration(
         &self,
         b: &mut FunctionBuilder,
         pre: &Pre,
         mode: Mode,
-        out: Cv,
-        i: Cv,
+        at: &Cursor,
         slots: usize,
-    ) -> Vec<Option<Cv>> {
+        accs: &[Cv],
+    ) -> Vec<Cv> {
+        let (out, ins) = (at.out, &at.ins);
         let flags = MemFlags::new().with_notrap();
-        let byte = b.ins().ishl_imm(i, 3);
-        let addr: Vec<Option<Cv>> = self
-            .plan
-            .nodes
-            .iter()
-            .map(|n| match n.kind {
-                Kind::Input(k) if !n.uniform => Some(b.ins().iadd(pre.ptrs[k], byte)),
-                _ => None,
-            })
-            .collect();
-        let out_addr = b.ins().iadd(out, byte);
-        let mut terms = Vec::with_capacity(slots);
+        let mut next_accs = Vec::with_capacity(accs.len());
         for slot in 0..slots {
             let offset = (slot * mode.lanes() * 8) as i32;
             let mut vals: Vec<Option<Cv>> = vec![None; self.plan.nodes.len()];
-            let mut term: Option<Cv> = None;
+            let mut acc: Vec<Cv> = accs[slot * self.groups..(slot + 1) * self.groups].to_vec();
+            let mut checked = 0;
             for (idx, node) in self.plan.nodes.iter().enumerate() {
                 if node.uniform {
                     continue;
@@ -603,10 +628,10 @@ impl Gen<'_> {
                     }
                 };
                 let r = match node.kind {
-                    Kind::Input(_) => {
-                        let base = addr[idx].unwrap_or(out_addr);
-                        b.ins().load(mode.ty, flags, base, offset)
-                    }
+                    Kind::Input(k) => match ins.get(k).copied().flatten() {
+                        Some(base) => b.ins().load(mode.ty, flags, base, offset),
+                        None => pre.zero_v,
+                    },
                     kind => {
                         let ops = kind.operands();
                         let args = [ops[0].map(|o| get(&vals, o)), ops[1].map(|o| get(&vals, o))];
@@ -614,12 +639,10 @@ impl Gen<'_> {
                     }
                 };
                 vals[idx] = Some(r);
-                if node.check && self.opts.check_finite {
-                    let d = b.ins().fsub(r, r);
-                    term = Some(match term {
-                        Some(t) => b.ins().fadd(t, d),
-                        None => d,
-                    });
+                if node.check && self.groups > 0 {
+                    let g = checked % self.groups;
+                    acc[g] = self.check(b, pre, mode, acc[g], r);
+                    checked += 1;
                 }
             }
             let y = self.plan.yielded;
@@ -632,16 +655,17 @@ impl Gen<'_> {
             } else {
                 vals[y].unwrap_or(pre.zero_v)
             };
-            b.ins().store(flags, result, out_addr, offset);
-            terms.push(term);
+            b.ins().store(flags, result, out, offset);
+            next_accs.extend(acc);
         }
-        terms
+        next_accs
     }
 }
 
 fn compile_function(
     plan: &Plan,
     opts: Options,
+    fma: bool,
     module: &mut JITModule,
 ) -> Result<cranelift_module::FuncId, String> {
     let mut ctx = module.make_context();
@@ -665,7 +689,13 @@ fn compile_function(
     };
     let math = math_id.map(|id| module.declare_func_in_func(id, &mut ctx.func));
 
-    let gen = Gen { plan, opts };
+    let varying_checks = plan.nodes.iter().filter(|n| n.check && !n.uniform).count();
+    let groups = if opts.check_finite {
+        varying_checks.min(2)
+    } else {
+        0
+    };
+    let gen = Gen { plan, groups, fma };
     let mut fctx = FunctionBuilderContext::new();
     {
         let mut b = FunctionBuilder::new(&mut ctx.func, &mut fctx);
@@ -741,38 +771,60 @@ fn compile_function(
         }
         let pre_acc = pre_terms.unwrap_or(zero_s);
 
-        // Main loop: `unroll` vectors per iteration, one accumulator each.
+        // The array operands are read through pointers that advance with the
+        // output's (rather than by an index), so that every load and store
+        // is a base register plus a constant offset.
+        let arrays: Vec<usize> = (0..plan.nodes.len())
+            .filter(|&k| matches!(plan.nodes[k].kind, Kind::Input(_)) && !plan.nodes[k].uniform)
+            .collect();
+        let nbytes = b.ins().ishl_imm(n, 3);
+        let out_end = b.ins().iadd(out, nbytes);
+        let cursor_of = |params: &[Cv]| -> Cursor {
+            let mut ins = vec![None; plan.nodes.len()];
+            for (k, p) in arrays.iter().zip(&params[1..]) {
+                ins[*k] = Some(*p);
+            }
+            Cursor {
+                out: params[0],
+                ins,
+            }
+        };
+
+        // Main loop: `unroll` vectors per iteration, with `groups`
+        // accumulators each.
         let unroll = opts.unroll.max(1);
-        let step = (unroll * vmode.lanes()) as i64;
+        let step = (unroll * vmode.lanes() * 8) as i64;
         let head = b.create_block();
         let main = b.create_block();
         let mid = b.create_block();
-        b.append_block_param(head, types::I64);
-        for _ in 0..unroll {
+        for _ in 0..=arrays.len() {
+            b.append_block_param(head, types::I64);
+        }
+        for _ in 0..unroll * groups {
             b.append_block_param(head, vmode.ty);
         }
-        let zero_i = b.ins().iconst(types::I64, 0);
-        let mut first: Vec<Cv> = vec![zero_i];
-        first.extend(std::iter::repeat(zero_v).take(unroll));
+        let mut first: Vec<Cv> = vec![out];
+        first.extend(arrays.iter().map(|k| pre.ptrs[*k]));
+        first.extend(std::iter::repeat(zero_v).take(unroll * groups));
         b.ins().jump(head, &block_args(&first));
 
         b.switch_to_block(head);
         let params: Vec<Cv> = b.block_params(head).to_vec();
-        let (i, accs) = (params[0], params[1..].to_vec());
-        let next = b.ins().iadd_imm(i, step);
-        let fits = b.ins().icmp(IntCC::UnsignedLessThanOrEqual, next, n);
+        let (cursor, accs) = params.split_at(1 + arrays.len());
+        let next_out = b.ins().iadd_imm(cursor[0], step);
+        let fits = b
+            .ins()
+            .icmp(IntCC::UnsignedLessThanOrEqual, next_out, out_end);
         b.ins().brif(fits, main, &[], mid, &[]);
 
         b.switch_to_block(main);
         b.seal_block(main);
-        let terms = gen.iteration(&mut b, &pre, vmode, out, i, unroll);
-        let mut again: Vec<Cv> = vec![next];
-        for (acc, term) in accs.iter().zip(&terms) {
-            again.push(match term {
-                Some(t) => b.ins().fadd(*acc, *t),
-                None => *acc,
-            });
+        let new_accs = gen.iteration(&mut b, &pre, vmode, &cursor_of(cursor), unroll, accs);
+        let mut again: Vec<Cv> = vec![next_out];
+        for p in &cursor[1..] {
+            again.push(b.ins().iadd_imm(*p, step));
         }
+        again.extend(new_accs);
         b.ins().jump(head, &block_args(&again));
         b.seal_block(head);
 
@@ -780,7 +832,7 @@ fn compile_function(
         b.switch_to_block(mid);
         b.seal_block(mid);
         let mut total = pre_acc;
-        for acc in &accs {
+        for acc in accs {
             for lane in 0..vmode.lanes() {
                 let l = if vmode.lanes() == 1 {
                     *acc
@@ -795,26 +847,47 @@ fn compile_function(
         let thead = b.create_block();
         let tmain = b.create_block();
         let done = b.create_block();
-        b.append_block_param(thead, types::I64);
-        b.append_block_param(thead, types::F64);
-        b.ins().jump(thead, &block_args(&[i, total]));
+        let tail_accs = groups.max(1);
+        for _ in 0..=arrays.len() {
+            b.append_block_param(thead, types::I64);
+        }
+        for _ in 0..tail_accs {
+            b.append_block_param(thead, types::F64);
+        }
+        let mut tfirst: Vec<Cv> = cursor.to_vec();
+        tfirst.push(total);
+        tfirst.extend(std::iter::repeat(zero_s).take(tail_accs - 1));
+        b.ins().jump(thead, &block_args(&tfirst));
         b.switch_to_block(thead);
-        let (ti, tacc) = (b.block_params(thead)[0], b.block_params(thead)[1]);
-        let more = b.ins().icmp(IntCC::UnsignedLessThan, ti, n);
+        let tparams: Vec<Cv> = b.block_params(thead).to_vec();
+        let (tcursor, taccs) = tparams.split_at(1 + arrays.len());
+        let more = b.ins().icmp(IntCC::UnsignedLessThan, tcursor[0], out_end);
         b.ins().brif(more, tmain, &[], done, &[]);
         b.switch_to_block(tmain);
         b.seal_block(tmain);
-        let terms = gen.iteration(&mut b, &pre, smode, out, ti, 1);
-        let tnext = b.ins().iadd_imm(ti, 1);
-        let tacc2 = match terms[0] {
-            Some(t) => b.ins().fadd(tacc, t),
-            None => tacc,
-        };
-        b.ins().jump(thead, &block_args(&[tnext, tacc2]));
+        let new_taccs = gen.iteration(
+            &mut b,
+            &pre,
+            smode,
+            &cursor_of(tcursor),
+            1,
+            &taccs[..groups],
+        );
+        let mut tagain: Vec<Cv> = Vec::new();
+        for p in tcursor {
+            tagain.push(b.ins().iadd_imm(*p, 8));
+        }
+        tagain.extend(new_taccs);
+        tagain.extend(&taccs[groups..]);
+        b.ins().jump(thead, &block_args(&tagain));
         b.seal_block(thead);
 
         b.switch_to_block(done);
         b.seal_block(done);
+        let mut tacc = taccs[0];
+        for t in &taccs[1..] {
+            tacc = b.ins().fadd(tacc, *t);
+        }
         let bad = b.ins().fcmp(FloatCC::Unordered, tacc, tacc);
         let bad = b.ins().uextend(types::I64, bad);
         b.ins().return_(&[bad]);
@@ -823,15 +896,37 @@ fn compile_function(
     let id = module
         .declare_function("sky_kernel", Linkage::Local, &ctx.func.signature)
         .map_err(|e| e.to_string())?;
+    // `SKY_JIT_DUMP=clif` prints the kernel's Cranelift IR, `=asm` also its
+    // machine code (to stderr), for looking at what a body became.
+    let dump = std::env::var("SKY_JIT_DUMP").unwrap_or_default();
+    if dump == "clif" || dump == "asm" {
+        eprintln!("{}", ctx.func.display());
+    }
+    ctx.set_disasm(dump == "asm");
     module
         .define_function(id, &mut ctx)
         .map_err(|e| e.to_string())?;
+    if dump == "asm" {
+        if let Some(code) = ctx.compiled_code() {
+            eprintln!("{}", code.vcode.as_deref().unwrap_or(""));
+        }
+    }
     module.clear_context(&mut ctx);
     Ok(id)
 }
 
 fn block_args(values: &[Cv]) -> Vec<cranelift_codegen::ir::BlockArg> {
     values.iter().map(|v| (*v).into()).collect()
+}
+
+/// Whether the host has a fused multiply-add instruction (so that
+/// `fma` is one instruction and not a library call).
+fn has_fma(isa: &OwnedTargetIsa) -> bool {
+    isa.triple().architecture.to_string().starts_with("aarch64")
+        || isa
+            .isa_flags()
+            .iter()
+            .any(|v| v.name == "has_fma" && v.as_bool() == Some(true))
 }
 
 fn isa() -> Result<OwnedTargetIsa, String> {
@@ -893,13 +988,12 @@ pub fn compile_kernel_with(
 ) -> Result<Kernel, Refusal> {
     let (plan, reference) = plan(func, fused, inputs)?;
     let out_dim = plan.out_dim;
-    let mut builder = JITBuilder::with_isa(
-        isa().map_err(|e| Refusal(format!("no code generator for this host: {e}")))?,
-        default_libcall_names(),
-    );
+    let isa = isa().map_err(|e| Refusal(format!("no code generator for this host: {e}")))?;
+    let fma = options.fma_check && has_fma(&isa);
+    let mut builder = JITBuilder::with_isa(isa, default_libcall_names());
     builder.symbol("sky_kernel_math", kernel_rt::math as *const u8);
     let mut module = JITModule::new(builder);
-    let id = match compile_function(&plan, options, &mut module) {
+    let id = match compile_function(&plan, options, fma, &mut module) {
         Ok(id) => id,
         Err(e) => {
             // SAFETY: nothing was called from this module.
@@ -954,11 +1048,39 @@ impl Kernel {
         Ok(())
     }
 
+    /// Like [`Kernel::run`], into a new vector of `n` elements, which is not
+    /// zeroed first (the loop writes every element).
+    pub fn run_alloc(&self, inputs: &[Input<'_>], n: usize) -> Result<Vec<f64>, RuntimeError> {
+        let mut out: Vec<f64> = Vec::with_capacity(n);
+        // SAFETY: `out` has capacity for `n` elements, so `as_mut_ptr` is
+        // valid for `n` writes of `f64`, and nothing else uses it meanwhile.
+        let failed = unsafe { self.fast(inputs, n, out.as_mut_ptr())? };
+        if failed {
+            return self.reference.run(inputs, n);
+        }
+        // SAFETY: on success the loop wrote all `n` elements, so they are
+        // initialized (every bit pattern is a valid `f64`).
+        unsafe { out.set_len(n) };
+        Ok(out)
+    }
+
     /// The compiled loop alone: `true` if it saw a non-finite value, which
     /// means an element fails (then `out` is not the result), `false` if
     /// `out` is the result.
     fn run_fast(&self, inputs: &[Input<'_>], out: &mut [f64]) -> Result<bool, RuntimeError> {
-        let n = out.len();
+        // SAFETY: `out` is a live unique slice, valid for `out.len()` writes.
+        unsafe { self.fast(inputs, out.len(), out.as_mut_ptr()) }
+    }
+
+    /// # Safety
+    ///
+    /// `out` must be valid for writes of `n` `f64`s, and not overlap an input.
+    unsafe fn fast(
+        &self,
+        inputs: &[Input<'_>],
+        n: usize,
+        out: *mut f64,
+    ) -> Result<bool, RuntimeError> {
         let span = self.reference.span;
         let sigs = &self.reference.sigs;
         if inputs.len() != sigs.len() {
@@ -972,19 +1094,36 @@ impl Kernel {
             ));
         }
         // The pointers the compiled code reads; a scalar is read through a
-        // pointer to its copy in `scalars`.
-        let scalars: Vec<f64> = inputs
-            .iter()
-            .map(|i| match i {
-                Input::Scalar(x) => *x,
-                Input::Array(_) => 0.0,
-            })
-            .collect();
-        let mut ptrs: Vec<*const f64> = Vec::with_capacity(inputs.len());
-        for ((input, sig), scalar) in inputs.iter().zip(sigs).zip(&scalars) {
+        // pointer to its copy in `scalars`. Both live on the stack for the
+        // usual few operands: a call must not allocate (it is a few hundred
+        // nanoseconds for a thousand elements).
+        const INLINE: usize = 8;
+        let k = inputs.len();
+        let mut inline_scalars = [0.0f64; INLINE];
+        let mut heap_scalars;
+        let scalars: &mut [f64] = if k <= INLINE {
+            &mut inline_scalars[..k]
+        } else {
+            heap_scalars = vec![0.0f64; k];
+            &mut heap_scalars[..]
+        };
+        for (slot, input) in scalars.iter_mut().zip(inputs) {
+            if let Input::Scalar(x) = input {
+                *slot = *x;
+            }
+        }
+        let mut inline_ptrs = [std::ptr::null::<f64>(); INLINE];
+        let mut heap_ptrs;
+        let ptrs: &mut [*const f64] = if k <= INLINE {
+            &mut inline_ptrs[..k]
+        } else {
+            heap_ptrs = vec![std::ptr::null::<f64>(); k];
+            &mut heap_ptrs[..]
+        };
+        for (((slot, input), sig), scalar) in ptrs.iter_mut().zip(inputs).zip(sigs).zip(&*scalars) {
             match input {
-                Input::Array(a) if sig.array && a.len() >= n => ptrs.push(a.as_ptr()),
-                Input::Scalar(_) if !sig.array => ptrs.push(scalar),
+                Input::Array(a) if sig.array && a.len() >= n => *slot = a.as_ptr(),
+                Input::Scalar(_) if !sig.array => *slot = scalar,
                 _ => {
                     return Err(RuntimeError::new(
                         "malformed IR: a kernel was run on operands of another shape",
@@ -996,10 +1135,10 @@ impl Kernel {
         // SAFETY: the compiled function reads `n` elements through each
         // array pointer (checked above to have at least `n`), one element
         // through each scalar pointer, and writes `n` elements through
-        // `out`, which is a live unique slice of length `n`. `ptrs` has one
-        // pointer per operand, as compiled. The function does not retain
-        // any pointer, and the module holding the code is alive (`&self`).
-        let failed = unsafe { (self.entry)(n, ptrs.as_ptr(), out.as_mut_ptr()) };
+        // `out` (the caller's contract). `ptrs` has one pointer per
+        // operand, as compiled. The function does not retain any pointer,
+        // and the module holding the code is alive (`&self`).
+        let failed = unsafe { (self.entry)(n, ptrs.as_ptr(), out) };
         Ok(failed != 0)
     }
 }

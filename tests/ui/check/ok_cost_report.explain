@@ -45,6 +45,13 @@ tests/ui/check/ok_cost_report.sky:6:12: note: [PAR-001] this elementwise kernel 
   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
   = note: because 2 of its operations can fail (`mul`, `add`): if chunks fail, the failing operation that comes first in program order is reported, at its lowest failing element, which is the error a sequential run gives
 
+tests/ui/check/ok_cost_report.sky:6:12: note: [MEM-001] `v + 2 * w` reuses `w`'s buffer: no allocation for this result
+  |
+6 |     return v + 2 * w
+  |            ^^^^^^^^^
+  = note: `w` is not used again after this on any path, and has the shape of the result
+  = note: applied by the `lifetimes` analysis of the SIR interpreter
+
 tests/ui/check/ok_cost_report.sky:8:5: note: cost of `relax`: N² flops, N allocations (N² floats in all)
   |
 8 | def relax(v: Vector[N]) -> Vector[N]:
@@ -59,6 +66,13 @@ tests/ui/check/ok_cost_report.sky:10:13: note: [PAR-001] this elementwise `mul` 
    = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
    = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
 
+tests/ui/check/ok_cost_report.sky:10:13: note: [MEM-001] `v * 2` reuses `v`'s buffer: no allocation in this loop
+   |
+10 |         v = v * 2
+   |             ^^^^^
+   = note: `v` is not used again after this on any path, and has the shape of the result
+   = note: applied by the `lifetimes` analysis of the SIR interpreter
+
 tests/ui/check/ok_cost_report.sky:13:5: note: cost of `until`: unbounded (loop at line 14)
    |
 13 | def until(v: Vector[N]) -> Vector[N]:
@@ -72,6 +86,13 @@ tests/ui/check/ok_cost_report.sky:15:13: note: [PAR-001] this elementwise `mul` 
    = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
    = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
    = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
+
+tests/ui/check/ok_cost_report.sky:15:13: note: [MEM-001] `v * 2` reuses `v`'s buffer: no allocation in this loop
+   |
+15 |         v = v * 2
+   |             ^^^^^
+   = note: `v` is not used again after this on any path, and has the shape of the result
+   = note: applied by the `lifetimes` analysis of the SIR interpreter
 
 tests/ui/check/ok_cost_report.sky:18:5: note: cost of `norm_ish`: 25 flops
    |

@@ -21,6 +21,13 @@ tests/ui/check/warn_cost_unknown.sky:5:13: note: [PAR-001] this elementwise `mul
   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
   = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
 
+tests/ui/check/warn_cost_unknown.sky:5:13: note: [MEM-001] `v * 2` reuses `v`'s buffer: no allocation in this loop
+  |
+5 |         v = v * 2
+  |             ^^^^^
+  = note: `v` is not used again after this on any path, and has the shape of the result
+  = note: applied by the `lifetimes` analysis of the SIR interpreter
+
 tests/ui/check/warn_cost_unknown.sky:8:5: note: cost of `forever`: unbounded (recursive call to `forever` at line 10)
   |
 8 | def forever(v: Vector[N]) -> Vector[N]:
@@ -71,3 +78,10 @@ tests/ui/check/warn_cost_unknown.sky:19:13: note: [PAR-001] this elementwise `mu
    = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
    = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
    = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
+
+tests/ui/check/warn_cost_unknown.sky:19:13: note: [MEM-001] `v * 2` reuses `v`'s buffer: no allocation in this loop
+   |
+19 |         v = v * 2
+   |             ^^^^^
+   = note: `v` is not used again after this on any path, and has the shape of the result
+   = note: applied by the `lifetimes` analysis of the SIR interpreter

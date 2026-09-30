@@ -176,3 +176,23 @@ fn norm_and_dot_are_counted() {
         err(&o)
     );
 }
+
+/// The algorithm rewrites (built in parallel) turn `inv(A) @ b` into an LU
+/// solve for an untagged `A`, which costs 2·N³/3 to factor, twice the
+/// Cholesky solve of a PositiveDefinite one; the model prices each method.
+#[test]
+fn solves_are_priced_by_method() {
+    let lu = "def f(A: Matrix[N, N], b: Vector[N]) -> Vector[N]:\n    cost flops <= N^3 / 3 + 2 * N^2\n    return inv(A) @ b\n";
+    let o = sky("lu", &["check"], lu);
+    assert_eq!(
+        o.status.code(),
+        Some(1),
+        "an LU solve is not a Cholesky solve:\n{}",
+        err(&o)
+    );
+    let o = sky("lu-ok", &["check"], &lu.replace("N^3 / 3", "2 * N^3 / 3"));
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    let pd = "def f(A: PositiveDefinite Matrix[N, N], b: Vector[N]) -> Vector[N]:\n    cost flops <= N^3 / 3 + 2 * N^2\n    return inv(A) @ b\n";
+    let o = sky("pd", &["check"], pd);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+}

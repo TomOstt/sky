@@ -696,7 +696,137 @@ impl<'a> Parser<'a> {
         let word_at = self.pos;
         let word = self.word();
         let mut operands: Option<Vec<ValueId>> = None;
-        let kind = match word {
+        // Every other operation's keyword and attributes are read by
+        // `op_kind`, out of line: `op` recurses once per region level (up to
+        // `MAX_REGION_DEPTH`), so its frame must stay small whatever the
+        // number of operations the text format has.
+        let kind = if word == "call" {
+            self.expect('@')?;
+            let callee = self.fn_name()?;
+            self.expect('(')?;
+            operands = Some(self.operands(fs)?);
+            self.expect(')')?;
+            OpKind::Call { callee }
+        } else {
+            self.op_kind(word, word_at)?
+        };
+        let operands = match operands {
+            Some(o) => o,
+            None => self.operands(fs)?,
+        };
+
+        // Result types.
+        self.skip_inline();
+        let colon_at = self.pos;
+        let mut tys = Vec::new();
+        if self.eat(':') {
+            loop {
+                tys.push(self.ty()?);
+                self.skip_inline();
+                if !self.eat(',') {
+                    break;
+                }
+            }
+        }
+        if tys.len() != results.len() {
+            let msg = if tys.is_empty() {
+                format!(
+                    "`{}` has {} result(s) and needs `: types`",
+                    word,
+                    results.len()
+                )
+            } else {
+                format!(
+                    "{} result type(s) for {} result value(s)",
+                    tys.len(),
+                    results.len()
+                )
+            };
+            return self.err_at(colon_at, self.pos, msg);
+        }
+
+        // The operation exists before its regions are read, so the regions'
+        // contents are its children.
+        let span_placeholder = Span { start: 0, end: 0 };
+        let here = fs.b.insertion_block();
+        let (op, ids) = fs.b.op(kind, operands, tys, span_placeholder);
+        for ((tok, at), id) in results.iter().zip(ids) {
+            self.define(fs, tok, id, *at)?;
+        }
+        while self.next_is_after_ws('{') {
+            self.region(fs, op, depth + 1)?;
+        }
+        fs.b.set_insertion_block(here);
+        let span = self.opt_span()?;
+        fs.b.set_op_span(op, span);
+        let operand_spans = self.opt_operand_spans()?;
+        fs.b.set_operand_spans(op, operand_spans);
+
+        self.skip_inline();
+        match self.peek() {
+            None | Some('\n' | '}') => Ok(()),
+            Some(_) => self.err("expected the end of the line"),
+        }
+    }
+
+    /// The attributes of `assert`: `[kind] "text" fn "f" msg "m" names("a",
+    /// "b")`, the last three optional and in that order.
+    fn assert_attrs(&mut self) -> Res<OpKind> {
+        self.expect('[')?;
+        self.skip_inline();
+        let at = self.pos;
+        let kind = match self.word() {
+            "assert" => AssertKind::Assert,
+            "requires" => AssertKind::Requires,
+            "ensures" => AssertKind::Ensures,
+            _ => {
+                return self.err_at(
+                    at,
+                    self.pos.max(at + 1),
+                    "expected `assert`, `requires` or `ensures`",
+                )
+            }
+        };
+        self.expect(']')?;
+        let text = self.string()?;
+        let (mut func, mut message, mut names) = (None, None, Vec::new());
+        loop {
+            self.skip_inline();
+            let before = self.pos;
+            match self.word() {
+                "fn" if func.is_none() => func = Some(self.string()?),
+                "msg" if message.is_none() => message = Some(self.string()?),
+                "names" if names.is_empty() => {
+                    self.expect('(')?;
+                    loop {
+                        names.push(self.string()?);
+                        self.skip_inline();
+                        if !self.eat(',') {
+                            break;
+                        }
+                    }
+                    self.expect(')')?;
+                }
+                _ => {
+                    self.pos = before;
+                    break;
+                }
+            }
+        }
+        Ok(OpKind::Assert {
+            kind,
+            text,
+            message,
+            func,
+            names,
+        })
+    }
+
+    /// The kind of an operation from its keyword `word` (read at
+    /// `word_at`) and its attributes; `call` is read by [`Self::op`].
+    #[inline(never)]
+    fn op_kind(&mut self, word: &str, word_at: usize) -> Res<OpKind> {
+        Ok(match word {
             "const.float" => {
                 self.skip_inline();
                 OpKind::ConstFloat {
@@ -841,14 +971,6 @@ impl<'a> Parser<'a> {
             "condition" => OpKind::Condition,
             "return" => OpKind::Return,
             "print" => OpKind::Print,
-            "call" => {
-                self.expect('@')?;
-                let callee = self.fn_name()?;
-                self.expect('(')?;
-                operands = Some(self.operands(fs)?);
-                self.expect(')')?;
-                OpKind::Call { callee }
-            }
             "" => return self.err("expected an operation"),
             other => match MathFn::ALL.into_iter().find(|f| f.mnemonic() == other) {
                 Some(f) => OpKind::Math(f),
@@ -856,116 +978,6 @@ impl<'a> Parser<'a> {
                     return self.err_at(word_at, self.pos, format!("unknown operation `{other}`"));
                 }
             },
-        };
-        let operands = match operands {
-            Some(o) => o,
-            None => self.operands(fs)?,
-        };
-
-        // Result types.
-        self.skip_inline();
-        let colon_at = self.pos;
-        let mut tys = Vec::new();
-        if self.eat(':') {
-            loop {
-                tys.push(self.ty()?);
-                self.skip_inline();
-                if !self.eat(',') {
-                    break;
-                }
-            }
-        }
-        if tys.len() != results.len() {
-            let msg = if tys.is_empty() {
-                format!(
-                    "`{}` has {} result(s) and needs `: types`",
-                    word,
-                    results.len()
-                )
-            } else {
-                format!(
-                    "{} result type(s) for {} result value(s)",
-                    tys.len(),
-                    results.len()
-                )
-            };
-            return self.err_at(colon_at, self.pos, msg);
-        }
-
-        // The operation exists before its regions are read, so the regions'
-        // contents are its children.
-        let span_placeholder = Span { start: 0, end: 0 };
-        let here = fs.b.insertion_block();
-        let (op, ids) = fs.b.op(kind, operands, tys, span_placeholder);
-        for ((tok, at), id) in results.iter().zip(ids) {
-            self.define(fs, tok, id, *at)?;
-        }
-        while self.next_is_after_ws('{') {
-            self.region(fs, op, depth + 1)?;
-        }
-        fs.b.set_insertion_block(here);
-        let span = self.opt_span()?;
-        fs.b.set_op_span(op, span);
-        let operand_spans = self.opt_operand_spans()?;
-        fs.b.set_operand_spans(op, operand_spans);
-
-        self.skip_inline();
-        match self.peek() {
-            None | Some('\n' | '}') => Ok(()),
-            Some(_) => self.err("expected the end of the line"),
-        }
-    }
-
-    /// The attributes of `assert`: `[kind] "text" fn "f" msg "m" names("a",
-    /// "b")`, the last three optional and in that order.
-    fn assert_attrs(&mut self) -> Res<OpKind> {
-        self.expect('[')?;
-        self.skip_inline();
-        let at = self.pos;
-        let kind = match self.word() {
-            "assert" => AssertKind::Assert,
-            "requires" => AssertKind::Requires,
-            "ensures" => AssertKind::Ensures,
-            _ => {
-                return self.err_at(
-                    at,
-                    self.pos.max(at + 1),
-                    "expected `assert`, `requires` or `ensures`",
-                )
-            }
-        };
-        self.expect(']')?;
-        let text = self.string()?;
-        let (mut func, mut message, mut names) = (None, None, Vec::new());
-        loop {
-            self.skip_inline();
-            let before = self.pos;
-            match self.word() {
-                "fn" if func.is_none() => func = Some(self.string()?),
-                "msg" if message.is_none() => message = Some(self.string()?),
-                "names" if names.is_empty() => {
-                    self.expect('(')?;
-                    loop {
-                        names.push(self.string()?);
-                        self.skip_inline();
-                        if !self.eat(',') {
-                            break;
-                        }
-                    }
-                    self.expect(')')?;
-                }
-                _ => {
-                    self.pos = before;
-                    break;
-                }
-            }
-        }
-        Ok(OpKind::Assert {
-            kind,
-            text,
-            message,
-            func,
-            names,
         })
     }
 

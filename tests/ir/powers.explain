@@ -1,3 +1,8 @@
+tests/ir/powers.sky:5:5: note: cost of `powers`: 24 flops
+  |
+5 | def powers(x: Scalar):
+  |     ^^^^^^
+
 tests/ir/powers.sky:6:10: note: [POW-CHAIN-001] `x^2` is rewritten to `x · x`
   |
 6 |     p2 = x ^ 2
@@ -24,6 +29,11 @@ tests/ir/powers.sky:8:11: note: [POW-CHAIN-001] `x^14` is rewritten to `x^6 · x
   = note: because the exponent 14 is a constant integer: x^2 = x · x, x^4 = x^2 · x^2, x^6 = x^2 · x^4, x^8 = x^4 · x^4, x^14 = x^6 · x^8
   = note: because 5 multiplications, the fewest for 14: no shorter chain exists for an exponent up to 14
   = note: because exact: these are the multiplications the interpreter's `powi` performs, in the same order, so every bit and the overflow error are the same
+
+tests/ir/powers.sky:14:5: note: cost of `volume`: 2 flops
+   |
+14 | def volume(l: m):
+   |     ^^^^^^
 
 tests/ir/powers.sky:15:12: note: [POW-CHAIN-001] `l^3` is rewritten to `l · l^2`
    |

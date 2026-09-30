@@ -10,7 +10,7 @@ use sky_units::Rational;
 use super::amount::{Amount, At, Reason, ReasonKind, Trips};
 use super::{Cost, FunctionCost, Site};
 use crate::ir::{Function, OpData, OpId, RegionId, Type, ValueDef, ValueId};
-use crate::op::{CmpOp, MathFn, OpKind};
+use crate::op::{CmpOp, MathFn, OpKind, Side, SolveMethod};
 
 /// Bytes per array entry: every entry is an `f64`.
 const ENTRY_BYTES: i64 = 8;
@@ -494,8 +494,13 @@ impl Cx<'_> {
         }
         match &op.kind {
             OpKind::MatMul => self.matmul(op),
+            OpKind::MatMulEx { ta, tb, algorithm } => {
+                self.matmul_ex(op, *ta, *tb, *algorithm == sky_types::algo::Algorithm::Syrk)
+            }
+            OpKind::DiagMul { side } => self.diag_mul(op, *side),
             OpKind::Inverse => self.inverse(op),
-            OpKind::Solve { .. } => self.solve(op),
+            OpKind::Solve { method } => self.solve(op, *method, false),
+            OpKind::SolveRight { method } => self.solve(op, *method, true),
             OpKind::Transpose => match self.made(op, Fail::Shape)? {
                 Some(n) => Self::make(&n, &n),
                 None => Ok(Parts::default()),
@@ -608,23 +613,99 @@ impl Cx<'_> {
     }
 
     /// A Cholesky solve: `n³/3 + 2·n²·k`, two allocations.
-    fn solve(&self, op: &OpData) -> P<Parts> {
-        let a = self.arg(op, 0)?;
-        let b = self.arg(op, 1)?;
+    /// `solve[method]` (`A⁻¹ @ b`, operands `A`, `b`) and `solve.right`
+    /// (`x @ A⁻¹`, operands `x`, `A`): the factorization, then two
+    /// triangular solves per right-hand side. Cholesky factors in n³/3, LU
+    /// in 2·n³/3; a Diagonal `A` is one division per entry of the result.
+    fn solve(&self, op: &OpData, method: SolveMethod, right: bool) -> P<Parts> {
+        let (ia, ib) = if right { (1, 0) } else { (0, 1) };
+        let a = self.arg(op, ia)?;
+        let b = self.arg(op, ib)?;
         let n = a.first().ok_or(Fail::Shape)?;
         let n2 = mul(n, n)?;
-        // The right-hand sides: one, or the columns of a matrix.
-        let columns = b.get(1).cloned().unwrap_or_else(|| Poly::integer(1));
-        let factor = frac(&mul(&n2, n)?, 1, 3)?;
-        let solves = scale(&mul(&n2, &columns)?, 2)?;
+        // The right-hand sides: one, or the columns of `b` (the rows of
+        // `x` for `solve.right`).
+        let columns = if right {
+            if b.len() > 1 {
+                b.first().cloned().unwrap_or_else(|| Poly::integer(1))
+            } else {
+                Poly::integer(1)
+            }
+        } else {
+            b.get(1).cloned().unwrap_or_else(|| Poly::integer(1))
+        };
         let result = product(&b)?;
+        let read = scale(&add(&product(&a)?, &result)?, ENTRY_BYTES)?;
+        if method == SolveMethod::Diagonal {
+            return Ok(Parts {
+                flops: result.clone(),
+                read,
+                written: scale(&result, ENTRY_BYTES)?,
+                allocs: Poly::integer(1),
+                alloc_bytes: scale(&result, ENTRY_BYTES)?,
+            });
+        }
+        let n3 = mul(&n2, n)?;
+        let factor = match method {
+            SolveMethod::Cholesky => frac(&n3, 1, 3)?,
+            _ => frac(&n3, 2, 3)?,
+        };
+        let solves = scale(&mul(&n2, &columns)?, 2)?;
         Ok(Parts {
             flops: add(&factor, &solves)?,
-            read: scale(&add(&product(&a)?, &result)?, ENTRY_BYTES)?,
+            read,
             written: scale(&add(&result, &n2)?, ENTRY_BYTES)?,
             allocs: Poly::integer(2),
             alloc_bytes: scale(&add(&result, &n2)?, ENTRY_BYTES)?,
         })
+    }
+
+    /// `matmul[ta, tb]`: the product of the (possibly transposed) operands,
+    /// 2·n·k·m as `matmul`; the transposes are read in place, not made. A
+    /// Gram product (`alg=syrk`, an m×m result) computes one triangle and
+    /// mirrors it: m·(m+1)/2 entries of 2·k flops, k·m² + k·m.
+    fn matmul_ex(&self, op: &OpData, ta: bool, tb: bool, syrk: bool) -> P<Parts> {
+        let flip = |d: Vec<Poly>, t: bool| {
+            if t && d.len() == 2 {
+                vec![d[1].clone(), d[0].clone()]
+            } else {
+                d
+            }
+        };
+        let a = flip(self.arg(op, 0)?, ta);
+        let b = flip(self.arg(op, 1)?, tb);
+        if a.is_empty() || b.is_empty() {
+            return Err(Fail::Shape);
+        }
+        let rest = b.get(1..).unwrap_or(&[]);
+        let flops = match (syrk, rest) {
+            (true, [m]) => mul(&product(&a)?, &add(m, &Poly::integer(1))?)?,
+            _ => scale(&mul(&product(&a)?, &product(rest)?)?, 2)?,
+        };
+        let read = add(&product(&a)?, &product(&b)?)?;
+        let mut p = match self.made(op, Fail::Shape)? {
+            Some(n) => Self::make(&n, &read)?,
+            None => Parts {
+                read: scale(&read, ENTRY_BYTES)?,
+                ..Parts::default()
+            },
+        };
+        p.flops = flops;
+        Ok(p)
+    }
+
+    /// `diag.mul`: each entry of `X` scaled by a diagonal entry, computed as
+    /// `0.0 + d·x`, two flops per entry.
+    fn diag_mul(&self, op: &OpData, side: Side) -> P<Parts> {
+        let (id, ix) = match side {
+            Side::Left => (0, 1),
+            Side::Right => (1, 0),
+        };
+        let d = product(&self.arg(op, id)?)?;
+        let x = product(&self.arg(op, ix)?)?;
+        let mut p = Self::make(&x, &add(&d, &x)?)?;
+        p.flops = scale(&x, 2)?;
+        Ok(p)
     }
 
     /// A fused kernel: its body once per entry.

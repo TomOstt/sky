@@ -1,5 +1,5 @@
 //! Contracts end to end (spec "Contracts"): `sky run` with `assert`,
-//! `requires` and `ensures`, on both engines, and `sky check` for what it
+//! `requires` and `ensures`, on every engine, and `sky check` for what it
 //! says about them.
 //!
 //! Scripts run in a scratch directory with a `.git`, so project discovery
@@ -40,19 +40,25 @@ fn err(o: &Output) -> String {
     String::from_utf8(o.stderr.clone()).expect("utf-8")
 }
 
-/// `sky run` under both engines, which must agree on stdout, stderr and
+/// `sky run` under all three engines, which must agree on stdout, stderr and
 /// exit status byte for byte. Returns the tree-walker's run.
 fn run_both(name: &str, src: &str) -> Output {
     let ast = sky(name, &["run", "--engine=ast"], src);
-    let sir = sky(name, &["run", "--engine=sir"], src);
-    assert!(
-        !err(&sir).contains("cannot run on SIR"),
-        "SIR refused:\n{}",
-        err(&sir)
-    );
-    assert_eq!(sir.status.code(), ast.status.code(), "status of:\n{src}");
-    assert_eq!(out(&sir), out(&ast), "stdout of:\n{src}");
-    assert_eq!(err(&sir), err(&ast), "stderr of:\n{src}");
+    for engine in ["sir", "native"] {
+        let other = sky(name, &["run", &format!("--engine={engine}")], src);
+        assert!(
+            !err(&other).contains("cannot run"),
+            "{engine} refused:\n{}",
+            err(&other)
+        );
+        assert_eq!(
+            other.status.code(),
+            ast.status.code(),
+            "{engine} status of:\n{src}"
+        );
+        assert_eq!(out(&other), out(&ast), "{engine} stdout of:\n{src}");
+        assert_eq!(err(&other), err(&ast), "{engine} stderr of:\n{src}");
+    }
     ast
 }
 

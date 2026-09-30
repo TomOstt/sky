@@ -60,6 +60,16 @@ fn run(name: &str, src: &str) -> Output {
         err(&sir)
     );
     assert_eq!(out(&sir), "");
+    // ... and so does `--engine=native`, which runs the same lowered SIR.
+    let native = sky(name, "run", &["--engine=native"], src);
+    assert_eq!(native.status.code(), Some(1));
+    assert!(
+        err(&native)
+            .contains("cannot run natively: differential equations are not supported by SIR yet"),
+        "{}",
+        err(&native)
+    );
+    assert_eq!(out(&native), "");
     default
 }
 

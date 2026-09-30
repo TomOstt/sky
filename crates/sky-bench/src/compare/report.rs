@@ -7,7 +7,7 @@
 use std::fmt::Write;
 
 use super::workloads::Kind;
-use super::{is_sky, CaseResult, Outcome, Run, IMPLS};
+use super::{is_sky_engine, CaseResult, Outcome, Run, IMPLS};
 
 /// The references Sky is compared against, in report order: id and label.
 const REFS: [(&str, &str); 5] = [
@@ -91,14 +91,17 @@ fn columns(run: &Run) -> Vec<&'static str> {
 
 /// The Sky engines that ran anywhere.
 fn sky_columns(run: &Run) -> Vec<&'static str> {
-    columns(run).into_iter().filter(|id| is_sky(id)).collect()
+    columns(run)
+        .into_iter()
+        .filter(|id| is_sky_engine(id))
+        .collect()
 }
 
 /// The fastest Sky engine that ran and agrees with the reference.
 fn best_sky(c: &CaseResult) -> Option<(&'static str, f64)> {
     c.cells
         .iter()
-        .filter(|(id, _)| is_sky(id))
+        .filter(|(id, _)| is_sky_engine(id))
         .filter_map(|(id, _)| c.time(id).map(|t| (*id, t)))
         .min_by(|a, b| a.1.total_cmp(&b.1))
 }

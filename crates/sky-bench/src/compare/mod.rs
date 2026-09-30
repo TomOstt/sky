@@ -46,8 +46,15 @@ const USAGE: &str = "usage: sky-bench compare [--filter <substring>] [--reps <n>
 /// Engines of `sky run --engine=`, in report order.
 pub const SKY_ENGINES: [&str; 4] = ["ast", "sir", "native", "auto"];
 
+/// The id of the column that runs Sky's native engine with
+/// `--numerics=relaxed` (fused multiply-add, reassociated sums, Accelerate on
+/// macOS): not bit-reproducible, so it is a column of its own, never the
+/// "best Sky engine" the interpretation compares with, and it is checked
+/// against the same reference within the workload's tolerance.
+pub const SKY_RELAXED: &str = "sky-relaxed";
+
 /// Every implementation column, in report order: id and table label.
-pub const IMPLS: [(&str, &str); 10] = [
+pub const IMPLS: [(&str, &str); 11] = [
     ("c", "C -O3"),
     ("c-fast", "C -O3 -ffast-math"),
     ("rust", "Rust -O3"),
@@ -58,10 +65,17 @@ pub const IMPLS: [(&str, &str); 10] = [
     ("sky-sir", "Sky sir"),
     ("sky-native", "Sky native"),
     ("sky-auto", "Sky auto"),
+    (SKY_RELAXED, "Sky native, relaxed"),
 ];
 
 pub fn is_sky(id: &str) -> bool {
     id.starts_with("sky-")
+}
+
+/// A Sky column that is an engine with the default numerics (not
+/// [`SKY_RELAXED`]).
+pub fn is_sky_engine(id: &str) -> bool {
+    is_sky(id) && id != SKY_RELAXED
 }
 
 /// How a run is configured.
@@ -570,12 +584,18 @@ fn command_for(
             let engine = impl_id
                 .strip_prefix("sky-")
                 .ok_or("unknown implementation")?;
+            let relaxed = impl_id == SKY_RELAXED;
+            let engine = if relaxed { "native" } else { engine };
             let sky = ctx.sky.as_ref().ok_or("no sky binary")?;
             if !ctx.engines.contains(&engine_name(engine)) {
                 return Err(format!("this `sky` has no `{engine}` engine"));
             }
             let mut c = Command::new(sky);
-            c.arg("run").arg(format!("--engine={engine}")).arg(sky_file);
+            c.arg("run").arg(format!("--engine={engine}"));
+            if relaxed {
+                c.arg("--numerics=relaxed");
+            }
+            c.arg(sky_file);
             Ok(c)
         }
     }

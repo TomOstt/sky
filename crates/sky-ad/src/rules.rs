@@ -30,6 +30,7 @@
 //! | `norm(a)` | `(a·ta) / r`, summed over all entries (`a` a vector, matrix or scalar); fails at `r = 0` as `sqrt` does |
 //! | `dot(a, b)` | `dot(ta, b) + dot(a, tb)` |
 //! | `solve(A, b)` = `A⁻¹ b` | `solve(A, tb - tA @ r)` |
+//! | `solve.right(x, A)` = `x A⁻¹` | `solve.right(tx - r @ tA, A)` |
 //! | `[a, b, ...]` (`array.literal`) | `[ta, tb, ...]`, a zero for an entry that does not depend on `x` |
 //! | `A[i]`, `A[lo:hi]` | `tA[i]`, `tA[lo:hi]` (the positions are integers: no tangent) |
 //! | `zeros`, `identity`, `len` | none (integers) |
@@ -320,6 +321,31 @@ impl Diff<'_> {
                 Ok(Some(self.emit(
                     OpKind::Solve { method: *method },
                     vec![pa, rhs],
+                    ty,
+                    span,
+                )))
+            }
+            OpKind::SolveRight { method } => {
+                // r = x A⁻¹, so r A = x and tr A + r tA = tx:
+                // tr = (tx - r tA) A⁻¹, a transposed solve with the same A.
+                // r tA has dim(x)/dim(A) dim(A)/dim(w) = dim(x)/dim(w), the
+                // type of tx.
+                let [x, a] = self.operands(op)?;
+                let (pa, pr) = (self.primal(a)?, self.primal(r)?);
+                let rhs_ty = self.tangent_ty(x)?;
+                let via_a = self
+                    .tan_of(a)
+                    .map(|ta| self.emit(OpKind::MatMul, vec![pr, ta], rhs_ty.clone(), span));
+                let rhs = match (self.tan_of(x), via_a) {
+                    (Some(tx), Some(t)) => self.emit(OpKind::Sub, vec![tx, t], rhs_ty, span),
+                    (Some(tx), None) => tx,
+                    (None, Some(t)) => self.emit(OpKind::Neg, vec![t], rhs_ty, span),
+                    (None, None) => return Ok(None),
+                };
+                let ty = self.tangent_ty(r)?;
+                Ok(Some(self.emit(
+                    OpKind::SolveRight { method: *method },
+                    vec![rhs, pa],
                     ty,
                     span,
                 )))

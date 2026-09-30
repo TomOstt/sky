@@ -1,15 +1,17 @@
 //! The static cost model (`sky_ir::cost`) end to end on Sky source: each
 //! rule of the model in the module documentation, checked as the polynomial
 //! it produces. The model reads the optimized program (spec "Performance
-//! contracts"), so these run the default pipeline first.
+//! contracts"), so these run the pipeline `sky check` uses for them first:
+//! the default one without `specialize`, which would replace a function by
+//! its clones for particular calls.
 
 use sky_ir::cost::{analyze, Amount, ReasonKind};
 
-/// The cost of function `name` of `src`, after the default pipeline.
+/// The cost of function `name` of `src`, as `sky check` computes it.
 fn cost(src: &str, name: &str) -> sky_ir::cost::FunctionCost {
     sky_ast::with_deep_stack(|| {
         let mut ir = sky_lower::lower_source(src).expect("lowers");
-        sky_opt::default_pipeline()
+        sky_opt::default_passes_without_specialize(sky_ir::PassManager::new())
             .verify_each(true)
             .run(&mut ir)
             .expect("optimizes");

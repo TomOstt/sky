@@ -4,8 +4,11 @@
 //!
 //! Every test skips (says so, and passes) when the machine has no C linker.
 //! The runtime library the executables link with (`libsky_rt.a`) is built
-//! on first use with `cargo build -p sky-rt`, next to the `sky` binary under
-//! test, because `cargo test` does not build a package's static library.
+//! once per test run with `cargo build -p sky-rt`, next to the `sky` binary
+//! under test, because `cargo test` does not build a package's static
+//! library. It is built every run, not only when missing: cargo does nothing
+//! if it is fresh, and an archive left from before a runtime change would
+//! lack new symbols and fail every link.
 //!
 //! `SKY_TEST_X86_64=1` (macOS on Apple silicon only) also builds for
 //! `x86_64-apple-darwin` and runs the executables under Rosetta.
@@ -47,8 +50,8 @@ fn profile_dir(triple: Option<&str>) -> Option<PathBuf> {
     }
 }
 
-/// The runtime library for `triple`, built if it is not there yet. `None`
-/// if it cannot be built here.
+/// The runtime library for `triple`, brought up to date once per run.
+/// `None` if it cannot be built here.
 fn runtime_lib(triple: Option<&str>) -> Option<PathBuf> {
     static HOST: OnceLock<Option<PathBuf>> = OnceLock::new();
     static X86: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -56,7 +59,7 @@ fn runtime_lib(triple: Option<&str>) -> Option<PathBuf> {
     cell.get_or_init(|| {
         let dir = profile_dir(triple)?;
         let lib = dir.join("libsky_rt.a");
-        if !lib.is_file() {
+        {
             let target_dir = PathBuf::from(env!("CARGO_BIN_EXE_sky"))
                 .parent()?
                 .parent()?

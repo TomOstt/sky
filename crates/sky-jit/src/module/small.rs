@@ -107,7 +107,7 @@ enum Pos {
     D(Cv),
 }
 
-impl FnTx<'_, '_> {
+impl<M: cranelift_module::Module> FnTx<'_, '_, M> {
     // ----- the runtime side -----
 
     fn array_args(&mut self, sh: Sh, d: Dimension) -> [Cv; 3] {

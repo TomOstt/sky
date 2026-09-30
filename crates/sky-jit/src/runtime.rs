@@ -739,7 +739,8 @@ pub extern "C" fn sky_rt_pow_scalar(site: i32, b: f64, x: f64) -> f64 {
 // the places that need a handle. An array's shape is passed as `rows` and
 // `cols`: `cols == 0` is a vector of `rows` entries.
 
-pub(crate) extern "C" fn sky_rt_push_elem(x: f64) {
+#[no_mangle]
+pub extern "C" fn sky_rt_push_elem(x: f64) {
     with((), |st| st.raw.push(x));
 }
 
@@ -768,7 +769,8 @@ fn array_dims(rows: i32, cols: i32) -> Vec<usize> {
 
 /// Pushes the array of the entries pushed as an operand of the next
 /// operation.
-pub(crate) extern "C" fn sky_rt_push_array(dim: i32, rows: i32, cols: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_push_array(dim: i32, rows: i32, cols: i32) {
     with((), |st| {
         if let Some(v) = take_array(st, dim, rows, cols) {
             st.args.push(Arg::Val(v));
@@ -785,7 +787,8 @@ pub(crate) extern "C" fn sky_rt_box_array(dim: i32, rows: i32, cols: i32) -> i64
 }
 
 /// Prints the array of the entries pushed, as one item of the line.
-pub(crate) extern "C" fn sky_rt_print_array(dim: i32, rows: i32, cols: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_print_array(dim: i32, rows: i32, cols: i32) {
     let text = with(None, |st| {
         take_array(st, dim, rows, cols).map(|v| v.print_text())
     });
@@ -798,13 +801,8 @@ pub(crate) extern "C" fn sky_rt_print_array(dim: i32, rows: i32, cols: i32) {
 /// dimension given, so `sky_rt_elem` can read its entries: 0, or -1 and a
 /// deoptimization if it is not what the type says. With `release`, `h` is
 /// released either way.
-pub(crate) extern "C" fn sky_rt_unpack(
-    h: i64,
-    dim: i32,
-    rows: i32,
-    cols: i32,
-    release: i32,
-) -> i32 {
+#[no_mangle]
+pub extern "C" fn sky_rt_unpack(h: i64, dim: i32, rows: i32, cols: i32, release: i32) -> i32 {
     with(-1, |st| {
         let want = st.program.dims.get(dim as usize).copied();
         let v = st.value(h);
@@ -833,7 +831,8 @@ pub(crate) extern "C" fn sky_rt_unpack(
 }
 
 /// Entry `i` of the array [`sky_rt_unpack`] unpacked.
-pub(crate) extern "C" fn sky_rt_elem(i: i32) -> f64 {
+#[no_mangle]
+pub extern "C" fn sky_rt_elem(i: i32) -> f64 {
     with(f64::NAN, |st| {
         st.unpacked.get(i as usize).copied().unwrap_or(f64::NAN)
     })
@@ -842,7 +841,8 @@ pub(crate) extern "C" fn sky_rt_elem(i: i32) -> f64 {
 /// The operation at `site`, which failed inline on the operands pushed
 /// (arrays and numbers), runs in the interpreters' own code to produce its
 /// error, as `sky_rt_fail1` does for one number.
-pub(crate) extern "C" fn sky_rt_fail_op(site: i32) {
+#[no_mangle]
+pub extern "C" fn sky_rt_fail_op(site: i32) {
     with((), |st| {
         let args = std::mem::take(&mut st.args);
         let program = st.program.clone();

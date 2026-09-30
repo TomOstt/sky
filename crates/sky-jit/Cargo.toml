@@ -18,6 +18,7 @@ cranelift-frontend = "0.121.2"
 cranelift-jit = "0.121.2"
 cranelift-module = "0.121.2"
 cranelift-native = "0.121.2"
+cranelift-object = "0.121.2"
 
 [[bench]]
 name = "kernels"

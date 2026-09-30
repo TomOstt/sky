@@ -403,13 +403,13 @@ struct Slot {
 }
 
 /// State shared by the functions of a module while they are translated.
-struct Shared<'m> {
+pub(crate) struct Shared<'m> {
     m: &'m SirModule,
-    fn_ids: Vec<FuncId>,
+    pub fn_ids: Vec<FuncId>,
     rt_ids: HashMap<Rt, FuncId>,
-    dims: Vec<Dimension>,
+    pub dims: Vec<Dimension>,
     dim_ids: HashMap<Dimension, i32>,
-    sites: Vec<Site>,
+    pub sites: Vec<Site>,
 }
 
 fn build(module: &SirModule, emit: bool) -> Res<Built> {
@@ -445,57 +445,8 @@ fn build(module: &SirModule, emit: bool) -> Res<Built> {
     }
     let mut jit = JITModule::new(builder);
 
-    let internal = |what: &str, e: &dyn fmt::Display| CompileError {
-        message: format!("the code generator failed on {what}: {e}"),
-        span: None,
-    };
-    let mut sh = Shared {
-        m: module,
-        fn_ids: Vec::new(),
-        rt_ids: HashMap::new(),
-        dims: Vec::new(),
-        dim_ids: HashMap::new(),
-        sites: Vec::new(),
-    };
-    for rt in Rt::ALL {
-        let (params, ret) = rt.signature();
-        let mut sig = Signature::new(call_conv);
-        sig.params
-            .extend(params.iter().map(|t| AbiParam::new(cl_ty(*t))));
-        if let Some(r) = ret {
-            sig.returns.push(AbiParam::new(cl_ty(r)));
-        }
-        let id = jit
-            .declare_function(rt.name(), Linkage::Import, &sig)
-            .map_err(|e| internal(rt.name(), &e))?;
-        sh.rt_ids.insert(rt, id);
-    }
-    for (i, f) in module.functions.iter().enumerate() {
-        let sig = function_signature(f, call_conv);
-        let id = jit
-            .declare_function(&symbol_name(i, &f.name), Linkage::Local, &sig)
-            .map_err(|e| internal(&f.name, &e))?;
-        sh.fn_ids.push(id);
-    }
-
-    let mut clif = String::new();
-    // The size of each function's machine code, to flush the instruction cache.
-    let mut code_sizes = Vec::new();
-    let mut fctx = FunctionBuilderContext::new();
-    let mut ctx = jit.make_context();
-    for (i, f) in module.functions.iter().enumerate() {
-        ctx.func.signature = function_signature(f, call_conv);
-        ctx.func.name = UserFuncName::testcase(symbol_name(i, &f.name));
-        FnTx::translate(&mut ctx.func, &mut fctx, &mut jit, &mut sh, f, i as u32)?;
-        if emit {
-            clif.push_str(&format!("; {}\n{}\n", describe(f), ctx.func));
-        } else {
-            jit.define_function(sh.fn_ids[i], &mut ctx)
-                .map_err(|e| internal(&f.name, &e))?;
-            code_sizes.push(ctx.compiled_code().map_or(0, |c| c.code_buffer().len()));
-        }
-        jit.clear_context(&mut ctx);
-    }
+    let done = translate_module(module, &mut jit, call_conv, emit)?;
+    let (sh, code_sizes, clif) = (done.sh, done.code_sizes, done.clif);
     if emit {
         return Ok(Built {
             jit: None,
@@ -527,6 +478,86 @@ fn build(module: &SirModule, emit: bool) -> Res<Built> {
             sites: sh.sites,
         },
         main: Some(main),
+        clif,
+    })
+}
+
+fn internal(what: &str, e: &dyn fmt::Display) -> CompileError {
+    CompileError {
+        message: format!("the code generator failed on {what}: {e}"),
+        span: None,
+    }
+}
+
+/// What [`translate_module`] left: the shared tables and, per function, the
+/// size of its machine code and (when only the IR was asked for) its text.
+pub(crate) struct Translated<'m> {
+    /// The ids of the functions, and the tables native code names by index.
+    pub sh: Shared<'m>,
+    /// The size of each function's machine code, to flush the instruction
+    /// cache.
+    pub code_sizes: Vec<usize>,
+    pub clif: String,
+}
+
+/// Declares the runtime functions and every function of `module` in `jit`
+/// (a JIT or an object file: the translation is the same), and translates
+/// and defines each. `emit` only produces the Cranelift IR text.
+pub(crate) fn translate_module<'m, M: ClModule>(
+    module: &'m SirModule,
+    jit: &mut M,
+    call_conv: cranelift_codegen::isa::CallConv,
+    emit: bool,
+) -> Res<Translated<'m>> {
+    let mut sh = Shared {
+        m: module,
+        fn_ids: Vec::new(),
+        rt_ids: HashMap::new(),
+        dims: Vec::new(),
+        dim_ids: HashMap::new(),
+        sites: Vec::new(),
+    };
+    for rt in Rt::ALL {
+        let (params, ret) = rt.signature();
+        let mut sig = Signature::new(call_conv);
+        sig.params
+            .extend(params.iter().map(|t| AbiParam::new(cl_ty(*t))));
+        if let Some(r) = ret {
+            sig.returns.push(AbiParam::new(cl_ty(r)));
+        }
+        let id = jit
+            .declare_function(rt.name(), Linkage::Import, &sig)
+            .map_err(|e| internal(rt.name(), &e))?;
+        sh.rt_ids.insert(rt, id);
+    }
+    for (i, f) in module.functions.iter().enumerate() {
+        let sig = function_signature(f, call_conv);
+        let id = jit
+            .declare_function(&symbol_name(i, &f.name), Linkage::Local, &sig)
+            .map_err(|e| internal(&f.name, &e))?;
+        sh.fn_ids.push(id);
+    }
+
+    let mut clif = String::new();
+    let mut code_sizes = Vec::new();
+    let mut fctx = FunctionBuilderContext::new();
+    let mut ctx = jit.make_context();
+    for (i, f) in module.functions.iter().enumerate() {
+        ctx.func.signature = function_signature(f, call_conv);
+        ctx.func.name = UserFuncName::testcase(symbol_name(i, &f.name));
+        FnTx::translate(&mut ctx.func, &mut fctx, jit, &mut sh, f, i as u32)?;
+        if emit {
+            clif.push_str(&format!("; {}\n{}\n", describe(f), ctx.func));
+        } else {
+            jit.define_function(sh.fn_ids[i], &mut ctx)
+                .map_err(|e| internal(&f.name, &e))?;
+            code_sizes.push(ctx.compiled_code().map_or(0, |c| c.code_buffer().len()));
+        }
+        jit.clear_context(&mut ctx);
+    }
+    Ok(Translated {
+        sh,
+        code_sizes,
         clif,
     })
 }
@@ -592,9 +623,9 @@ fn args_of(vs: &[Cv]) -> Vec<BlockArg> {
 }
 
 /// The translation of one function.
-struct FnTx<'a, 'm> {
+struct FnTx<'a, 'm, M: ClModule> {
     b: FunctionBuilder<'a>,
-    jit: &'a mut JITModule,
+    jit: &'a mut M,
     sh: &'a mut Shared<'m>,
     f: &'m Function,
     fidx: u32,
@@ -620,11 +651,11 @@ struct FnTx<'a, 'm> {
     facts: Analysis,
 }
 
-impl<'a, 'm> FnTx<'a, 'm> {
+impl<'a, 'm, M: ClModule> FnTx<'a, 'm, M> {
     fn translate(
         func: &'a mut ir::Function,
         fctx: &'a mut FunctionBuilderContext,
-        jit: &'a mut JITModule,
+        jit: &'a mut M,
         sh: &'a mut Shared<'m>,
         f: &'m Function,
         fidx: u32,

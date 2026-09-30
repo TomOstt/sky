@@ -9,7 +9,7 @@ use sky_diag::{display_safe, Diagnostic, SourceFile, Span};
 
 use sky_syntax::Edition;
 
-use crate::manifest::{parse_manifest, ManifestError, MAX_MANIFEST_BYTES};
+use crate::manifest::{parse_manifest, ManifestError, Numerics, MAX_MANIFEST_BYTES};
 use crate::source::{read_source_limited, SourceError};
 use crate::Identity;
 
@@ -44,6 +44,10 @@ pub struct Discovery {
     /// ([`Project::SingleFile`]) it is [`Edition::LATEST`]: a lone file has
     /// no history to preserve.
     pub edition: Edition,
+    /// The numerics the project declares in `sky.toml`
+    /// ([`Numerics::Reproducible`] if it names none, and without a
+    /// `sky.toml`). `sky run --numerics=` overrides it.
+    pub numerics: Numerics,
 }
 
 /// Why discovery refused to continue. Every variant fails closed.
@@ -118,7 +122,7 @@ pub fn discover(file: &Path, identity: &dyn Identity) -> Result<Discovery, Disco
         match fs::symlink_metadata(&manifest) {
             Ok(meta) => {
                 check_manifest(&manifest, &meta, d, euid)?;
-                let edition = load_edition(&manifest, &meta, d, euid)?;
+                let (edition, numerics) = load_manifest(&manifest, &meta, d, euid)?;
                 return Ok(Discovery {
                     file: file.clone(),
                     project: Project::Rooted {
@@ -126,6 +130,7 @@ pub fn discover(file: &Path, identity: &dyn Identity) -> Result<Discovery, Disco
                         manifest,
                     },
                     edition,
+                    numerics,
                 });
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
@@ -145,6 +150,7 @@ pub fn discover(file: &Path, identity: &dyn Identity) -> Result<Discovery, Disco
         file,
         project: Project::SingleFile,
         edition: Edition::LATEST,
+        numerics: Numerics::Reproducible,
     })
 }
 
@@ -187,7 +193,7 @@ fn same_file(_a: &fs::Metadata, _b: &fs::Metadata) -> bool {
     false
 }
 
-/// Reads the edition from `sky.toml` through one new handle, which is
+/// Reads the settings (edition, numerics) from `sky.toml` through one new handle, which is
 /// re-validated: the path was only `lstat`ed so far, and a path can be
 /// swapped for a link, or for another user's file, between that and an open.
 /// So the open refuses a final symlink (`O_NOFOLLOW`) and cannot block on a
@@ -195,12 +201,12 @@ fn same_file(_a: &fs::Metadata, _b: &fs::Metadata) -> bool {
 /// device and inode), and its own `fstat` runs through the same ownership
 /// and mode rules again. The bytes then come from that handle, capped at
 /// [`MAX_MANIFEST_BYTES`]; the path is never opened a second time.
-fn load_edition(
+fn load_manifest(
     manifest: &Path,
     lstat: &fs::Metadata,
     dir: &Path,
     euid: u32,
-) -> Result<Edition, DiscoverError> {
+) -> Result<(Edition, Numerics), DiscoverError> {
     let io = |error| DiscoverError::Io {
         path: manifest.to_path_buf(),
         error,
@@ -229,7 +235,7 @@ fn load_edition(
             }
         })?;
     match parse_manifest(&text) {
-        Ok(m) => Ok(m.edition),
+        Ok(m) => Ok((m.edition, m.numerics)),
         Err(error) => Err(DiscoverError::ManifestInvalid {
             manifest: manifest.to_path_buf(),
             text,

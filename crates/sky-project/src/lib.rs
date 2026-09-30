@@ -26,7 +26,7 @@
 //! - The manifest is read (at most 64 KiB, UTF-8, a strict `key = "string"`
 //!   subset, see [`parse_manifest`]) from a handle opened with `O_NOFOLLOW`
 //!   and re-checked by `fstat`, never by a second open of the path. It sets
-//!   the [`Edition`]; no field can affect imports.
+//!   the [`Edition`] and the [`Numerics`]; no field can affect imports.
 //! - [`read_source`] and [`read_entry_file`] read a source from a handle:
 //!   regular files only, at most [`sky_syntax::MAX_SOURCE_BYTES`].
 
@@ -42,7 +42,7 @@ pub use discover::{discover, discover_opened, DiscoverError, Discovery, Project,
 pub use identity::{Identity, SystemIdentity};
 pub use import::{parse_module_path, resolve_import, ImportError, Module, ProjectModule};
 pub use manifest::{
-    parse_manifest, Manifest, ManifestError, ManifestErrorKind, MAX_MANIFEST_BYTES,
+    parse_manifest, Manifest, ManifestError, ManifestErrorKind, Numerics, MAX_MANIFEST_BYTES,
 };
 pub use sky_syntax::Edition;
 pub use source::{open_entry_file, read_entry_file, read_source, SourceError};

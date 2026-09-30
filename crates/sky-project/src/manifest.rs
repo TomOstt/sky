@@ -20,8 +20,8 @@
 //!
 //! There are no escapes, tables, arrays, numbers, or multi-line strings:
 //! anything else is an error, so a future field cannot be smuggled past an
-//! older Sky as something it half understands. The only known key is
-//! `edition`.
+//! older Sky as something it half understands. The known keys are `edition`
+//! and `numerics` (`"reproducible"`, the default, or `"relaxed"`).
 
 use std::fmt;
 
@@ -39,13 +39,47 @@ pub const MAX_MANIFEST_BYTES: usize = 64 << 10;
 const _: () = assert!(MAX_MANIFEST_BYTES < u32::MAX as usize);
 
 /// Every key a manifest may set.
-const KNOWN_KEYS: &[&str] = &["edition"];
+const KNOWN_KEYS: &[&str] = &["edition", "numerics"];
+
+/// How the project's arrays are computed (spec "Relaxed numerics"): the
+/// `numerics` key of `sky.toml`, and `sky run --numerics=`, which overrides it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
+pub enum Numerics {
+    /// Bit-identical results on every machine, thread count and engine.
+    #[default]
+    Reproducible,
+    /// Faster, and only reproducible to rounding error: fused multiply-add,
+    /// reassociated sums, the platform's BLAS/LAPACK.
+    Relaxed,
+}
+
+impl Numerics {
+    /// The text `sky.toml` and `--numerics=` use.
+    pub fn name(self) -> &'static str {
+        match self {
+            Numerics::Reproducible => "reproducible",
+            Numerics::Relaxed => "relaxed",
+        }
+    }
+
+    /// Parses [`Numerics::name`]'s text.
+    pub fn parse(text: &str) -> Option<Numerics> {
+        match text {
+            "reproducible" => Some(Numerics::Reproducible),
+            "relaxed" => Some(Numerics::Relaxed),
+            _ => None,
+        }
+    }
+}
 
 /// What a valid `sky.toml` says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Manifest {
     /// The declared edition; [`Edition::FIRST`] if the manifest names none.
     pub edition: Edition,
+    /// The declared numerics; [`Numerics::Reproducible`] if the manifest
+    /// names none.
+    pub numerics: Numerics,
 }
 
 impl Default for Manifest {
@@ -53,6 +87,7 @@ impl Default for Manifest {
     fn default() -> Self {
         Manifest {
             edition: Edition::FIRST,
+            numerics: Numerics::Reproducible,
         }
     }
 }
@@ -100,6 +135,8 @@ pub enum ManifestErrorKind {
     EditionTooNew { year: u16 },
     /// A year no edition has ever had.
     EditionUnknown { year: u16 },
+    /// `numerics` is neither `"reproducible"` nor `"relaxed"`.
+    NumericsUnknown { value: String },
 }
 
 /// Parses the text of a `sky.toml`. Never panics, on any input.
@@ -231,6 +268,14 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, ManifestError> {
 
         match key {
             "edition" => manifest.edition = parse_edition(value, value_span)?,
+            "numerics" => {
+                manifest.numerics = Numerics::parse(value).ok_or_else(|| ManifestError {
+                    kind: ManifestErrorKind::NumericsUnknown {
+                        value: value.to_string(),
+                    },
+                    span: value_span,
+                })?
+            }
             _ => unreachable!("KNOWN_KEYS and this match are kept in step"),
         }
     }
@@ -377,6 +422,9 @@ impl ManifestError {
             ManifestErrorKind::EditionUnknown { year } => {
                 format!("edition {year} is not a Sky edition")
             }
+            ManifestErrorKind::NumericsUnknown { value } => {
+                format!("numerics `{value}` is not `reproducible` or `relaxed`")
+            }
         }
     }
 
@@ -401,7 +449,7 @@ impl ManifestError {
                 let d = d.with_label("a line is blank, a `#` comment, or `key = \"value\"`");
                 if *found == '[' {
                     d.with_note("tables are not supported: sky.toml is a flat list of `key = \"value\"` lines")
-                        .with_help("the only key is `edition = \"2026\"`")
+                        .with_help("write `edition = \"2026\"`, and `numerics = \"relaxed\"` for relaxed numerics")
                 } else {
                     d.with_help("write `edition = \"2026\"`")
                 }
@@ -427,7 +475,7 @@ impl ManifestError {
             ManifestErrorKind::UnknownKey { suggestion, .. } => {
                 let d = d
                     .with_label("not a sky.toml key")
-                    .with_note("the only key is `edition`; sky.toml cannot add import paths or change how imports resolve");
+                    .with_note("the keys are `edition` and `numerics`; sky.toml cannot add import paths or change how imports resolve");
                 match suggestion {
                     Some(s) => d.with_help(format!("did you mean `{s}`?")),
                     None => d.with_help("remove this line"),
@@ -448,6 +496,10 @@ impl ManifestError {
                 .with_label("no such edition")
                 .with_note(format!("the first edition is {}", Edition::FIRST))
                 .with_help(format!("write `edition = \"{latest}\"`")),
+            ManifestErrorKind::NumericsUnknown { .. } => d
+                .with_label("expected \"reproducible\" or \"relaxed\"")
+                .with_note("`reproducible` (the default) gives the same bits on every machine; `relaxed` is faster and only reproducible to rounding error")
+                .with_help("write `numerics = \"relaxed\"`, or remove the line"),
         }
     }
 }
@@ -501,6 +553,77 @@ mod tests {
         ] {
             assert_eq!(ok(t).edition, Edition::E2026, "{t:?}");
         }
+    }
+
+    #[test]
+    fn numerics_defaults_to_reproducible_and_is_read() {
+        assert_eq!(ok("").numerics, Numerics::Reproducible);
+        assert_eq!(ok("edition = \"2026\"\n").numerics, Numerics::Reproducible);
+        for (t, want) in [
+            ("numerics = \"relaxed\"", Numerics::Relaxed),
+            ("numerics=\"reproducible\"\n", Numerics::Reproducible),
+            (
+                "# c\nedition = \"2026\"\n  numerics\t=\t\"relaxed\" # fast\n",
+                Numerics::Relaxed,
+            ),
+        ] {
+            assert_eq!(ok(t).numerics, want, "{t:?}");
+        }
+        // Independent of the edition key, in either order.
+        let m = ok("numerics = \"relaxed\"\nedition = \"2026\"\n");
+        assert_eq!((m.edition, m.numerics), (Edition::E2026, Numerics::Relaxed));
+    }
+
+    #[test]
+    fn numerics_must_be_one_of_the_two_words() {
+        for v in [
+            "", "fast", "Relaxed", "RELAXED", "relaxed ", "strict", "true", "0",
+        ] {
+            let t = format!("numerics = \"{v}\"");
+            let e = bad(&t);
+            assert_eq!(
+                e.kind,
+                ManifestErrorKind::NumericsUnknown {
+                    value: v.to_string()
+                },
+                "{v:?}"
+            );
+            assert_eq!(covered(&t, &e), format!("\"{v}\""));
+            let d = e.to_diagnostic();
+            assert_eq!(
+                d.message,
+                format!("numerics `{v}` is not `reproducible` or `relaxed`")
+            );
+        }
+        // Not a string at all: the same error as any key.
+        assert_eq!(
+            bad("numerics = relaxed").kind,
+            ManifestErrorKind::ExpectedString
+        );
+    }
+
+    #[test]
+    fn a_numerics_typo_gets_a_did_you_mean() {
+        for key in ["numeric", "numerics_", "Numerics", "numrics"] {
+            let e = bad(&format!("{key} = \"relaxed\""));
+            assert!(
+                matches!(
+                    e.kind,
+                    ManifestErrorKind::UnknownKey {
+                        suggestion: Some("numerics"),
+                        ..
+                    }
+                ),
+                "{key}: {e:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn numerics_set_twice_points_at_both() {
+        let t = "numerics = \"relaxed\"\nnumerics = \"reproducible\"\n";
+        let e = bad(t);
+        assert!(matches!(e.kind, ManifestErrorKind::DuplicateKey { .. }));
     }
 
     #[test]

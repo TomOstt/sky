@@ -1,0 +1,42 @@
+tests/ir/parallel.sky:19:5: note: [FUSE-001] `(a + b) * 2 - a` is rewritten to `fused(a, b, 2)`
+   |
+19 | d = (a + b) * 2 - a
+   |     ^^^^^^^^^^^^^^^
+   = note: applied by the `fuse` pass
+   = note: because fused 3 elementwise operations into one kernel; saves 2 temporary arrays of 1000000 elements
+   = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[1000000]
+   = note: because 3 of the operations can fail (`add`, `mul`, `sub`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
+
+tests/ir/parallel.sky:19:5: note: [PAR-001] this elementwise kernel over 1e6 elements runs on 8 threads
+   |
+19 | d = (a + b) * 2 - a
+   |     ^^^^^^^^^^^^^^^
+   = note: because every element is independent, so the array is split into contiguous chunks (at most four per thread); the result is bit-identical to the sequential one whatever the split
+   = note: because it does not print or call, so no output can change order
+   = note: because 3 of its operations can fail (`add`, `mul`, `sub`): if chunks fail, the failing operation that comes first in program order is reported, at its lowest failing element, which is the error a sequential run gives
+
+tests/ir/parallel.sky:20:5: note: [PAR-002] these 2 calls are independent (pure): run concurrently on up to 8 threads
+   |
+20 | x = work(1000)
+   |     ^^^^^^^^^^
+   = note: because `work` has no `print` (directly or in what it calls), and no call uses another's result, so their order cannot show in the output
+   = note: because each is expensive enough to start elsewhere: at least 1204 estimated operations (the threshold is 400)
+   = note: because any of them may fail: every call is awaited and the error of the earliest one in program order is reported, as in a sequential run
+
+tests/ir/parallel.sky:22:5: note: [PAR-003] the call to `noisy` is not run concurrently with the calls after it
+   |
+22 | p = noisy(1)
+   |     ^^^^^^^^
+   = note: because `noisy` prints, and output order is behaviour: it stays in program order
+
+tests/ir/parallel.sky:24:1: note: printed value of `x + y` is accurate to within 2.2e-15 relative
+   |
+24 | print(d[10], x + y, p, q)
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: a proven bound on the rounding error against the exact real result (roundoff analysis)
+
+tests/ir/parallel.sky:24:1: note: printed value of `q` is accurate to within 7.9e-16 relative
+   |
+24 | print(d[10], x + y, p, q)
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: a proven bound on the rounding error against the exact real result (roundoff analysis)

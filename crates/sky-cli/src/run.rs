@@ -17,6 +17,11 @@
 //!   the oracle the differential tests compare SIR against, and the fallback
 //!   for the programs SIR cannot express yet.
 //!
+//! `--threads=N` (or `SKY_THREADS`) sets how many threads the SIR engine may
+//! use for work that cannot change the output (`sky_ir::parallel`: big
+//! elementwise kernels and independent pure calls); 1 means sequential, and
+//! the output is the same for every N. The tree-walker is always sequential.
+//!
 //! `--engine=auto` picks SIR and falls back to the tree-walker
 //! on a `LowerError`, silently: the program is valid, it is only that one
 //! engine cannot run it yet. `--engine=ast` and `--engine=sir` force one, for
@@ -69,7 +74,7 @@ impl Engine {
 /// Warnings are shown and the run continues. Program output goes to stdout,
 /// diagnostics (including a runtime error, with the span of the failing
 /// expression) to stderr. Exit 0 on success, 1 on any error.
-pub fn run(path: &str, file: &File, src: &str, engine: Engine) -> ExitCode {
+pub fn run(path: &str, file: &File, src: &str, engine: Engine, threads: Option<usize>) -> ExitCode {
     // Same discovery as `sky check` (spec non-negotiable 2): the project
     // root comes only from walking up from the opened file.
     let discovery = match sky_project::discover_opened(Path::new(path), file, &SystemIdentity) {
@@ -81,7 +86,7 @@ pub fn run(path: &str, file: &File, src: &str, engine: Engine) -> ExitCode {
     };
     // Front end and interpreter both run on the known-size stack, so the
     // parser's, checker's and evaluator's depth bounds hold.
-    sky_ast::with_deep_stack(|| run_source(path, src, discovery.edition, engine))
+    sky_ast::with_deep_stack(|| run_source(path, src, discovery.edition, engine, threads))
 }
 
 /// Forwards to stdout and remembers whether the reader went away (`sky run
@@ -103,7 +108,13 @@ impl Write for Stdout<'_> {
     }
 }
 
-fn run_source(path: &str, src: &str, edition: Edition, engine: Engine) -> ExitCode {
+fn run_source(
+    path: &str,
+    src: &str,
+    edition: Edition,
+    engine: Engine,
+    threads: Option<usize>,
+) -> ExitCode {
     let file = SourceFile::new(path, src);
     let front = analyze(src, sky_types::Env::with_prelude(), false, edition);
     let rendered = front.render(&file);
@@ -144,7 +155,12 @@ fn run_source(path: &str, src: &str, edition: Edition, engine: Engine) -> ExitCo
         // An operation's operands carry the spans of the source they were
         // read from, so SIR's error is worded and labelled exactly as the
         // tree-walker's, with nothing to replay.
-        Some(ir) => sky_ir_interp::run(&ir, &mut out).map_err(|e| e.to_diagnostic()),
+        Some(ir) => {
+            let cfg = sky_ir_interp::ParConfig::with_threads(
+                threads.unwrap_or_else(sky_ir_interp::ParConfig::default_threads),
+            );
+            sky_ir_interp::run_with(&ir, &mut out, &cfg).map_err(|e| e.to_diagnostic())
+        }
         None => tree_walk(module, src, &front.cholesky_solves, checked, &mut out)
             .map_err(|e| e.to_diagnostic()),
     };

@@ -15,7 +15,7 @@ mod repl;
 mod run;
 mod tune;
 
-const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] <file.sky>\n       sky run [--engine=auto|ast|sir] <file.sky>\n       sky repl\n\
+const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] [--threads=N] <file.sky>\n       sky run [--engine=auto|ast|sir] [--threads=N] <file.sky>\n       sky repl\n\
                      sky hw\n\
                      sky tune [--show | --reset] [--budget-ms=<n>] [<kernel>]\n\n\
                      <stage> is `lower`, `final` (the default), or `after:<pass>` for one of\n\
@@ -26,7 +26,11 @@ const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] <file.sk
                      lower yet)\n\
                      `sky hw` prints what this machine can do and what Sky uses it for;\n\
                      `sky tune` measures kernel parameters here and remembers the winners\n\
-                     (`--show` lists them, `--reset` forgets them)";
+                     (`--show` lists them, `--reset` forgets them)\n\
+                     --threads sets how many threads independent work may use (default:\n\
+                     SKY_THREADS, else the machine's cores); 1 is sequential, and the\n\
+                     output is the same for every count. `sky run` uses it on the SIR\n\
+                     engine; `sky check --explain` says what would run in parallel";
 
 /// The `sky` command line.
 ///
@@ -70,7 +74,7 @@ fn main() -> ExitCode {
             check(&opts, &file, &src)
         }
         Some("run") => {
-            let (path, engine) = match parse_run_args(&args[1..]) {
+            let (path, engine, threads) = match parse_run_args(&args[1..]) {
                 Ok(x) => x,
                 Err(msg) => {
                     eprintln!("{USAGE}");
@@ -84,7 +88,7 @@ fn main() -> ExitCode {
                 Ok(x) => x,
                 Err(code) => return code,
             };
-            run::run(&path, &file, &src, engine)
+            run::run(&path, &file, &src, engine, threads)
         }
         Some("repl") => {
             if args.len() != 1 {
@@ -117,14 +121,24 @@ fn main() -> ExitCode {
     }
 }
 
-/// Parses `sky run`'s arguments: one file and at most one
-/// `--engine=ast|sir|auto` (before or after the file, like `check`'s flags).
-/// `Err` is a usage error: the message, if it needs one beyond the usage
-/// text.
-fn parse_run_args(args: &[String]) -> Result<(String, run::Engine), Option<String>> {
-    let (mut path, mut engine) = (None, None);
+/// Parses `--threads=N`: `N` is a whole number from 1 to
+/// `sky_ir::parallel::MAX_THREADS`.
+fn parse_threads(text: &str) -> Result<usize, Option<String>> {
+    sky_ir::parallel::parse_threads(text).map_err(Some)
+}
+
+/// Parses `sky run`'s arguments: one file, at most one
+/// `--engine=ast|sir|auto` and at most one `--threads=N` (before or after the
+/// file, like `check`'s flags). `Err` is a usage error: the message, if it
+/// needs one beyond the usage text.
+fn parse_run_args(args: &[String]) -> Result<(String, run::Engine, Option<usize>), Option<String>> {
+    let (mut path, mut engine, mut threads) = (None, None, None);
     for arg in args {
-        if let Some(text) = arg.strip_prefix("--engine=") {
+        if let Some(text) = arg.strip_prefix("--threads=") {
+            if threads.replace(parse_threads(text)?).is_some() {
+                return Err(None);
+            }
+        } else if let Some(text) = arg.strip_prefix("--engine=") {
             let e = run::Engine::parse(text).ok_or_else(|| {
                 Some(format!(
                     "unknown engine `{}` (use `auto`, `ast` or `sir`)",
@@ -138,7 +152,7 @@ fn parse_run_args(args: &[String]) -> Result<(String, run::Engine), Option<Strin
             return Err(None);
         }
     }
-    Ok((path.ok_or(None)?, engine.unwrap_or_default()))
+    Ok((path.ok_or(None)?, engine.unwrap_or_default(), threads))
 }
 
 /// Opens and reads the entry file for `check` and `run`. One open, then
@@ -165,6 +179,8 @@ struct CheckArgs {
     explain: bool,
     /// `--emit-ir[=<stage>]`.
     emit_ir: Option<ir::Stage>,
+    /// `--threads=N`: the thread count the parallelism notes speak of.
+    threads: Option<usize>,
 }
 
 impl CheckArgs {
@@ -172,7 +188,7 @@ impl CheckArgs {
     /// the file). `Err` is a usage error: the message, if it needs one
     /// beyond the usage text.
     fn parse(args: &[String]) -> Result<CheckArgs, Option<String>> {
-        let (mut path, mut explain, mut emit_ir) = (None, false, None);
+        let (mut path, mut explain, mut emit_ir, mut threads) = (None, false, None, None);
         for arg in args {
             if arg == "--explain" {
                 if std::mem::replace(&mut explain, true) {
@@ -186,6 +202,10 @@ impl CheckArgs {
                 if emit_ir.replace(stage).is_some() {
                     return Err(None);
                 }
+            } else if let Some(text) = arg.strip_prefix("--threads=") {
+                if threads.replace(parse_threads(text)?).is_some() {
+                    return Err(None);
+                }
             } else if arg.starts_with("--") || path.replace(arg.clone()).is_some() {
                 return Err(None);
             }
@@ -195,6 +215,7 @@ impl CheckArgs {
                 path,
                 explain,
                 emit_ir,
+                threads,
             }),
             None => Err(None),
         }
@@ -285,6 +306,8 @@ fn check_source(
         opts.explain,
         opts.emit_ir.is_some(),
         true,
+        opts.threads
+            .unwrap_or_else(sky_ir::parallel::Config::default_threads),
         edition,
     );
     // Pass the source unchanged: spans are byte offsets into it, and the

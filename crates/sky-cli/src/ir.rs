@@ -104,7 +104,8 @@ impl Ready {
 /// runs the default pipeline with verification after every pass.
 ///
 /// `print` keeps the IR text of every stage (for `--emit-ir`); `explain`
-/// turns the passes' explanations into notes.
+/// turns the passes' explanations into notes, and adds what the parallelism
+/// analysis (`sky_ir::parallel`) decided for `threads` threads.
 ///
 /// # The Cholesky note is not shown twice
 ///
@@ -115,7 +116,14 @@ impl Ready {
 /// when it is at a span the checker rewrote. One it finds that the checker
 /// did not (`B = inv(A)` and then `B @ b`, which only the IR sees through)
 /// is shown, in the pass's own words.
-pub fn build(module: &Ast, src: &str, checked: &Checked, print: bool, explain: bool) -> Outcome {
+pub fn build(
+    module: &Ast,
+    src: &str,
+    checked: &Checked,
+    print: bool,
+    explain: bool,
+    threads: usize,
+) -> Outcome {
     let mut ir = match sky_lower::lower(module, src, checked) {
         Ok(ir) => ir,
         Err(e) => {
@@ -142,7 +150,9 @@ pub fn build(module: &Ast, src: &str, checked: &Checked, print: bool, explain: b
         Err(e) => return Outcome::Internal(internal(&e)),
     };
     let notes = if explain {
-        explanation_notes(&report, src, &checked.cholesky_solves)
+        let mut notes = explanation_notes(&report, src, &checked.cholesky_solves);
+        notes.extend(parallel_notes(&ir, threads));
+        notes
     } else {
         Vec::new()
     };
@@ -228,6 +238,22 @@ fn note(x: &sky_ir::Explanation) -> Diagnostic {
         .with_note(format!("applied by the `{}` pass", x.pass)),
         None => x.to_diagnostic(),
     }
+}
+
+/// What can run in parallel, and what cannot and why, as notes
+/// (`[PAR-001]`, `[PAR-002]`, `[PAR-003]`).
+fn parallel_notes(ir: &sky_ir::Module, threads: usize) -> Vec<Diagnostic> {
+    let cfg = sky_ir::parallel::Config::with_threads(threads);
+    sky_ir::parallel::explain(ir, &cfg)
+        .into_iter()
+        .map(|n| {
+            let mut d = Diagnostic::note(format!("[{}] {}", n.rule, n.headline), n.span);
+            for reason in n.because {
+                d = d.with_note(format!("because {reason}"));
+            }
+            d
+        })
+        .collect()
 }
 
 /// The pass explanations as notes, in pipeline order (the caller sorts

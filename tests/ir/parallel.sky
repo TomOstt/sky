@@ -1,0 +1,24 @@
+# Work that can run on several threads without changing anything a program
+# can observe (`sky check --explain` with SKY_THREADS=8): a big elementwise
+# kernel, two independent calls of an expensive pure function, and a call
+# that prints, which keeps its place.
+def work(n):
+    total = 0
+    i = 0
+    while i < n:
+        total = total + sqrt(i + 1) / (i + 1)
+        i = i + 1
+    return total
+
+def noisy(n):
+    print(n)
+    return n * 2
+
+a = zeros(1000000)
+b = zeros(1000000)
+d = (a + b) * 2 - a
+x = work(1000)
+y = work(2000)
+p = noisy(1)
+q = work(3000)
+print(d[10], x + y, p, q)

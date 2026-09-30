@@ -59,7 +59,7 @@ impl FrontEnd {
 /// first edition-dependent rule has one place to read it, and no phase can
 /// forget to ask.
 pub fn analyze(src: &str, env: Env, explain: bool, edition: Edition) -> FrontEnd {
-    analyze_ir(src, env, explain, false, false, edition)
+    analyze_ir(src, env, explain, false, false, 1, edition)
 }
 
 /// [`analyze`], and with `explain` or `emit_ir`, also lowers a program the
@@ -68,6 +68,9 @@ pub fn analyze(src: &str, env: Env, explain: bool, edition: Edition) -> FrontEnd
 /// notes in source order; with `emit_ir`, [`FrontEnd::ir`] keeps the text of
 /// every stage. A program that cannot be lowered is not an error here:
 /// [`FrontEnd::ir`] says why.
+///
+/// `threads` is the thread count the parallelism notes of `explain` speak
+/// of (`--threads`, `SKY_THREADS`).
 ///
 /// With `budgets` (`sky check`), the `accuracy` statements are checked by the
 /// roundoff analysis (see [`crate::accuracy`]), and with `explain` too the
@@ -78,6 +81,7 @@ pub fn analyze_ir(
     explain: bool,
     emit_ir: bool,
     budgets: bool,
+    threads: usize,
     _edition: Edition,
 ) -> FrontEnd {
     let mut ir_out = None;
@@ -97,7 +101,7 @@ pub fn analyze_ir(
                 // checker never reports on a statement the parser dropped.
                 let checked = sky_types::check_module_with(&module, src, env);
                 if (explain || emit_ir) && !checked.has_errors() {
-                    let outcome = ir::build(&module, src, &checked, emit_ir, explain);
+                    let outcome = ir::build(&module, src, &checked, emit_ir, explain, threads);
                     match &outcome {
                         ir::Outcome::Ready(ready) => pass_notes = ready.notes.clone(),
                         // Only `--emit-ir` says so: `--explain` alone stays

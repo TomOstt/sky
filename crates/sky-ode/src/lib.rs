@@ -53,13 +53,12 @@
 //! deterministic: the same inputs give bit-identical outputs.
 
 #![forbid(unsafe_code)]
-// Until automatic selection lands (next commit), some helpers are unused.
-#![allow(dead_code)]
 // Integrators index several parallel state and stage vectors with one loop
 // variable (`y[i] + h * k1[i]`); iterator chains over four slices at once
 // read worse than the formulas in the papers they implement.
 #![allow(clippy::needless_range_loop)]
 
+mod auto;
 mod dopri;
 mod fixed;
 mod linalg;
@@ -384,17 +383,8 @@ pub fn solve(
 
     let (method, t, y, explanation) = match opts.method {
         Method::Auto => {
-            // Automatic selection follows in the next commit; until then
-            // the general-purpose adaptive method.
-            check_tolerances(opts)?;
-            let y = match dopri::dopri5(&mut run, t0, y0.to_vec(), None, false)? {
-                dopri::Outcome::Done { y, .. } => y,
-                dopri::Outcome::Stiff(_) => unreachable!("stiffness detection is off"),
-            };
-            let e =
-                "automatic method selection is not available yet, so Dormand-Prince 5(4) was used"
-                    .to_string();
-            (Method::DormandPrince, t1, y, vec![e])
+            let c = auto::auto(&mut run, second_order, y0)?;
+            (c.method, c.t, c.y, c.explanation)
         }
         Method::Rk4 { step } => {
             check_step(step)?;

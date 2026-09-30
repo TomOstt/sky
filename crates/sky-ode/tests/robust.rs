@@ -420,7 +420,7 @@ fn solves_are_deterministic() {
                 solve(&mut Kepler, 0.0, 60.0, &kepler_start(0.5), &o).unwrap()
             }
             1 => {
-                let mut o = with(Method::Rodas3);
+                let mut o = with(Method::Auto);
                 o.outputs = vec![40.0, 1e5];
                 solve(&mut Robertson, 0.0, 1e8, &[1.0, 0.0, 0.0], &o).unwrap()
             }
@@ -429,7 +429,7 @@ fn solves_are_deterministic() {
                 0.0,
                 800.0,
                 &[2.0, 0.0],
-                &with(Method::Rodas3),
+                &with(Method::Auto),
             )
             .unwrap(),
             _ => {
@@ -457,4 +457,65 @@ fn the_options_are_not_consumed_or_changed_by_a_solve() {
     let a = solve(&mut Kepler, 0.0, 20.0, &kepler_start(0.5), &o).unwrap();
     let b = solve(&mut Kepler, 0.0, 20.0, &kepler_start(0.5), &o).unwrap();
     assert_eq!(a, b);
+}
+
+#[test]
+fn a_wrong_second_order_declaration_is_caught_at_the_start() {
+    // A damped oscillator: the acceleration depends on the velocity, so it
+    // is not `q'' = a(t, q)` and a symplectic method would silently give a
+    // wrong (undamped-looking) answer.
+    struct Damped;
+    impl System for Damped {
+        fn dim(&self) -> usize {
+            2
+        }
+        fn rhs(&mut self, _t: f64, y: &[f64], d: &mut [f64]) -> Result<(), String> {
+            d[0] = y[1];
+            d[1] = -y[0] - 0.1 * y[1];
+            Ok(())
+        }
+        fn structure(&self) -> Structure {
+            Structure::SecondOrder { n: 1 }
+        }
+    }
+    // `q'` is not the velocity (a scaled coordinate, say).
+    struct Scaled;
+    impl System for Scaled {
+        fn dim(&self) -> usize {
+            2
+        }
+        fn rhs(&mut self, _t: f64, y: &[f64], d: &mut [f64]) -> Result<(), String> {
+            d[0] = 2.0 * y[1];
+            d[1] = -y[0];
+            Ok(())
+        }
+        fn structure(&self) -> Structure {
+            Structure::SecondOrder { n: 1 }
+        }
+    }
+    let conserved = || {
+        vec![Conserved {
+            name: "energy".into(),
+            value: Box::new(|_, y: &[f64]| 0.5 * (y[0] * y[0] + y[1] * y[1])),
+            max_drift: None,
+        }]
+    };
+    for m in [
+        Method::Auto,
+        Method::VelocityVerlet { step: 0.1 },
+        Method::Yoshida4 { step: 0.1 },
+    ] {
+        let mut o = with(m);
+        o.conserved = conserved();
+        let msg = bad(solve(&mut Damped, 0.0, 1.0, &[1.0, 1.0], &o));
+        assert!(msg.contains("depends on the velocity"), "{m:?}: {msg}");
+        let mut o = with(m);
+        o.conserved = conserved();
+        let msg = bad(solve(&mut Scaled, 0.0, 1.0, &[1.0, 1.0], &o));
+        assert!(msg.contains("must be the velocity"), "{m:?}: {msg}");
+    }
+    // Without energy monitoring, `Auto` never uses the claim: a fine
+    // general system.
+    let s = solve(&mut Damped, 0.0, 1.0, &[1.0, 1.0], &with(Method::Auto)).unwrap();
+    assert_eq!(s.method, Method::DormandPrince);
 }

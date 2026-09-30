@@ -3,8 +3,8 @@ sir edition 2026
 fn @<main>() -> () effects(io, fail) @ 0..314 {
   %A = input "A" : num[1; (3, 3); {Symmetric, PositiveDefinite}] @ 235..267
   %b = input "b" : num[1; (3)] @ 268..280
-  %B = inverse %A : num[1; (3, 3); {Symmetric, PositiveDefinite}] @ 285..291
-  %x = matmul %B, %b : num[1; (3)] @ 296..301
+  %B = inverse %A : num[1; (3, 3); {Symmetric, PositiveDefinite}] @ 285..291 (289..290)
+  %x = matmul %B, %b : num[1; (3)] @ 296..301 (296..297, 300..301)
   print %x, %B @ 302..313
   return @ 0..314
 }

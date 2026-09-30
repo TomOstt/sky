@@ -7,7 +7,7 @@ fn @<main>() -> () effects(io, fail) @ 0..292 {
   %b = input "b" : num[1; (3)] @ 191..203
   %a = const.float 6 : num[1; ()] @ 208..213
   print %a, %x, %t @ 249..263
-  %sol = solve[cholesky] %A, %b : num[1; (3)] @ 270..280
+  %sol = solve[cholesky] %A, %b : num[1; (3)] @ 270..280 (270..271, 279..280)
   print %sol @ 281..291
   return @ 0..292
 }

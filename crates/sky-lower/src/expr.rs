@@ -51,7 +51,7 @@ impl Lower<'_> {
             ExprKind::Inverse { operand, .. } => {
                 let a = self.expr(operand)?;
                 let ty = self.ty_of(e)?;
-                Ok(self.op1(OpKind::Inverse, vec![a], ty, e.span))
+                Ok(self.op1s(OpKind::Inverse, vec![a], vec![operand.span], ty, e.span))
             }
             ExprKind::Transpose { operand, .. } => {
                 let a = self.expr(operand)?;
@@ -70,7 +70,7 @@ impl Lower<'_> {
                 } else {
                     self.ty_of(e)?
                 };
-                self.binary_with(*op, a, rhs, ty, e.span)
+                self.binary_with(*op, (a, lhs.span), rhs, ty, e.span)
             }
             ExprKind::BoolOp { op, operands, .. } => self.bool_op(e.span, *op, operands),
             ExprKind::Call { callee, args } => self.call(e, callee, args),
@@ -171,7 +171,7 @@ impl Lower<'_> {
             UnaryOp::Neg => {
                 let a = self.expr(operand)?;
                 let ty = self.ty_of(e)?;
-                Ok(self.op1(OpKind::Neg, vec![a], ty, e.span))
+                Ok(self.op1s(OpKind::Neg, vec![a], vec![operand.span], ty, e.span))
             }
             // `+x` is `x`, unless the checker could not type `x`: then `sky
             // run` checks at run time that it is a number or an array, and
@@ -199,14 +199,20 @@ impl Lower<'_> {
     pub(crate) fn binary_with(
         &mut self,
         op: BinaryOp,
-        a: ValueId,
+        (a, lspan): (ValueId, Span),
         rhs: &Expr,
         ty: Type,
         span: Span,
     ) -> R<ValueId> {
         if op == BinaryOp::Pow {
             if let Some(exponent) = const_exponent(self.src, rhs) {
-                return Ok(self.op1(OpKind::PowConst { exponent }, vec![a], ty, span));
+                return Ok(self.op1s(
+                    OpKind::PowConst { exponent },
+                    vec![a],
+                    vec![lspan],
+                    ty,
+                    span,
+                ));
             }
         }
         let b = self.expr(rhs)?;
@@ -222,7 +228,7 @@ impl Lower<'_> {
                 None => return self.err("internal error: unknown binary operator", span),
             },
         };
-        Ok(self.op1(kind, vec![a, b], ty, span))
+        Ok(self.op1s(kind, vec![a, b], vec![lspan, rhs.span], ty, span))
     }
 
     /// `a and b and c` is a running value `t`, updated one operand at a time:
@@ -396,7 +402,7 @@ impl Lower<'_> {
                         let a = self.expr(arg)?;
                         let a = self.expect_number(NumberContext::Inv, arg, a);
                         let ty = self.ty_of(e)?;
-                        return Ok(self.op1(OpKind::Inverse, vec![a], ty, e.span));
+                        return Ok(self.op1s(OpKind::Inverse, vec![a], vec![arg.span], ty, e.span));
                     }
                     ("transpose", [arg]) => {
                         let a = self.expr(arg)?;
@@ -426,7 +432,8 @@ impl Lower<'_> {
                                 vals.push(self.expr(a)?);
                             }
                             let ty = self.ty_of(e)?;
-                            return Ok(self.op1(OpKind::Math(f), vals, ty, e.span));
+                            let spans = args.iter().map(|a| a.span).collect();
+                            return Ok(self.op1s(OpKind::Math(f), vals, spans, ty, e.span));
                         }
                     }
                 },

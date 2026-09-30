@@ -184,6 +184,21 @@ impl<'a> Lower<'a> {
         self.st.b.op1(kind, operands, ty, span)
     }
 
+    /// [`Self::op1`] with the source span of each operand at its use (the
+    /// spans of the expressions that produced `operands`, in order), which
+    /// the SIR interpreter's diagnostics point at, as `sky run`'s do (`slice`
+    /// adds the span of each axis's item; the verifier checks the count).
+    pub(crate) fn op1s(
+        &mut self,
+        kind: OpKind,
+        operands: Vec<ValueId>,
+        operand_spans: Vec<Span>,
+        ty: Type,
+        span: Span,
+    ) -> ValueId {
+        self.st.b.op1_spans(kind, operands, operand_spans, ty, span)
+    }
+
     pub(crate) fn const_bool(&mut self, value: bool, span: Span) -> ValueId {
         self.op1(OpKind::ConstBool(value), Vec::new(), Type::Bool, span)
     }

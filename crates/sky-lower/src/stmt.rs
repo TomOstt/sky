@@ -216,7 +216,7 @@ impl Lower<'_> {
                 op,
                 value,
                 ..
-            } => self.compound(s.span, id, *op, value),
+            } => self.compound(id, *op, value),
             StmtKind::CompoundAssign { .. } => Err(write_through(s.span)),
             StmtKind::If {
                 branches,
@@ -275,7 +275,7 @@ impl Lower<'_> {
     }
 
     /// `x op= value`: `x op value`, rebound to `x`.
-    fn compound(&mut self, span: Span, id: &Ident, op: CompoundOp, value: &Expr) -> R<()> {
+    fn compound(&mut self, id: &Ident, op: CompoundOp, value: &Expr) -> R<()> {
         let name = self.text(id.span);
         let cur = match self.st.scope.get(name) {
             Some(v) => *v,
@@ -302,7 +302,10 @@ impl Lower<'_> {
             Some(t @ (Ty::Value(_) | Ty::Bool)) => crate::ctx::map_ty(&t).unwrap_or(Type::Unknown),
             _ => self.st.b.ty(cur).clone(),
         };
-        let v = self.binary_with(op.binary(), cur, value, ty, span)?;
+        // The tree-walker's spans: `x op= v` is `x` and `v` joined, with
+        // `x` and `v` as the operands.
+        let whole = id.span.join(value.span);
+        let v = self.binary_with(op.binary(), (cur, id.span), value, ty, whole)?;
         self.bind(name, v);
         Ok(())
     }

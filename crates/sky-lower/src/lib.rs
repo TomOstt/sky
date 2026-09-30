@@ -88,6 +88,15 @@
 //!   It fails with `sky run`'s message on `sky run`'s span, and it covers the
 //!   operand that is only yielded (the last of an `and`/`or`), which no `if`
 //!   tests. A typed Bool gets none.
+//! * The operand of a unary `+`, and the argument of `inv(...)`, that the
+//!   checker could not type get an `expect.number[pos|inv]` likewise (`+x`
+//!   is otherwise just `x`; `inv(x)` is worded with its own spelling).
+//! * An operation that reads operands records where, in the source
+//!   (`OpData::operand_spans`), with the spans the tree-walker uses for the
+//!   same operands: `b` of `a / b`, `x` of `-x`, `i` of `v[i]` (and the
+//!   whole `1:3` item of a slice), the entries of an array literal, the
+//!   arguments of a math function. The SIR interpreter labels its errors
+//!   with them, so they are the tree-walker's.
 //! * `for i in range(a, b, s)` is that `while` over a hidden carried index
 //!   (`<i1>`, `<i2>`, ...) that the body's first operations copy into `i`
 //!   and advance; see `for_loop.rs`. `for x in v` over an array is a

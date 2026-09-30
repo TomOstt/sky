@@ -14,6 +14,6 @@ fn @<main>() -> () effects(io, fail, call) @ 0..455 {
 
 fn @halve(%x: num[L; ()]) -> (num[L; ()]) effects(fail) @ 272..330 {
   %1 = const.float 0.5 : num[1; ()] @ 327..330
-  %2 = mul %x, %1 : num[L; ()] @ 323..330
+  %2 = mul %x, %1 : num[L; ()] @ 323..330 (323..324, 327..330)
   return %2 @ 272..330
 }

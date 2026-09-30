@@ -42,12 +42,15 @@ pub mod algo;
 mod array;
 mod builtins;
 mod cancellation;
+pub mod chain;
+mod chain_check;
 pub mod check;
 pub mod constant;
 mod contracts;
 pub mod cost;
 mod derivative;
 mod display;
+pub mod flops;
 mod flow;
 mod for_loop;
 pub mod linalg;
@@ -67,6 +70,7 @@ mod uncertain;
 mod vecfn;
 
 pub use algo::{Algorithm, Side, SolveMethod};
+pub use chain::{ChainPlan, LeafForm, Node, PlanFactor};
 pub use check::{
     check_module, check_module_with, const_exponent, Checked, Env, RewriteSite, Ty, ValueTy,
     MAX_STORED_REWRITES,

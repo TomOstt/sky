@@ -64,6 +64,7 @@ use sky_diag::{Diagnostic, Severity, Span};
 use sky_units::{lookup, lookup_constant, suggest_unit, Dimension, Rational, CONSTANTS};
 
 use crate::array::LiteralProof;
+use crate::chain::ChainPlan;
 use crate::flow::{FnCtx, FuncSig, LoopFrame};
 use crate::numerics::NumState;
 use crate::ode::OdeTy;
@@ -344,6 +345,16 @@ pub struct Checked {
     /// rewrite, so every site must be in it. Checking the same code twice
     /// (a loop body) adds the same span once.
     pub cholesky_solves: HashSet<Span>,
+    /// The plan of every `@` chain the checker rewrote (see
+    /// [`crate::chain`]), keyed by the span of the whole chain expression.
+    /// Like [`Checked::cholesky_solves`] it is what the executors read to
+    /// honour the rewrite, so it is not capped.
+    pub chains: HashMap<Span, Arc<ChainPlan>>,
+    /// The `sky check --explain` note of each planned chain, in source
+    /// order of the walk: at most [`MAX_STORED_REWRITES`].
+    pub chain_notes: Vec<Diagnostic>,
+    /// Chain plans made after [`MAX_STORED_REWRITES`] notes were stored.
+    pub chain_notes_omitted: usize,
     /// The environment after the last statement.
     pub env: Env,
     /// The type of every expression the walk typed, keyed by the
@@ -414,6 +425,9 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         rewrites: Vec::new(),
         rewrites_omitted: 0,
         solves: HashSet::new(),
+        chains: HashMap::new(),
+        chain_notes: Vec::new(),
+        chain_notes_omitted: 0,
         fns: Vec::new(),
         loops: Vec::new(),
         diverged: false,
@@ -435,6 +449,9 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         rewrites: c.rewrites,
         rewrites_omitted: c.rewrites_omitted,
         cholesky_solves: c.solves,
+        chains: c.chains,
+        chain_notes: c.chain_notes.into_iter().map(|(_, d)| d).collect(),
+        chain_notes_omitted: c.chain_notes_omitted,
         env: c.env,
         expr_types: c.expr_types,
         ode_notes: c.ode_notes,
@@ -462,10 +479,16 @@ pub(crate) struct Checker<'s> {
     shadow_reported: Vec<String>,
     pub(crate) env: Env,
     pub(crate) diagnostics: Vec<Diagnostic>,
-    rewrites: Vec<RewriteSite>,
+    pub(crate) rewrites: Vec<RewriteSite>,
     rewrites_omitted: usize,
     /// See [`Checked::cholesky_solves`].
-    solves: HashSet<Span>,
+    pub(crate) solves: HashSet<Span>,
+    /// See [`Checked::chains`].
+    pub(crate) chains: HashMap<Span, Arc<ChainPlan>>,
+    /// See [`Checked::chain_notes`], with the span of the chain each is
+    /// about (so a plan that an outer chain replaces can withdraw it).
+    pub(crate) chain_notes: Vec<(Span, Diagnostic)>,
+    pub(crate) chain_notes_omitted: usize,
     /// The `def`s being checked, innermost last.
     pub(crate) fns: Vec<FnCtx>,
     /// The loops around the current statement within the current
@@ -1456,7 +1479,7 @@ impl<'s> Checker<'s> {
     }
 
     /// `inv(x)` with exactly one argument: the function spelling of `x⁻¹`.
-    fn inv_call<'e>(&self, callee: &Expr, args: &'e [Expr]) -> Option<&'e Expr> {
+    pub(crate) fn inv_call<'e>(&self, callee: &Expr, args: &'e [Expr]) -> Option<&'e Expr> {
         match (&callee.kind, args) {
             (ExprKind::Name(id), [arg])
                 if self.ident(id) == "inv" && self.env.get("inv").is_none() =>
@@ -1667,8 +1690,14 @@ impl<'s> Checker<'s> {
             return Ty::Unknown;
         };
         if let Some((operand, Ty::Value(av))) = a {
+            // A Diagonal or Orthogonal `A` is the chain planner's (a
+            // division, a transpose); the per-site Cholesky rewrite is for
+            // the rest.
+            let closed = av.ty.tags().closure();
+            let structured = closed.contains(Tag::Diagonal) || closed.contains(Tag::Orthogonal);
             if let Some(rewrite) =
                 cholesky_rewrite(MatmulLhs::Inverse(&av.ty), &rv.ty, &self.env.shapes)
+                    .filter(|_| !structured)
             {
                 self.solves.insert(span);
                 if self.rewrites.len() < MAX_STORED_REWRITES {
@@ -1686,7 +1715,10 @@ impl<'s> Checker<'s> {
         }
         let what = format!("`{}`", self.quoted(span));
         match self.with_origin(op_span, what, |u| matmul(u, &lv.ty, &rv.ty)) {
-            Ok(ty) => Ty::value(dim, ty),
+            Ok(ty) => {
+                self.plan_chain_site(span, lhs, rhs);
+                Ty::value(dim, ty)
+            }
             Err(e) => {
                 let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
                 self.error(

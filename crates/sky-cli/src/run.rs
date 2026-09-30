@@ -217,7 +217,10 @@ fn run_source(
     // program it refuses has printed nothing yet.
     let native = match (&sir, engine) {
         (Some(ir), Engine::Native | Engine::Auto) => {
-            match sky_jit::compile_with(ir, mode.kernels()) {
+            // The same thread configuration as the SIR engine's (`--threads`,
+            // `SKY_THREADS`): big kernels run in chunks on the pool.
+            let cfg = par_config(threads);
+            match sky_jit::compile_par(ir, mode.kernels(), sky_jit::Slp::from_env(), &cfg) {
                 Ok(c) => Some(c),
                 Err(e) if engine == Engine::Native => {
                     let span = e.span.unwrap_or(module.span);

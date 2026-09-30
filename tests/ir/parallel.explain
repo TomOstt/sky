@@ -27,6 +27,13 @@ tests/ir/parallel.sky:19:5: note: [PAR-001] this elementwise kernel over 1e6 ele
    = note: because it does not print or call, so no output can change order
    = note: because 3 of its operations can fail (`add`, `mul`, `sub`): if chunks fail, the failing operation that comes first in program order is reported, at its lowest failing element, which is the error a sequential run gives
 
+tests/ir/parallel.sky:19:5: note: [MEM-001] `(a + b) * 2 - a` reuses `a`'s buffer: no allocation for this result
+   |
+19 | d = (a + b) * 2 - a
+   |     ^^^^^^^^^^^^^^^
+   = note: `a` is not used again after this on any path, and has the shape of the result
+   = note: applied by the `lifetimes` analysis of the SIR interpreter
+
 tests/ir/parallel.sky:20:5: note: [PAR-002] these 2 calls are independent (pure): run concurrently on up to 8 threads
    |
 20 | x = work(1000)

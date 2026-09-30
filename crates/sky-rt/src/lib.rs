@@ -215,3 +215,35 @@ fn ignore_sigpipe() {
 
 #[cfg(not(unix))]
 fn ignore_sigpipe() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn meta_round_trips_and_rejects_anything_else() {
+        let meta = Meta {
+            path: "dir/prog.sky".into(),
+            source: "print(\"é\")\n".into(),
+            warnings: "warning: x\n".into(),
+            has_warnings: true,
+        };
+        let bytes = meta.encode();
+        assert_eq!(Meta::decode(&bytes), Some(meta));
+        // Every truncation is refused without a panic.
+        for n in 0..bytes.len() {
+            assert_eq!(Meta::decode(&bytes[..n]), None, "{n}");
+        }
+        assert_eq!(
+            Meta::decode(&[1, 255, 255, 255, 255, 255, 255, 255, 255]),
+            None
+        );
+    }
+
+    #[test]
+    fn a_damaged_image_is_an_error_not_a_crash() {
+        for bytes in [&b""[..], b"SKYIMG", b"not an image at all, but long enough"] {
+            assert!(Image::decode(bytes).is_err());
+        }
+    }
+}

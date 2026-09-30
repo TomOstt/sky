@@ -340,3 +340,52 @@ impl<'a> Reader<'a> {
         Some(i64::from_le_bytes(self.take(8)?.try_into().ok()?))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EMPTY_MAIN: &str = "sir edition 2026\n\nfn @\"<main>\"() -> () {\n  return\n}\n";
+
+    #[test]
+    fn an_image_round_trips() {
+        let dims = [
+            Dimension::from_ints([1, 0, 0, 0, 0, 0, 0]),
+            Dimension::from_ints([2, 1, -2, 0, 0, 0, 0]),
+        ];
+        let sites = [
+            Site { func: 0, op: 3 },
+            Site {
+                func: 1,
+                op: u32::MAX,
+            },
+        ];
+        let bytes = Image::encode(EMPTY_MAIN, &dims, &sites, b"extra");
+        let image = Image::decode(&bytes).expect("decodes");
+        assert_eq!(image.extra, b"extra");
+        assert_eq!(image.program.dims, dims);
+        assert_eq!(image.program.sites.len(), 2);
+        assert_eq!(image.program.sites[1].op, u32::MAX);
+        assert_eq!(
+            sky_ir::print(image.module()),
+            sky_ir::print(&sky_ir::parse(EMPTY_MAIN).unwrap())
+        );
+        // Every truncation is refused, never a panic.
+        for n in 0..bytes.len() {
+            assert!(Image::decode(&bytes[..n]).is_err(), "{n}");
+        }
+        // A runtime library from another version refuses the image.
+        let mut other = bytes.clone();
+        other[7] ^= 1;
+        assert!(Image::decode(&other).is_err());
+    }
+
+    #[test]
+    fn an_unknown_target_is_an_error_not_a_panic() {
+        let m = sky_ir::parse(EMPTY_MAIN).unwrap();
+        let e = compile_object(&m, Some("pdp11-none"), b"")
+            .err()
+            .expect("refused");
+        assert!(e.message.contains("pdp11"), "{}", e.message);
+    }
+}

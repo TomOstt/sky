@@ -480,6 +480,144 @@ fn random_bodies_agree_with_the_reference_bit_for_bit() {
     assert!(failing >= 100, "only {failing} runs failed");
 }
 
+/// The bodies of the entry-by-entry operations: a product and a quotient of
+/// two arrays' entries, a chain with `sqrt`, and the math functions of one
+/// and of two arrays (or of an array and a number).
+const ENTRYWISE: [&str; 8] = [
+    "      %xx = mul %x, %x : num[1; ()]
+      %yy = mul %y, %y : num[1; ()]
+      %q = add %xx, %yy : num[1; ()]
+      %rt = math.sqrt %q : num[1; ()]
+      %c = mul %rt, %s : num[1; ()]
+      %d = add %c, %x : num[1; ()]
+      yield %d",
+    "      %t = div %x, %y : num[1; ()]
+      %u = mul %t, %y : num[1; ()]
+      yield %u",
+    "      %t = math.atan2 %x, %y : num[1; ()]
+      %u = math.hypot %t, %s : num[1; ()]
+      yield %u",
+    "      %t = math.min %x, %s : num[1; ()]
+      %u = math.max %y, %t : num[1; ()]
+      yield %u",
+    "      %t = math.floor %x : num[1; ()]
+      %u = math.round %y : num[1; ()]
+      %v = math.ceil %s : num[1; ()]
+      %w = sub %t, %u : num[1; ()]
+      %z = math.sign %w : num[1; ()]
+      %e = add %z, %v : num[1; ()]
+      yield %e",
+    "      %t = math.exp %x : num[1; ()]
+      %u = math.log %y : num[1; ()]
+      %v = div %t, %u : num[1; ()]
+      yield %v",
+    "      %z = sub %y, %y : num[1; ()]
+      %t = div %x, %z : num[1; ()]
+      %u = math.abs %t : num[1; ()]
+      yield %u",
+    "      %t = math.sqrt %x : num[1; ()]
+      %u = math.log %y : num[1; ()]
+      %v = math.sin %s : num[1; ()]
+      %w = mul %t, %v : num[1; ()]
+      %e = add %w, %u : num[1; ()]
+      yield %e",
+];
+
+#[test]
+fn entrywise_bodies_agree_on_long_arrays_and_every_tail() {
+    let bad = [
+        1e200, -1e200, 0.0, -0.0, -1.0, 1e-320, 1000.0, 1e308, 5e-324,
+    ];
+    for (k, body) in ENTRYWISE.iter().enumerate() {
+        for options in [
+            Options::default(),
+            Options {
+                simd: false,
+                ..Options::default()
+            },
+            Options {
+                unroll: 3,
+                fma_check: false,
+                ..Options::default()
+            },
+        ] {
+            let kernel = compile(body, options);
+            let mut rng = Rng(100 + k as u64);
+            // Lengths around the unroll (8) and a kernel's 512 threshold.
+            for n in [17usize, 25, 65, 511, 513, 1025] {
+                let xs: Vec<f64> = (0..n)
+                    .map(|_| 0.25 + (rng.below(64) as f64) * 0.125)
+                    .collect();
+                let ys: Vec<f64> = (0..n)
+                    .map(|_| 0.5 + (rng.below(64) as f64) * 0.25)
+                    .collect();
+                let s = 0.75 + rng.below(4) as f64;
+                let what = format!("body {k} {options:?} n={n}");
+                agree(&kernel, &xs, &ys, s, &what);
+                // One bad entry at the start, in a tail, in the middle, at the
+                // end; in either array, and in the scalar.
+                for p in [0, n / 2, n - 2, n - 1] {
+                    let b = bad[(p + n + k) % bad.len()];
+                    let (mut x2, mut y2) = (xs.clone(), ys.clone());
+                    if (p + k) % 2 == 0 {
+                        x2[p] = b;
+                    } else {
+                        y2[p] = b;
+                    }
+                    agree(&kernel, &x2, &y2, s, &format!("{what} p={p} bad={b:e}"));
+                    // Two bad entries, so the earliest operation has to be told
+                    // from the lowest element.
+                    x2[n - 1] = -1.0;
+                    y2[0] = 0.0;
+                    agree(&kernel, &x2, &y2, s, &format!("{what} p={p} both"));
+                }
+                agree(&kernel, &xs, &ys, bad[(n + k) % bad.len()], &what);
+            }
+        }
+    }
+}
+
+#[test]
+fn the_earliest_failing_math_operation_is_reported_at_any_length() {
+    // `sqrt` (span 10..15) fails only at the last entry, `log` (20..25) at
+    // the first: sqrt's error is the unfused chain's.
+    let kernel = compile(
+        "      %t = math.sqrt %x : num[1; ()] @ 10..15 (10..11)
+      %u = math.log %y : num[1; ()] @ 20..25 (20..21)
+      %v = add %t, %u : num[1; ()] @ 30..35 (30..31, 32..33)
+      yield %v",
+        Options::default(),
+    );
+    for n in [2usize, 8, 9, 100, 513, 2000] {
+        let mut xs = vec![4.0; n];
+        let mut ys = vec![1.0; n];
+        xs[n - 1] = -1.0;
+        ys[0] = 0.0;
+        let mut out = vec![0.0; n];
+        let e = kernel
+            .run(
+                &[Input::Array(&xs), Input::Array(&ys), Input::Scalar(0.0)],
+                &mut out,
+            )
+            .unwrap_err();
+        let d = e.to_diagnostic();
+        assert_eq!(d.primary.span, Span::new(10, 15), "n={n} {d:?}");
+        assert!(d.message.contains("`sqrt` of a negative number"), "{d:?}");
+        // Without the sqrt failure the log's lowest entry is the error.
+        xs[n - 1] = 4.0;
+        ys[n - 1] = -1.0;
+        let e = kernel
+            .run(
+                &[Input::Array(&xs), Input::Array(&ys), Input::Scalar(0.0)],
+                &mut out,
+            )
+            .unwrap_err();
+        let d = e.to_diagnostic();
+        assert_eq!(d.primary.span, Span::new(20, 25), "n={n}");
+        assert!(d.message.contains("`log` of zero"), "{d:?}");
+    }
+}
+
 #[test]
 fn every_math_function_agrees_on_awkward_arguments() {
     let args = [

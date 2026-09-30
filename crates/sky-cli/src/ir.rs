@@ -210,6 +210,15 @@ fn internal(e: &PassError) -> String {
 /// same whichever of the two reports it; everything else uses the generic
 /// rendering.
 fn note(x: &sky_ir::Explanation) -> Diagnostic {
+    // A discharged contract reads "this `requires` always holds".
+    if let Some(headline) = sky_opt::contract_headline(x.rule, &x.before) {
+        let mut d = Diagnostic::note(headline, x.span)
+            .with_note(format!("applied by the `{}` pass", x.pass));
+        for reason in &x.because {
+            d = d.with_note(format!("because {reason}"));
+        }
+        return d;
+    }
     match sky_opt::cholesky_text(x) {
         Some(text) => Diagnostic::note(
             format!("`{}` is rewritten to a Cholesky solve", x.before),

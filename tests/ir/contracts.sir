@@ -1,0 +1,42 @@
+sir edition 2026
+
+fn @<main>() -> () effects(io, fail, call) @ 0..401 {
+  %0 = const.float 20 : num[L; ()] @ 278..282
+  %1 = call @fall_time(%0) : num[T; ()] @ 268..283
+  %2 = const.float 5 : num[L; ()] @ 296..299
+  %3 = call @fall_time(%2) : num[T; ()] @ 286..300
+  %t = add %1, %3 : num[T; ()] @ 268..300
+  %5 = const.float 0 : num[T; ()] @ 312..315
+  %6 = cmp.gt %t, %5 : bool @ 308..315
+  assert[assert] "t > 0 s" msg "time passes" names("t") %6, %t @ 308..315
+  %7 = const.float 3 : num[L; ()] @ 358..361
+  %8 = const.float 2 : num[L; ()] @ 363..366
+  %k = call @ratio(%7, %8) : num[L; ()] @ 352..367
+  %10 = const.float 1 : num[L; ()] @ 395..398
+  %11 = add %k, %10 : num[L; ()] @ 391..398
+  %12 = call @open_ended(%11) : num[L; ()] @ 380..399
+  print %t, %k, %12 @ 368..400
+  return @ 0..401
+}
+
+fn @fall_time(%h: num[L; ()]) -> (num[T; ()]) effects(fail) @ 0..101 {
+  %1 = const.float 2 : num[1; ()] @ 89..90
+  %2 = mul %1, %h : num[L; ()] @ 89..94
+  %3 = const.float 9.80665 : num[L·T⁻²; ()] @ 97..100
+  %4 = div %2, %3 : num[T²; ()] @ 89..100
+  %5 = math.sqrt %4 : num[T; ()] @ 84..101
+  return %5 @ 0..101
+}
+
+fn @ratio(%a: num[L; ()], %b: num[L; ()]) -> (num[L; ()]) effects(fail) @ 103..200 {
+  %2 = mul %a, %a : num[L²; ()] @ 191..196
+  %3 = div %2, %b : num[L; ()] @ 191..200
+  return %3 @ 103..200
+}
+
+fn @open_ended(%x: num[L; ()]) -> (num[L; ()]) effects(fail) @ 202..262 {
+  %1 = const.float 1 : num[L; ()] @ 246..249
+  %2 = cmp.gt %x, %1 : bool @ 242..249
+  assert[requires] "x > 1 m" fn "open_ended" names("x") %2, %x @ 242..249
+  return %x @ 202..262
+}

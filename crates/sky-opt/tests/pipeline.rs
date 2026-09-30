@@ -1,4 +1,4 @@
-//! The default pipeline (`fold`, `egraph`, `dce`, `fuse`, `cholesky`) must not
+//! The default pipeline (`fold`, `egraph`, `contracts`, `dce`, `fuse`, `cholesky`) must not
 //! change what a program does: lower it, run it in the reference
 //! interpreter, run the pipeline (verified after every pass), run it again,
 //! and the two runs must agree byte for byte on stdout and on the error (the
@@ -500,18 +500,22 @@ fn operations_that_can_still_fail_are_kept_and_keep_failing() {
 // ----- the pipeline and its adapters -----
 
 #[test]
-fn the_default_pipeline_runs_the_five_passes_in_order() {
+fn the_default_pipeline_runs_the_six_passes_in_order() {
     let mut m = sky_lower::lower_source("x = 2 * 3\nprint(x)\n").unwrap();
     let report = default_pipeline().verify_each(true).run(&mut m).unwrap();
     let names: Vec<&str> = report.ran.iter().map(|(n, _)| *n).collect();
-    assert_eq!(names, ["fold", "egraph", "dce", "fuse", "cholesky"]);
+    assert_eq!(
+        names,
+        ["fold", "egraph", "contracts", "dce", "fuse", "cholesky"]
+    );
     assert_eq!(names, DEFAULT_PASSES);
     // fold changed the module (`2 * 3`), dce removed the operands.
     assert!(report.ran[0].1.is_yes());
     assert!(!report.ran[1].1.is_yes());
-    assert!(report.ran[2].1.is_yes());
-    assert!(!report.ran[3].1.is_yes());
+    assert!(!report.ran[2].1.is_yes());
+    assert!(report.ran[3].1.is_yes());
     assert!(!report.ran[4].1.is_yes());
+    assert!(!report.ran[5].1.is_yes());
     // A second run finds nothing left to do.
     let again = default_pipeline().verify_each(true).run(&mut m).unwrap();
     assert!(again.ran.iter().all(|(_, c)| !c.is_yes()), "{again:?}");

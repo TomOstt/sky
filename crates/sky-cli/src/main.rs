@@ -13,7 +13,7 @@ mod run;
 
 const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] <file.sky>\n       sky run [--engine=auto|ast|sir] <file.sky>\n       sky repl\n\n\
                      <stage> is `lower`, `final` (the default), or `after:<pass>` for one of\n\
-                     fold, egraph, dce, cholesky\n\
+                     fold, egraph, contracts, dce, fuse, cholesky\n\
                      --engine picks how `sky run` executes: `ast` (the tree-walking\n\
                      interpreter, the default), `sir` (lower to SIR, run the optimized IR),\n\
                      or `auto` (SIR, falling back to the tree-walker for programs SIR cannot\n\

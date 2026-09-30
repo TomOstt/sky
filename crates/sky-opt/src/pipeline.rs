@@ -16,10 +16,15 @@
 //! 2. `egraph`: e-graph rewriting under the `Reproducible` contract, which
 //!    enables only exact and conditional rules (`@fast` rules are never on
 //!    by default);
-//! 3. `dce`: removes dead pure operations, and says so when named
+//! 3. `contracts`: removes an `assert`, `requires` or `ensures` that the
+//!    exactness analysis proves true (from constants, and from the
+//!    arguments of every call of the function), and says so. It runs after
+//!    the e-graph, so it sees the simplified conditions, and before `dce`,
+//!    which then removes the comparison the check leaves unused;
+//! 4. `dce`: removes dead pure operations, and says so when named
 //!    (user-written) values disappear. It runs after the e-graph, which
 //!    leaves the operations it replaced behind;
-//! 4. `fuse`: trees of elementwise array operations become `fused` kernels.
+//! 5. `fuse`: trees of elementwise array operations become `fused` kernels.
 //!    It runs after `dce`, because a dead operation left by the e-graph
 //!    would count as a second use of its operands and keep a temporary
 //!    alive, and after the e-graph, because a `fused` body is opaque to it
@@ -27,7 +32,7 @@
 //!    runs before `cholesky` only by convention: they touch different
 //!    operations, and `cholesky`'s result must stay last so it is never
 //!    rewritten.
-//! 5. `cholesky`: `A⁻¹ @ b` with a PositiveDefinite `A` becomes
+//! 6. `cholesky`: `A⁻¹ @ b` with a PositiveDefinite `A` becomes
 //!    `solve[cholesky](A, b)`. It runs last so the earlier passes see the
 //!    program as the user wrote it, and its result is never rewritten.
 //!
@@ -39,11 +44,11 @@ use sky_egraph::EgraphPass;
 use sky_ir::{Changed, Module, Pass, PassCx, PassManager};
 
 use crate::rewrite::Rewrite;
-use crate::{cholesky, dce, fold_with, fuse, FoldMode};
+use crate::{cholesky, contracts, dce, fold_with, fuse, FoldMode};
 
 /// The pass names of [`default_pipeline`], in order: what
 /// `sky check --emit-ir=after:<name>` accepts.
-pub const DEFAULT_PASSES: [&str; 5] = ["fold", "egraph", "dce", "fuse", "cholesky"];
+pub const DEFAULT_PASSES: [&str; 6] = ["fold", "egraph", "contracts", "dce", "fuse", "cholesky"];
 
 /// Runs `f`, explains its records, and says whether the module changed.
 /// (A pass can change a module without a record: dropping an unnamed
@@ -73,6 +78,21 @@ impl Pass for FoldPass {
 
     fn run(&self, m: &mut Module, cx: &mut PassCx) -> Changed {
         run_reporting(m, cx, |m| fold_with(m, self.mode))
+    }
+}
+
+/// Static discharge of contracts ([`contracts`]) as a pass named
+/// `"contracts"`.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct ContractsPass;
+
+impl Pass for ContractsPass {
+    fn name(&self) -> &'static str {
+        "contracts"
+    }
+
+    fn run(&self, m: &mut Module, cx: &mut PassCx) -> Changed {
+        run_reporting(m, cx, contracts)
     }
 }
 
@@ -124,6 +144,7 @@ pub fn default_passes(manager: PassManager) -> PassManager {
     manager
         .with(FoldPass::default())
         .with(EgraphPass::default())
+        .with(ContractsPass)
         .with(DcePass)
         .with(FusePass)
         .with(CholeskyPass)

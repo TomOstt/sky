@@ -9,6 +9,7 @@ use sky_diag::{Diagnostic, Span};
 
 use crate::chain::{
     chain_factors, nested_chain_spans, plan_chain, ChainDecision, ChainFactor, InverseFactor,
+    CHAIN_RULE,
 };
 use crate::check::{strip_parens, Checker, Ty, MAX_STORED_REWRITES};
 use crate::flops::grouped;
@@ -94,7 +95,11 @@ impl Checker<'_> {
     /// The `--explain` note for a planned chain.
     fn chain_note(&self, span: Span, d: &ChainDecision, factors: &[ChainFactor]) -> Diagnostic {
         let written = self.quoted(span);
-        let mut note = Diagnostic::note(format!("`{written}` is rewritten to `{}`", d.text), span);
+        let mut note = Diagnostic::note(
+            format!("[{CHAIN_RULE}] `{written}` is rewritten to `{}`", d.text),
+            span,
+        )
+        .with_note("applied by the checker: the tree-walker and SIR both follow this choice");
         let list: Vec<String> = factors
             .iter()
             .map(|f| match &f.inverse {
@@ -102,7 +107,7 @@ impl Checker<'_> {
                 None => format!("{} is {}", f.atom, f.shape),
             })
             .collect();
-        note = note.with_note(format!("{}", list.join(", ")));
+        note = note.with_note(list.join(", "));
         for reason in &d.reasons {
             note = note.with_note(reason.clone());
         }
@@ -113,7 +118,12 @@ impl Checker<'_> {
         }
         let saving = match (d.before.value(), d.after.value()) {
             (Some(b), Some(a)) if a > 0 && b > a => {
-                format!(", about {:.1}x fewer", b as f64 / a as f64)
+                let ratio = b as f64 / a as f64;
+                if ratio < 10.0 {
+                    format!(", about {ratio:.1}x fewer")
+                } else {
+                    format!(", about {}x fewer", grouped(ratio.round() as u128))
+                }
             }
             _ => String::new(),
         };
@@ -125,9 +135,9 @@ impl Checker<'_> {
             d.after,
             unit(d.after.value()),
         ));
-        let _ = grouped;
-        note.with_note(
-            "not bit-identical to the written form: it rounds differently, within the error bound of any association (spec, \"Algorithm choice\")",
-        )
+        note.with_note(format!(
+            "not bit-identical to the written form: {} (spec, \"Algorithm choice\")",
+            d.rounding.join("; ")
+        ))
     }
 }

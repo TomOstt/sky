@@ -52,6 +52,10 @@ use crate::flops::Flops;
 use crate::shape::{Shape, ShapeDim};
 use crate::tags::{Tag, TagSet};
 
+/// The rule id of a chain rewrite (order, solves, transposes, products of
+/// inverses), as `--explain` shows it.
+pub const CHAIN_RULE: &str = "LA-CHAIN-001";
+
 /// The most factors a chain is planned for; a longer chain is evaluated as
 /// written.
 pub const MAX_CHAIN_FACTORS: usize = 32;
@@ -269,6 +273,9 @@ pub struct ChainDecision {
     /// One line per solve, transposition and product of inverses the plan
     /// uses, saying why.
     pub reasons: Vec<String>,
+    /// How the result can differ from the written form's, one clause for
+    /// each kind of change the plan makes (never empty).
+    pub rounding: Vec<String>,
 }
 
 /// How an `A⁻¹` factor is used when it meets a value.
@@ -622,6 +629,7 @@ pub fn plan_chain(factors: &[ChainFactor]) -> Option<ChainDecision> {
         let reassociated = !plan.root.is_left_associated();
         let text = describe(&plan.root, factors, true);
         let reasons = reasons(&plan.root, factors);
+        let rounding = rounding(&plan.root, reassociated);
         return Some(ChainDecision {
             plan,
             before,
@@ -629,6 +637,7 @@ pub fn plan_chain(factors: &[ChainFactor]) -> Option<ChainDecision> {
             reassociated,
             text,
             reasons,
+            rounding,
         });
     }
     None
@@ -772,6 +781,56 @@ fn reasons(root: &Node, factors: &[ChainFactor]) -> Vec<String> {
         }
     }
     walk(root, factors, &mut out);
+    out
+}
+
+/// How the plan's result can differ from the written form's.
+fn rounding(root: &Node, reassociated: bool) -> Vec<String> {
+    fn kinds(n: &Node, solves: &mut bool, transposes: &mut bool, products: &mut bool) {
+        match n {
+            Node::Leaf { form, .. } => *transposes |= *form == LeafForm::Transposed,
+            Node::Mul { lhs, rhs } => {
+                kinds(lhs, solves, transposes, products);
+                kinds(rhs, solves, transposes, products);
+            }
+            Node::Solve { rhs, .. } => {
+                *solves = true;
+                kinds(rhs, solves, transposes, products);
+            }
+            Node::SolveRight { lhs, .. } => {
+                *solves = true;
+                kinds(lhs, solves, transposes, products);
+            }
+            Node::InvOfProduct { .. } => *products = true,
+        }
+    }
+    let (mut solves, mut transposes, mut products) = (false, false, false);
+    kinds(root, &mut solves, &mut transposes, &mut products);
+    let mut out = Vec::new();
+    if reassociated {
+        out.push(
+            "products in another order round differently, within the error bound of any association"
+                .to_string(),
+        );
+    }
+    if solves {
+        out.push(
+            "solving rounds differently from forming the inverse and multiplying, and is at least as accurate"
+                .to_string(),
+        );
+    }
+    if transposes {
+        out.push(
+            "the transpose is exact, where a computed inverse carries rounding error, so the last digits can differ"
+                .to_string(),
+        );
+    }
+    if products {
+        out.push(
+            "one inverse of a product rounds differently from two inverses and a product"
+                .to_string(),
+        );
+    }
     out
 }
 

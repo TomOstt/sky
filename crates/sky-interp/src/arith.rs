@@ -65,6 +65,13 @@ impl StackMeter {
         }
     }
 
+    /// How many bytes of stack the run has used since the meter started.
+    /// A parallel executor reads it to start work on another thread only
+    /// while the run is far from [`STACK_BUDGET`].
+    pub fn used(&self) -> usize {
+        self.base.abs_diff(stack_position())
+    }
+
     /// An error if the run has used up [`STACK_BUDGET`]: deep recursion
     /// combined with deeply nested code ends here, cleanly, rather than in a
     /// stack overflow.

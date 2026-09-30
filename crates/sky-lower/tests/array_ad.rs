@@ -446,3 +446,185 @@ fn a_derivative_of_a_function_that_returns_a_vector_through_a_helper() {
     let (_, _, d) = differentiate(src, "r", 0, &[scalar(2.0, Dimension::TIME)]);
     assert_eq!(entries(&d).0, [4.0 + 1.0, 2.0]);
 }
+
+// ----- cost and limits -----
+
+/// The number of operations of the gradient function `func` builds, in the
+/// function itself and the functions it calls.
+fn gradient_ops(src: &str, func: &str) -> usize {
+    let mut m = lower_ok(src);
+    let name = sky_ad::differentiate_into(&mut m, func, 0).expect("differentiates");
+    sky_ir::verify(&m).expect("well-typed");
+    let f = m.function(&name).expect("built");
+    let callees: usize = m
+        .functions
+        .iter()
+        .filter(|g| g.name.starts_with(&format!("d{func}/")) && g.name != name)
+        .map(|g| g.ops.len())
+        .sum();
+    f.ops.len() + callees
+}
+
+#[test]
+fn reverse_mode_cost_does_not_grow_with_n() {
+    // A gradient by reverse mode is one forward and one backward sweep, so
+    // the function has the same size for a 3-vector and a 200-vector.
+    let src = |n: usize| {
+        format!(
+            "def U(p: Vector[{n}] m) -> J:\n    d = p - p\n    return 0.5 * 200 N/m * (p @ p) + 1 N/m * (d @ p)\n"
+        )
+    };
+    let (small, large) = (gradient_ops(&src(3), "U"), gradient_ops(&src(200), "U"));
+    assert_eq!(small, large);
+    // The forward fallback is one pass per entry, so it grows with n.
+    let looped = |n: usize| {
+        format!(
+            "def U(p: Vector[{n}] m) -> J:\n    acc = 0 J\n    i = 0\n    while i < {n}:\n        acc = acc + 1 N/m * p[i] * p[i]\n        i += 1\n    return acc\n"
+        )
+    };
+    let (small, large) = (
+        gradient_ops(&looped(3), "U"),
+        gradient_ops(&looped(12), "U"),
+    );
+    assert!(
+        large >= small + 9,
+        "{small} ops for 3 entries, {large} for 12"
+    );
+}
+
+#[test]
+fn a_loop_over_an_array_of_unknown_size_has_no_gradient() {
+    // No tape for reverse mode, and one pass per entry needs the size.
+    let src = "def U(p: Vector[N] m) -> J:\n    acc = 0 J\n    i = 0\n    while i < len(p):\n        acc = acc + 1 N/m * p[i] * p[i]\n        i += 1\n    return acc\n";
+    let mut m = lower_ok(src);
+    let err = sky_ad::differentiate_into(&mut m, "U", 0).expect_err("no gradient");
+    let text = err.to_string();
+    assert!(text.contains("N is not known"), "{text}");
+    assert!(text.contains("reverse mode does not apply"), "{text}");
+}
+
+#[test]
+fn a_gradient_of_an_array_of_unknown_size_by_reverse_mode() {
+    // The size is only known at run time, and reverse mode does not need it.
+    let src =
+        "def U(p: Vector[N] m) -> J:\n    q = p[1:] - p[:2]\n    return 0.5 * 200 N/m * (q @ q)\n";
+    let p = vector(&[0.1, 0.4, -0.2], L);
+    let (m, _, grad) = differentiate(src, "U", 0, &[p.clone()]);
+    let (got, dim) = entries(&grad);
+    assert_eq!(dim, Dimension::FORCE);
+    assert_close(
+        &got,
+        &finite_difference(&m, "U", 0, &[p]),
+        "against differences",
+    );
+}
+
+#[test]
+fn a_cholesky_solve_with_a_matrix_that_depends_on_the_parameter() {
+    // `K⁻¹ @ b` with K declared PositiveDefinite is a Cholesky solve. The
+    // gradient with respect to b is K⁻ᵀ r̄, and with respect to K is
+    // -(K⁻ᵀ r̄) xᵀ: checked along symmetric perturbations of K, the only
+    // ones the solve accepts.
+    let src = "def f(K: PositiveDefinite Matrix[2, 2], b: Vector[2]) -> m:\n    x = K⁻¹ @ b\n    return 1 m * (x @ x + x[0])\n";
+    let k = matrix(2, 2, &[4.0, 1.0, 1.0, 3.0], ONE);
+    let b = vector(&[1.0, -2.0], ONE);
+    let (m, _, gb) = differentiate(src, "f", 1, &[k.clone(), b.clone()]);
+    assert_close(
+        &entries(&gb).0,
+        &finite_difference(&m, "f", 1, &[k.clone(), b.clone()]),
+        "with respect to b",
+    );
+    let (m, _, gk) = differentiate(src, "f", 0, &[k.clone(), b.clone()]);
+    let solves = |name: &str| {
+        m.function(name)
+            .expect("function")
+            .ops
+            .iter()
+            .filter(|o| matches!(o.kind, sky_ir::OpKind::Solve { .. }))
+            .count()
+    };
+    assert_eq!(solves("f"), 1, "the source has a Cholesky solve");
+    assert_eq!(
+        solves("df/dK"),
+        2,
+        "and so does its gradient (value, adjoint)"
+    );
+    let (g, dim) = entries(&gk);
+    assert_eq!(dim, L);
+    // Along E_01 + E_10 (a symmetric perturbation of the off-diagonal), and
+    // along E_00.
+    let f_at = |kk: [f64; 4]| number(&run(&m, "f", &[matrix(2, 2, &kk, ONE), b.clone()])[0]);
+    let h = 1e-6;
+    let off = (f_at([4.0, 1.0 + h, 1.0 + h, 3.0]) - f_at([4.0, 1.0 - h, 1.0 - h, 3.0])) / (2.0 * h);
+    assert_close(&[g[1] + g[2]], &[off], "along the off-diagonal");
+    let diag = (f_at([4.0 + h, 1.0, 1.0, 3.0]) - f_at([4.0 - h, 1.0, 1.0, 3.0])) / (2.0 * h);
+    assert_close(&[g[0]], &[diag], "along the diagonal");
+}
+
+#[test]
+fn a_conditional_expression_that_yields_an_outside_value() {
+    // An arm that yields a value defined before the `if` passes the adjoint
+    // straight through.
+    let src = "def f(p: Vector[3]) -> m:\n    e = p @ p\n    q = e if p[0] > 0.5 else 2 * e\n    return 1 m * q\n";
+    for p in [[0.9, 1.0, 2.0], [0.2, 1.0, 2.0]] {
+        check_gradient(src, "f", 0, &[vector(&p, ONE)], None, L);
+    }
+}
+
+#[test]
+fn derivative_modules_round_trip_through_the_text_format() {
+    // The functions `sky-ad` builds (reverse mode, the forward fallback with
+    // its `#jvp` function, kernels) are ordinary SIR: they print, parse back
+    // and verify.
+    for src in [
+        "def f(p: Vector[3] m) -> J:\n    q = p * 2 - p / 3\n    return 1 N/m * (q @ q)\n",
+        "def f(p: Vector[3] m) -> J:\n    acc = 0 J\n    i = 0\n    while i < 3:\n        acc = acc + 1 N/m * p[i] * p[i]\n        i += 1\n    return acc\n",
+        "def f(A: Matrix[2, 3] m) -> J:\n    B = A[0:2, 1:3]\n    if A[0, 0] > 0 m:\n        return 1 N/m * (B[0, 0] * B[1, 1])\n    return 1 N/m * (Aᵀ @ A)[2, 2]\n",
+    ] {
+        let mut m = lower_ok(src);
+        sky_ad::differentiate_into(&mut m, "f", 0).expect("differentiates");
+        let text = sky_ir::print(&m);
+        let parsed = sky_ir::parse(&text).unwrap_or_else(|e| panic!("{e:?}\n{text}"));
+        sky_ir::verify(&parsed).unwrap_or_else(|e| panic!("{e:?}\n{text}"));
+        assert_eq!(sky_ir::print(&parsed), text, "printing is stable");
+    }
+}
+
+#[test]
+fn every_math_function_has_an_adjoint() {
+    // The gradient of `1 m * f(x(p))` for each function of the language, with
+    // x an affine function of the parameters, against finite differences:
+    // reverse mode reuses the scalar tangent rules for these.
+    let unary = [
+        "sqrt", "cbrt", "abs", "exp", "log", "log10", "log2", "sin", "cos", "tan", "asin", "acos",
+        "atan", "expm1", "log1p", "sinh", "cosh", "tanh", "asinh", "atanh", "erf", "floor", "ceil",
+        "round", "sign",
+    ];
+    let p = vector(&[0.5, 0.8], ONE);
+    for f in unary {
+        let src = format!(
+            "def g(p: Vector[2]) -> m:\n    x = 0.3 * p[0] + 0.2 * p[1] + 0.25\n    return 1 m * {f}(x) * p[1]\n"
+        );
+        check_gradient(&src, "g", 0, std::slice::from_ref(&p), None, L);
+    }
+    // acosh needs an argument above 1, and the roots and hypot keep units.
+    let src = "def g(p: Vector[2]) -> m:\n    return 1 m * acosh(1.5 + p[0] * p[1])\n";
+    check_gradient(src, "g", 0, std::slice::from_ref(&p), None, L);
+    let dimensional = [
+        "hypot(p[0], 2 * p[1])",
+        "min(p[0], 2 * p[1])",
+        "max(p[0], 2 * p[1])",
+        "sqrt(p[0] * p[1])",
+        "abs(p[0] - p[1])",
+        "1 m * atan2(p[0], p[1] + 1 m)",
+    ];
+    let q = vector(&[0.5, 0.8], L);
+    for expr in dimensional {
+        let src = format!("def g(p: Vector[2] m) -> m:\n    return {expr}\n");
+        // A length by a length: dimensionless.
+        check_gradient(&src, "g", 0, std::slice::from_ref(&q), None, ONE);
+    }
+    // Powers, general and constant exponent, and the scalar reciprocal.
+    let src = "def g(p: Vector[2]) -> m:\n    return 1 m * (p[0] ^ p[1] + p[0] ^ 3 + (p[1] ^ 0.5) + 1 / (1 + p[0]))\n";
+    check_gradient(src, "g", 0, std::slice::from_ref(&p), None, L);
+}

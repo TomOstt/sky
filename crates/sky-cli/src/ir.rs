@@ -155,6 +155,7 @@ pub fn build(
     let notes = if explain {
         let mut notes = explanation_notes(&report, src, &checked.cholesky_solves);
         notes.extend(parallel_notes(&ir, threads));
+        notes.extend(reuse_notes(&ir, src));
         notes
     } else {
         Vec::new()
@@ -268,6 +269,87 @@ fn parallel_notes(ir: &sky_ir::Module, threads: usize) -> Vec<Diagnostic> {
             d
         })
         .collect()
+}
+
+/// The stable id of the note that an elementwise operation reuses the buffer
+/// of an operand that dies there.
+pub const MEM_RULE: &str = "MEM-001";
+
+/// One note per operation that overwrites a dying operand's buffer with its
+/// result (`sky_ir::Lifetimes::reuse_sites`), so `v = v + dt * a` in a
+/// time-stepping loop says that it allocates nothing.
+///
+/// The note is about the source the user wrote: a fused kernel is quoted by
+/// the expression it yields (`v + dt * a`), not by the statements it merged,
+/// and the buffer is named by the variable, as written where it is read. A
+/// site whose expression or variable has no source text to quote is left
+/// out: a note about `%17` would say nothing to the user. These notes are
+/// about what the SIR interpreter does (`sky run` on the tree-walker moves
+/// the same buffers at a reassignment, but only `x = x + ...`).
+fn reuse_notes(module: &sky_ir::Module, src: &str) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for func in &module.functions {
+        let life = sky_ir::Lifetimes::analyze(func);
+        for site in life.reuse_sites() {
+            let op = func.op(site.op);
+            // The expression the result is: a fused kernel's yielded value.
+            let expr_span = if let sky_ir::OpKind::Fused = op.kind {
+                fused_result_span(func, op).unwrap_or(op.span)
+            } else {
+                op.span
+            };
+            let Some(expr) = one_line(src, expr_span) else {
+                continue;
+            };
+            let operand = op.operands[site.operand];
+            let Some(name) = func
+                .value(operand)
+                .name
+                .clone()
+                .filter(|n| n.chars().all(|c| c.is_alphanumeric() || c == '_'))
+                .or_else(|| one_line(src, op.operand_span(site.operand)))
+            else {
+                continue;
+            };
+            let place = if site.in_loop {
+                "no allocation in this loop"
+            } else {
+                "no allocation for this result"
+            };
+            out.push(
+                Diagnostic::note(
+                    format!("[{MEM_RULE}] `{expr}` reuses `{name}`'s buffer: {place}"),
+                    expr_span,
+                )
+                .with_note(format!(
+                    "`{name}` is not used again after this on any path, and has the shape of the result"
+                ))
+                .with_note("applied by the `lifetimes` analysis of the SIR interpreter".to_string()),
+            );
+        }
+    }
+    out
+}
+
+/// The span of the expression a `fused` kernel yields: the operation in its
+/// body that produces the result (the kernel's own span covers every
+/// statement it merged).
+fn fused_result_span(func: &sky_ir::Function, op: &sky_ir::OpData) -> Option<Span> {
+    let region = func.regions.get(op.regions.first()?.index())?;
+    let block = func.blocks.get(region.blocks.first()?.index())?;
+    let last = func.ops.get(block.ops.last()?.index())?;
+    let yielded = *last.operands.first()?;
+    match func.value(yielded).def {
+        sky_ir::ValueDef::OpResult { op, .. } => Some(func.op(op).span),
+        sky_ir::ValueDef::BlockArg { .. } => None,
+    }
+}
+
+/// The source of `span` on one line, with no line breaks; `None` if it has
+/// none or spans lines.
+fn one_line(src: &str, span: Span) -> Option<String> {
+    let text = sky_ast::ast::span_text(src, span)?;
+    (!text.is_empty() && !text.contains('\n')).then(|| text.to_string())
 }
 
 /// The pass explanations as notes, in pipeline order (the caller sorts

@@ -151,6 +151,7 @@ impl Lu {
     /// sequence of row operations of the elimination, so `Z = (X·U'⁻¹)·E`:
     /// a forward solve against the unit upper triangle, then the
     /// elimination's operations applied to columns, last step first.
+    #[allow(clippy::needless_range_loop)]
     pub fn solve_right(&self, x: &[f64], m: usize) -> Vec<f64> {
         let n = self.n;
         debug_assert_eq!(x.len(), m * n);
@@ -233,7 +234,7 @@ fn promise(method: SolveMethod) -> &'static str {
 
 /// `A` as an `n` by `n` matrix: its size and entries, or the error a solve
 /// gives for anything else.
-fn square<'v>(a: &'v Value, whole: Span, aspan: Span) -> R<(usize, &'v [f64], Dimension)> {
+fn square(a: &Value, whole: Span, aspan: Span) -> R<(usize, &[f64], Dimension)> {
     match a {
         Value::Array { dims, data, dim } => match dims[..] {
             [n, m] if n == m => Ok((n, data, *dim)),
@@ -539,7 +540,12 @@ pub fn diag_mul(
         Side::Right => xdim.checked_mul(ddim),
     }
     .map_err(|_| exponent_overflow(whole))?;
-    let cols = *dx.last().unwrap_or(&1);
+    // A vector on the left of `D @ x` is a column (entry `i` scales by
+    // `dᵢ`); on the right of `x @ D` it is a row (entry `j` by `dⱼ`).
+    let cols = match (side, dx.len()) {
+        (Side::Left, 1) => 1,
+        _ => *dx.last().unwrap_or(&1),
+    };
     let out: Vec<f64> = xd
         .iter()
         .enumerate()
@@ -568,6 +574,7 @@ pub fn diag_mul(
 /// `(j, i)` sums `bⱼₚ·bᵢₚ`, the same products in the same order (IEEE
 /// multiplication commutes). The other classes name the shape and change
 /// nothing here.
+#[allow(clippy::too_many_arguments)]
 pub fn matmul_ex(
     ta: bool,
     tb: bool,

@@ -761,36 +761,13 @@ impl<'a> Parser<'a> {
                 OpKind::PowConst { exponent }
             }
             "inverse" => OpKind::Inverse,
-            "matmul" => {
-                if self.peek() == Some('[') {
-                    self.matmul_attrs()?
-                } else {
-                    OpKind::MatMul
-                }
-            }
-            "diag.mul" => {
-                self.expect('[')?;
-                self.skip_inline();
-                let at = self.pos;
-                let side = match self.word() {
-                    "left" => Side::Left,
-                    "right" => Side::Right,
-                    _ => {
-                        return self.err_at(at, self.pos.max(at + 1), "expected `left` or `right`")
-                    }
-                };
-                self.expect(']')?;
-                OpKind::DiagMul { side }
-            }
+            // One out-of-line reader for the operations with algorithm
+            // attributes: this function recurses per nesting level, so
+            // every arm here adds to a frame that is paid 1000 times.
+            name @ ("matmul" | "diag.mul" | "solve" | "solve.right") => self.algorithm_op(name)?,
             "transpose" => OpKind::Transpose,
             "norm" => OpKind::Norm,
             "dot" => OpKind::Dot,
-            "solve" => OpKind::Solve {
-                method: self.solve_method()?,
-            },
-            "solve.right" => OpKind::SolveRight {
-                method: self.solve_method()?,
-            },
             "array.literal" => {
                 self.skip_inline();
                 let cols = if self.peek() == Some('[') {
@@ -992,7 +969,40 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// `matmul` (with or without attributes), `diag.mul[side]`, `solve[m]`
+    /// and `solve.right[m]`.
+    #[inline(never)]
+    fn algorithm_op(&mut self, name: &str) -> Res<OpKind> {
+        match name {
+            "matmul" if self.peek() != Some('[') => Ok(OpKind::MatMul),
+            "matmul" => self.matmul_attrs(),
+            "diag.mul" => self.diag_mul_side(),
+            "solve" => Ok(OpKind::Solve {
+                method: self.solve_method()?,
+            }),
+            _ => Ok(OpKind::SolveRight {
+                method: self.solve_method()?,
+            }),
+        }
+    }
+
+    /// `[left]` or `[right]`: the side of a `diag.mul`.
+    #[inline(never)]
+    fn diag_mul_side(&mut self) -> Res<OpKind> {
+        self.expect('[')?;
+        self.skip_inline();
+        let at = self.pos;
+        let side = match self.word() {
+            "left" => Side::Left,
+            "right" => Side::Right,
+            _ => return self.err_at(at, self.pos.max(at + 1), "expected `left` or `right`"),
+        };
+        self.expect(']')?;
+        Ok(OpKind::DiagMul { side })
+    }
+
     /// `[cholesky]`, `[lu]` or `[diagonal]`: the method of a `solve`.
+    #[inline(never)]
     fn solve_method(&mut self) -> Res<SolveMethod> {
         self.expect('[')?;
         self.skip_inline();
@@ -1011,6 +1021,7 @@ impl<'a> Parser<'a> {
 
     /// The `[ta,tb,alg=NAME]` of a `matmul` with attributes: any of the
     /// three, in this order, at least one.
+    #[inline(never)]
     fn matmul_attrs(&mut self) -> Res<OpKind> {
         self.expect('[')?;
         let (mut ta, mut tb, mut algorithm) = (false, false, Algorithm::Auto);

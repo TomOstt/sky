@@ -697,6 +697,7 @@ version = "0.0.1"
 name = "sky-interp"
 version = "0.0.1"
 dependencies = [
+ "proptest",
  "sky-ast",
  "sky-diag",
  "sky-ode",

@@ -51,6 +51,8 @@ mod literal;
 pub mod math;
 pub mod show;
 pub mod solve;
+#[cfg(test)]
+mod solve_tests;
 pub mod uncertain;
 mod uncertain_format;
 mod uncertain_math;

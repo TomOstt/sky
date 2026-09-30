@@ -216,9 +216,9 @@ fn attribute_errors() {
         "2",
     );
     fails(
-        &body("%a = solve[lu] %x, %x : num[L; ()]"),
-        "expected `cholesky`",
-        "lu",
+        &body("%a = solve[qr] %x, %x : num[L; ()]"),
+        "expected `cholesky`, `lu` or `diagonal`",
+        "qr",
     );
     fails(&body("%a = call f(%x) : num[L; ()]"), "expected `@`", "f");
     fails(&body("%a = call @f(%x : num[L; ()]"), "expected `)`", ":");

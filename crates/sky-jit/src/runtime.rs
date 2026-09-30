@@ -855,13 +855,15 @@ pub extern "C" fn sky_rt_fail_op(site: i32) {
         let args = std::mem::take(&mut st.args);
         let program = st.program.clone();
         match program.op(site) {
-            Some((f, op)) => match eval_op(f, op, &args, &mut Vec::new(), &mut HashMap::new()) {
-                Err(e) => st.fail(e),
-                Ok(_) => st.fail(internal(format!(
-                    "`{}` failed inline but succeeds in the runtime",
-                    op.kind.mnemonic()
-                ))),
-            },
+            Some((f, op)) => {
+                match eval_op(f, op, &args, &mut Vec::new(), &mut Kernels::default()) {
+                    Err(e) => st.fail(e),
+                    Ok(_) => st.fail(internal(format!(
+                        "`{}` failed inline but succeeds in the runtime",
+                        op.kind.mnemonic()
+                    ))),
+                }
+            }
             None => st.fail(internal("unknown site")),
         }
         let mut args = args;

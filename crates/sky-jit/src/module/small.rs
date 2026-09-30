@@ -36,6 +36,7 @@ use sky_ir::{OpData, OpId, OpKind, Type, ValueId};
 use sky_types::ShapeDim;
 use sky_units::Dimension;
 
+use super::slp::{Bin, Side};
 use super::{dim_of_type, number_dim, refuse, rep_of, Comp, FnTx, Rep, Res, Rt, Slot};
 
 /// The most entries a small array has. Chosen by measuring (Apple M2 Pro,
@@ -196,22 +197,6 @@ impl<M: cranelift_module::Module> FnTx<'_, '_, M> {
         self.b.ins().f64const(x)
     }
 
-    /// An integer, nonzero if every one of `xs` is finite.
-    fn all_finite(&mut self, xs: &[Cv]) -> Cv {
-        let inf = self.f64c(f64::INFINITY);
-        let mut ok: Option<Cv> = None;
-        for &x in xs {
-            let abs = self.b.ins().fabs(x);
-            // False for infinity and for NaN (an ordered comparison).
-            let c = self.b.ins().fcmp(FloatCC::LessThan, abs, inf);
-            ok = Some(match ok {
-                None => c,
-                Some(o) => self.b.ins().band(o, c),
-            });
-        }
-        ok.unwrap_or_else(|| self.b.ins().iconst(types::I8, 1))
-    }
-
     /// The sum of `terms` in the fixed order of `sky_linalg::dot`: fewer than
     /// 8 left to right from `+0.0`, else 8 interleaved partial sums combined
     /// by a fixed tree.
@@ -317,18 +302,12 @@ impl<M: cranelift_module::Module> FnTx<'_, '_, M> {
                 if sx != sy || dx != dy {
                     return Ok(false);
                 }
-                let add = matches!(op.kind, OpKind::Add);
-                let out: Vec<Cv> = x
-                    .iter()
-                    .zip(&y)
-                    .map(|(&p, &q)| {
-                        if add {
-                            self.b.ins().fadd(p, q)
-                        } else {
-                            self.b.ins().fsub(p, q)
-                        }
-                    })
-                    .collect();
+                let k = if matches!(op.kind, OpKind::Add) {
+                    Bin::Add
+                } else {
+                    Bin::Sub
+                };
+                let out = self.zip_arith(k, Side::Arr(&x), Side::Arr(&y), x.len());
                 (out, sx, dx)
             }
             (OpKind::Mul, Opnd::A(x, sx, dx), Opnd::S(s, ds))
@@ -336,7 +315,7 @@ impl<M: cranelift_module::Module> FnTx<'_, '_, M> {
                 let Ok(dim) = dx.checked_mul(ds) else {
                     return Ok(false);
                 };
-                let out = x.iter().map(|&p| self.b.ins().fmul(p, s)).collect();
+                let out = self.zip_arith(Bin::Mul, Side::Arr(&x), Side::Scalar(s), x.len());
                 (out, sx, dim)
             }
             (OpKind::Div, Opnd::A(x, sx, dx), Opnd::S(s, ds)) => {
@@ -346,7 +325,7 @@ impl<M: cranelift_module::Module> FnTx<'_, '_, M> {
                 // A zero divisor fails before any entry is looked at.
                 let zero = self.f64c(0.0);
                 extra_ok = Some(self.b.ins().fcmp(FloatCC::NotEqual, s, zero));
-                let out = x.iter().map(|&p| self.b.ins().fdiv(p, s)).collect();
+                let out = self.zip_arith(Bin::Div, Side::Arr(&x), Side::Scalar(s), x.len());
                 (out, sx, dim)
             }
             _ => return Ok(false),
@@ -366,7 +345,7 @@ impl<M: cranelift_module::Module> FnTx<'_, '_, M> {
             return Ok(false);
         };
         let zero = self.f64c(0.0);
-        let out = x.iter().map(|&p| self.b.ins().fsub(zero, p)).collect();
+        let out = self.zip_arith(Bin::Sub, Side::Scalar(zero), Side::Arr(&x), x.len());
         self.define(op, 0, Comp::Small(out, sh, dim))?;
         Ok(true)
     }
@@ -809,6 +788,16 @@ impl<M: cranelift_module::Module> FnTx<'_, '_, M> {
                 }
                 continue;
             }
+            if self.slp_active()
+                && matches!(
+                    b.kind,
+                    OpKind::Add | OpKind::Sub | OpKind::Mul | OpKind::Div | OpKind::Neg
+                )
+            {
+                let outs = self.fused_batched(oid, b, &per, sh.len())?;
+                per.insert(result, outs);
+                continue;
+            }
             let mut outs = Vec::with_capacity(sh.len());
             for e in 0..sh.len() {
                 for v in &b.operands {
@@ -842,6 +831,76 @@ impl<M: cranelift_module::Module> FnTx<'_, '_, M> {
         };
         self.define(op, 0, Comp::Small(out, sh, dim))?;
         Ok(true)
+    }
+}
+
+impl<M: cranelift_module::Module> FnTx<'_, '_, M> {
+    /// One operation of a `fused` body (`+ - * /` or `neg`) on every entry,
+    /// with the entries' operations packed in pairs ([`super::slp`]) and
+    /// *one* check for all of them.
+    ///
+    /// The operation's result entries are all finite, or one branch leaves
+    /// for a cold block that runs the entries' scalar operations one after
+    /// another, each with its own check (the code of `module.rs`), which is
+    /// what the interpreter's loop does: the first failing entry reports
+    /// (a zero divisor before a non-finite quotient) with its own operands,
+    /// and the operations before it, being pure, leave no trace.
+    fn fused_batched(
+        &mut self,
+        oid: OpId,
+        b: &OpData,
+        per: &HashMap<ValueId, Vec<Cv>>,
+        n: usize,
+    ) -> Res<Vec<Cv>> {
+        fn side<'p, M: cranelift_module::Module>(
+            tx: &FnTx<'_, '_, M>,
+            b: &OpData,
+            per: &'p HashMap<ValueId, Vec<Cv>>,
+            i: usize,
+        ) -> Res<Side<'p>> {
+            let v = b.operands[i];
+            Ok(match per.get(&v) {
+                Some(xs) => Side::Arr(xs),
+                None => Side::Scalar(tx.slot(v, b)?.v),
+            })
+        }
+        let neg = matches!(b.kind, OpKind::Neg);
+        let (out, check) = if neg {
+            let x = side(self, b, per, 0)?;
+            let zero = self.f64c(0.0);
+            (self.zip_arith(Bin::Sub, Side::Scalar(zero), x, n), false)
+        } else {
+            let k = match b.kind {
+                OpKind::Add => Bin::Add,
+                OpKind::Sub => Bin::Sub,
+                OpKind::Mul => Bin::Mul,
+                _ => Bin::Div,
+            };
+            let (l, r) = (side(self, b, per, 0)?, side(self, b, per, 1)?);
+            (self.zip_arith(k, l, r, n), !self.proven(oid))
+        };
+        if check {
+            let ok = self.all_finite(&out);
+            let (cold, cont) = (self.b.create_block(), self.b.create_block());
+            self.b.ins().brif(ok, cont, &[], cold, &[]);
+            self.b.set_cold_block(cold);
+            self.b.switch_to_block(cold);
+            for e in 0..n {
+                for v in &b.operands {
+                    if let Some(xs) = per.get(v) {
+                        self.vals[v.index()] = Some(Slot {
+                            v: xs[e],
+                            rep: Rep::F64,
+                        });
+                    }
+                }
+                self.op(oid)?;
+            }
+            let err = self.err;
+            self.b.ins().jump(err, &[]);
+            self.b.switch_to_block(cont);
+        }
+        Ok(out)
     }
 }
 

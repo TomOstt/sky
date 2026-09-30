@@ -39,6 +39,15 @@
 //! check that its shape and dimension are what the type says; if they are
 //! not, the run deoptimizes, as for a scalar.
 //!
+//! # Vectorizing
+//!
+//! The entries of a small array, and pairs of scalar operations that follow
+//! one another, are computed two at a time as `F64X2` vector operations
+//! when that pays ([`slp`]: lane-wise IEEE, so the same bits; one check for
+//! the pair, whose failure re-runs the scalar operations in program order).
+//! `SKY_SLP=off|auto|always` picks the mode for [`compile`]; the default,
+//! `auto`, packs only in loops and functions that are not latency bound.
+//!
 //! # Exactness
 //!
 //! * `fadd`, `fsub`, `fmul`, `fdiv`, `fneg`, `fabs` and `sqrt` are IEEE
@@ -154,7 +163,9 @@ use sky_units::Dimension;
 
 use crate::runtime::{self, Program, Rt, Site, Ty, FUNC_SITE};
 
+mod slp;
 mod small;
+pub use slp::Slp;
 use small::{small_shape, Sh};
 
 /// A program native code cannot run (yet): what `sky run --engine=native`
@@ -346,8 +357,18 @@ pub fn compile(module: &SirModule) -> Result<Compiled, CompileError> {
 
 /// [`compile`] with the numerics chosen: [`Numerics::Relaxed`] lets native
 /// code contract `a*b + c` into a fused multiply-add (see the module docs).
+/// Vectorization follows `SKY_SLP` (see [`Slp`]).
 pub fn compile_with(module: &SirModule, numerics: Numerics) -> Result<Compiled, CompileError> {
-    let built = build(module, false, numerics == Numerics::Relaxed)?;
+    compile_with_slp(module, numerics, Slp::from_env())
+}
+
+/// [`compile_with`] with an explicit vectorization mode (see [`Slp`]).
+pub fn compile_with_slp(
+    module: &SirModule,
+    numerics: Numerics,
+    slp: Slp,
+) -> Result<Compiled, CompileError> {
+    let built = build(module, false, numerics == Numerics::Relaxed, slp)?;
     let jit = built.jit;
     match (jit, built.main) {
         (Some(jit), Some(main)) => Ok(Compiled {
@@ -367,7 +388,16 @@ pub fn emit_clif(module: &SirModule) -> Result<String, CompileError> {
 
 /// [`emit_clif`] with the numerics chosen (relaxed shows the `fma`s).
 pub fn emit_clif_with(module: &SirModule, numerics: Numerics) -> Result<String, CompileError> {
-    Ok(build(module, true, numerics == Numerics::Relaxed)?.clif)
+    emit_clif_with_slp(module, numerics, Slp::from_env())
+}
+
+/// [`emit_clif_with`] with an explicit vectorization mode (see [`Slp`]).
+pub fn emit_clif_with_slp(
+    module: &SirModule,
+    numerics: Numerics,
+    slp: Slp,
+) -> Result<String, CompileError> {
+    Ok(build(module, true, numerics == Numerics::Relaxed, slp)?.clif)
 }
 
 /// What [`build`] made.
@@ -466,9 +496,11 @@ pub(crate) struct Shared<'m> {
     /// Contract `a*b + c` into a fused multiply-add (relaxed numerics on a
     /// host that has the instruction).
     contract: bool,
+    /// Pack pairs of `f64` operations into vector lanes (see [`Slp`]).
+    slp: Slp,
 }
 
-fn build(module: &SirModule, emit: bool, relaxed: bool) -> Res<Built> {
+fn build(module: &SirModule, emit: bool, relaxed: bool, slp: Slp) -> Res<Built> {
     precheck(module)?;
     let isa = crate::host_isa().map_err(|e| CompileError {
         message: format!("no code generator for this machine ({e})"),
@@ -486,7 +518,7 @@ fn build(module: &SirModule, emit: bool, relaxed: bool) -> Res<Built> {
     }
     let mut jit = JITModule::new(builder);
 
-    let done = translate_module(module, &mut jit, call_conv, emit, contract)?;
+    let done = translate_module(module, &mut jit, call_conv, emit, contract, slp)?;
     let (sh, code_sizes, clif) = (done.sh, done.code_sizes, done.clif);
     if emit {
         return Ok(Built {
@@ -567,13 +599,14 @@ pub(crate) struct Translated<'m> {
 /// Declares the runtime functions and every function of `module` in `jit`
 /// (a JIT or an object file: the translation is the same), and translates
 /// and defines each. `emit` only produces the Cranelift IR text; `contract`
-/// fuses `a*b + c` (relaxed numerics).
+/// fuses `a*b + c` (relaxed numerics); `slp` packs vector lanes.
 pub(crate) fn translate_module<'m, M: ClModule>(
     module: &'m SirModule,
     jit: &mut M,
     call_conv: cranelift_codegen::isa::CallConv,
     emit: bool,
     contract: bool,
+    slp: Slp,
 ) -> Res<Translated<'m>> {
     let mut sh = Shared {
         m: module,
@@ -583,6 +616,7 @@ pub(crate) fn translate_module<'m, M: ClModule>(
         dim_ids: HashMap::new(),
         sites: Vec::new(),
         contract,
+        slp,
     };
     for rt in Rt::ALL {
         let (params, ret) = rt.signature();
@@ -790,6 +824,12 @@ struct FnTx<'a, 'm, M: ClModule> {
     rt_refs: HashMap<Rt, FuncRef>,
     fn_refs: HashMap<usize, FuncRef>,
     site_ids: HashMap<u32, i32>,
+    /// Where each scalar that is a lane of a packed vector came from
+    /// (see [`slp`]).
+    lanes: HashMap<Cv, (Cv, u8)>,
+    /// Whether array operations are vectorized in the loop or function body
+    /// being translated, innermost last (see [`slp`]).
+    slp_regions: Vec<bool>,
     /// What the exactness analysis proves about the function: an operation
     /// that can fail by kind and provably cannot needs no check.
     facts: Analysis,
@@ -841,6 +881,8 @@ impl<'a, 'm, M: ClModule> FnTx<'a, 'm, M> {
             rt_refs: HashMap::new(),
             fn_refs: HashMap::new(),
             site_ids: HashMap::new(),
+            lanes: HashMap::new(),
+            slp_regions: Vec::new(),
             facts: exact::analyze(f),
             uses: if tx_contract {
                 use_counts(f)
@@ -850,6 +892,8 @@ impl<'a, 'm, M: ClModule> FnTx<'a, 'm, M> {
             pending: HashMap::new(),
         };
         let limit = params[1];
+        let pack = tx.sh.slp == Slp::Auto && !slp::body_latency_bound(f);
+        tx.slp_regions.push(pack);
         tx.owned.push(Vec::new());
         let entry_block = f.entry();
         tx.bind_all(f.param_values(), &params[3..]);
@@ -1359,12 +1403,22 @@ impl<'a, 'm, M: ClModule> FnTx<'a, 'm, M> {
         let Some((term, body)) = block.ops.split_last() else {
             return refuse("a block has no terminator", Some(f.span));
         };
-        for (i, id) in body.iter().enumerate() {
+        let mut i = 0;
+        while i < body.len() {
+            // Relaxed numerics: a product that fuses into its sum is left for
+            // the sum. Otherwise pairs of independent operations may share
+            // vector lanes (SLP), and the rest are translated one by one.
             if self.sh.contract && fusable_product(f, &self.uses, body, i).is_some() {
-                self.defer_product(*id)?;
+                self.defer_product(body[i])?;
+                i += 1;
                 continue;
             }
-            self.op(*id)?;
+            if i + 1 < body.len() && self.scalar_pair(body[i], body[i + 1])? {
+                i += 2;
+            } else {
+                self.op(body[i])?;
+                i += 1;
+            }
         }
         Ok(f.op(*term))
     }
@@ -2202,6 +2256,14 @@ impl<'a, 'm, M: ClModule> FnTx<'a, 'm, M> {
     /// transferred in a block of its own, so the `before` block's handles are
     /// released on both paths.
     fn while_op(&mut self, id: OpId, op: &'m OpData) -> Res<()> {
+        let f = self.f;
+        self.slp_region(
+            || !slp::loop_latency_bound(f, op),
+            |tx| tx.while_loop(id, op),
+        )
+    }
+
+    fn while_loop(&mut self, id: OpId, op: &'m OpData) -> Res<()> {
         let f = self.f;
         let [before_r, after_r] = op.regions[..] else {
             return refuse("a `while` needs two regions", Some(op.span));

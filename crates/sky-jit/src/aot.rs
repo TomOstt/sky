@@ -147,7 +147,14 @@ pub fn compile_object(
         .map_err(|e| internal("the object writer", &e))?;
     let mut obj = ObjectModule::new(builder);
 
-    let done = translate_module(&module, &mut obj, call_conv, false, false)?;
+    let done = translate_module(
+        &module,
+        &mut obj,
+        call_conv,
+        false,
+        false,
+        crate::Slp::from_env(),
+    )?;
     let main_index = module
         .functions
         .iter()
@@ -289,6 +296,8 @@ impl Image {
                 module,
                 dims,
                 sites,
+                // `sky build` compiles reproducible numerics only.
+                relaxed: false,
             }),
             extra,
         })

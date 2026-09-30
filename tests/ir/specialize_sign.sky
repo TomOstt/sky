@@ -1,0 +1,16 @@
+# What is proven about an argument, not only what it is: `g` is called with a
+# value that is strictly positive (`abs(z) + 1`) and one that is strictly
+# negative, so each call gets a clone in which `x > 0` is decided and the
+# branch is gone. `h` gets no clone: knowing the sign of its argument decides
+# nothing there.
+z: Scalar
+
+def g(x: Scalar) -> Scalar:
+    if x > 0:
+        return 1
+    return 2
+
+def h(x: Scalar) -> Scalar:
+    return x * 2
+
+print(g(abs(z) + 1), g(-1 - abs(z)), h(abs(z) + 1))

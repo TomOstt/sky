@@ -229,6 +229,15 @@ fn note(x: &sky_ir::Explanation) -> Diagnostic {
         }
         return d;
     }
+    // A specialization reads "specialized `f` for N = 3 at this call".
+    if let Some(headline) = sky_opt::specialize_headline(x) {
+        let mut d = Diagnostic::note(headline, x.span)
+            .with_note(format!("applied by the `{}` pass", x.pass));
+        for reason in &x.because {
+            d = d.with_note(format!("because {reason}"));
+        }
+        return d;
+    }
     match sky_opt::cholesky_text(x) {
         Some(text) => Diagnostic::note(
             format!("`{}` is rewritten to a Cholesky solve", x.before),

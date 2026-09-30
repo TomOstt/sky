@@ -184,8 +184,13 @@ fn a_contract_that_always_holds_is_explained_and_its_check_is_removed() {
         "{e}"
     );
     assert!(e.contains("applied by the `contracts` pass"), "{e}");
+    // The constant call gets its own function (`specialize`), where `h` is 20.
     assert!(
-        e.contains("in every call of `fall_time` in this program, `h` is 20"),
+        e.contains("`fall_time[h=20]` is `fall_time` specialized for h = 20"),
+        "{e}"
+    );
+    assert!(
+        e.contains("note: [SPEC-001] specialized `fall_time` for h = 20 at this call"),
         "{e}"
     );
     // The IR after the passes has no assert; before, it has one.

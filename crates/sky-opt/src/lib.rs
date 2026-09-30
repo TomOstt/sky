@@ -24,7 +24,13 @@
 //!   Symmetric transposes. All exact.
 //! * [`algorithms`]: records the algorithm class a policy chooses for each
 //!   `matmul`; the hook the kernel and tuning agents plug into.
-//! * [`default_pipeline`]: `fold`, then the e-graph (`sky-egraph`, under the
+//! * [`specialize`]: a call whose arguments have facts the callee's signature
+//!   lacks (a concrete shape for `Vector[N]`, a constant, a proven sign) gets
+//!   a clone of the callee that knows them, simplified (`len` of a known
+//!   shape, decided branches, small constant loops unrolled). [`specialize_for`]
+//!   and [`SpecializationCache`] do the same for values an engine sees at
+//!   run time.
+//! * [`default_pipeline`]: `specialize`, then `fold`, then the e-graph (`sky-egraph`, under the
 //!   `Reproducible` contract), then `contracts`, then `dce`, then `powers`,
 //!   then `fuse`, then `cholesky`, then `transposes`, `structure` and
 //!   `algorithms`.
@@ -49,6 +55,7 @@ mod linalg;
 pub mod pipeline;
 pub mod powers;
 mod rewrite;
+pub mod specialize;
 mod util;
 
 #[cfg(test)]
@@ -78,8 +85,13 @@ pub use fold::{fold, fold_with, FoldMode};
 pub use fuse::{fuse, FUSE_RULE};
 pub use linalg::{structure, transposes, DIAGONAL_RULE, GRAM_RULE, SYMMETRIC_RULE, TRANSPOSE_RULE};
 pub use pipeline::{
-    default_passes, default_pipeline, AlgorithmPass, CholeskyPass, ContractsPass, DcePass,
-    FoldPass, FusePass, PowersPass, StructurePass, TransposesPass, DEFAULT_PASSES,
+    default_passes, default_passes_without_specialize, default_pipeline, AlgorithmPass,
+    CholeskyPass, ContractsPass, DcePass, FoldPass, FusePass, PowersPass, SpecializePass,
+    StructurePass, TransposesPass, DEFAULT_PASSES,
 };
 pub use powers::{powers, POWER_RULE};
 pub use rewrite::Rewrite;
+pub use specialize::{
+    specialize, specialize_for, specialize_headline, specialized_name, Specialization,
+    SpecializationCache,
+};

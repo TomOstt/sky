@@ -1,0 +1,136 @@
+tests/ir/specialize_limits.sky:11:16: note: [SPEC-001] specialized `fact` for n = 4 at this call: 0 checks removed
+   |
+11 |     return n * fact(n - 1)
+   |                ^^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 0 run-time checks removed: operations that can fail in `fact` and cannot in `fact[n=4]`
+   = note: because the argument for `n` is the constant 4
+   = note: because in `fact[n=4]`: 2 branches decided, 3 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_limits.sky:11:16: note: [SPEC-001] specialized `fact` for n = 3 at this call: 0 checks removed
+   |
+11 |     return n * fact(n - 1)
+   |                ^^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 0 run-time checks removed: operations that can fail in `fact` and cannot in `fact[n=3]`
+   = note: because the argument for `n` is the constant 3
+   = note: because in `fact[n=3]`: 2 branches decided, 3 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_limits.sky:11:16: note: [SPEC-001] specialized `fact` for n = 2 at this call: 0 checks removed
+   |
+11 |     return n * fact(n - 1)
+   |                ^^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 0 run-time checks removed: operations that can fail in `fact` and cannot in `fact[n=2]`
+   = note: because the argument for `n` is the constant 2
+   = note: because in `fact[n=2]`: 2 branches decided, 3 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_limits.sky:11:16: note: [SPEC-001] specialized `fact` for n = 1 at this call: 1 check removed
+   |
+11 |     return n * fact(n - 1)
+   |                ^^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time check removed: operations that can fail in `fact` and cannot in `fact[n=1]`
+   = note: because the argument for `n` is the constant 1
+   = note: because in `fact[n=1]`: 2 branches decided, 2 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_limits.sky:13:7: note: [SPEC-001] specialized `k` for x = 1 at this call: 1 check removed
+   |
+13 | print(k(1), k(2), k(3), k(4), k(5))
+   |       ^^^^
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time check removed: operations that can fail in `k` and cannot in `k[x=1]`
+   = note: because the argument for `x` is the constant 1
+   = note: because in `k[x=1]`: 2 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_limits.sky:13:13: note: [SPEC-001] specialized `k` for x = 2 at this call: 1 check removed
+   |
+13 | print(k(1), k(2), k(3), k(4), k(5))
+   |             ^^^^
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time check removed: operations that can fail in `k` and cannot in `k[x=2]`
+   = note: because the argument for `x` is the constant 2
+   = note: because in `k[x=2]`: 2 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_limits.sky:13:19: note: [SPEC-001] specialized `k` for x = 3 at this call: 1 check removed
+   |
+13 | print(k(1), k(2), k(3), k(4), k(5))
+   |                   ^^^^
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time check removed: operations that can fail in `k` and cannot in `k[x=3]`
+   = note: because the argument for `x` is the constant 3
+   = note: because in `k[x=3]`: 2 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_limits.sky:13:25: note: [SPEC-001] specialized `k` for x = 4 at this call: 1 check removed
+   |
+13 | print(k(1), k(2), k(3), k(4), k(5))
+   |                         ^^^^
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time check removed: operations that can fail in `k` and cannot in `k[x=4]`
+   = note: because the argument for `x` is the constant 4
+   = note: because in `k[x=4]`: 2 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_limits.sky:13:31: note: [SPEC-001] specialized `k` for x = 5 at this call: 1 check removed
+   |
+13 | print(k(1), k(2), k(3), k(4), k(5))
+   |                               ^^^^
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time check removed: operations that can fail in `k` and cannot in `k[x=5]`
+   = note: because the argument for `x` is the constant 5
+   = note: because in `k[x=5]`: 2 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_limits.sky:14:7: note: [SPEC-001] specialized `k` for x = 6 at this call: 1 check removed
+   |
+14 | print(k(6), k(7), k(8), k(9), k(10))
+   |       ^^^^
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time check removed: operations that can fail in `k` and cannot in `k[x=6]`
+   = note: because the argument for `x` is the constant 6
+   = note: because in `k[x=6]`: 2 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_limits.sky:14:13: note: [SPEC-001] specialized `k` for x = 7 at this call: 1 check removed
+   |
+14 | print(k(6), k(7), k(8), k(9), k(10))
+   |             ^^^^
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time check removed: operations that can fail in `k` and cannot in `k[x=7]`
+   = note: because the argument for `x` is the constant 7
+   = note: because in `k[x=7]`: 2 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_limits.sky:14:19: note: [SPEC-001] specialized `k` for x = 8 at this call: 1 check removed
+   |
+14 | print(k(6), k(7), k(8), k(9), k(10))
+   |                   ^^^^
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time check removed: operations that can fail in `k` and cannot in `k[x=8]`
+   = note: because the argument for `x` is the constant 8
+   = note: because in `k[x=8]`: 2 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_limits.sky:14:25: note: [SPEC-004] this call of `k` is not specialized: `k` already has 8 specializations, the most one function gets
+   |
+14 | print(k(6), k(7), k(8), k(9), k(10))
+   |                         ^^^^
+   = note: applied by the `specialize` pass
+   = note: because `k` already has 8 specializations, the most one function gets
+
+tests/ir/specialize_limits.sky:15:7: note: [SPEC-001] specialized `fact` for n = 5 at this call: 0 checks removed
+   |
+15 | print(fact(5))
+   |       ^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 0 run-time checks removed: operations that can fail in `fact` and cannot in `fact[n=5]`
+   = note: because the argument for `n` is the constant 5
+   = note: because in `fact[n=5]`: 2 branches decided, 3 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged

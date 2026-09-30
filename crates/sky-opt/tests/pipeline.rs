@@ -1,5 +1,5 @@
-//! The default pipeline (`fold`, `egraph`, `contracts`, `dce`, `powers`, `fuse`, `cholesky`,
-//! `transposes`, `structure`, `algorithms`) must not
+//! The default pipeline (`specialize`, `fold`, `egraph`, `contracts`, `dce`, `powers`, `fuse`,
+//! `cholesky`, `transposes`, `structure`, `algorithms`) must not
 //! change what a program does: lower it, run it in the reference
 //! interpreter, run the pipeline (verified after every pass), run it again,
 //! and the two runs must agree byte for byte on stdout and on the error (the
@@ -48,20 +48,29 @@ fn run(m: &Module, src: &str) -> Outcome {
     })
 }
 
-/// The pipeline, verifying after every pass and panicking (naming the pass)
-/// if it breaks the IR.
-fn optimize(m: &mut Module) -> sky_ir::PipelineReport {
-    default_passes(PassManager::for_tests())
-        .run(m)
-        .expect("valid IR")
-}
-
 /// Lowers `src`, runs it before and after the pipeline, and asserts the
 /// runs agree. Returns the shared outcome and the report.
 fn same_before_and_after(src: &str) -> (Outcome, sky_ir::PipelineReport) {
+    same_before_and_after_with(src, default_passes)
+}
+
+/// [`same_before_and_after`] for the pipeline without `specialize`, for a
+/// test about what another pass does to a function that is called with
+/// constants (specialization would give each such call a function of its
+/// own, which `specialize`'s tests cover).
+fn same_before_and_after_generic(src: &str) -> (Outcome, sky_ir::PipelineReport) {
+    same_before_and_after_with(src, sky_opt::default_passes_without_specialize)
+}
+
+fn same_before_and_after_with(
+    src: &str,
+    passes: fn(PassManager) -> PassManager,
+) -> (Outcome, sky_ir::PipelineReport) {
     let mut m = sky_lower::lower_source(src).unwrap_or_else(|e| panic!("{src}\n{e}"));
     let before = run(&m, src);
-    let report = optimize(&mut m);
+    let report = passes(PassManager::for_tests())
+        .run(&mut m)
+        .expect("valid IR");
     let after = run(&m, src);
     assert_eq!(
         after, before,
@@ -399,7 +408,7 @@ const EXACT_SRC: &str = "def halve(x: m) -> m:\n    spare = x / 2\n    return x 
 
 #[test]
 fn operations_that_provably_cannot_fail_are_removed_and_the_proof_is_the_reason() {
-    let (o, report) = same_before_and_after(EXACT_SRC);
+    let (o, report) = same_before_and_after_generic(EXACT_SRC);
     assert_eq!(o.stdout, "1.5 m 0 1\n0.5 0.30000000000000004\n");
     assert_eq!(o.error, None);
     let rules: Vec<&str> = report.explanations.iter().map(|x| x.rule).collect();
@@ -501,13 +510,14 @@ fn operations_that_can_still_fail_are_kept_and_keep_failing() {
 // ----- the pipeline and its adapters -----
 
 #[test]
-fn the_default_pipeline_runs_the_ten_passes_in_order() {
+fn the_default_pipeline_runs_the_eleven_passes_in_order() {
     let mut m = sky_lower::lower_source("x = 2 * 3\nprint(x)\n").unwrap();
     let report = default_pipeline().verify_each(true).run(&mut m).unwrap();
     let names: Vec<&str> = report.ran.iter().map(|(n, _)| *n).collect();
     assert_eq!(
         names,
         [
+            "specialize",
             "fold",
             "egraph",
             "contracts",
@@ -521,13 +531,14 @@ fn the_default_pipeline_runs_the_ten_passes_in_order() {
         ]
     );
     assert_eq!(names, DEFAULT_PASSES);
-    // fold changed the module (`2 * 3`), dce removed the operands; nothing
-    // else had anything to do.
-    assert!(report.ran[0].1.is_yes());
-    assert!(!report.ran[1].1.is_yes());
+    // Nothing to specialize; fold changed the module (`2 * 3`), dce removed
+    // the operands; nothing else had anything to do.
+    assert!(!report.ran[0].1.is_yes());
+    assert!(report.ran[1].1.is_yes());
     assert!(!report.ran[2].1.is_yes());
-    assert!(report.ran[3].1.is_yes());
-    assert!(report.ran[4..].iter().all(|(_, c)| !c.is_yes()));
+    assert!(!report.ran[3].1.is_yes());
+    assert!(report.ran[4].1.is_yes());
+    assert!(report.ran[5..].iter().all(|(_, c)| !c.is_yes()));
     // A second run finds nothing left to do.
     let again = default_pipeline().verify_each(true).run(&mut m).unwrap();
     assert!(again.ran.iter().all(|(_, c)| !c.is_yes()), "{again:?}");

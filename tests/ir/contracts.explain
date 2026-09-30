@@ -8,16 +8,32 @@ tests/ir/contracts.sky:2:14: note: [CONTRACT-002] this `requires` always holds, 
 2 |     requires h >= 0 m
   |              ^^^^^^^^
   = note: applied by the `contracts` pass
-  = note: because in every call of `fall_time` in this program, `h` is between 5 and 20
-  = note: because the left side of the `>=` is between 5 and 20 and the right side is 0, so it cannot be false
+  = note: because `fall_time[h=20]` is `fall_time` specialized for h = 20 (its constants and shapes are known)
+  = note: because the condition is true for every value the analysis allows, so it cannot be false
+
+tests/ir/contracts.sky:2:14: note: [CONTRACT-002] this `requires` always holds, so its check is removed: `h >= 0 m`
+  |
+2 |     requires h >= 0 m
+  |              ^^^^^^^^
+  = note: applied by the `contracts` pass
+  = note: because `fall_time[h=5]` is `fall_time` specialized for h = 5 (its constants and shapes are known)
+  = note: because the condition is true for every value the analysis allows, so it cannot be false
 
 tests/ir/contracts.sky:3:13: note: [CONTRACT-003] this `ensures` always holds, so its check is removed: `result > 0 s`
   |
 3 |     ensures result > 0 s
   |             ^^^^^^^^^^^^
   = note: applied by the `contracts` pass
-  = note: because in every call of `fall_time` in this program, `h` is between 5 and 20
-  = note: because the left side of the `>` is between 1.0098099885512761 and 2.0196199771025523 and the right side is 0, so it cannot be false
+  = note: because `fall_time[h=20]` is `fall_time` specialized for h = 20 (its constants and shapes are known)
+  = note: because the left side of the `>` is 2.0196199771025523 and the right side is 0, so it cannot be false
+
+tests/ir/contracts.sky:3:13: note: [CONTRACT-003] this `ensures` always holds, so its check is removed: `result > 0 s`
+  |
+3 |     ensures result > 0 s
+  |             ^^^^^^^^^^^^
+  = note: applied by the `contracts` pass
+  = note: because `fall_time[h=5]` is `fall_time` specialized for h = 5 (its constants and shapes are known)
+  = note: because the left side of the `>` is 1.0098099885512761 and the right side is 0, so it cannot be false
 
 tests/ir/contracts.sky:6:5: note: cost of `ratio`: 2 flops
   |
@@ -29,9 +45,28 @@ tests/ir/contracts.sky:7:14: note: [CONTRACT-002] this `requires` always holds, 
 7 |     requires b != 0 m and a > 0 m, "b divides a"
   |              ^^^^^^^^^^^^^^^^^^^^
   = note: applied by the `contracts` pass
-  = note: because in every call of `ratio` in this program, `a` is 3
-  = note: because in every call of `ratio` in this program, `b` is 2
+  = note: because `ratio[a=3,b=2]` is `ratio` specialized for a = 3, b = 2 (its constants and shapes are known)
   = note: because the condition is true for every value the analysis allows, so it cannot be false
+
+tests/ir/contracts.sky:14:5: note: [SPEC-001] specialized `fall_time` for h = 20 at this call: 2 checks removed
+   |
+14 | t = fall_time(20 m) + fall_time(5 m)
+   |     ^^^^^^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 2 run-time checks removed: operations that can fail in `fall_time` and cannot in `fall_time[h=20]`
+   = note: because the argument for `h` is the constant 20
+   = note: because in `fall_time[h=20]`: 3 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/contracts.sky:14:23: note: [SPEC-001] specialized `fall_time` for h = 5 at this call: 2 checks removed
+   |
+14 | t = fall_time(20 m) + fall_time(5 m)
+   |                       ^^^^^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 2 run-time checks removed: operations that can fail in `fall_time` and cannot in `fall_time[h=5]`
+   = note: because the argument for `h` is the constant 5
+   = note: because in `fall_time[h=5]`: 3 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
 
 tests/ir/contracts.sky:16:8: note: [FOLD-CMP-001] `2 m > 1 m` is rewritten to `true`
    |
@@ -47,6 +82,17 @@ tests/ir/contracts.sky:16:8: note: [CONTRACT-001] this `assert` always holds, so
    |        ^^^^^^^^^
    = note: applied by the `contracts` pass
    = note: because the condition is true for every value the analysis allows, so it cannot be false
+
+tests/ir/contracts.sky:17:5: note: [SPEC-001] specialized `ratio` for a = 3, b = 2 at this call: 2 checks removed
+   |
+17 | k = ratio(3 m, 2 m)
+   |     ^^^^^^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 2 run-time checks removed: operations that can fail in `ratio` and cannot in `ratio[a=3,b=2]`
+   = note: because the argument for `a` is the constant 3
+   = note: because the argument for `b` is the constant 2
+   = note: because in `ratio[a=3,b=2]`: 1 branch decided, 4 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
 
 tests/ir/contracts.sky:18:1: note: printed value of `t` is accurate to within 5.9e-17 relative
    |

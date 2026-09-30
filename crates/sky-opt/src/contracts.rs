@@ -92,7 +92,7 @@ fn symbol(c: CmpOp) -> &'static str {
 
 /// Three-valued truth.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Truth {
+pub(crate) enum Truth {
     True,
     False,
     Unknown,
@@ -118,7 +118,7 @@ fn decided(b: bool) -> Truth {
 
 /// `a op b` for every pair of values in the two enclosures, if it is the
 /// same for all of them.
-fn compare(op: CmpOp, a: Range, b: Range) -> Truth {
+pub(crate) fn compare(op: CmpOp, a: Range, b: Range) -> Truth {
     let (lt_always, ge_always) = (a.hi < b.lo, a.lo >= b.hi);
     let (gt_always, le_always) = (a.lo > b.hi, a.hi <= b.lo);
     match op {
@@ -303,6 +303,14 @@ fn explain(f: &Function, id: OpId, facts: &Analysis, params: &[Option<Range>]) -
                 "in every call of `{calls_of}` in this program, `{name}` is {r}"
             ));
         }
+    }
+    // A specialization of the function (`f[h=20]`, `sky_opt::specialize`)
+    // has its parameters' values baked in; say so.
+    if let Some(known) = crate::specialize::facts_in_name(&f.name) {
+        because.push(format!(
+            "`{}` is `{calls_of}` specialized for {known} (its constants and shapes are known)",
+            f.name
+        ));
     }
     if let Some(cond) = op.operands.first() {
         because.push(condition_reason(f, facts, *cond));

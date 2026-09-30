@@ -82,7 +82,7 @@ pub fn fold_with(m: &mut Module, mode: FoldMode) -> Vec<Rewrite> {
     out
 }
 
-fn fold_function(f: &mut Function, mode: FoldMode, out: &mut Vec<Rewrite>) {
+pub(crate) fn fold_function(f: &mut Function, mode: FoldMode, out: &mut Vec<Rewrite>) {
     // What each value is over the reals, from the operations as written.
     // Folding replaces an operation by a constant for the same value, so
     // the table stays valid for the whole fixed point.

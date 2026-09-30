@@ -1,0 +1,68 @@
+sir edition 2026
+
+fn @<main>() -> () effects(io, fail, call) @ 0..521 {
+  %0 = const.float 1 : num[1; ()] @ 441..442
+  %1 = call @k(%0) : num[1; ()] @ 439..443
+  %2 = const.float 2 : num[1; ()] @ 447..448
+  %3 = call @k(%2) : num[1; ()] @ 445..449
+  %4 = const.float 3 : num[1; ()] @ 453..454
+  %5 = call @k(%4) : num[1; ()] @ 451..455
+  %6 = const.float 4 : num[1; ()] @ 459..460
+  %7 = call @k(%6) : num[1; ()] @ 457..461
+  %8 = const.float 5 : num[1; ()] @ 465..466
+  %9 = call @k(%8) : num[1; ()] @ 463..467
+  print %1, %3, %5, %7, %9 @ 433..468
+  %10 = const.float 6 : num[1; ()] @ 477..478
+  %11 = call @k(%10) : num[1; ()] @ 475..479
+  %12 = const.float 7 : num[1; ()] @ 483..484
+  %13 = call @k(%12) : num[1; ()] @ 481..485
+  %14 = const.float 8 : num[1; ()] @ 489..490
+  %15 = call @k(%14) : num[1; ()] @ 487..491
+  %16 = const.float 9 : num[1; ()] @ 495..496
+  %17 = call @k(%16) : num[1; ()] @ 493..497
+  %18 = const.float 10 : num[1; ()] @ 501..503
+  %19 = call @k(%18) : num[1; ()] @ 499..504
+  print %11, %13, %15, %17, %19 @ 469..505
+  %20 = const.float 5 : num[1; ()] @ 517..518
+  %21 = call @fact(%20) : unknown @ 512..519
+  print %21 @ 506..520
+  return @ 0..521
+}
+
+fn @k(%x: num[1; ()]) -> (num[1; ()]) effects(fail) @ 292..340 {
+  %1 = const.float 2 : num[1; ()] @ 335..336
+  %2 = mul %x, %1 : num[1; ()] @ 331..336 (331..332, 335..336)
+  %3 = const.float 1 : num[1; ()] @ 339..340
+  %4 = add %2, %3 : num[1; ()] @ 331..340 (331..336, 339..340)
+  return %4 @ 292..340
+}
+
+fn @fact(%n: num[1; ()]) -> (unknown) effects(fail, call) @ 342..431 {
+  %1 = const.bool false : bool @ 342..431
+  %2 = const.nothing : nothing @ 342..431
+  %3 = const.float 1 : num[1; ()] @ 385..386
+  %4 = cmp.le %n, %3 : bool @ 380..386 (380..381, 385..386)
+  %5, %6 = if %4 : bool, unknown {
+    ^1:
+      %7 = const.float 1 : num[1; ()] @ 403..404
+      %8 = const.bool true : bool @ 396..404
+      yield %8, %7 @ 377..404
+  } {
+    ^2:
+      yield %1, %2 @ 377..404
+  } @ 377..404
+  %9 = not %5 : bool @ 409..431
+  %10, %11 = if %9 : bool, unknown {
+    ^3:
+      %12 = const.float 1 : num[1; ()] @ 429..430
+      %13 = sub %n, %12 : num[1; ()] @ 425..430 (425..426, 429..430)
+      %14 = call @fact(%13) : unknown @ 420..431
+      %15 = mul %n, %14 : unknown @ 416..431 (416..417, 420..431)
+      %16 = const.bool true : bool @ 409..431
+      yield %16, %15 @ 409..431
+  } {
+    ^4:
+      yield %5, %6 @ 409..431
+  } @ 409..431
+  return %11 @ 342..431
+}

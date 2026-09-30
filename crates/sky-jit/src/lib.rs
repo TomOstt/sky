@@ -53,6 +53,32 @@ pub mod kernel;
 pub mod kernel_rt;
 mod module;
 mod runtime;
+/// A JIT builder for `isa` whose code and data live in **one** region of
+/// `reserve` bytes, reserved up front (untouched pages cost no memory).
+///
+/// Compiled code reaches its own data and functions with 32-bit PC-relative
+/// relocations on x86-64. cranelift-jit's default provider allocates code and
+/// data separately, and on Linux they can land more than 2 GiB apart, which
+/// makes finalizing panic (the differential fuzzer found it). An arena keeps
+/// everything within reach; a module that outgrows it fails to compile and
+/// the engine falls back, it never crashes.
+pub(crate) fn jit_builder(
+    isa: OwnedTargetIsa,
+    reserve: usize,
+) -> Result<cranelift_jit::JITBuilder, String> {
+    let mut builder =
+        cranelift_jit::JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+    let arena =
+        cranelift_jit::ArenaMemoryProvider::new_with_size(reserve).map_err(|e| e.to_string())?;
+    builder.memory_provider(Box::new(arena));
+    Ok(builder)
+}
+
+/// The address space a whole program's native code may use.
+pub(crate) const MODULE_ARENA_BYTES: usize = 256 << 20;
+/// The address space one compiled `fused` kernel may use.
+pub(crate) const KERNEL_ARENA_BYTES: usize = 16 << 20;
+
 pub mod smoke;
 
 pub use module::{compile, emit_clif, CompileError, Compiled, RunFailure, SkipWriter};

@@ -91,8 +91,8 @@ use cranelift_codegen::ir::{
 };
 use cranelift_codegen::isa::OwnedTargetIsa;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{default_libcall_names, Linkage, Module};
+use cranelift_jit::JITModule;
+use cranelift_module::{Linkage, Module};
 use sky_diag::Span;
 use sky_interp::arith::{arith, ArithOp};
 use sky_interp::{RuntimeError, Value};
@@ -991,7 +991,8 @@ pub fn compile_kernel_with(
     let out_dim = plan.out_dim;
     let isa = isa().map_err(|e| Refusal(format!("no code generator for this host: {e}")))?;
     let fma = options.fma_check && has_fma(&isa);
-    let mut builder = JITBuilder::with_isa(isa, default_libcall_names());
+    let mut builder = crate::jit_builder(isa, crate::KERNEL_ARENA_BYTES)
+        .map_err(|e| Refusal(format!("no memory for a native kernel: {e}")))?;
     builder.symbol("sky_kernel_math", kernel_rt::math as *const u8);
     let mut module = JITModule::new(builder);
     let (id, code_len) = match compile_function(&plan, options, fma, &mut module) {

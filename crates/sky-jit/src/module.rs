@@ -89,8 +89,8 @@ use cranelift_codegen::ir::{
     Value as Cv,
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{default_libcall_names, FuncId, Linkage, Module as ClModule};
+use cranelift_jit::JITModule;
+use cranelift_module::{FuncId, Linkage, Module as ClModule};
 use sky_diag::Span;
 use sky_interp::arith::{ArithOp, MAX_CALL_DEPTH, STACK_BUDGET};
 use sky_interp::RuntimeError;
@@ -388,7 +388,11 @@ fn build(module: &SirModule, emit: bool) -> Res<Built> {
         span: None,
     })?;
     let call_conv = isa.default_call_conv();
-    let mut builder = JITBuilder::with_isa(isa, default_libcall_names());
+    let mut builder =
+        crate::jit_builder(isa, crate::MODULE_ARENA_BYTES).map_err(|e| CompileError {
+            message: format!("no memory for native code ({e})"),
+            span: None,
+        })?;
     for rt in Rt::ALL {
         builder.symbol(rt.name(), rt.address());
     }

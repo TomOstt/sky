@@ -10,13 +10,13 @@
 
 use cranelift_codegen::ir::{types, AbiParam, InstBuilder};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{default_libcall_names, Linkage, Module};
+use cranelift_jit::JITModule;
+use cranelift_module::{Linkage, Module};
 
 /// Compiles `f(a, b) = a * b + a` and returns `f(x, y)`.
 pub fn mul_add(x: f64, y: f64) -> Result<f64, String> {
     let isa = crate::host_isa()?;
-    let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
+    let mut module = JITModule::new(crate::jit_builder(isa, 1 << 20)?);
     let mut ctx = module.make_context();
     let sig = &mut ctx.func.signature;
     sig.params.push(AbiParam::new(types::F64));

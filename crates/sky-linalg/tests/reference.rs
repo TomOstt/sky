@@ -352,3 +352,40 @@ fn errors_are_the_same_as_the_plain_algorithm() {
         Err(LinalgError::Singular)
     );
 }
+
+#[test]
+fn known_results() {
+    // [[1, 2, 3], [4, 5, 6]] * [[7, 8], [9, 10], [11, 12]]
+    let a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let b = [7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
+    assert_eq!(
+        sky_linalg::gemm(&a, 2, 3, &b, 2),
+        [58.0, 64.0, 139.0, 154.0]
+    );
+    // A dot product of 10 terms, the sum of 1..=10 (exact in any order).
+    let x: Vec<f64> = (1..=10).map(f64::from).collect();
+    assert_eq!(sky_linalg::dot(&x, &[1.0; 10]), 55.0);
+    // The classic Cholesky example, whose factor is [[2, 0, 0], [6, 1, 0], [-8, 5, 3]].
+    let spd = [4.0, 12.0, -16.0, 12.0, 37.0, -43.0, -16.0, -43.0, 98.0];
+    let l = sky_linalg::cholesky(&spd, 3).unwrap();
+    assert_eq!(l, [2.0, 0.0, 0.0, 6.0, 1.0, 0.0, -8.0, 5.0, 3.0]);
+    assert_eq!(
+        sky_linalg::cholesky_solve(&l, 3, &[-20.0, -43.0, 192.0], 1),
+        [1.0, 2.0, 3.0]
+    );
+    // A system that needs a row exchange.
+    let sys = [0.0, 2.0, 1.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0];
+    let f = sky_linalg::lu(&sys, 3).unwrap();
+    assert_eq!(f.perm, [1, 0, 2]);
+    let x = f.solve(&[4.0, 3.0, 3.0], 1);
+    let want = [1.0, 1.0, 1.0];
+    let back = reference::matmul(&sys, 3, 3, &x, 1);
+    for (got, w) in back.iter().zip([4.0, 3.0, 3.0]) {
+        assert!((got - w).abs() < 1e-14, "{x:?} {back:?} {want:?}");
+    }
+    // [[4, 7], [2, 6]]⁻¹ = [[0.6, -0.7], [-0.2, 0.4]].
+    let inv = sky_linalg::inverse(&[4.0, 7.0, 2.0, 6.0], 2).unwrap();
+    for (got, want) in inv.iter().zip([0.6, -0.7, -0.2, 0.4]) {
+        assert!((got - want).abs() < 1e-15, "{inv:?}");
+    }
+}

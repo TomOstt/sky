@@ -12,20 +12,22 @@ use std::sync::{Arc, Mutex, OnceLock};
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
+/// A thread count from the text of `SKY_THREADS`: a positive integer.
+fn parse_threads(text: Option<&str>) -> Option<usize> {
+    text.and_then(|s| s.trim().parse::<usize>().ok())
+        .filter(|&n| n >= 1)
+}
+
 /// The number of threads the kernels use by default: `SKY_THREADS` if it is
 /// a positive integer, else the available parallelism (at least 1).
 pub fn default_threads() -> usize {
     static N: OnceLock<usize> = OnceLock::new();
     *N.get_or_init(|| {
-        std::env::var("SKY_THREADS")
-            .ok()
-            .and_then(|s| s.trim().parse::<usize>().ok())
-            .filter(|&n| n >= 1)
-            .unwrap_or_else(|| {
-                std::thread::available_parallelism()
-                    .map(usize::from)
-                    .unwrap_or(1)
-            })
+        parse_threads(std::env::var("SKY_THREADS").ok().as_deref()).unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(usize::from)
+                .unwrap_or(1)
+        })
     })
 }
 
@@ -75,5 +77,30 @@ pub(crate) fn map_collect<T: Send, R: Send, F: Fn(T) -> R + Sync + Send>(
         items.into_iter().map(f).collect()
     } else {
         pool(threads).install(|| items.into_par_iter().map(f).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sky_threads_is_a_positive_integer() {
+        assert_eq!(parse_threads(Some("4")), Some(4));
+        assert_eq!(parse_threads(Some(" 12 ")), Some(12));
+        assert_eq!(parse_threads(Some("1")), Some(1));
+        for bad in ["0", "-2", "many", "", "2.5"] {
+            assert_eq!(parse_threads(Some(bad)), None, "{bad:?}");
+        }
+        assert_eq!(parse_threads(None), None);
+        assert!(default_threads() >= 1);
+    }
+
+    #[test]
+    fn work_runs_once_per_item_on_any_thread_count() {
+        for threads in [1, 2, 5] {
+            let out = map_collect(threads, (0..37).collect(), |i: usize| i * i);
+            assert_eq!(out, (0..37).map(|i| i * i).collect::<Vec<_>>());
+        }
     }
 }

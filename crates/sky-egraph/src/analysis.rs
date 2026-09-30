@@ -117,6 +117,14 @@ pub struct SkyAnalysis {
     pub node_spans: HashMap<SkyNode, (u64, Span)>,
     pub firings: Vec<Firing>,
     pub seen: HashSet<(&'static str, Id)>,
+    /// Pairs `(new, root)`: an operation of class `new` that a rule made
+    /// below `root` fails, if it fails, exactly when and as an original
+    /// operation of class `root` did (`Aᵀ + Bᵀ` becomes `(A + B)ᵀ`: the new
+    /// `A + B` overflows in the same entries the old `+` did). The
+    /// write-back check that keeps the order of failing operations reads
+    /// them; without one, a rule that makes a new failing operation makes
+    /// the block be left alone.
+    pub fail_alias: Vec<(Id, Id)>,
 }
 
 impl SkyAnalysis {
@@ -129,6 +137,7 @@ impl SkyAnalysis {
             node_spans: HashMap::new(),
             firings: Vec::new(),
             seen: HashSet::new(),
+            fail_alias: Vec::new(),
         }
     }
 }

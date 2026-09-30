@@ -40,11 +40,13 @@
 //! be `infallible` in the analysis.
 
 use egg::{Applier, Id, PatternAst, Rewrite, SearchMatches, Searcher, Subst, Symbol, Var};
-use sky_ir::MathFn;
-use sky_types::Tag;
+use sky_ir::cost::Poly;
+use sky_ir::{MathFn, NumberType};
+use sky_types::{Tag, TagSet};
 use sky_units::{Dimension, Rational};
 
 use crate::analysis::{add_node, lit_node, render, Firing, Graph, Sign, SkyAnalysis};
+use crate::cost::{matmul_cost, matmul_ty};
 use crate::lang::{Lit, LitVal, Op, SkyNode};
 use crate::RewriteContract;
 
@@ -249,9 +251,33 @@ fn is_one(eg: &Graph, id: Id) -> bool {
     value(eg, id) == Some(1.0) && is_dimensionless(eg, id) && is_scalar(eg, id)
 }
 
+fn rank(eg: &Graph, id: Id) -> Option<usize> {
+    eg[id].data.ty.as_ref().map(|t| t.shape.rank())
+}
+
 /// Every entry of `id` is provably not `-0.0`.
 fn not_neg_zero(eg: &Graph, id: Id) -> bool {
     eg[id].data.sign >= Sign::NonNeg
+}
+
+/// The class's type carries no tags. A rule that builds a new *array* node
+/// derives its type without tags (the analysis does not model how `+`, `@`
+/// and scaling carry them), and the class's tags are the meet of the two: so
+/// a rule that would make a tagged value lose its tags does not fire.
+fn untagged(eg: &Graph, id: Id) -> bool {
+    eg[id]
+        .data
+        .ty
+        .as_ref()
+        .is_some_and(|t| t.tags == TagSet::EMPTY)
+}
+
+/// Same dimension and shape, both known.
+fn same_type(eg: &Graph, a: Id, b: Id) -> bool {
+    match (&eg[a].data.ty, &eg[b].data.ty) {
+        (Some(x), Some(y)) => x.dim == y.dim && x.shape == y.shape,
+        _ => false,
+    }
 }
 
 fn has_tag(eg: &Graph, id: Id, tag: Tag) -> bool {
@@ -481,6 +507,280 @@ fn match_neg_neg(eg: &Graph, root: Id, _: RewriteContract) -> Vec<Binds> {
     out
 }
 
+/// `x + (-y)`, either order, where the rewrite to `x - y` is exact. `-y` for
+/// a number is the sign flip, so `x - y` is `x + (-y)` by the definition of
+/// IEEE subtraction. For an array it is `0 - y`, and the two differ only
+/// where `y` is `+0.0` and `x` is `-0.0` (`-0.0 + (0 - 0) = +0.0`, but
+/// `-0.0 - 0.0 = -0.0`), so `x` must be proven not `-0.0`.
+fn match_add_neg(eg: &Graph, root: Id, _: RewriteContract) -> Vec<Binds> {
+    if !untagged(eg, root) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for n in nodes(eg, root).iter().filter(|n| n.op == Op::Add) {
+        let (a, b) = (n.args[0], n.args[1]);
+        for (x, ny) in [(a, b), (b, a)] {
+            for inner in args_of(eg, ny, Op::Neg) {
+                if is_scalar(eg, x) || not_neg_zero(eg, x) {
+                    out.push(vec![x, inner[0]]);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `x - (-y)`: `x + y`, on the same terms as [`match_add_neg`]: exact for
+/// numbers; for an array the two differ only for `x = -0.0`, `y = +0.0`.
+fn match_sub_neg(eg: &Graph, root: Id, _: RewriteContract) -> Vec<Binds> {
+    if !untagged(eg, root) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for n in nodes(eg, root).iter().filter(|n| n.op == Op::Sub) {
+        let (x, ny) = (n.args[0], n.args[1]);
+        for inner in args_of(eg, ny, Op::Neg) {
+            if is_scalar(eg, x) || not_neg_zero(eg, x) {
+                out.push(vec![x, inner[0]]);
+            }
+        }
+    }
+    out
+}
+
+fn build_binary(eg: &mut Graph, root: Id, b: &mut Binds, op: Op) -> Option<Id> {
+    let span = eg[root].data.span;
+    let node = SkyNode::new(op, vec![*b.first()?, *b.get(1)?]);
+    Some(add_node(eg, node, None, span))
+}
+
+/// `(-x) * (-y)` for numbers: the sign of a product is the exclusive or of
+/// the signs, and a number's negation flips only the sign, so the two flips
+/// cancel bit for bit (zeros included). Not for arrays, whose negation is
+/// `0 - x`. There is no such rule for `/`: a division by zero labels the
+/// divisor's own source span, which an operation a rule made does not have.
+fn match_neg_product(eg: &Graph, root: Id, _: RewriteContract) -> Vec<Binds> {
+    let mut out = Vec::new();
+    for n in nodes(eg, root).iter().filter(|n| n.op == Op::Mul) {
+        for l in args_of(eg, n.args[0], Op::Neg) {
+            for r in args_of(eg, n.args[1], Op::Neg) {
+                if is_scalar(eg, l[0]) && is_scalar(eg, r[0]) {
+                    out.push(vec![l[0], r[0]]);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `x + x` on an array: `2 * x`. Both compute the correctly rounded `2·xᵢ`
+/// (the sum of a float with itself is its double, `-0.0` included) or
+/// overflow in the same entries, and the product reads the array once.
+fn match_double(eg: &Graph, root: Id, _: RewriteContract) -> Vec<Binds> {
+    if !untagged(eg, root) {
+        return Vec::new();
+    }
+    nodes(eg, root)
+        .iter()
+        .filter(|n| n.op == Op::Add && eg.find(n.args[0]) == eg.find(n.args[1]))
+        .filter(|n| rank(eg, n.args[0]).is_some_and(|r| r > 0))
+        .map(|n| vec![eg.find(n.args[0])])
+        .collect()
+}
+
+fn build_double(eg: &mut Graph, root: Id, b: &mut Binds) -> Option<Id> {
+    let span = eg[root].data.span;
+    let two = SkyNode::leaf(Op::Lit(Lit::new(
+        LitVal::Rat(Rational::integer(2)),
+        Dimension::DIMENSIONLESS,
+    )));
+    let two = add_node(eg, two, None, span);
+    Some(add_node(
+        eg,
+        SkyNode::new(Op::Mul, vec![two, *b.first()?]),
+        None,
+        span,
+    ))
+}
+
+/// `Aᵀ + Bᵀ` and `Aᵀ - Bᵀ` on matrices: `(A ± B)ᵀ`. The entries are the same
+/// sums, one transpose (a copy) fewer.
+fn match_transpose_pair(eg: &Graph, root: Id, op: Op) -> Vec<Binds> {
+    if !untagged(eg, root) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for n in nodes(eg, root).iter().filter(|n| n.op == op) {
+        for p in args_of(eg, n.args[0], Op::Transpose) {
+            for q in args_of(eg, n.args[1], Op::Transpose) {
+                if rank(eg, p[0]) == Some(2) && rank(eg, q[0]) == Some(2) {
+                    out.push(vec![p[0], q[0]]);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn build_transpose_pair(eg: &mut Graph, root: Id, b: &mut Binds, op: Op) -> Option<Id> {
+    let span = eg[root].data.span;
+    let (x, y) = (*b.first()?, *b.get(1)?);
+    let inner = add_node(eg, SkyNode::new(op, vec![x, y]), None, span);
+    // The new `x ± y` fails in the entries the old `±` did.
+    eg.analysis.fail_alias.push((inner, root));
+    Some(add_node(
+        eg,
+        SkyNode::new(Op::Transpose, vec![inner]),
+        None,
+        span,
+    ))
+}
+
+// ---- Relaxed rules ----
+
+/// `p*x + p*y` and `p*x - p*y` with a shared factor `p` on either side of
+/// each product: `p * (x ± y)`. Valid over the reals; the products round
+/// separately in the original and once in the rewrite. For a scalar `p` and
+/// arrays `x`, `y` it saves a pass over an array and a temporary.
+fn match_distribute(eg: &Graph, root: Id, op: Op) -> Vec<Binds> {
+    if !untagged(eg, root) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for n in nodes(eg, root).iter().filter(|n| n.op == op) {
+        for l in args_of(eg, n.args[0], Op::Mul) {
+            for r in args_of(eg, n.args[1], Op::Mul) {
+                for (i, j) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                    if eg.find(l[i]) != eg.find(r[j]) {
+                        continue;
+                    }
+                    let (x, y) = (l[1 - i], r[1 - j]);
+                    if same_type(eg, x, y) {
+                        out.push(vec![eg.find(l[i]), x, y]);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn build_distribute(eg: &mut Graph, root: Id, b: &mut Binds, op: Op) -> Option<Id> {
+    let span = eg[root].data.span;
+    let (p, x, y) = (*b.first()?, *b.get(1)?, *b.get(2)?);
+    let inner = add_node(eg, SkyNode::new(op, vec![x, y]), None, span);
+    Some(add_node(
+        eg,
+        SkyNode::new(Op::Mul, vec![p, inner]),
+        None,
+        span,
+    ))
+}
+
+/// `s * (t * A)` for numbers `s`, `t` and an array `A`: `(s * t) * A`. The
+/// scalar product is one operation instead of a pass over the array.
+fn match_rescale(eg: &Graph, root: Id, _: RewriteContract) -> Vec<Binds> {
+    if !untagged(eg, root) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for n in nodes(eg, root).iter().filter(|n| n.op == Op::Mul) {
+        for (s, inner) in [(n.args[0], n.args[1]), (n.args[1], n.args[0])] {
+            if !is_scalar(eg, s) {
+                continue;
+            }
+            for m in args_of(eg, inner, Op::Mul) {
+                for (t, a) in [(m[0], m[1]), (m[1], m[0])] {
+                    if is_scalar(eg, t) && rank(eg, a).is_some_and(|r| r > 0) {
+                        out.push(vec![s, t, a]);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn build_rescale(eg: &mut Graph, root: Id, b: &mut Binds) -> Option<Id> {
+    let span = eg[root].data.span;
+    let (s, t, a) = (*b.first()?, *b.get(1)?, *b.get(2)?);
+    let st = add_node(eg, SkyNode::new(Op::Mul, vec![s, t]), None, span);
+    Some(add_node(eg, SkyNode::new(Op::Mul, vec![st, a]), None, span))
+}
+
+/// The flops of `(x @ y) @ z` and of `x @ (y @ z)`, from the types, as
+/// polynomials in the sizes.
+fn chain_flops(eg: &Graph, x: Id, y: Id, z: Id) -> Option<(Poly, Poly)> {
+    let (tx, ty, tz) = (
+        eg[x].data.ty.as_ref()?,
+        eg[y].data.ty.as_ref()?,
+        eg[z].data.ty.as_ref()?,
+    );
+    let flops = |a: &NumberType, b: &NumberType| -> Option<(Poly, NumberType)> {
+        let res = matmul_ty(a, b)?;
+        Some((matmul_cost(a, b, &res)?.flops, res))
+    };
+    let (xy, xy_ty) = flops(tx, ty)?;
+    let (yz, yz_ty) = flops(ty, tz)?;
+    let (xy_z, _) = flops(&xy_ty, tz)?;
+    let (x_yz, _) = flops(tx, &yz_ty)?;
+    Some((xy.checked_add(&xy_z)?, yz.checked_add(&x_yz)?))
+}
+
+/// Re-associates a matrix product only when the flop count is *provably*
+/// lower for every size (the sound test of `sky_types::poly`), so an order
+/// the checker planned (`sky_types::chain`, by the same flop model) is never
+/// undone. The products are not bit-identical: each entry is a sum in a
+/// different order.
+fn match_assoc(eg: &Graph, root: Id, to_right: bool) -> Vec<Binds> {
+    if !untagged(eg, root) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for n in nodes(eg, root).iter().filter(|n| n.op == Op::MatMul) {
+        let triples: Vec<[Id; 3]> = if to_right {
+            args_of(eg, n.args[0], Op::MatMul)
+                .into_iter()
+                .map(|i| [i[0], i[1], n.args[1]])
+                .collect()
+        } else {
+            args_of(eg, n.args[1], Op::MatMul)
+                .into_iter()
+                .map(|i| [n.args[0], i[0], i[1]])
+                .collect()
+        };
+        for [x, y, z] in triples {
+            let Some((left, right)) = chain_flops(eg, x, y, z) else {
+                continue;
+            };
+            let (old, new) = if to_right {
+                (&left, &right)
+            } else {
+                (&right, &left)
+            };
+            if new != old && new.le_for_all_sizes(old) {
+                out.push(vec![x, y, z]);
+            }
+        }
+    }
+    out
+}
+
+fn build_assoc(eg: &mut Graph, root: Id, b: &mut Binds, to_right: bool) -> Option<Id> {
+    let span = eg[root].data.span;
+    let (x, y, z) = (*b.first()?, *b.get(1)?, *b.get(2)?);
+    let mm = |eg: &mut Graph, l: Id, r: Id| {
+        add_node(eg, SkyNode::new(Op::MatMul, vec![l, r]), None, span)
+    };
+    if to_right {
+        let yz = mm(eg, y, z);
+        Some(mm(eg, x, yz))
+    } else {
+        let xy = mm(eg, x, y);
+        Some(mm(eg, xy, z))
+    }
+}
+
 fn match_sub_zero(eg: &Graph, root: Id, _: RewriteContract) -> Vec<Binds> {
     nodes(eg, root)
         .iter()
@@ -646,5 +946,60 @@ static RULES: &[Rule] = &[
         "TRIG-001", RealOnly, "sin({0})^2 + cos({0})^2" => "1",
         "the Pythagorean identity holds for every real x; in floating point the sum can differ from 1 in the last bit",
         match_pythagoras, build_one
+    ),
+    rule!(
+        "ALG-011", Conditional, "{0} + -{1}" => "{0} - {1}",
+        "x - y is x + (-y) in IEEE arithmetic for numbers; for arrays negation is 0 - y, which differs only where y is +0 and x is -0, so x must be proven not -0",
+        match_add_neg, |eg, r, b| build_binary(eg, r, b, Op::Sub)
+    ),
+    rule!(
+        "ALG-012", Conditional, "{0} - -{1}" => "{0} + {1}",
+        "x - (-y) is x + y in IEEE arithmetic for numbers; for arrays negation is 0 - y, which differs only where y is +0 and x is -0, so x must be proven not -0",
+        match_sub_neg, |eg, r, b| build_binary(eg, r, b, Op::Add)
+    ),
+    rule!(
+        "ALG-013", Exact, "-{0} * -{1}" => "{0} * {1}",
+        "the sign of a product is the exclusive or of the signs, and a number's negation flips only the sign, so the two flips cancel bit for bit (numbers only: an array's negation is 0 - x)",
+        match_neg_product, |eg, r, b| build_binary(eg, r, b, Op::Mul)
+    ),
+    rule!(
+        "ALG-015", Exact, "{0} + {0}" => "2 * {0}",
+        "for an array, x + x and 2 * x are both the correctly rounded 2x in every entry (-0 included) or overflow in the same entries, and the product reads the array once",
+        match_double, build_double
+    ),
+    rule!(
+        "ALG-016", Relaxed, "{0} * {1} + {0} * {2}" => "{0} * ({1} + {2})",
+        "distributing a shared factor is valid over the reals; the two products round separately in the original and the sum once, so the last bits can differ, and an overflow may appear or vanish",
+        |eg, r, _| match_distribute(eg, r, Op::Add), |eg, r, b| build_distribute(eg, r, b, Op::Add)
+    ),
+    rule!(
+        "ALG-017", Relaxed, "{0} * {1} - {0} * {2}" => "{0} * ({1} - {2})",
+        "distributing a shared factor is valid over the reals; the two products round separately in the original and the difference once, so the last bits can differ, and an overflow may appear or vanish",
+        |eg, r, _| match_distribute(eg, r, Op::Sub), |eg, r, b| build_distribute(eg, r, b, Op::Sub)
+    ),
+    rule!(
+        "ALG-018", Relaxed, "{0} * ({1} * {2})" => "({0} * {1}) * {2}",
+        "scaling an array twice is scaling once by the product, over the reals; the number's product rounds once instead of each entry twice, so the last bits can differ",
+        match_rescale, build_rescale
+    ),
+    rule!(
+        "LA-004", Exact, "{0}ᵀ + {1}ᵀ" => "({0} + {1})ᵀ",
+        "elementwise sums do not care where an entry sits, so transposing the sum is the sum of the transposes, entry for entry; one copy fewer, and the same entries overflow",
+        |eg, r, _| match_transpose_pair(eg, r, Op::Add), |eg, r, b| build_transpose_pair(eg, r, b, Op::Add)
+    ),
+    rule!(
+        "LA-005", Exact, "{0}ᵀ - {1}ᵀ" => "({0} - {1})ᵀ",
+        "elementwise differences do not care where an entry sits, so transposing the difference is the difference of the transposes, entry for entry; one copy fewer, and the same entries overflow",
+        |eg, r, _| match_transpose_pair(eg, r, Op::Sub), |eg, r, b| build_transpose_pair(eg, r, b, Op::Sub)
+    ),
+    rule!(
+        "LA-006", Relaxed, "({0} @ {1}) @ {2}" => "{0} @ ({1} @ {2})",
+        "matrix products associate over the reals; taken only when the flop count is provably lower for every size, and each entry is then a sum in a different order, so the last bits can differ",
+        |eg, r, _| match_assoc(eg, r, true), |eg, r, b| build_assoc(eg, r, b, true)
+    ),
+    rule!(
+        "LA-007", Relaxed, "{0} @ ({1} @ {2})" => "({0} @ {1}) @ {2}",
+        "matrix products associate over the reals; taken only when the flop count is provably lower for every size, and each entry is then a sum in a different order, so the last bits can differ",
+        |eg, r, _| match_assoc(eg, r, false), |eg, r, b| build_assoc(eg, r, b, false)
     ),
 ];

@@ -671,6 +671,13 @@ fn rewrite_segment(
         .any(|f| rules::class_of(f.rule) == Some(RuleClass::Relaxed));
     let check_order = cfg.contract == RewriteContract::Reproducible
         || (cfg.contract == RewriteContract::Relaxed && !relaxed_used);
+    // Operations a rule made that fail exactly where an original one did.
+    let alias: HashMap<Id, Id> = eg
+        .analysis
+        .fail_alias
+        .iter()
+        .map(|(new, root)| (eg.find(*new), eg.find(*root)))
+        .collect();
     let mut last_order: Option<usize> = None;
     for s in &staged {
         for src in &s.operands {
@@ -682,7 +689,10 @@ fn rewrite_segment(
             }
         }
         if check_order && s.kind.properties().effects.contains(Effect::Fail) {
-            match original_order.get(&s.class) {
+            let key = original_order
+                .get(&s.class)
+                .or_else(|| alias.get(&s.class).and_then(|r| original_order.get(r)));
+            match key {
                 Some(k) if last_order.is_none_or(|l| *k > l) => last_order = Some(*k),
                 _ => {
                     report.skipped = Some("the order of operations that can fail would change");

@@ -449,3 +449,25 @@ fn operations_the_analysis_proves_cannot_fail_still_compute_the_same_bits() {
         agree(src);
     }
 }
+
+/// Small vectors and matrices are scalars in native code: a loop over them
+/// (literals, arithmetic, indexing, `dot`, products, calls with
+/// vector parameters and vector and matrix results) makes no runtime call
+/// that returns a handle (`sky_rt_op`, `sky_rt_box_*`), so it allocates
+/// nothing. (`norm` keeps a runtime call for entries beyond 1e+-100, in a cold
+/// block.)
+#[test]
+fn small_array_loops_make_no_handles() {
+    let src = "def cross(a: Vector[3], b: Vector[3]) -> Vector[3]:\n    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]\n\
+               def outer(a: Vector[3]) -> Matrix[3, 3]:\n    return [[a[0] * a[0], a[0] * a[1], a[0] * a[2]], [a[1] * a[0], a[1] * a[1], a[1] * a[2]], [a[2] * a[0], a[2] * a[1], a[2] * a[2]]]\n\
+               x = [1.0, 0.5, 0.25]\nv = [0.0, 1.0, 0.0]\nA = [[1.0, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.25]]\ns = 0.0\ni = 0\n\
+               d = x\nwhile i < 100:\n    d = cross(x, v)\n    x = x + v * 0.01 + A @ d * 0.001\n    v = v - x * (0.01 / (1 + dot(x, x)))\n    s = s + dot(x, x) + x[2] + (outer(v) @ x)[0]\n    i += 1\nprint(s)\n";
+    let m = lower(src);
+    let clif = emit_clif(&m).expect("emits");
+    let handle_calls: Vec<&str> = clif
+        .lines()
+        .filter(|l| l.trim_start().starts_with("sig") && l.contains("-> i64"))
+        .collect();
+    assert!(handle_calls.is_empty(), "{handle_calls:#?}\n{clif}");
+    agree(src);
+}

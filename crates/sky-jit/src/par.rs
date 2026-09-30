@@ -114,8 +114,12 @@ pub fn map2(
 /// takes the case that has no error before the entries are computed:
 ///
 /// * `+`, `-`: two arrays of one shape and one dimension;
-/// * `*`: an array and a number whose dimensions multiply;
-/// * `/`: an array and a nonzero number whose dimensions divide;
+/// * `*`: an array and a number, or two arrays of one shape, whose
+///   dimensions multiply;
+/// * `/`: an array and a nonzero number, or two arrays of one shape with no
+///   zero entry in the divisor, whose dimensions divide (a zero entry leaves
+///   the operation to the sequential code, which reports the lowest failing
+///   entry);
 /// * `-x` of an array.
 ///
 /// The entries are the same `f64` operations as the sequential loop's, so the
@@ -186,6 +190,41 @@ pub fn elementwise(
             let k = *k;
             let pool = pool_for(cfg.threads)?;
             (dims, out, map1(&pool, cfg, data, |x| x / k))
+        }
+        // Two arrays of one shape, entry by entry.
+        (
+            OpKind::Mul,
+            Value::Array {
+                dims: d1,
+                data: x,
+                dim: da,
+            },
+            Value::Array {
+                dims: d2,
+                data: y,
+                dim: db,
+            },
+        ) if d1 == d2 && x.len() >= min => {
+            let out = da.checked_mul(*db).ok()?;
+            let pool = pool_for(cfg.threads)?;
+            (d1, out, map2(&pool, cfg, x, y, |p, q| p * q))
+        }
+        (
+            OpKind::Div,
+            Value::Array {
+                dims: d1,
+                data: x,
+                dim: da,
+            },
+            Value::Array {
+                dims: d2,
+                data: y,
+                dim: db,
+            },
+        ) if d1 == d2 && x.len() >= min && y.iter().all(|&q| q != 0.0) => {
+            let out = da.checked_div(*db).ok()?;
+            let pool = pool_for(cfg.threads)?;
+            (d1, out, map2(&pool, cfg, x, y, |p, q| p / q))
         }
         _ => return None,
     };

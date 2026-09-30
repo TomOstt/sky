@@ -1831,130 +1831,25 @@ impl Kernel<'_> {
 /// An elementwise operation on arrays, run on the pool when the array is big
 /// (`Config::array_elements`). Returns whether it did; `false` leaves the
 /// operation to [`pure_op`], which is `sky_interp::arith` and produces every
-/// error, so this only ever takes the case that has no error before the
-/// entries are computed:
-///
-/// * `+`, `-`: two arrays of one shape and one dimension;
-/// * `*`: an array and a number, or two arrays of one shape, whose
-///   dimensions multiply;
-/// * `/`: an array and a nonzero number, or two arrays of one shape with no
-///   zero entry in the divisor, whose dimensions divide;
-/// * `-x` of an array.
-///
-/// The entries are the same `f64` operations as the sequential loop's, so
-/// the same bits. The one failure left is that an entry is not finite, one
-/// error for the whole operation whichever entry (or thread) found it.
+/// error. The cases and why they cannot differ from the sequential loop are
+/// those of `sky_jit::par::elementwise`, which native code shares.
 fn elementwise(act: &mut Act<'_>, op: &OpData, rt: &ParRt) -> R<bool> {
     let s = op.span;
-    let min = rt.cfg.array_elements.max(2);
-    if let OpKind::Neg = op.kind {
+    let done = if let OpKind::Neg = op.kind {
         let [a] = fixed(op)?;
-        let Value::Array { dims, data, dim } = act.get(a, s)? else {
-            return Ok(false);
-        };
-        if data.len() < min {
-            return Ok(false);
-        }
-        // `0 - x`, as `sky_interp::array::negate`: a zero stays `+0`.
-        let Some((out, _)) = rt.map1(data, |x| 0.0 - x) else {
-            return Ok(false);
-        };
-        let v = Value::array(dims.clone(), out, *dim);
-        act.define1(op, v)?;
-        return Ok(true);
-    }
-    let [a, b] = fixed(op)?;
-    let (l, r) = (act.get(a, s)?, act.get(b, s)?);
-    let (dims, dim, mapped) = match (&op.kind, l, r) {
-        (
-            OpKind::Add | OpKind::Sub,
-            Value::Array {
-                dims: d1,
-                data: x,
-                dim: da,
-            },
-            Value::Array {
-                dims: d2,
-                data: y,
-                dim: db,
-            },
-        ) if d1 == d2 && da == db && x.len() >= min => {
-            let f = if matches!(op.kind, OpKind::Add) {
-                |p: f64, q: f64| p + q
-            } else {
-                |p: f64, q: f64| p - q
-            };
-            (d1, *da, rt.map2(x, y, f))
-        }
-        (OpKind::Mul, Value::Number { value: k, dim: dk }, Value::Array { dims, data, dim })
-        | (OpKind::Mul, Value::Array { dims, data, dim }, Value::Number { value: k, dim: dk })
-            if data.len() >= min =>
-        {
-            let Ok(out) = dim.checked_mul(*dk) else {
-                return Ok(false);
-            };
-            let k = *k;
-            (dims, out, rt.map1(data, |x| x * k))
-        }
-        (OpKind::Div, Value::Array { dims, data, dim }, Value::Number { value: k, dim: dk })
-            if data.len() >= min && *k != 0.0 =>
-        {
-            let Ok(out) = dim.checked_div(*dk) else {
-                return Ok(false);
-            };
-            let k = *k;
-            (dims, out, rt.map1(data, |x| x / k))
-        }
-        // Two arrays of one shape, entry by entry (a zero divisor entry
-        // leaves the operation to `pure_op`, which reports the lowest
-        // failing entry).
-        (
-            OpKind::Mul,
-            Value::Array {
-                dims: d1,
-                data: x,
-                dim: da,
-            },
-            Value::Array {
-                dims: d2,
-                data: y,
-                dim: db,
-            },
-        ) if d1 == d2 && x.len() >= min => {
-            let Ok(out) = da.checked_mul(*db) else {
-                return Ok(false);
-            };
-            (d1, out, rt.map2(x, y, |p, q| p * q))
-        }
-        (
-            OpKind::Div,
-            Value::Array {
-                dims: d1,
-                data: x,
-                dim: da,
-            },
-            Value::Array {
-                dims: d2,
-                data: y,
-                dim: db,
-            },
-        ) if d1 == d2 && x.len() >= min && y.iter().all(|&q| q != 0.0) => {
-            let Ok(out) = da.checked_div(*db) else {
-                return Ok(false);
-            };
-            (d1, out, rt.map2(x, y, |p, q| p / q))
-        }
-        _ => return Ok(false),
+        sky_jit::par::elementwise(&op.kind, &[act.get(a, s)?], s, &rt.cfg)
+    } else {
+        let [a, b] = fixed(op)?;
+        sky_jit::par::elementwise(&op.kind, &[act.get(a, s)?, act.get(b, s)?], s, &rt.cfg)
     };
-    let Some((out, finite)) = mapped else {
-        return Ok(false);
-    };
-    if !finite {
-        return Err(sky_interp::arith::overflow(s).into());
+    match done {
+        Some(Ok(v)) => {
+            act.define1(op, v)?;
+            Ok(true)
+        }
+        Some(Err(e)) => Err(e.into()),
+        None => Ok(false),
     }
-    let v = Value::array(dims.clone(), out, dim);
-    act.define1(op, v)?;
-    Ok(true)
 }
 
 /// One operation of a `fused` body: [`pure_op`], except that `neg` is `0 - x`

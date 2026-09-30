@@ -215,3 +215,42 @@ fn matmul_loop_allocations_are_reported() {
     assert_eq!(tree_out, raw_out);
     assert_eq!(tree_out, opt_out);
 }
+
+/// Every workload of `benches/programs`: allocations per iteration on the
+/// three engines, printed as a table (run with `--nocapture`), and the three
+/// engines must print the same. Only the reuse of the array loops is asserted
+/// (see the other tests); the rest is a report, since a loop that builds
+/// arrays, calls functions or takes derivatives allocates for reasons of its
+/// own.
+#[test]
+fn every_benchmark_program_allocations_are_reported() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../benches/programs");
+    let mut names: Vec<_> = std::fs::read_dir(dir)
+        .expect("benches/programs exists")
+        .map(|e| e.expect("entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "sky"))
+        // `recursion`'s `N` is the depth of `fib`, not an iteration count.
+        .filter(|p| p.file_stem().is_some_and(|x| x != "recursion"))
+        .collect();
+    names.sort();
+    println!(
+        "{:<14} {:>12} {:>8} {:>10}",
+        "workload", "tree-walker", "SIR", "SIR+opt"
+    );
+    for path in names {
+        let src = std::fs::read_to_string(&path).expect("readable");
+        // The size is the line `N = <number>`; `{N}` stands for it.
+        let templated: String = src
+            .lines()
+            .map(|l| if l.starts_with("N = ") { "N = {N}" } else { l })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (tree, tree_out) = per_iteration(&templated, Engine::TreeWalker);
+        let (raw, raw_out) = per_iteration(&templated, Engine::Sir);
+        let (opt, opt_out) = per_iteration(&templated, Engine::SirOpt);
+        let name = path.file_stem().unwrap().to_string_lossy();
+        println!("{name:<14} {tree:>12.1} {raw:>8.1} {opt:>10.1}");
+        assert_eq!(tree_out, raw_out, "{name}");
+        assert_eq!(tree_out, opt_out, "{name}");
+    }
+}

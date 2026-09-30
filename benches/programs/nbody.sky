@@ -1,0 +1,17 @@
+# bench: N=100000 quick=100
+# An N-body-like time-stepping loop on vectors of 32 bodies: the acceleration
+# is a spring pull plus damping, and every step updates the velocities and the
+# positions (`v = v + dt * a`, `x = x + dt * v`). The arrays never leave the
+# loop, so an interpreter that reuses the buffers of dead values allocates
+# nothing per step. The checksum is the final state of two bodies.
+N = 100000
+dt = 0.001 s
+k = 4 / (1 s)^2
+c = 0.1 / (1 s)
+x = [1 m, 1.25 m, 1.5 m, 1.75 m, 2 m, 2.25 m, 2.5 m, 2.75 m, 3 m, 3.25 m, 3.5 m, 3.75 m, 4 m, 4.25 m, 4.5 m, 4.75 m, 5 m, 5.25 m, 5.5 m, 5.75 m, 6 m, 6.25 m, 6.5 m, 6.75 m, 7 m, 7.25 m, 7.5 m, 7.75 m, 8 m, 8.25 m, 8.5 m, 8.75 m]
+v = [0.5 m/s, -0.5 m/s, 0.5 m/s, -0.5 m/s, 0.5 m/s, -0.5 m/s, 0.5 m/s, -0.5 m/s, 0.5 m/s, -0.5 m/s, 0.5 m/s, -0.5 m/s, 0.5 m/s, -0.5 m/s, 0.5 m/s, -0.5 m/s, 0.5 m/s, -0.5 m/s, 0.5 m/s, -0.5 m/s, 0.5 m/s, -0.5 m/s, 0.5 m/s, -0.5 m/s, 0.5 m/s, -0.5 m/s, 0.5 m/s, -0.5 m/s, 0.5 m/s, -0.5 m/s, 0.5 m/s, -0.5 m/s]
+for i in range(N):
+    a = -k * x - c * v
+    v = v + dt * a
+    x = x + dt * v
+print(x[0], x[31], v[0], v[31])

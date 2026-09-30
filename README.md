@@ -204,6 +204,8 @@ The workloads are `scalar_loop` (10^6 iterations of arithmetic with units), `rec
 
 The chain workloads show what choosing the association buys (spec, "Algorithm choice"): on one release run, `chain_order` took about 3 ms and `chain_order_forced` about 540 ms per engine (roughly 165×, the flop model predicts 334×: 500,500,000 flops as written, 1,500,000 after), with the outputs identical across the three engines. The machine was busy, so read it as an order of magnitude and re-run it on a quiet one. The `+` in their setup lines (`identity(500) + identity(500)`) drops the tags `identity` carries, so the matrices are dense and untagged, and the lines end in `# N` so `--quick` can swap the literal size.
 
+`nbody` (an N-body-like time-stepping loop on vectors of 32 bodies, `v = v + dt * a`) is the loop the buffer reuse of `sky_ir::lifetime` is for; `crates/sky-bench/tests/allocations.rs` counts the allocations per iteration of every workload on the three engines with a counting allocator.
+
 The `bench` workflow (`.github/workflows/bench.yml`) runs the suite in release mode weekly and on manual dispatch, never on pull requests, and uploads the JSON as an artifact.
 
 ## Development

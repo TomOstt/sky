@@ -26,7 +26,7 @@ fn @<main>() -> () effects(io, fail, call) @ 0..586 {
   return @ 0..586
 }
 
-fn @work(%n: unknown) -> (num[1; ()]) effects(fail) @ 263..397 {
+fn @"work[n:Scalar]"(%n: num[1; ()]) -> (num[1; ()]) effects(fail) @ 263..397 {
   %total = const.float 0 : num[1; ()] @ 288..289
   %2 = const.float 1 : num[1; ()] @ 350..351
   %i, %total_1 = while %total, %total : num[1; ()], num[1; ()] {
@@ -44,9 +44,9 @@ fn @work(%n: unknown) -> (num[1; ()]) effects(fail) @ 263..397 {
   return %total_1 @ 263..397
 }
 
-fn @noisy(%n: unknown) -> (unknown) effects(io, fail) @ 399..442 {
+fn @"noisy[n:Scalar]"(%n: num[1; ()]) -> (num[1; ()]) effects(io, fail) @ 399..442 {
   print %n @ 417..425
   %1 = const.float 2 : num[1; ()] @ 441..442
-  %2 = mul %n, %1 : unknown @ 437..442 (437..438, 441..442)
+  %2 = mul %n, %1 : num[1; ()] @ 437..442 (437..438, 441..442)
   return %2 @ 399..442
 }

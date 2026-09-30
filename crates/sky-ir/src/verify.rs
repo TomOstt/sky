@@ -125,15 +125,15 @@ pub fn verify(m: &Module) -> Result<(), Vec<VerifyError>> {
     sky_diag::with_deep_stack(|| verify_inner(m))
 }
 
-/// Checks one function `f` against the functions of `m` (its callees are
-/// looked up there): everything [`verify`] checks of a function except the
-/// declared effects, which need the whole call graph. `f` need not be in `m`
-/// (a pass checks a function it is about to add), but a call to `f` itself
-/// needs a function of that name in `m`.
-pub fn verify_function(m: &Module, f: &Function) -> Result<(), Vec<VerifyError>> {
+/// Checks one function `f` against `functions` (its callees are looked up
+/// there): everything [`verify`] checks of a function except the declared
+/// effects, which need the whole call graph. `f` need not be among them (a
+/// pass checks a function it is about to add), but a call to `f` itself
+/// needs a function of that name in `functions`.
+pub fn verify_function(functions: &[Function], f: &Function) -> Result<(), Vec<VerifyError>> {
     sky_diag::with_deep_stack(|| {
         let mut errors = Vec::new();
-        FnVerifier::new(m, f, &mut errors).run();
+        FnVerifier::new(functions, f, &mut errors).run();
         if errors.is_empty() {
             Ok(())
         } else {
@@ -157,7 +157,7 @@ fn verify_inner(m: &Module) -> Result<(), Vec<VerifyError>> {
                 },
             );
         }
-        FnVerifier::new(m, f, &mut errors).run();
+        FnVerifier::new(&m.functions, f, &mut errors).run();
     }
     if errors.is_empty() {
         check_effects(m, &mut errors);
@@ -245,7 +245,7 @@ enum Slot<'a> {
 }
 
 struct FnVerifier<'a> {
-    m: &'a Module,
+    functions: &'a [Function],
     f: &'a Function,
     errors: &'a mut Vec<VerifyError>,
     vis: Vec<Vis>,
@@ -255,9 +255,9 @@ struct FnVerifier<'a> {
 }
 
 impl<'a> FnVerifier<'a> {
-    fn new(m: &'a Module, f: &'a Function, errors: &'a mut Vec<VerifyError>) -> Self {
+    fn new(functions: &'a [Function], f: &'a Function, errors: &'a mut Vec<VerifyError>) -> Self {
         FnVerifier {
-            m,
+            functions,
             f,
             errors,
             vis: vec![Vis::Unseen; f.values.len()],
@@ -1469,7 +1469,7 @@ impl<'a> FnVerifier<'a> {
     }
 
     fn check_call(&mut self, o: OpId, op: &OpData, callee: &str) {
-        let Some(g) = self.m.function(callee) else {
+        let Some(g) = self.functions.iter().find(|g| g.name == callee) else {
             self.err_op(o, format!("call to undefined function `{callee}`"));
             return;
         };

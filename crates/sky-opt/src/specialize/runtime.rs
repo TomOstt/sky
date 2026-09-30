@@ -158,7 +158,7 @@ pub fn specialize_for(module: &Module, func: &str, args: &[Option<Value>]) -> Mo
     if out.function(&name).is_some() {
         return out;
     }
-    let built = build(base, name, &facts, true);
+    let built = build(base, name, &facts, true, &module.functions);
     out.functions.push(built.func);
     let idx = out.functions.len() - 1;
     // The calls inside the copy are specialized like any other.

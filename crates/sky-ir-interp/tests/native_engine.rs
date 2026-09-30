@@ -471,3 +471,45 @@ fn small_array_loops_make_no_handles() {
     assert!(handle_calls.is_empty(), "{handle_calls:#?}\n{clif}");
     agree(src);
 }
+
+// ----- type-specialized clones -----
+
+#[test]
+fn a_typed_clone_of_an_unannotated_function_runs_natively_as_the_interpreter_does() {
+    // `fib[n:Scalar]` is all `f64`s natively (no boxed value, no deopt).
+    let r = agree(
+        "def fib(n):\n    if n < 2:\n        return n\n    return fib(n - 1) + fib(n - 2)\n\
+         print(fib(20))\n",
+    );
+    assert_eq!(r.stdout, "6765\n");
+    // One clone per dimension; the results carry their own dimensions.
+    let r = agree("def sq(x):\n    return x * x\nprint(sq(3), sq(3 m), sq(2 s))\n");
+    assert!(r.failure.is_none());
+    // A number and a Bool: the Bool call reaches the generic function and
+    // fails as before, after the number call's output.
+    let r = agree("def twice(x):\n    return x + x\nprint(twice(2))\nprint(twice(true))\n");
+    assert_eq!(r.stdout, "4\n");
+    assert!(r.failure.is_some());
+    // An error inside a clone.
+    let r = agree("def inv(x):\n    return 1 / x\nprint(inv(4))\nprint(inv(0))\n");
+    assert_eq!(r.stdout, "0.25\n");
+    assert!(r.failure.unwrap().contains("division by zero"));
+    // Several early returns.
+    let r = agree(
+        "def sign(x):\n    if x < 0:\n        return -1\n    if x > 0:\n        return 1\n    return 0\n\
+         print(sign(-5), sign(0), sign(7))\n",
+    );
+    assert!(r.failure.is_none());
+}
+
+#[test]
+fn a_typed_clone_that_recurses_forever_stops_at_the_depth_limit() {
+    let src = "def f(x):\n    return f(x + 1) + 1\nprint(f(1))\n";
+    let m = lower(src);
+    assert!(m.function("f[x:Scalar]").is_some(), "{}", sky_ir::print(&m));
+    let (r, deopt) = native_run(&m, src);
+    assert!(!deopt);
+    let e = r.failure.clone().expect("fails");
+    assert!(e.contains("calling `f` here"), "{e}");
+    assert_eq!(sir_run(&m, src), r);
+}

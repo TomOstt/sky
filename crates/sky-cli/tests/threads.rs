@@ -209,7 +209,7 @@ print(a + b + c)
     let o = sky("prints", &["check", "--explain", "--threads=8"], &[], src);
     let text = err(&o);
     assert!(
-        text.contains("`noisy` prints, and output order is behaviour"),
+        text.contains("`noisy[x:Scalar]` prints, and output order is behaviour"),
         "{text}"
     );
 }

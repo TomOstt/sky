@@ -176,6 +176,35 @@ for i in range(N):
 print(v, s)
 ";
 
+/// `x * y` and `x / z` of two arrays (entry by entry) write into a dying
+/// operand's buffer, like `+` and `-`.
+const ENTRYWISE: &str = "
+N = {N}
+x = [1 m, 2 m, 3 m, 4 m]
+y = [2, 4, 8, 16]
+z = [2, 4, 8, 16]
+for i in range(N):
+    x = x * y
+    x = x / z
+print(x)
+";
+
+#[test]
+fn entrywise_products_and_quotients_reuse_a_dying_buffer_on_sir() {
+    let (tree, tree_out) = per_iteration(ENTRYWISE, Engine::TreeWalker);
+    let (raw, raw_out) = per_iteration(ENTRYWISE, Engine::Sir);
+    let (opt, opt_out) = per_iteration(ENTRYWISE, Engine::SirOpt);
+    println!("entrywise: allocations per iteration: tree-walker {tree}, SIR {raw}, SIR+opt {opt}");
+    assert_eq!(tree_out, raw_out);
+    assert_eq!(tree_out, opt_out);
+    assert!(
+        raw.abs() < 0.05,
+        "the unfused loop allocates in steady state: {raw} per iteration"
+    );
+    // Fused, one kernel per iteration builds its result.
+    assert!(opt <= 2.0, "the fused loop allocates {opt} per iteration");
+}
+
 #[test]
 fn nbody_loop_allocates_nothing_per_iteration_on_sir() {
     let (tree, tree_out) = per_iteration(NBODY, Engine::TreeWalker);

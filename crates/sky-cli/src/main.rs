@@ -8,17 +8,24 @@ use sky_syntax::Edition;
 
 mod accuracy;
 mod frontend;
+mod hw;
 mod ir;
 mod repl;
 mod run;
+mod tune;
 
-const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] <file.sky>\n       sky run [--engine=auto|ast|sir] <file.sky>\n       sky repl\n\n\
+const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] <file.sky>\n       sky run [--engine=auto|ast|sir] <file.sky>\n       sky repl\n\
+                     sky hw\n\
+                     sky tune [--show | --reset] [--budget-ms=<n>] [<kernel>]\n\n\
                      <stage> is `lower`, `final` (the default), or `after:<pass>` for one of\n\
                      fold, egraph, contracts, dce, fuse, cholesky\n\
                      --engine picks how `sky run` executes: `ast` (the tree-walking\n\
                      interpreter, the default), `sir` (lower to SIR, run the optimized IR),\n\
                      or `auto` (SIR, falling back to the tree-walker for programs SIR cannot\n\
-                     lower yet)";
+                     lower yet)\n\
+                     `sky hw` prints what this machine can do and what Sky uses it for;\n\
+                     `sky tune` measures kernel parameters here and remembers the winners\n\
+                     (`--show` lists them, `--reset` forgets them)";
 
 /// The `sky` command line.
 ///
@@ -33,6 +40,9 @@ const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] <file.sk
 ///   project root (a `sky.toml` that is a link, foreign-owned or
 ///   world-writable) or an invalid `sky.toml` (unknown key, unsupported
 ///   edition, ...).
+/// * `sky hw` and `sky tune` exit `0` on success; `sky tune` exits `1` when
+///   the performance database cannot be written and `2` when no tunable
+///   kernel matches its argument.
 /// * `2`: a usage error (unknown command, wrong arguments), or an input that
 ///   cannot be read (missing, not a regular file, too large, not UTF-8).
 ///
@@ -82,6 +92,23 @@ fn main() -> ExitCode {
             }
             repl::repl()
         }
+        Some("hw") => {
+            if args.len() != 1 {
+                eprintln!("{USAGE}");
+                return ExitCode::from(2);
+            }
+            hw::hw()
+        }
+        Some("tune") => match tune::parse(&args[1..]) {
+            Ok(parsed) => tune::tune(parsed),
+            Err(msg) => {
+                eprintln!("{USAGE}");
+                if let Some(msg) = msg {
+                    eprintln!("\nerror: {msg}");
+                }
+                ExitCode::from(2)
+            }
+        },
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)

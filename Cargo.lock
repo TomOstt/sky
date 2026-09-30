@@ -639,6 +639,7 @@ dependencies = [
  "sky-ast",
  "sky-derive",
  "sky-diag",
+ "sky-hw",
  "sky-interp",
  "sky-ir",
  "sky-ir-interp",
@@ -646,6 +647,7 @@ dependencies = [
  "sky-opt",
  "sky-project",
  "sky-syntax",
+ "sky-tune",
  "sky-types",
 ]
 

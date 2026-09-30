@@ -207,10 +207,32 @@ pub struct Analysis {
 
 /// Analyses every scalar `f64` value of `f`. See the module documentation.
 pub fn analyze(f: &Function) -> Analysis {
+    analyze_with_params(f, &[])
+}
+
+/// [`analyze`], with what is known about the function's parameters:
+/// `params[i]` is the enclosure of every value parameter `i` can be called
+/// with (`None`, or a parameter past the end, is any finite number, as in
+/// [`analyze`]). Only sound where the caller has proved it for *every* call
+/// of the function (see `sky_opt::contracts`, which takes it from the calls
+/// in the module).
+pub fn analyze_with_params(f: &Function, params: &[Option<Range>]) -> Analysis {
     let mut a = Analysis {
         known: vec![None; f.values.len()],
         proofs: vec![None; f.ops.len()],
     };
+    let entry = f.param_values();
+    for (&v, range) in entry.iter().zip(params) {
+        if let (Some(r), true) = (range, is_scalar_f64(f, v)) {
+            a.set(
+                v,
+                Known {
+                    ideal: None,
+                    range: *r,
+                },
+            );
+        }
+    }
     a.region(f, f.body, 0);
     a
 }
@@ -286,7 +308,8 @@ impl Analysis {
         }
         for &b in &f.region(r).blocks {
             for &arg in &f.block(b).args {
-                if is_scalar_f64(f, arg) {
+                // A parameter seeded by `analyze_with_params` keeps its fact.
+                if is_scalar_f64(f, arg) && self.known(arg).is_none() {
                     self.set(arg, Known::finite());
                 }
             }

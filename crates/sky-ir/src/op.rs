@@ -189,6 +189,10 @@ impl LiteralError {
     }
 }
 
+/// Which contract an [`OpKind::Assert`] checks: `assert`, or the `requires`
+/// and `ensures` of a function (the AST's own enum).
+pub use sky_ast::AssertKind;
+
 /// The math functions (`sqrt`, `exp`, `sin`, ...): the one list, with each
 /// function's arity, dimension rule and failure behaviour, lives in
 /// sky-units and is shared by the checker, both interpreters and SIR.
@@ -482,6 +486,38 @@ pub enum OpKind {
     /// (inside an `if` or `while` region) is malformed.
     Return,
 
+    // ----- contracts -----
+    /// `assert[kind] "text" ... %cond, %v0, ...`: a contract (spec
+    /// "Contracts"). No results. Operand 0 is the condition, a Bool (or
+    /// `Unknown`, which is checked at run time: anything but a Bool fails
+    /// with "`assert` needs a Bool condition, found ..."); the other
+    /// operands are the values of `names`, one each, in order, which only a
+    /// failure message uses.
+    ///
+    /// If the condition is true nothing happens. If it is false the run
+    /// stops with the message of `sky_interp::contract::failure_message`,
+    /// built from the attributes and the values: `kind` says which contract
+    /// (`assert`, `requires`, `ensures`); `text` is the condition as
+    /// written, white space collapsed; `message` is the author's string, if
+    /// any; `func` is the source name of the function a `requires` or
+    /// `ensures` belongs to (present exactly for those two); `names` are the
+    /// names the condition reads, whose values the message shows. The
+    /// operation's span is the condition's, which is where `sky run` points.
+    ///
+    /// A `requires` is the first thing a function does; an `ensures` runs
+    /// just before its `return`, on the arguments as they were passed (SIR
+    /// values are immutable, so lowering only has to name them) and the
+    /// returned value. Effect `Fail`: an assertion is behaviour, so no pass
+    /// moves it past output or removes it, except the `contracts` pass, when
+    /// it proves the condition true (`sky_opt::contracts`).
+    Assert {
+        kind: AssertKind,
+        text: String,
+        message: Option<String>,
+        func: Option<String>,
+        names: Vec<String>,
+    },
+
     // ----- effects -----
     /// `print(a, b, ...)`: writes the operands separated by spaces and a
     /// newline, as the interpreter does. No results.
@@ -553,6 +589,7 @@ impl OpKind {
             OpKind::Call { .. } => "call",
             OpKind::Return => "return",
             OpKind::Print => "print",
+            OpKind::Assert { .. } => "assert",
         }
     }
 
@@ -584,6 +621,8 @@ impl OpKind {
             OpKind::Show { .. } => (fail, false, false, false),
             // A value that is not a Bool fails.
             OpKind::ExpectBool { .. } | OpKind::ExpectNumber { .. } => (fail, false, false, false),
+            // A false condition fails.
+            OpKind::Assert { .. } => (fail, false, false, false),
             // A singular matrix or a zero scalar fails.
             OpKind::Inverse | OpKind::Solve { .. } => (fail, false, false, false),
             OpKind::MatMul => (fail, false, false, true),

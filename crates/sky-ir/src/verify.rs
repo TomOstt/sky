@@ -64,7 +64,7 @@ use crate::ir::{
     BlockId, EffectSet, Function, Module, NumberType, OpData, OpId, RegionId, Type, ValueDef,
     ValueId,
 };
-use crate::op::{CmpOp, OpKind, SolveMethod};
+use crate::op::{AssertKind, CmpOp, OpKind, SolveMethod};
 use crate::print::effect_name;
 
 /// The deepest nesting of regions the verifier, printer and parser accept.
@@ -645,7 +645,9 @@ impl<'a> FnVerifier<'a> {
             OpKind::If => (Some(1), None),
             OpKind::Fused => (None, Some(1)),
             OpKind::While => (None, Some(op.operands.len())),
-            OpKind::Yield | OpKind::Return | OpKind::Print => (None, Some(0)),
+            OpKind::Yield | OpKind::Return | OpKind::Print | OpKind::Assert { .. } => {
+                (None, Some(0))
+            }
             OpKind::Condition => (None, Some(0)),
             OpKind::Call { .. } => (None, None),
             OpKind::Math(f) => (Some(f.arity()), Some(1)),
@@ -762,6 +764,49 @@ impl<'a> FnVerifier<'a> {
                         format!(
                             "the result of `expect.number` must be unknown or {t} like its operand, found {}",
                             self.f.ty(op.results[0])
+                        ),
+                    );
+                }
+            }
+            OpKind::Assert {
+                kind,
+                text,
+                func,
+                names,
+                ..
+            } => {
+                if op.operands.len() != 1 + names.len() {
+                    self.err_op(
+                        o,
+                        format!(
+                            "`assert` takes a condition and {} value(s) for its names, found {} operand(s)",
+                            names.len(),
+                            op.operands.len()
+                        ),
+                    );
+                } else {
+                    let t = self.f.ty(op.operands[0]);
+                    if !matches!(t, Type::Bool | Type::Unknown) {
+                        self.err_op(
+                            o,
+                            format!("`assert` needs a Bool or unknown condition, found {t}"),
+                        );
+                    }
+                }
+                if text.is_empty() {
+                    self.err_op(o, "`assert` needs the text of its condition".to_string());
+                }
+                if func.is_some() != (*kind != AssertKind::Assert) {
+                    self.err_op(
+                        o,
+                        format!(
+                            "`assert[{}]` {} the function it belongs to",
+                            kind.keyword(),
+                            if *kind == AssertKind::Assert {
+                                "takes no name of"
+                            } else {
+                                "needs the name of"
+                            }
                         ),
                     );
                 }

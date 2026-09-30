@@ -61,7 +61,8 @@ use crate::ir::{
     Edition, Effect, EffectSet, Module, NumberType, OpId, RegionId, Repr, Type, ValueId,
 };
 use crate::op::{
-    BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind, SliceAxis, SolveMethod,
+    AssertKind, BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind, SliceAxis,
+    SolveMethod,
 };
 use crate::verify::MAX_REGION_DEPTH;
 
@@ -839,6 +840,7 @@ impl<'a> Parser<'a> {
                 self.expect(']')?;
                 OpKind::ExpectNumber { context }
             }
+            "assert" => self.assert_attrs()?,
             "if" => OpKind::If,
             "while" => OpKind::While,
             "yield" => OpKind::Yield,
@@ -918,6 +920,59 @@ impl<'a> Parser<'a> {
             None | Some('\n' | '}') => Ok(()),
             Some(_) => self.err("expected the end of the line"),
         }
+    }
+
+    /// The attributes of `assert`: `[kind] "text" fn "f" msg "m" names("a",
+    /// "b")`, the last three optional and in that order.
+    fn assert_attrs(&mut self) -> Res<OpKind> {
+        self.expect('[')?;
+        self.skip_inline();
+        let at = self.pos;
+        let kind = match self.word() {
+            "assert" => AssertKind::Assert,
+            "requires" => AssertKind::Requires,
+            "ensures" => AssertKind::Ensures,
+            _ => {
+                return self.err_at(
+                    at,
+                    self.pos.max(at + 1),
+                    "expected `assert`, `requires` or `ensures`",
+                )
+            }
+        };
+        self.expect(']')?;
+        let text = self.string()?;
+        let (mut func, mut message, mut names) = (None, None, Vec::new());
+        loop {
+            self.skip_inline();
+            let before = self.pos;
+            match self.word() {
+                "fn" if func.is_none() => func = Some(self.string()?),
+                "msg" if message.is_none() => message = Some(self.string()?),
+                "names" if names.is_empty() => {
+                    self.expect('(')?;
+                    loop {
+                        names.push(self.string()?);
+                        self.skip_inline();
+                        if !self.eat(',') {
+                            break;
+                        }
+                    }
+                    self.expect(')')?;
+                }
+                _ => {
+                    self.pos = before;
+                    break;
+                }
+            }
+        }
+        Ok(OpKind::Assert {
+            kind,
+            text,
+            message,
+            func,
+            names,
+        })
     }
 
     /// One item of a `slice`'s `[...]`: `at`, `:`, `lo:`, `:hi` or `lo:hi`.

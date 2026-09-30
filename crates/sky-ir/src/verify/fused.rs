@@ -184,6 +184,14 @@ impl FnVerifier<'_> {
                     ),
                 }
             } else if !inner.kind.properties().terminator {
+                if matches!(inner.kind, OpKind::Assert { .. }) {
+                    // It would run once per element, and a message names no
+                    // element: a contract is checked outside the kernel.
+                    self.err_op(
+                        id,
+                        "`assert` is not allowed in the body of `fused`".to_string(),
+                    );
+                }
                 let effects = inner.kind.properties().effects;
                 if let Some(e) = effects.iter().find(|e| *e != Effect::Fail) {
                     self.err_op(

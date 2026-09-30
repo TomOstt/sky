@@ -247,6 +247,34 @@ impl Printer<'_> {
             OpKind::ExpectNumber { context } => {
                 let _ = write!(self.out, "[{}]", context.text());
             }
+            OpKind::Assert {
+                kind,
+                text,
+                message,
+                func,
+                names,
+            } => {
+                let _ = write!(self.out, "[{}] ", kind.keyword());
+                write_string(&mut self.out, text);
+                if let Some(f) = func {
+                    self.out.push_str(" fn ");
+                    write_string(&mut self.out, f);
+                }
+                if let Some(m) = message {
+                    self.out.push_str(" msg ");
+                    write_string(&mut self.out, m);
+                }
+                if !names.is_empty() {
+                    self.out.push_str(" names(");
+                    for (i, n) in names.iter().enumerate() {
+                        if i > 0 {
+                            self.out.push_str(", ");
+                        }
+                        write_string(&mut self.out, n);
+                    }
+                    self.out.push(')');
+                }
+            }
             OpKind::ArrayLiteral { cols: Some(c) } => {
                 let _ = write!(self.out, "[{c}]");
             }

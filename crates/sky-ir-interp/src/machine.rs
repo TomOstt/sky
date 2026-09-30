@@ -17,6 +17,7 @@ use sky_interp::arith::{
     recursion_too_deep, sign, ArithOp, StackMeter, MAX_CALL_DEPTH,
 };
 use sky_interp::array::{self, Ix};
+use sky_interp::contract;
 use sky_interp::Value;
 use sky_ir::{
     BlockData, BlockId, CmpOp, Function, Module, NumberType, OpData, OpId, OpKind, RegionId,
@@ -642,6 +643,7 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             let b = expect_bool(context.keyword(), act.get(a, s)?, s)?;
             act.define(op, vec![Value::Bool(b)])
         }
+        OpKind::Assert { .. } => assert_op(act, op),
 
         // `+x` of a value the checker could not type: a number or an array
         // passes as it is, anything else fails as in `sky run`.
@@ -666,6 +668,35 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             s,
         )),
     }
+}
+
+/// `assert` (see `OpKind::Assert`): a false condition stops the run with
+/// the failure `sky_interp::contract` builds, which is the tree-walker's,
+/// word for word. Kept out of [`pure_op`]'s frame.
+#[inline(never)]
+fn assert_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
+    let s = op.span;
+    let OpKind::Assert {
+        kind,
+        text,
+        message,
+        func,
+        names,
+    } = &op.kind
+    else {
+        return Err(IrRuntimeError::malformed("expected an `assert`", s));
+    };
+    let Some((cond, values)) = op.operands.split_first() else {
+        return Err(IrRuntimeError::malformed("`assert` needs a condition", s));
+    };
+    if contract::expect_condition(*kind, act.get(*cond, s)?, s)? {
+        return Ok(());
+    }
+    let mut shown: Vec<(&str, String)> = Vec::with_capacity(names.len());
+    for (name, v) in names.iter().zip(values) {
+        shown.push((name.as_str(), contract::show(act.get(*v, s)?)));
+    }
+    Err(contract::failure(*kind, func.as_deref(), text, message.as_deref(), &shown, s).into())
 }
 
 /// `fused` (see `OpKind::Fused`): runs the scalar body once per element.

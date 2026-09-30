@@ -548,10 +548,11 @@ fn match_sub_neg(eg: &Graph, root: Id, _: RewriteContract) -> Vec<Binds> {
     out
 }
 
-fn build_binary(eg: &mut Graph, root: Id, b: &mut Binds, op: Op) -> Option<Id> {
-    let span = eg[root].data.span;
+fn build_binary(eg: &mut Graph, _root: Id, b: &mut Binds, op: Op) -> Option<Id> {
     let node = SkyNode::new(op, vec![*b.first()?, *b.get(1)?]);
-    Some(add_node(eg, node, None, span))
+    // No span: the node can fail, and the write-back gives it the span of the
+    // original operation that failed in its place (see `convert`).
+    Some(add_node(eg, node, None, None))
 }
 
 /// `(-x) * (-y)` for numbers: the sign of a product is the exclusive or of
@@ -599,7 +600,7 @@ fn build_double(eg: &mut Graph, root: Id, b: &mut Binds) -> Option<Id> {
         eg,
         SkyNode::new(Op::Mul, vec![two, *b.first()?]),
         None,
-        span,
+        None,
     ))
 }
 
@@ -625,7 +626,7 @@ fn match_transpose_pair(eg: &Graph, root: Id, op: Op) -> Vec<Binds> {
 fn build_transpose_pair(eg: &mut Graph, root: Id, b: &mut Binds, op: Op) -> Option<Id> {
     let span = eg[root].data.span;
     let (x, y) = (*b.first()?, *b.get(1)?);
-    let inner = add_node(eg, SkyNode::new(op, vec![x, y]), None, span);
+    let inner = add_node(eg, SkyNode::new(op, vec![x, y]), None, None);
     // The new `x ± y` fails in the entries the old `±` did.
     eg.analysis.fail_alias.push((inner, root));
     Some(add_node(
@@ -665,15 +666,14 @@ fn match_distribute(eg: &Graph, root: Id, op: Op) -> Vec<Binds> {
     out
 }
 
-fn build_distribute(eg: &mut Graph, root: Id, b: &mut Binds, op: Op) -> Option<Id> {
-    let span = eg[root].data.span;
+fn build_distribute(eg: &mut Graph, _root: Id, b: &mut Binds, op: Op) -> Option<Id> {
     let (p, x, y) = (*b.first()?, *b.get(1)?, *b.get(2)?);
-    let inner = add_node(eg, SkyNode::new(op, vec![x, y]), None, span);
+    let inner = add_node(eg, SkyNode::new(op, vec![x, y]), None, None);
     Some(add_node(
         eg,
         SkyNode::new(Op::Mul, vec![p, inner]),
         None,
-        span,
+        None,
     ))
 }
 
@@ -701,11 +701,10 @@ fn match_rescale(eg: &Graph, root: Id, _: RewriteContract) -> Vec<Binds> {
     out
 }
 
-fn build_rescale(eg: &mut Graph, root: Id, b: &mut Binds) -> Option<Id> {
-    let span = eg[root].data.span;
+fn build_rescale(eg: &mut Graph, _root: Id, b: &mut Binds) -> Option<Id> {
     let (s, t, a) = (*b.first()?, *b.get(1)?, *b.get(2)?);
-    let st = add_node(eg, SkyNode::new(Op::Mul, vec![s, t]), None, span);
-    Some(add_node(eg, SkyNode::new(Op::Mul, vec![st, a]), None, span))
+    let st = add_node(eg, SkyNode::new(Op::Mul, vec![s, t]), None, None);
+    Some(add_node(eg, SkyNode::new(Op::Mul, vec![st, a]), None, None))
 }
 
 /// The flops of `(x @ y) @ z` and of `x @ (y @ z)`, from the types, as
@@ -766,11 +765,10 @@ fn match_assoc(eg: &Graph, root: Id, to_right: bool) -> Vec<Binds> {
     out
 }
 
-fn build_assoc(eg: &mut Graph, root: Id, b: &mut Binds, to_right: bool) -> Option<Id> {
-    let span = eg[root].data.span;
+fn build_assoc(eg: &mut Graph, _root: Id, b: &mut Binds, to_right: bool) -> Option<Id> {
     let (x, y, z) = (*b.first()?, *b.get(1)?, *b.get(2)?);
     let mm = |eg: &mut Graph, l: Id, r: Id| {
-        add_node(eg, SkyNode::new(Op::MatMul, vec![l, r]), None, span)
+        add_node(eg, SkyNode::new(Op::MatMul, vec![l, r]), None, None)
     };
     if to_right {
         let yz = mm(eg, y, z);

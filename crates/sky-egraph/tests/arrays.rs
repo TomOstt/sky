@@ -785,3 +785,133 @@ fn a_cheaper_array_form_is_chosen_and_explained_under_the_default_contract() {
          2 vs 3 allocations (weighted cost 512 vs 704)"
     );
 }
+
+// ---------------------------------------------------------------------
+// Where a rule-made failing operation reports its failure
+// ---------------------------------------------------------------------
+
+/// `((-x) * (-x))^1`: the class of the product also holds the `^1`, whose
+/// span is wider. The product a rule makes must report an overflow at the
+/// original `*`, not at the class's joined span.
+#[test]
+fn a_rule_made_failing_op_fails_at_the_span_of_the_original_op() {
+    let big = [Value::scalar(1e200), Value::scalar(0.0)];
+    // The counterexample of the differential proptest, as it was found.
+    let f = scalar2(|t, x, _| {
+        let nx = t.un(OpKind::Neg, x);
+        let m = t.bin(OpKind::Mul, nx, nx);
+        t.pow(m, 1, 1)
+    });
+    let (g, fired) = rewritten(&f, &repro());
+    assert!(fired.contains(&"ALG-013"), "{fired:?}");
+    let (a, b) = (run_with(&f, &big), run_with(&g, &big));
+    assert!(a.is_err());
+    assert!(same(&a, &b), "{a:?}\nvs\n{b:?}");
+
+    // `(x + (-y))^1`, `(x - (-y))^1`, `(-x * -y)^1` on overflowing numbers.
+    let wrap = |build: fn(&mut T, ValueId, ValueId) -> ValueId| {
+        scalar2(move |t, x, y| {
+            let r = build(t, x, y);
+            t.pow(r, 1, 1)
+        })
+    };
+    let cases: [(Function, &str); 3] = [
+        (
+            wrap(|t, x, y| {
+                let ny = t.un(OpKind::Neg, y);
+                t.bin(OpKind::Add, x, ny)
+            }),
+            "ALG-011",
+        ),
+        (
+            wrap(|t, x, y| {
+                let ny = t.un(OpKind::Neg, y);
+                t.bin(OpKind::Sub, x, ny)
+            }),
+            "ALG-012",
+        ),
+        (
+            wrap(|t, x, y| {
+                let nx = t.un(OpKind::Neg, x);
+                let ny = t.un(OpKind::Neg, y);
+                t.bin(OpKind::Mul, nx, ny)
+            }),
+            "ALG-013",
+        ),
+    ];
+    for (f, rule) in &cases {
+        // `x + (-y)` overflows for `y = -MAX`; the others for `y = MAX`.
+        let y = if *rule == "ALG-011" {
+            -f64::MAX
+        } else {
+            f64::MAX
+        };
+        let huge = [Value::scalar(f64::MAX), Value::scalar(y)];
+        let (g, fired) = rewritten(f, &repro());
+        assert!(fired.contains(rule), "{rule}: {fired:?}");
+        let (a, b) = (run_with(f, &huge), run_with(&g, &huge));
+        assert!(a.is_err(), "{rule}");
+        assert!(same(&a, &b), "{rule}: {a:?}\nvs\n{b:?}");
+    }
+}
+
+#[test]
+fn rule_made_failing_array_ops_fail_at_the_original_span_too() {
+    let ty = vec_ty(N as u64);
+    let pow1 = |t: &mut T, v: ValueId, ty: &Type| {
+        t.op(
+            OpKind::PowConst {
+                exponent: sky_units::Rational::integer(1),
+            },
+            &[v],
+            ty.clone(),
+        )
+    };
+    let big = Value::array(vec![N], vec![f64::MAX; N], Dimension::DIMENSIONLESS);
+    // `(v + v)^1` (ALG-015).
+    let mut t = T::new(vec![ty.clone()], vec![ty.clone()]);
+    let p = t.params()[0];
+    let s = t.op(OpKind::Add, &[p, p], ty.clone());
+    let r = pow1(&mut t, s, &ty);
+    let f = t.ret(&[r]);
+    let (g, fired) = rewritten(&f, &repro());
+    assert!(fired.contains(&"ALG-015"), "{fired:?}");
+    let args = [big.clone()];
+    assert!(run_with(&f, &args).is_err());
+    assert!(same(&run_with(&f, &args), &run_with(&g, &args)));
+
+    // `(Aᵀ + Bᵀ)^1` (LA-004) on matrices.
+    let (m, mt) = (mat_ty(2, 3), mat_ty(3, 2));
+    let mut t = T::new(vec![m.clone(), m.clone()], vec![mt.clone()]);
+    let p = t.params();
+    let x = t.op(OpKind::Transpose, &[p[0]], mt.clone());
+    let y = t.op(OpKind::Transpose, &[p[1]], mt.clone());
+    let s = t.op(OpKind::Add, &[x, y], mt.clone());
+    let r = pow1(&mut t, s, &mt);
+    let f = t.ret(&[r]);
+    let (g, fired) = rewritten(&f, &repro());
+    assert!(fired.contains(&"LA-004"), "{fired:?}");
+    let bigm = Value::array(vec![2, 3], vec![f64::MAX; 6], Dimension::DIMENSIONLESS);
+    let args = [bigm.clone(), bigm];
+    assert!(run_with(&f, &args).is_err());
+    assert!(same(&run_with(&f, &args), &run_with(&g, &args)));
+}
+
+/// `(-y) * (-y)` and `y * y` are one class once ALG-013 fires, and the
+/// program's own `y * y` (written later) may be what is extracted. The
+/// overflow is still the first product's, at its span.
+#[test]
+fn an_extracted_op_reports_the_first_failing_op_of_its_class() {
+    let mut t = T::new(vec![num(), num()], vec![num(), num()]);
+    let y = t.params()[1];
+    let ny = t.un(OpKind::Neg, y);
+    let first = t.bin(OpKind::Mul, ny, ny);
+    let second = t.bin(OpKind::Mul, y, y);
+    let f = t.ret(&[first, second]);
+    let (g, fired) = rewritten(&f, &repro());
+    assert!(fired.contains(&"ALG-013"), "{fired:?}");
+    let args = [Value::scalar(0.0), Value::scalar(1e200)];
+    let (a, b) = (run_with(&f, &args), run_with(&g, &args));
+    assert!(a.is_err());
+    assert!(same(&a, &b), "{a:?}\nvs\n{b:?}");
+}

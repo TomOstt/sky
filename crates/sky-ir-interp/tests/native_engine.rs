@@ -317,7 +317,8 @@ fn a_module_that_does_not_verify_is_refused() {
 
 #[test]
 fn clif_text_has_every_function_and_the_status_convention() {
-    let m = lower("def f(x: m) -> m:\n    return x * 2\nprint(f(1 m))\n");
+    let m =
+        lower("def f(x: m) -> m:\n    return x * 2\nfor i in range(3):\n    print(f(i * 1 m))\n");
     let text = emit_clif(&m).expect("emits");
     assert!(text.contains("sky_f0__main_"), "{text}");
     assert!(text.contains("sky_f1_f"), "{text}");

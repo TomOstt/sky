@@ -38,7 +38,10 @@ fn err(o: &Output) -> String {
     String::from_utf8_lossy(&o.stderr).into_owned()
 }
 
-const PROGRAM: &str = "def area(w: m, h: m) -> m^2:\n    return w * h\nprint(area(3 m, 4 m))\n";
+// The width varies with the loop, so `specialize` cannot fold the call away
+// and the multiplication is compiled.
+const PROGRAM: &str =
+    "def area(w: m, h: m) -> m^2:\n    return w * h\nfor i in range(3):\n    print(area(i * 1 m, 4 m))\n";
 
 #[test]
 fn emit_clif_prints_every_function_on_stdout() {
@@ -95,7 +98,7 @@ fn only_clif_is_an_emit_target_and_it_may_not_repeat() {
 fn native_runs_the_program_and_auto_prefers_it() {
     let native = sky("run_native", &["run", "--engine=native"], PROGRAM);
     assert_eq!(native.status.code(), Some(0), "{}", err(&native));
-    assert_eq!(out(&native), "12 m^2\n");
+    assert_eq!(out(&native), "0 m^2\n4 m^2\n8 m^2\n");
     let auto = sky("run_auto", &["run", "--engine=auto"], PROGRAM);
     assert_eq!(out(&auto), out(&native));
     let ast = sky("run_ast", &["run", "--engine=ast"], PROGRAM);

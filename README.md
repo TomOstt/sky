@@ -16,7 +16,7 @@ See `spec/v0.1.md` for the v0.1 scope.
 
 [`examples/orbit.sky`](examples/orbit.sky) shows the numerics built so far. It is a year of Earth's orbit, with the force written as `-grad(U)(r)` of a potential. The script states its tolerance and that energy is conserved. Sky picks a symplectic integrator and explains the choice, and energy drifts by about 4e-12. The same file checks a contract (`requires`, `assert`) and carries a measurement's uncertainty (`1.000 ± 0.005 m`) through a formula.
 
-The expected output of each example is next to it (`showcase.out`, `orbit.out`). A test runs every example on both engines and compares the output byte for byte.
+The expected output of each example is next to it (`showcase.out`, `orbit.out`). A test runs every example on every engine and compares the output byte for byte.
 
 ## Status
 
@@ -79,8 +79,9 @@ sky check --explain file.sky  # also show the edition, the checker's rewrites (A
 sky check --emit-ir file.sky  # print the program's IR (SIR text) on stdout; --emit-ir=lower, =after:fold|egraph|dce|cholesky, =final
 sky run file.sky              # check, then run; only a clean file runs. print() writes to stdout
 sky repl                      # expressions echo their value; blocks (def, if, while, for) continue on `...` lines until an empty line
-sky run --engine=sir file.sky # pick the engine: ast (tree-walker, the default), sir (lower to SIR, run it), auto
+sky run --engine=sir file.sky # pick the engine: ast (tree-walker, the default), sir (lower to SIR, run it), native (compile the SIR to machine code), auto
 sky run --engine=sir --threads=4 file.sky  # SIR runs big elementwise kernels and independent pure calls on 4 threads (SKY_THREADS; 1 is sequential); the output never depends on it
+sky check --emit=clif file.sky # print the Cranelift IR the native engine compiles
 sky repl                      # one line at a time; expressions echo their value
 sky hw                        # what this machine can do (SIMD, cores, caches, memory) and what Sky uses each for
 sky tune                      # measure kernel parameters (block sizes, unroll factors) here and remember the winners
@@ -135,7 +136,7 @@ f.sky:2:5: note: [ALG-001] `x * 1` is rewritten to `x`
   = note: because multiplying a finite float by 1 gives it back bit for bit, and cannot overflow
 ```
 
-`sky run` has two engines that print the same bytes, on stdout and stderr, with the same exit status. The default, `--engine=ast`, is the tree-walking interpreter: it is faster than the SIR engine today (see Benchmarks), and the default switches to SIR once SIR is the faster one. `--engine=auto` lowers the program to SIR, runs the optimization pipeline with verification, and executes it on the SIR reference interpreter; a program SIR cannot express yet (iterating over an array, a `range` bound computed at run time, an input declaration inside a function, ...) silently runs on the tree-walking interpreter instead. `--engine=sir` never falls back and reports such a program as an error (`cannot run on SIR: ...`), and `--engine=ast` uses the tree-walker, which also stays as the oracle the SIR engine is tested against. A runtime error found on SIR is re-run on the tree-walker, with its output discarded, so that it is pointed at and labelled exactly as before (see "Running programs" in `spec/v0.1.md`).
+`sky run` has three engines that print the same bytes, on stdout and stderr, with the same exit status. The default, `--engine=ast`, is the tree-walking interpreter, which also stays as the oracle the other engines are tested against. `--engine=sir` lowers the program to SIR, runs the optimization pipeline with verification, and executes it on the SIR reference interpreter. `--engine=native` compiles the same optimized SIR to machine code through Cranelift (`crates/sky-jit`) and runs that; it is over 100 times faster than the interpreters on a loop of scalar arithmetic (see Benchmarks). `--engine=auto` picks native code, then SIR, then the tree-walker: a program native code cannot take runs on SIR, and a program SIR cannot express yet (iterating over an array, a `range` bound computed at run time, an input declaration inside a function, ...) silently runs on the tree-walking interpreter instead. `--engine=sir` and `--engine=native` never fall back and report such a program as an error (`cannot run on SIR: ...`, `cannot run natively: ...`). A runtime error found on SIR is re-run on the tree-walker, with its output discarded, so that it is pointed at and labelled exactly as before (see "Running programs" in `spec/v0.1.md`).
 
 Numbers are always finite: division by zero and overflow are runtime errors, not `inf` or `NaN`. See "Running programs" in `spec/v0.1.md`. The REPL keeps no session file.
 
@@ -184,7 +185,7 @@ fuzz/           cargo-fuzz targets for the lexer, parser and manifest
 
 ## Benchmarks
 
-`sky-bench` times each program in `benches/programs/` through three engines: (a) the tree-walking interpreter (`sky run`), (b) lowering plus the SIR interpreter with no passes, and (c) lowering plus `sky_opt::default_pipeline` plus the SIR interpreter. It also times the compile-side phases (lex, parse, check, lower, pipeline, verify), and it fails if the three engines do not print identical output. Every workload prints a checksum, so none can be skipped.
+`sky-bench` times each program in `benches/programs/` through four engines: (a) the tree-walking interpreter (`sky run`), (b) lowering plus the SIR interpreter with no passes, (c) lowering plus `sky_opt::default_pipeline` plus the SIR interpreter, and (d) the same optimized SIR compiled to machine code (`sky-jit`). It also times the compile-side phases (lex, parse, check, lower, pipeline, verify, and the native compile), and it fails if the four engines do not print identical output. Every workload prints a checksum, so none can be skipped.
 
 ```
 cargo run --release -p sky-bench                              # all workloads, a table on stdout

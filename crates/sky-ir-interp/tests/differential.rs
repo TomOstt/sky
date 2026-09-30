@@ -673,6 +673,81 @@ print(dia([[2, 1], [0, 3]] + identity(2), [1, 2]))
 }
 
 #[test]
+fn an_array_first_bound_in_a_loop_gets_a_stand_in_of_its_type() {
+    // The loop carries `a`, which nothing binds before it: its initial value
+    // is a stand-in that is never observed, and must be an array of the same
+    // shape, dimension and tags (a scalar `const.float` does not verify).
+    let src = "\
+x = [1, 2, 3]
+k = 2
+for i in range(3):
+    a = -k * x
+    print(a)
+print(a, i)
+m: Matrix[2, 2] = [[1, 2], [3, 4]]
+for j in range(2):
+    b = m + m
+    mm = b @ b
+print(b, mm)
+v = [1 m, 2 m]
+for j in range(2):
+    w = 2 * v
+print(w)
+K: PositiveDefinite Matrix[2, 2] = [[4, 1], [1, 3]]
+for r in range(2):
+    S = K
+    U = K + K
+print(S⁻¹ @ [1, 2], U)
+n = 0
+while true:
+    n += 1
+    z = n * x
+    if n > 2:
+        break
+print(z)
+";
+    let o = assert_same(src);
+    assert_eq!(o.error, None, "{}", o.stdout);
+    assert_eq!(o.stdout.lines().count(), 8, "{}", o.stdout);
+}
+
+#[test]
+fn a_stand_in_array_of_a_size_only_a_parameter_has_is_sized_by_len() {
+    // `Vector[N]` and `Matrix[M, N]`: the stand-in's sizes are the `len` of a
+    // parameter (and of its transpose, for the second axis). Early returns
+    // leave a stand-in in the result slot and in the merges.
+    let src = "\
+def twice(z: Vector[N]) -> Vector[N]:
+    for r in range(2):
+        q = z + z
+    return q
+print(twice([1, 2, 3]))
+def gram(A: Matrix[M, N]) -> Matrix[N, N]:
+    for r in range(2):
+        gm = Aᵀ @ A
+    return gm
+print(gram([[1, 2], [3, 4], [5, 6]]))
+def early(A: Matrix[M, N], f) -> Matrix[N, M]:
+    for r in range(2):
+        if f:
+            return Aᵀ
+        T = Aᵀ
+    return T
+print(early([[1, 2], [3, 4], [5, 6]], false))
+print(early([[1, 2], [3, 4], [5, 6]], true))
+def first(z: Vector[3]) -> Vector[3]:
+    for r in range(3):
+        if r == 1:
+            return z + z
+    return z
+print(first([1, 2, 3]))
+";
+    let o = assert_same(src);
+    assert_eq!(o.error, None, "{}", o.stdout);
+    assert_eq!(o.stdout.lines().count(), 5, "{}", o.stdout);
+}
+
+#[test]
 fn literals_arithmetic_and_builtins_agree() {
     let o = assert_same(
         "\

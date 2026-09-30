@@ -70,7 +70,7 @@ use sky_interp::contract;
 use sky_interp::solve;
 use sky_interp::{RuntimeError, Value};
 use sky_ir::{BlockData, CmpOp, Function, Module, OpData, OpKind, SliceAxis, Type};
-use sky_units::{Dimension, Rational};
+use sky_units::{Dimension, MathFn, Rational};
 
 type R<T> = Result<T, RuntimeError>;
 
@@ -638,6 +638,25 @@ pub(crate) extern "C" fn sky_rt_math1(site: i32, x: f64) -> f64 {
 /// `f(x, y)` for the two-argument math function at `site`.
 pub(crate) extern "C" fn sky_rt_math2(site: i32, x: f64, y: f64) -> f64 {
     math(site, x, y)
+}
+
+/// `f(x)` for the math function number `f` (its place in `MathFn::ALL`):
+/// the value only, with no lookup of the site and no state. Native code has
+/// already checked the domain, and checks the result, inline.
+pub(crate) extern "C" fn sky_rt_libm1(f: i32, x: f64) -> f64 {
+    libm(f, x, 0.0)
+}
+
+/// [`sky_rt_libm1`] for a two-argument function.
+pub(crate) extern "C" fn sky_rt_libm2(f: i32, x: f64, y: f64) -> f64 {
+    libm(f, x, y)
+}
+
+fn libm(f: i32, x: f64, y: f64) -> f64 {
+    match MathFn::ALL.get(f as usize) {
+        Some(f) => sky_interp::math::core_f64(*f, x, y),
+        None => f64::NAN,
+    }
 }
 
 fn math(site: i32, x: f64, y: f64) -> f64 {
@@ -1341,6 +1360,8 @@ pub(crate) enum Rt {
     FailAlways,
     Math1,
     Math2,
+    Libm1,
+    Libm2,
     PowScalar,
     PrintNum,
     PrintBool,
@@ -1351,7 +1372,7 @@ pub(crate) enum Rt {
 }
 
 impl Rt {
-    pub const ALL: [Rt; 29] = [
+    pub const ALL: [Rt; 31] = [
         Rt::BoxNum,
         Rt::BoxBool,
         Rt::ConstStr,
@@ -1374,6 +1395,8 @@ impl Rt {
         Rt::FailAlways,
         Rt::Math1,
         Rt::Math2,
+        Rt::Libm1,
+        Rt::Libm2,
         Rt::PowScalar,
         Rt::PrintNum,
         Rt::PrintBool,
@@ -1408,6 +1431,8 @@ impl Rt {
             Rt::FailAlways => "sky_rt_fail_always",
             Rt::Math1 => "sky_rt_math1",
             Rt::Math2 => "sky_rt_math2",
+            Rt::Libm1 => "sky_rt_libm1",
+            Rt::Libm2 => "sky_rt_libm2",
             Rt::PowScalar => "sky_rt_pow_scalar",
             Rt::PrintNum => "sky_rt_print_num",
             Rt::PrintBool => "sky_rt_print_bool",
@@ -1443,6 +1468,8 @@ impl Rt {
             Rt::FailAlways => sky_rt_fail_always as *const u8,
             Rt::Math1 => sky_rt_math1 as *const u8,
             Rt::Math2 => sky_rt_math2 as *const u8,
+            Rt::Libm1 => sky_rt_libm1 as *const u8,
+            Rt::Libm2 => sky_rt_libm2 as *const u8,
             Rt::PowScalar => sky_rt_pow_scalar as *const u8,
             Rt::PrintNum => sky_rt_print_num as *const u8,
             Rt::PrintBool => sky_rt_print_bool as *const u8,
@@ -1474,6 +1501,8 @@ impl Rt {
             Rt::FailDepth | Rt::FailStack | Rt::FailAlways => (&[I32], None),
             Rt::Math1 => (&[I32, F64], Some(F64)),
             Rt::Math2 => (&[I32, F64, F64], Some(F64)),
+            Rt::Libm1 => (&[I32, F64], Some(F64)),
+            Rt::Libm2 => (&[I32, F64, F64], Some(F64)),
             Rt::PowScalar => (&[I32, F64, F64], Some(F64)),
             Rt::PrintNum => (&[I32, F64], None),
             Rt::PrintBool => (&[I32], None),

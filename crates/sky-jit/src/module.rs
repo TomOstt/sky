@@ -94,6 +94,7 @@ use cranelift_module::{FuncId, Linkage, Module as ClModule};
 use sky_diag::Span;
 use sky_interp::arith::{ArithOp, MAX_CALL_DEPTH, STACK_BUDGET};
 use sky_interp::RuntimeError;
+use sky_ir::exact::{self, Analysis};
 use sky_ir::{
     BlockId, CmpOp, Function, MathFn, Module as SirModule, OpData, OpId, OpKind, Type, ValueId,
 };
@@ -537,6 +538,9 @@ struct FnTx<'a, 'm> {
     rt_refs: HashMap<Rt, FuncRef>,
     fn_refs: HashMap<usize, FuncRef>,
     site_ids: HashMap<u32, i32>,
+    /// What the exactness analysis proves about the function: an operation
+    /// that can fail by kind and provably cannot needs no check.
+    facts: Analysis,
 }
 
 impl<'a, 'm> FnTx<'a, 'm> {
@@ -569,6 +573,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
             rt_refs: HashMap::new(),
             fn_refs: HashMap::new(),
             site_ids: HashMap::new(),
+            facts: exact::analyze(f),
         };
         let limit = params[1];
         tx.owned.push(Vec::new());
@@ -742,13 +747,33 @@ impl<'a, 'm> FnTx<'a, 'm> {
         self.fail_if(bad);
     }
 
+    /// Whether the exactness analysis proves that the operation `id`, which
+    /// can fail by kind, cannot with these operands: no check is needed.
+    fn proven(&self, id: OpId) -> bool {
+        self.facts.proof(id).is_some()
+    }
+
+    /// Whether the analysis proves the scalar `v` is never zero.
+    fn nonzero(&self, v: ValueId) -> bool {
+        self.facts.known(v).is_some_and(|k| k.is_nonzero())
+    }
+
+    /// Whether `x` is finite (an `i8`): false for infinity and for NaN.
+    ///
+    /// `x - x` is 0 for a finite `x` and NaN for the rest, and "ordered"
+    /// (not NaN) is one flag test on both machines this runs on. Testing
+    /// `|x| < inf` instead needs the infinity in a register, which the
+    /// register allocator rebuilds in every block (two more instructions
+    /// per check, and a `fabs`).
+    fn is_finite(&mut self, x: Cv) -> Cv {
+        let d = self.b.ins().fsub(x, x);
+        self.b.ins().fcmp(FloatCC::Ordered, d, d)
+    }
+
     /// Fails if `x` (a result that must be finite) is not: the overflow
     /// check of `sky_interp::arith::finite`.
     fn finite_or(&mut self, x: Cv, rt: Rt, args: &[Cv]) {
-        let abs = self.b.ins().fabs(x);
-        let inf = self.b.ins().f64const(f64::INFINITY);
-        // False for infinity and for NaN (an ordered comparison).
-        let ok = self.b.ins().fcmp(FloatCC::LessThan, abs, inf);
+        let ok = self.is_finite(x);
         let (cold, cont) = (self.b.create_block(), self.b.create_block());
         self.b.ins().brif(ok, cont, &[], cold, &[]);
         self.b.set_cold_block(cold);
@@ -1196,18 +1221,23 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 let site = self.site(id);
                 let site = self.c32(site);
                 let fail = [site, a.v, b.v];
+                let proven = self.proven(id);
                 let r = match kind {
                     ArithOp::Add => self.b.ins().fadd(a.v, b.v),
                     ArithOp::Sub => self.b.ins().fsub(a.v, b.v),
                     ArithOp::Mul => self.b.ins().fmul(a.v, b.v),
                     ArithOp::Div => {
-                        let zero = self.b.ins().f64const(0.0);
-                        let bad = self.b.ins().fcmp(FloatCC::Equal, b.v, zero);
-                        self.fail_with(bad, Rt::Fail2, &fail);
+                        if !proven && !self.nonzero(op.operands[1]) {
+                            let zero = self.b.ins().f64const(0.0);
+                            let bad = self.b.ins().fcmp(FloatCC::Equal, b.v, zero);
+                            self.fail_with(bad, Rt::Fail2, &fail);
+                        }
                         self.b.ins().fdiv(a.v, b.v)
                     }
                 };
-                self.finite_or(r, Rt::Fail2, &fail);
+                if !proven {
+                    self.finite_or(r, Rt::Fail2, &fail);
+                }
                 return self.define(op, 0, Comp::F64(r, dim));
             }
         }
@@ -1262,13 +1292,16 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 let site = self.site(id);
                 let site = self.c32(site);
                 let r = if x.fract() == 0.0 && x.abs() <= sky_interp::arith::POWI_MAX {
-                    if x < 0.0 {
+                    let proven = self.proven(id);
+                    if x < 0.0 && !proven && !self.nonzero(op.operands[0]) {
                         let zero = self.b.ins().f64const(0.0);
                         let bad = self.b.ins().fcmp(FloatCC::Equal, a.v, zero);
                         self.fail_with(bad, Rt::Fail1, &[site, a.v]);
                     }
                     let r = self.powi(a.v, x as i32);
-                    self.finite_or(r, Rt::Fail1, &[site, a.v]);
+                    if !proven {
+                        self.finite_or(r, Rt::Fail1, &[site, a.v]);
+                    }
                     r
                 } else {
                     let xv = self.b.ins().f64const(x);
@@ -1309,12 +1342,17 @@ impl<'a, 'm> FnTx<'a, 'm> {
             if let Ok(dim) = da.inverse() {
                 let site = self.site(id);
                 let site = self.c32(site);
-                let zero = self.b.ins().f64const(0.0);
-                let bad = self.b.ins().fcmp(FloatCC::Equal, a.v, zero);
-                self.fail_with(bad, Rt::Fail1, &[site, a.v]);
+                let proven = self.proven(id);
+                if !proven && !self.nonzero(op.operands[0]) {
+                    let zero = self.b.ins().f64const(0.0);
+                    let bad = self.b.ins().fcmp(FloatCC::Equal, a.v, zero);
+                    self.fail_with(bad, Rt::Fail1, &[site, a.v]);
+                }
                 let one = self.b.ins().f64const(1.0);
                 let r = self.b.ins().fdiv(one, a.v);
-                self.finite_or(r, Rt::Fail1, &[site, a.v]);
+                if !proven {
+                    self.finite_or(r, Rt::Fail1, &[site, a.v]);
+                }
                 return self.define(op, 0, Comp::F64(r, dim));
             }
         }
@@ -1344,6 +1382,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
         };
         let site = self.site(id);
         let site = self.c32(site);
+        let proven = self.proven(id);
         // `apply` ends with `+ 0.0`, which turns `-0` into `0`.
         let plus_zero = |tx: &mut Self, r: Cv| {
             let z = tx.b.ins().f64const(0.0);
@@ -1351,9 +1390,11 @@ impl<'a, 'm> FnTx<'a, 'm> {
         };
         let r = match m {
             MathFn::Sqrt => {
-                let zero = self.b.ins().f64const(0.0);
-                let bad = self.b.ins().fcmp(FloatCC::LessThan, xs[0], zero);
-                self.fail_with(bad, Rt::Fail1, &[site, xs[0]]);
+                if !proven {
+                    let zero = self.b.ins().f64const(0.0);
+                    let bad = self.b.ins().fcmp(FloatCC::LessThan, xs[0], zero);
+                    self.fail_with(bad, Rt::Fail1, &[site, xs[0]]);
+                }
                 let r = self.b.ins().sqrt(xs[0]);
                 plus_zero(self, r)
             }
@@ -1378,16 +1419,77 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 plus_zero(self, r)
             }
             _ => {
-                let r = if n == 1 {
-                    self.call1(Rt::Math1, &[site, xs[0]])
+                // The domain first, as `apply_f64` checks it, then the value
+                // (`core_f64`, the same function), then the finiteness check.
+                // A failure re-runs the operation the interpreter's way for
+                // its diagnostic.
+                let fail = [site, xs[0], xs.get(1).copied().unwrap_or(xs[0])];
+                let fail = &fail[..=n.min(2)];
+                let outside = if proven {
+                    None
                 } else {
-                    self.call1(Rt::Math2, &[site, xs[0], xs[1]])
+                    self.math_domain(m, &xs)
                 };
-                self.nan_fail(r);
-                r
+                if let Some(bad) = outside {
+                    let rt = if n == 1 { Rt::Fail1 } else { Rt::Fail2 };
+                    self.fail_with(bad, rt, fail);
+                }
+                let fid = MathFn::ALL
+                    .iter()
+                    .position(|x| *x == m)
+                    .unwrap_or(usize::MAX);
+                let fid = self.c32(fid as i32);
+                let r = if n == 1 {
+                    self.call1(Rt::Libm1, &[fid, xs[0]])
+                } else {
+                    self.call1(Rt::Libm2, &[fid, xs[0], xs[1]])
+                };
+                if !proven {
+                    let rt = if n == 1 { Rt::Fail1 } else { Rt::Fail2 };
+                    self.finite_or(r, rt, fail);
+                }
+                plus_zero(self, r)
             }
         };
         self.define(op, 0, Comp::F64(r, dim))
+    }
+
+    /// Whether `m(xs)` is outside its domain (an `i8`, nonzero if so): the
+    /// conditions of `sky_interp::math::apply_f64`, which says which error.
+    /// `None` for a function defined on every finite number.
+    fn math_domain(&mut self, m: MathFn, xs: &[Cv]) -> Option<Cv> {
+        let konst = |tx: &mut Self, x: f64| tx.b.ins().f64const(x);
+        Some(match m {
+            MathFn::Log | MathFn::Log10 | MathFn::Log2 => {
+                let zero = konst(self, 0.0);
+                self.b.ins().fcmp(FloatCC::LessThanOrEqual, xs[0], zero)
+            }
+            MathFn::Log1p => {
+                let lo = konst(self, -1.0);
+                self.b.ins().fcmp(FloatCC::LessThanOrEqual, xs[0], lo)
+            }
+            MathFn::Acosh => {
+                let one = konst(self, 1.0);
+                self.b.ins().fcmp(FloatCC::LessThan, xs[0], one)
+            }
+            MathFn::Asin | MathFn::Acos => {
+                let a = self.b.ins().fabs(xs[0]);
+                let one = konst(self, 1.0);
+                self.b.ins().fcmp(FloatCC::GreaterThan, a, one)
+            }
+            MathFn::Atanh => {
+                let a = self.b.ins().fabs(xs[0]);
+                let one = konst(self, 1.0);
+                self.b.ins().fcmp(FloatCC::GreaterThanOrEqual, a, one)
+            }
+            MathFn::Atan2 => {
+                let zero = konst(self, 0.0);
+                let x0 = self.b.ins().fcmp(FloatCC::Equal, xs[0], zero);
+                let y0 = self.b.ins().fcmp(FloatCC::Equal, xs[1], zero);
+                self.b.ins().band(x0, y0)
+            }
+            _ => return None,
+        })
     }
 
     fn cmp(&mut self, id: OpId, op: &OpData, c: CmpOp) -> Res<()> {
@@ -1449,10 +1551,114 @@ impl<'a, 'm> FnTx<'a, 'm> {
         }
     }
 
+    /// Whether `id` can run whether or not its branch is taken: it cannot
+    /// fail, print or call, and it reads and makes only numbers and Bools
+    /// that native code holds unboxed (a comparison of same-dimension
+    /// scalars or of Bools, a `not`, a negation, a constant).
+    fn speculable(&self, id: OpId) -> bool {
+        let f = self.f;
+        let op = f.op(id);
+        let scalar = |v: &ValueId| matches!(rep_of(f.ty(*v)), Rep::F64 | Rep::Bool);
+        if !op.operands.iter().chain(&op.results).all(scalar) {
+            return false;
+        }
+        let same_dim = |op: &OpData| {
+            let d = |i: usize| dim_of_type(f.ty(op.operands[i]));
+            d(0).is_some() && d(0) == d(1)
+        };
+        match &op.kind {
+            OpKind::ConstFloat { bits } => f64::from_bits(*bits).is_finite(),
+            OpKind::ConstBool(_) => true,
+            OpKind::Cmp(c) => match op.operands[..] {
+                [a, b] if matches!(f.ty(a), Type::Bool) => {
+                    matches!(f.ty(b), Type::Bool) && matches!(c, CmpOp::Eq | CmpOp::Ne)
+                }
+                [_, _] => same_dim(op),
+                _ => false,
+            },
+            OpKind::Not => op.operands.len() == 1 && matches!(f.ty(op.operands[0]), Type::Bool),
+            OpKind::Neg => op.operands.len() == 1 && dim_of_type(f.ty(op.operands[0])).is_some(),
+            _ => false,
+        }
+    }
+
+    /// An `if` whose arms only compute comparisons and constants (what a
+    /// short-circuit `and`, `or`, or `break` flag lowers to) as straight-line
+    /// code: both arms run, and each result is a `select`. There is no branch
+    /// to mispredict and no `i8` handed through a merge block for the next
+    /// branch to test again. Nothing observable changes, since an arm that
+    /// runs when it should not can neither fail nor print. `Ok(false)` if
+    /// the `if` is not of that shape.
+    fn if_select(&mut self, op: &'m OpData, cond: Cv) -> Res<bool> {
+        /// More work than this is not worth doing on both paths.
+        const MAX_OPS: usize = 6;
+        let f = self.f;
+        let [then_r, else_r] = op.regions[..] else {
+            return Ok(false);
+        };
+        let (Ok(then_b), Ok(else_b)) =
+            (self.single_block(then_r, op), self.single_block(else_r, op))
+        else {
+            return Ok(false);
+        };
+        let mut arms = Vec::new();
+        for bid in [then_b, else_b] {
+            let Some((term, body)) = f.block(bid).ops.split_last() else {
+                return Ok(false);
+            };
+            let term = f.op(*term);
+            if !matches!(term.kind, OpKind::Yield)
+                || term.operands.len() != op.results.len()
+                || body.len() > MAX_OPS
+                || !body.iter().all(|o| self.speculable(*o))
+            {
+                return Ok(false);
+            }
+            // The results are unboxed scalars of the type each arm yields.
+            for (&y, &r) in term.operands.iter().zip(&op.results) {
+                let (ty, want) = (f.ty(y), f.ty(r));
+                let ok = match (rep_of(ty), rep_of(want)) {
+                    (Rep::F64, Rep::F64) => dim_of_type(ty) == dim_of_type(want),
+                    (Rep::Bool, Rep::Bool) => true,
+                    _ => false,
+                };
+                if !ok {
+                    return Ok(false);
+                }
+            }
+            arms.push((body, term));
+        }
+        let mut chosen: Vec<Vec<Cv>> = Vec::new();
+        for (body, term) in arms {
+            for id in body {
+                self.op(*id)?;
+            }
+            let mut vs = Vec::new();
+            for &y in &term.operands {
+                vs.push(self.slot(y, term)?.v);
+            }
+            chosen.push(vs);
+        }
+        for (i, &r) in op.results.iter().enumerate() {
+            let v = self.b.ins().select(cond, chosen[0][i], chosen[1][i]);
+            self.bind(
+                r,
+                Slot {
+                    v,
+                    rep: rep_of(f.ty(r)),
+                },
+            );
+        }
+        Ok(true)
+    }
+
     fn if_op(&mut self, id: OpId, op: &'m OpData) -> Res<()> {
         let f = self.f;
         let c = self.operand(op, 0)?;
         let cond = self.condition(id, op, c)?;
+        if c.rep == Rep::Bool && self.if_select(op, cond)? {
+            return Ok(());
+        }
         let [then_r, else_r] = op.regions[..] else {
             return refuse("an `if` needs two regions", Some(op.span));
         };

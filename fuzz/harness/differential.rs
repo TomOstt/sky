@@ -3329,7 +3329,7 @@ fn check_native_with(
     want: &Result<(), Failure>,
     slp: sky_jit::Slp,
 ) -> Result<Native, String> {
-    let compiled = match sky_jit::compile_with(m, slp) {
+    let compiled = match sky_jit::compile_with_slp(m, sky_jit::Numerics::Reproducible, slp) {
         Ok(c) => c,
         Err(e) => return Ok(Native::Refused(e.message)),
     };

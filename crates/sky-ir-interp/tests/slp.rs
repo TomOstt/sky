@@ -12,7 +12,7 @@
 
 use sky_diag::{Diagnostic, SourceFile};
 use sky_ir::Module;
-use sky_jit::{compile_with, emit_clif_with, Slp};
+use sky_jit::{compile_with_slp, emit_clif_with_slp, Slp};
 
 #[derive(Debug, PartialEq)]
 struct Run {
@@ -47,7 +47,8 @@ fn sir_run(m: &Module, src: &str) -> Run {
 
 fn native_run(m: &Module, src: &str, slp: Slp) -> Run {
     sky_ast::with_deep_stack(|| {
-        let code = compile_with(m, slp).unwrap_or_else(|e| panic!("{e}"));
+        let code = compile_with_slp(m, sky_jit::Numerics::Reproducible, slp)
+            .unwrap_or_else(|e| panic!("{e}"));
         let mut out = Vec::new();
         let (r, deopt) = code.run_or_rerun(&mut out, |w| sky_ir_interp::run(m, &mut { w }));
         assert!(!deopt, "native code deoptimized on:\n{src}");
@@ -72,7 +73,7 @@ fn agree(src: &str) -> Run {
 /// Whether forced vectorizing made `f64x2` code for `src`.
 fn packs(src: &str) -> bool {
     let m = lower(src);
-    emit_clif_with(&m, Slp::Always)
+    emit_clif_with_slp(&m, sky_jit::Numerics::Reproducible, Slp::Always)
         .expect("emits")
         .contains("f64x2")
 }
@@ -274,6 +275,6 @@ fn scalar_pairs_are_really_packed() {
     let src = prog("x = big * big\ny = huge * huge\nprint(1)\nprint(x, y)\n");
     assert!(packs(&src), "no packed code for:\n{src}");
     let m = lower(&src);
-    let off = emit_clif_with(&m, Slp::Off).expect("emits");
+    let off = emit_clif_with_slp(&m, sky_jit::Numerics::Reproducible, Slp::Off).expect("emits");
     assert!(!off.contains("f64x2"), "Off must not vectorize:\n{off}");
 }

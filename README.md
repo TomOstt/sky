@@ -4,6 +4,18 @@ Sky is a scientific programming language that checks physical units, tensor shap
 
 See `spec/v0.1.md` for the v0.1 scope.
 
+## A quick tour
+
+[`examples/showcase.sky`](examples/showcase.sky) is a short program that shows what Sky does today. Run it with `sky run examples/showcase.sky`.
+
+- **Units are types.** `42.195 km / (2 h + 35 min)` is a speed, and `print(pace as km/h)` shows it in the unit you ask for. Adding a length to a time is an error at check time, not a wrong number at run time.
+- **Physical constants are built in.** `c`, `G`, `g_n`, `ħ` and others are predefined, with CODATA values.
+- **Derivatives are exact and typed.** `derivative(position, t)(2 s)` (or `(∂position/∂t)(2 s)`) is computed by automatic differentiation, so there is no finite-difference error. Its type is a velocity. `-grad(U)(1 m, 2 m)` of an energy is a force vector in N.
+- **Matrix properties are proven, then used.** Sky checks that a `PositiveDefinite` matrix literal really is positive definite. `K⁻¹ @ f` then runs as a Cholesky solve, so the inverse is never formed.
+- **Loops and functions stay checked.** A `while` loop over a falling projectile keeps its time, height and speed in their units through every step.
+
+The expected output is in [`examples/showcase.out`](examples/showcase.out). A test runs every example on both engines and compares the output byte for byte.
+
 ## Status
 
 `sky check` lexes, parses and type-checks a file, and reports every error with source spans. It checks units (with SI prefixes and physical constants), symbolic tensor shapes, and matrix properties, through functions, `if` and `while`. `sky run` runs a file that checks cleanly, and `sky repl` is an interactive session; both print values in SI units, or in a unit you choose with `as` (`print(v as km/h)`). Vectors and matrices are written as literals (`[1 m, 2 m]`, `[[1, 2], [3, 4]]`), indexed and sliced, multiplied with `@`, inverted with `⁻¹`, and printed as Sky.
@@ -111,6 +123,7 @@ crates/
 spec/           grammar, typing rules, diagnostic format
 tests/ui/       golden diagnostic tests for `sky check`
 tests/ir/       golden tests for `sky check --emit-ir` and the pass explanations
+examples/       runnable programs, each with its expected output (`.out`)
 benches/        benchmark workloads: `benches/programs/*.sky`
 fuzz/           cargo-fuzz targets for the lexer, parser and manifest
 ```

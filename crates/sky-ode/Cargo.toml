@@ -1,0 +1,10 @@
+[package]
+name = "sky-ode"
+description = "Initial-value ODE solvers for Sky: adaptive, symplectic and stiff methods with explained selection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]

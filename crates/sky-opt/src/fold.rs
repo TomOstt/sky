@@ -188,6 +188,10 @@ fn eval(kind: &OpKind, args: &[Value], s: Span) -> Option<Value> {
         }
         (OpKind::Pow, 2) => pow(&args[0], &args[1], || None::<Rational>, s, s, s).ok(),
         (OpKind::Inverse, 1) => reciprocal("⁻¹", &args[0], s, s).ok(),
+        // A scalar is its own length, `norm(-3 m)` is `3 m`, through the
+        // function `sky run` calls. (Arrays are never constants here, so
+        // `dot` never folds.)
+        (OpKind::Norm, 1) => sky_interp::vecfn::norm(&args[0], s, s).ok(),
         (OpKind::Cmp(c), 2) => {
             let (l, r) = (&args[0], &args[1]);
             let holds = match c {
@@ -249,6 +253,7 @@ fn expr_text(kind: &OpKind, a: &[Const]) -> String {
         OpKind::PowConst { exponent } => format!("{} ^ {exponent}", t[0]),
         OpKind::Neg => format!("-{}", t[0]),
         OpKind::Inverse => format!("({})⁻¹", t[0]),
+        OpKind::Norm => format!("norm({})", t[0]),
         OpKind::Not => format!("not {}", t[0]),
         OpKind::Cmp(c) => infix(match c {
             CmpOp::Eq => "==",
@@ -280,6 +285,7 @@ fn fold_op(
             | OpKind::PowConst { .. }
             | OpKind::Pow
             | OpKind::Inverse
+            | OpKind::Norm
             | OpKind::Cmp(_)
             | OpKind::Not
     );

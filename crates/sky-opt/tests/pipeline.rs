@@ -680,3 +680,47 @@ fn the_cholesky_explanation_joins_into_the_checkers_sentence() {
          then Lᵀ·x = y. x = A⁻¹·b is Vector[3], and A⁻¹ is never formed."
     );
 }
+
+#[test]
+fn norm_and_dot_go_through_every_pass_untouched_and_keep_failing() {
+    // The passes treat `norm` and `dot` as opaque operations that can fail:
+    // the arrays around them fuse, a scalar `norm` of a constant folds, and
+    // an unused one that overflows is neither removed nor moved.
+    let (o, report) = same_before_and_after(
+        "v = [3 m, 4 m]\nw = [1 N, 2 N]\n\
+         u = (v + v * 2) / norm(v - v * 0.5 + [1 m, 1 m])\n\
+         print(u, dot(v * 2, w) + 1 J, norm(-3 m), norm(0 m))\n\
+         d = norm([1e200, 1e200])\nprint(d)\n",
+    );
+    assert_eq!(o.error, None);
+    assert!(o.stdout.starts_with("["), "{}", o.stdout);
+    assert!(
+        report.explanations.iter().any(|x| x.pass == "fold"),
+        "the norm of a constant scalar folds: {:#?}",
+        report.explanations
+    );
+    let (o, _) = same_before_and_after(
+        "print(1)\nunused = norm([1.7e308, 1.7e308])\nprint(2)\n\
+         also = dot([1e200, 1e200], [1e200, 1e200])\n",
+    );
+    assert_eq!(o.stdout, "1\n");
+    assert_eq!(o.error.map(|e| e.0).as_deref(), Some("arithmetic overflow"));
+    let (o, _) = same_before_and_after("print(1)\nunused = dot([1e200, 1e200], [1e200, 1e200])\n");
+    assert_eq!(o.stdout, "1\n");
+    assert_eq!(o.error.map(|e| e.0).as_deref(), Some("arithmetic overflow"));
+}
+
+#[test]
+fn norm_and_dot_keep_their_operand_labels_through_every_pass() {
+    // The mismatch labels both operands' spans; the passes must keep them.
+    let (o, _) =
+        same_before_and_after("def id(a):\n    return a\nprint(dot(id([1, 2, 3]), id([1, 2])))\n");
+    assert_eq!(o.stdout, "");
+    let diagnostic = o.diagnostic.expect("fails");
+    assert!(diagnostic.contains("one length"), "{diagnostic}");
+    let (o, _) = same_before_and_after("def id(a):\n    return a\nprint(norm(id(true)))\n");
+    assert!(o
+        .diagnostic
+        .expect("fails")
+        .contains("`norm` needs a vector"));
+}

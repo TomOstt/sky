@@ -31,6 +31,8 @@ use crate::{RuntimeEnv, RuntimeError, Value};
 
 #[path = "for_loop.rs"]
 mod for_loop;
+#[path = "ode.rs"]
+mod ode;
 
 /// How a statement finished: normally (with the value of an expression
 /// statement, for the REPL), or by leaving its block early.
@@ -301,7 +303,14 @@ impl<'a> Interp<'a> {
             StmtKind::Pass => Ok(Flow::Normal(None)),
             StmtKind::Break => Ok(Flow::Break),
             StmtKind::Continue => Ok(Flow::Continue),
-            StmtKind::Equation(_) | StmtKind::Solve(_) => Ok(Flow::Normal(None)),
+            StmtKind::Equation(eq) => {
+                self.define_equation(eq);
+                Ok(Flow::Normal(None))
+            }
+            StmtKind::Solve(solve) => {
+                self.solve_stmt(s.span, solve)?;
+                Ok(Flow::Normal(None))
+            }
             StmtKind::Assign { target, value } => match target {
                 AssignTarget::Name(id) => {
                     let v = self.eval(value)?;
@@ -463,13 +472,7 @@ impl<'a> Interp<'a> {
             ExprKind::Call { callee, args } => self.call(e, callee, args),
             ExprKind::Array(elems) => self.array_literal(e, elems),
             ExprKind::Index { base, items } => self.index(e, base, items),
-            ExprKind::Attribute { base: _, name } => Err(RuntimeError::new(
-                format!(
-                    "attribute `{}` is not supported by the interpreter yet",
-                    self.text(name.span)
-                ),
-                e.span,
-            )),
+            ExprKind::Attribute { base, name } => self.attribute(e, base, name),
             ExprKind::Paren(inner) => self.eval(inner),
             ExprKind::IfElse { then, cond, else_ } => {
                 if self.expect_bool("if", cond)? {
@@ -520,6 +523,8 @@ impl<'a> Interp<'a> {
                     "transpose" => return self.transpose(call, args),
                     "nominal" | "uncertainty" => return self.uncertain_part(name, call, args),
                     "zeros" | "identity" | "len" => return self.array_builtin(name, call, args),
+                    "norm" | "dot" => return self.vector_builtin(name, call, args),
+                    "explain" => return self.explain_builtin(call, args),
                     _ => {
                         if let Some(f) = MathFn::from_name(name) {
                             return self.math(f, call, args);

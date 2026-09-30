@@ -424,6 +424,7 @@ version = "0.0.1"
 dependencies = [
  "sky-ast",
  "sky-diag",
+ "sky-ode",
  "sky-syntax",
  "sky-types",
  "sky-units",

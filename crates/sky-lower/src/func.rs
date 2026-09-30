@@ -34,6 +34,67 @@ impl Lower<'_> {
         }
     }
 
+    /// Lowers every `def` in `stmts`, looking inside the blocks of `if`,
+    /// `while` and `for` but not into a `def` (its nested `def`s are lowered
+    /// with its body): [`crate::lower_defs`]. Nothing else is lowered, but a
+    /// name a statement binds is bound in `<main>` to an `input` of the type
+    /// the checker gave that binding, so each `def` sees the module names
+    /// bound before it, with their types, exactly as when the whole file is
+    /// lowered, and takes the same trailing parameters for them.
+    pub(crate) fn defs_in(&mut self, stmts: &[Stmt]) -> R<()> {
+        for s in stmts {
+            match &s.kind {
+                StmtKind::Def {
+                    name, params, body, ..
+                } => self.lower_def(name, params, body, s.span)?,
+                StmtKind::Assign {
+                    target: AssignTarget::Name(name),
+                    ..
+                }
+                | StmtKind::Binding { name, .. } => self.bind_as_input(name),
+                StmtKind::If {
+                    branches,
+                    else_block,
+                } => {
+                    for (_, b) in branches {
+                        self.defs_in(&b.stmts)?;
+                    }
+                    if let Some(b) = else_block {
+                        self.defs_in(&b.stmts)?;
+                    }
+                }
+                StmtKind::While { body, .. } | StmtKind::For { body, .. } => {
+                    self.defs_in(&body.stmts)?
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Binds `name` in `<main>` to an `input` of its binding's type, for
+    /// [`Self::defs_in`]. A binding SIR has no type for (an equation, a
+    /// solution) is left unbound: a `def` that reads it cannot be lowered
+    /// anyway.
+    fn bind_as_input(&mut self, name: &Ident) {
+        let Some(t) = self.checked.binding_types.get(&name.span) else {
+            return;
+        };
+        let Some(ty) = map_ty(&self.checked.resolve_ty(t)) else {
+            return;
+        };
+        let text = self.text(name.span);
+        let v = self.op1(
+            OpKind::Input {
+                name: text.to_string(),
+            },
+            Vec::new(),
+            ty,
+            name.span,
+        );
+        self.bind(text, v);
+    }
+
     /// Lowers `def name(params): body` to a function of the module. The
     /// enclosing function's state is parked while it is built. The
     /// signature comes from the checker's final `FuncSig`: annotated

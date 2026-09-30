@@ -397,3 +397,63 @@ fn an_uncertain_value_in_solve_says_how_to_proceed() {
     );
     assert!(e.contains("nominal(v)"), "{e}");
 }
+
+/// The force as the gradient of a potential, `v' = -grad(U)(r)`: the
+/// derivative runs on SIR while the equation runs on the tree walker, and
+/// the orbit it gives is the one the explicit force gives.
+#[test]
+fn a_force_from_grad_of_a_potential_drives_the_orbit() {
+    let explicit = format!(
+        "{ORBIT}
+sol = solve orbit from 0 s to 1 yr with r = r0, v = v0:
+    tolerance 1e-9
+    conserve energy = 0.5 * norm(v)^2 - GM / norm(r)
+print(sol.r / (1 AU))
+"
+    );
+    let gradient = "\
+GM = 1.327e20 m^3/s^2
+def U(p: Vector[2] m) -> J/kg:
+    return -GM / sqrt(p @ p)
+
+equation orbit(t: s):
+    r: Vector[2] m
+    v: Vector[2] m/s
+    r' = v
+    v' = -grad(U)(r)
+
+sol = solve orbit from 0 s to 1 yr with r = [1 AU, 0 m], v = [0 m/s, 29.8 km/s]:
+    tolerance 1e-9
+    conserve energy = 0.5 * norm(v)^2 + U(r)
+print(sol.r / (1 AU))
+print(explain(sol))
+";
+    let a = run("orbit-explicit", &explicit);
+    let g = run("orbit-gradient", gradient);
+    assert_eq!(err(&g), "", "{}", err(&g));
+    let (text_a, text_g) = (out(&a), out(&g));
+    let ra = numbers(text_a.lines().next().unwrap());
+    let rg = numbers(text_g.lines().next().unwrap());
+    assert_eq!(ra.len(), 2);
+    for (x, y) in ra.iter().zip(&rg) {
+        assert!((x - y).abs() < 1e-6, "explicit {ra:?} vs gradient {rg:?}");
+    }
+    assert!(
+        explanation_after(&text_g, 1).contains("symplectic"),
+        "{text_g}"
+    );
+}
+
+/// A derivative only needs the `def`s to lower to SIR, so `±` at the top
+/// level of the file does not stop it.
+#[test]
+fn a_derivative_works_beside_uncertain_values() {
+    let o = sky(
+        "derivative-uncertain",
+        "run",
+        &[],
+        "L = 1.000 ± 0.005 m\ndef x(t: s) -> m:\n    return 3 m/s^2 * t^2\nprint(derivative(x, t)(2 s))\nprint(L)\n",
+    );
+    assert_eq!(err(&o), "");
+    assert_eq!(out(&o), "12 m/s\n1.000 ± 0.005 m\n");
+}

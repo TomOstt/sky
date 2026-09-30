@@ -52,6 +52,7 @@ pub mod linalg;
 pub mod numerics;
 mod ode;
 mod ode_analysis;
+pub mod poly;
 mod provenance;
 pub mod rewrite;
 pub mod rules;

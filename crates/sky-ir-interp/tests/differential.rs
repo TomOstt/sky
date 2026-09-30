@@ -1621,3 +1621,103 @@ fn a_derivative_of_a_function_with_a_contract_keeps_the_contract() {
         "precondition of `f` failed: x must be positive (`x > 0 m`, x = -1 m)"
     );
 }
+
+// ----- `norm` and `dot`: one function for both engines -----
+//
+// SIR runs `sky_interp::vecfn::norm` and `dot`, the functions `sky run`
+// calls, with the call's span and the arguments' spans, so results and
+// diagnostics are byte-identical.
+
+#[test]
+fn norm_and_dot_of_vectors_matrices_and_scalars() {
+    let o = assert_same(
+        "\
+v = [3 m, 4 m]
+w = [1 N, 2 N]
+A = [[1, 2], [2, 4]]
+print(norm(v), norm(-3 m), norm(A), norm([0, 0]))
+print(dot(v, w), dot([1, 2, 3], [4, 5, 6]), dot(v, v))
+print(norm([1e200, 1e200]), norm([1e-200, 1e-200]))
+d = dot(v, w)
+print(d > 10 N*m, norm(v) == 5 m)
+",
+    );
+    assert_eq!(o.error, None);
+    assert_eq!(o.stdout.lines().next(), Some("5 m 3 m 5 0"), "{}", o.stdout);
+}
+
+#[test]
+fn norm_and_dot_in_functions_with_symbolic_sizes() {
+    let o = assert_same(
+        "\
+def length(v: Vector[N] m) -> m:
+    return norm(v)
+def work(f: Vector[N] N, d: Vector[N] m) -> J:
+    return dot(f, d)
+def unit(v: Vector[N] m):
+    return v / norm(v)
+print(length([3 m, 4 m, 0 m]), work([1 N, 2 N], [3 m, 4 m]))
+print(unit([3 m, 4 m]))
+",
+    );
+    assert_eq!(o.error, None);
+    assert_eq!(o.stdout.lines().next(), Some("5 m 11 J"), "{}", o.stdout);
+}
+
+#[test]
+fn norm_and_dot_fail_alike() {
+    // Overflow: the call is the span, as in `sky run`.
+    let msg = same_failure("print(norm([1.7e308, 1.7e308]))\n");
+    assert_eq!(msg, "arithmetic overflow");
+    let msg = same_failure("print(dot([1e200, 1e200], [1e200, 1e200]))\n");
+    assert_eq!(msg, "arithmetic overflow");
+    // Vectors of different lengths, known only at run time: both operands
+    // are labelled with their spans.
+    let src = "def f(a, b):\n    return dot(a, b)\nprint(f([1, 2, 3], [1, 2]))\n";
+    let msg = same_failure(src);
+    assert!(msg.contains("one length"), "{msg}");
+    // Operands that the checker could not type and that are not vectors.
+    let src = "def f(a):\n    return norm(a)\nprint(f(true))\n";
+    let msg = same_failure(src);
+    assert!(msg.starts_with("`norm` needs a vector"), "{msg}");
+    let src = "def f(a, b):\n    return dot(a, b)\nprint(f([1, 2], 3))\n";
+    let msg = same_failure(src);
+    assert!(msg.starts_with("`dot` needs two vectors"), "{msg}");
+    let src = "def f(a, b):\n    return dot(a, b)\nprint(f([[1, 2], [3, 4]], [[1, 2], [3, 4]]))\n";
+    let msg = same_failure(src);
+    assert!(msg.starts_with("`dot` needs two vectors"), "{msg}");
+    // Output before the failure is the same too.
+    let o = assert_same("print(norm([3, 4]))\nprint(norm([1.7e308, 1.7e308]))\nprint(9)\n");
+    assert_eq!(o.stdout, "5\n");
+}
+
+#[test]
+fn a_gradient_of_the_natural_potential_through_norm() {
+    let o = assert_same(
+        "def U(p: Vector[3] m) -> J:\n    return -2 J*m / norm(p)\n\
+         print(grad(U)([1 m, 2 m, 2 m]))\n\
+         print(-grad(U)([3 m, 0 m, 4 m]))\n",
+    );
+    assert_eq!(o.error, None);
+    assert!(o.stdout.starts_with("[0.0740"), "{}", o.stdout);
+}
+
+#[test]
+fn the_gradient_of_norm_at_the_origin_fails_alike() {
+    let o = assert_same(
+        "def f(p: Vector[2] m) -> m:\n    return norm(p)\n\
+         print(1)\nprint(grad(f)([0 m, 0 m]))\n",
+    );
+    assert_eq!(o.stdout, "1\n");
+    assert_eq!(o.error.as_deref(), Some("division by zero"));
+}
+
+#[test]
+fn the_derivative_through_norm_and_dot_of_a_position_vector() {
+    let o = assert_same(
+        "def speed2(t: s) -> m^2/s^2:\n    v = [3 m/s^2 * t, 4 m/s]\n    return dot(v, v)\n\
+         def speed(t: s) -> m/s:\n    return norm([3 m/s^2 * t, 4 m/s])\n\
+         print(derivative(speed2, t)(2 s))\nprint(derivative(speed, t)(0 s))\n",
+    );
+    assert_eq!(o.error, None);
+}

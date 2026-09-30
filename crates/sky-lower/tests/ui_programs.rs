@@ -59,7 +59,6 @@ const REJECTED: &[(&str, &str)] = &[
         "ok_equation_types.sky",
         "differential equations are not supported by SIR yet",
     ),
-    ("ok_vector_builtins.sky", "is not supported by SIR yet"),
 ];
 
 #[test]

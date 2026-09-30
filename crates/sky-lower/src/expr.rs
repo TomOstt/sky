@@ -421,13 +421,24 @@ impl Lower<'_> {
                         )
                         .with_note(UNCERTAINTY));
                     }
-                    // Vector builtins that run on the tree-walker only.
-                    (name @ ("norm" | "dot"), _) => {
-                        return Err(LowerError::new(
-                            format!("`{name}` is not supported by SIR yet"),
+                    // The operands' spans are kept: the run-time errors of
+                    // `sky run` point at the arguments.
+                    ("norm", [arg]) => {
+                        let a = self.expr(arg)?;
+                        let ty = self.ty_of(e)?;
+                        return Ok(self.op1s(OpKind::Norm, vec![a], vec![arg.span], ty, e.span));
+                    }
+                    ("dot", [x, y]) => {
+                        let a = self.expr(x)?;
+                        let b = self.expr(y)?;
+                        let ty = self.ty_of(e)?;
+                        return Ok(self.op1s(
+                            OpKind::Dot,
+                            vec![a, b],
+                            vec![x.span, y.span],
+                            ty,
                             e.span,
-                        )
-                        .with_note("in a function SIR must run (one you differentiate, say), write `sqrt(v @ v)` for `norm(v)` and `a @ b` for `dot(a, b)`"));
+                        ));
                     }
                     ("explain", _) => {
                         return self.err("`explain` is not supported by SIR yet", e.span);

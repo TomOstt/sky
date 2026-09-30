@@ -1,0 +1,12 @@
+# The bound of a `cost` line is a polynomial in the sizes of the parameters.
+def f(A: Matrix[N, M]) -> Matrix[N, M]:
+    cost flops <= 2 * N * K
+    cost flops <= 2 N
+    cost flops <= N / M
+    cost flops <= sqrt(N)
+    cost flops <= N ^ M
+    return A
+
+def g(x, n):
+    cost flops <= n
+    return x

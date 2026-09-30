@@ -1,0 +1,59 @@
+name: Compare
+# Sky against C, Rust, Python and BLAS/LAPACK (`sky-bench compare`). Never on
+# pull requests: it compiles and runs many programs and shared runners are
+# noisy. Nightly and by hand. Missing toolchains only skip columns, so the
+# optional installs below may fail without failing the job.
+on:
+  schedule:
+    - cron: "17 4 * * *" # 04:17 UTC, off-peak and not on the hour
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: "Only cases whose id contains this text (empty: all)"
+        required: false
+        default: ""
+      reps:
+        description: "Timed repetitions per cell"
+        required: false
+        default: "5"
+permissions:
+  contents: read
+# Shares the group with bench.yml: two benchmarks on the same runner pool
+# would measure each other's noise.
+concurrency:
+  group: bench
+  cancel-in-progress: false
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: 1.85.1 # keep in sync with rust-toolchain.toml
+      # clang and python3 are preinstalled; OpenBLAS and NumPy are optional.
+      - name: Optional baselines (OpenBLAS, NumPy)
+        shell: bash
+        run: |
+          sudo apt-get install -y --no-install-recommends libopenblas-dev || echo "no OpenBLAS: the library column is skipped"
+          python3 -m pip install --user numpy || echo "no NumPy: the NumPy column is skipped"
+      - shell: bash
+        env:
+          FILTER: ${{ inputs.filter }}
+          REPS: ${{ inputs.reps || '5' }}
+        run: |
+          args=(--reps "$REPS" --out compare.md)
+          if [ -n "$FILTER" ]; then args+=(--filter "$FILTER"); fi
+          cargo run --release --locked -p sky-bench -- compare "${args[@]}" | tee compare.txt
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: compare-${{ github.sha }}
+          path: |
+            compare.md
+            compare.txt
+          if-no-files-found: warn
+          retention-days: 90

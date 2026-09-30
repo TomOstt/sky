@@ -33,7 +33,10 @@
 //!    prints the SIR, parses the text back, requires the result to equal
 //!    `canonicalize(m)`, verifies it, and runs it again for the same result.
 //!    The two resource-limit errors compare as one, exactly as in the
-//!    hand-written differential tests.
+//!    hand-written differential tests. The native engine (`sky-jit`) is held
+//!    to the same comparison, on the lowered SIR and on the SIR after the
+//!    default pipeline, whenever it compiles the program (a refusal is
+//!    reported in [`Outcome::native_refusal`], not a failure).
 //!
 //! Bugs this fuzzer found are fixed and each has a regression test in the
 //! sky-ir-interp test. A bug found later that is not fixed at once is
@@ -2184,6 +2187,12 @@ pub struct Outcome {
     /// A known, reported bug the run tolerated (see [`KNOWN`]); the rest of
     /// the check after it was skipped.
     pub known: Option<&'static str>,
+    /// Why native code refused to compile the program (lowered or
+    /// optimized), if it did; `None` when it compiled both and agreed.
+    pub native_refusal: Option<String>,
+    /// Native code deoptimized (a value the checker could not type was not
+    /// what a declaration says) and the SIR interpreter finished the run.
+    pub native_deopt: bool,
 }
 
 /// Bugs this fuzzer found that are not fixed yet: an id and the text of the
@@ -2294,6 +2303,54 @@ fn run_sir(m: &sky_ir::Module, src: &str) -> (String, Result<(), Failure>) {
     )
 }
 
+/// What native code did with a module.
+enum Native {
+    /// It compiled and did what the tree-walker did.
+    Same,
+    /// It refused to compile.
+    Refused(String),
+    /// It deoptimized (a value of unknown type was not what a declaration
+    /// says), and the SIR interpreter finished the run: the same stdout and
+    /// failure.
+    Deopt,
+}
+
+/// What native code does with `m`, compared with the tree-walker's `want`
+/// (same stdout, same failure as a whole diagnostic); `Err` if it differs.
+fn check_native(
+    m: &sky_ir::Module,
+    which: &str,
+    src: &str,
+    want_out: &str,
+    want: &Result<(), Failure>,
+) -> Result<Native, String> {
+    let compiled = match sky_jit::compile(m) {
+        Ok(c) => c,
+        Err(e) => return Ok(Native::Refused(e.message)),
+    };
+    let mut out = Vec::new();
+    let (r, deopt) = compiled.run_or_rerun(&mut out, |w| sky_ir_interp::run(m, &mut { w }));
+    let got_out = String::from_utf8_lossy(&out).into_owned();
+    let got = r.map_err(|e| Failure::new(&e.to_diagnostic(), &e.message, src));
+    if got_out != want_out {
+        return Err(format!(
+            "native code ({which} SIR) prints differently\n--- sky run ---\n{want_out}(error: {})\n--- native ---\n{got_out}(error: {})\n--- SIR text ---\n{}",
+            shown(want),
+            shown(&got),
+            sky_ir::print(m)
+        ));
+    }
+    if normalized(&got) != normalized(want) {
+        return Err(format!(
+            "native code ({which} SIR) fails differently\n--- sky run ---\n{}--- native ---\n{}--- stdout (both) ---\n{want_out}\n--- SIR text ---\n{}",
+            shown(want),
+            shown(&got),
+            sky_ir::print(m)
+        ));
+    }
+    Ok(if deopt { Native::Deopt } else { Native::Same })
+}
+
 /// Runs the whole oracle on `src`. `Err` describes what went wrong: a
 /// divergence between the engines, a lowering or verification failure, or a
 /// generator bug (the program does not pass `sky check`; the message starts
@@ -2341,6 +2398,8 @@ fn check_inner(src: &str, strict: bool) -> Result<Outcome, String> {
                     error: None,
                     printed: 0,
                     known: Some(id),
+                    native_refusal: None,
+                    native_deopt: false,
                 }),
                 _ => Err(msg),
             };
@@ -2376,6 +2435,29 @@ fn check_inner(src: &str, strict: bool) -> Result<Outcome, String> {
         ));
     }
 
+    // The native engine, when it compiles the program.
+    let mut native_refusal = None;
+    let mut native_deopt = false;
+    let mut optimized = m.clone();
+    if let Err(e) = sky_opt::default_pipeline()
+        .verify_each(true)
+        .run(&mut optimized)
+    {
+        return Err(format!(
+            "the pipeline fails on a lowered program: {e}\n--- SIR text ---\n{}",
+            sky_ir::print(&m)
+        ));
+    }
+    for (which, module) in [("lowered", &m), ("optimized", &optimized)] {
+        match check_native(module, which, src, &want_out, &want)? {
+            Native::Same => {}
+            Native::Refused(why) => {
+                native_refusal.get_or_insert(why);
+            }
+            Native::Deopt => native_deopt = true,
+        }
+    }
+
     let mut known = None;
     let outcome = |known| Outcome {
         failed: want.is_err(),
@@ -2383,6 +2465,8 @@ fn check_inner(src: &str, strict: bool) -> Result<Outcome, String> {
         error: want.clone().err().map(|f| f.message),
         printed: want_out.len(),
         known,
+        native_refusal: native_refusal.clone(),
+        native_deopt,
     };
 
     // The text format: print, parse back, canonical, verifies, same run.

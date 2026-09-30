@@ -87,7 +87,10 @@ pub(crate) fn op_text(f: &Function, op: OpId) -> String {
         OpKind::ConstStr(s) => format!(" {s:?}"),
         OpKind::PowConst { exponent } => format!("[{exponent}]"),
         OpKind::Call { callee } => format!(" @{callee}"),
-        OpKind::Solve { method } => format!("[{}]", method.mnemonic()),
+        k @ (OpKind::Solve { .. }
+        | OpKind::SolveRight { .. }
+        | OpKind::MatMulEx { .. }
+        | OpKind::DiagMul { .. }) => k.algorithm_attrs().unwrap_or_default(),
         _ => String::new(),
     };
     let body = if matches!(o.kind, OpKind::If) {

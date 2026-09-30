@@ -1,6 +1,6 @@
 [package]
 name = "sky-cli"
-description = "The sky command: check, run, repl"
+description = "The sky command: check, run, repl, hw, tune"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,11 +15,15 @@ path = "src/main.rs"
 sky-ast = { path = "../sky-ast" }
 sky-derive = { path = "../sky-derive" }
 sky-diag = { path = "../sky-diag" }
+sky-hw = { path = "../sky-hw" }
 sky-interp = { path = "../sky-interp" }
 sky-ir = { path = "../sky-ir" }
 sky-ir-interp = { path = "../sky-ir-interp" }
+sky-jit = { path = "../sky-jit" }
 sky-lower = { path = "../sky-lower" }
 sky-opt = { path = "../sky-opt" }
 sky-project = { path = "../sky-project" }
 sky-syntax = { path = "../sky-syntax" }
+sky-tune = { path = "../sky-tune" }
 sky-types = { path = "../sky-types" }
+sky-units = { path = "../sky-units" }

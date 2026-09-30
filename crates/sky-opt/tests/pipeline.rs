@@ -1,4 +1,5 @@
-//! The default pipeline (`fold`, `egraph`, `contracts`, `dce`, `fuse`, `cholesky`) must not
+//! The default pipeline (`specialize`, `fold`, `egraph`, `contracts`, `dce`, `powers`, `fuse`,
+//! `cholesky`, `transposes`, `structure`, `algorithms`) must not
 //! change what a program does: lower it, run it in the reference
 //! interpreter, run the pipeline (verified after every pass), run it again,
 //! and the two runs must agree byte for byte on stdout and on the error (the
@@ -47,20 +48,29 @@ fn run(m: &Module, src: &str) -> Outcome {
     })
 }
 
-/// The pipeline, verifying after every pass and panicking (naming the pass)
-/// if it breaks the IR.
-fn optimize(m: &mut Module) -> sky_ir::PipelineReport {
-    default_passes(PassManager::for_tests())
-        .run(m)
-        .expect("valid IR")
-}
-
 /// Lowers `src`, runs it before and after the pipeline, and asserts the
 /// runs agree. Returns the shared outcome and the report.
 fn same_before_and_after(src: &str) -> (Outcome, sky_ir::PipelineReport) {
+    same_before_and_after_with(src, default_passes)
+}
+
+/// [`same_before_and_after`] for the pipeline without `specialize`, for a
+/// test about what another pass does to a function that is called with
+/// constants (specialization would give each such call a function of its
+/// own, which `specialize`'s tests cover).
+fn same_before_and_after_generic(src: &str) -> (Outcome, sky_ir::PipelineReport) {
+    same_before_and_after_with(src, sky_opt::default_passes_without_specialize)
+}
+
+fn same_before_and_after_with(
+    src: &str,
+    passes: fn(PassManager) -> PassManager,
+) -> (Outcome, sky_ir::PipelineReport) {
     let mut m = sky_lower::lower_source(src).unwrap_or_else(|e| panic!("{src}\n{e}"));
     let before = run(&m, src);
-    let report = optimize(&mut m);
+    let report = passes(PassManager::for_tests())
+        .run(&mut m)
+        .expect("valid IR");
     let after = run(&m, src);
     assert_eq!(
         after, before,
@@ -398,7 +408,7 @@ const EXACT_SRC: &str = "def halve(x: m) -> m:\n    spare = x / 2\n    return x 
 
 #[test]
 fn operations_that_provably_cannot_fail_are_removed_and_the_proof_is_the_reason() {
-    let (o, report) = same_before_and_after(EXACT_SRC);
+    let (o, report) = same_before_and_after_generic(EXACT_SRC);
     assert_eq!(o.stdout, "1.5 m 0 1\n0.5 0.30000000000000004\n");
     assert_eq!(o.error, None);
     let rules: Vec<&str> = report.explanations.iter().map(|x| x.rule).collect();
@@ -500,22 +510,35 @@ fn operations_that_can_still_fail_are_kept_and_keep_failing() {
 // ----- the pipeline and its adapters -----
 
 #[test]
-fn the_default_pipeline_runs_the_six_passes_in_order() {
+fn the_default_pipeline_runs_the_eleven_passes_in_order() {
     let mut m = sky_lower::lower_source("x = 2 * 3\nprint(x)\n").unwrap();
     let report = default_pipeline().verify_each(true).run(&mut m).unwrap();
     let names: Vec<&str> = report.ran.iter().map(|(n, _)| *n).collect();
     assert_eq!(
         names,
-        ["fold", "egraph", "contracts", "dce", "fuse", "cholesky"]
+        [
+            "specialize",
+            "fold",
+            "egraph",
+            "contracts",
+            "dce",
+            "powers",
+            "fuse",
+            "cholesky",
+            "transposes",
+            "structure",
+            "algorithms"
+        ]
     );
     assert_eq!(names, DEFAULT_PASSES);
-    // fold changed the module (`2 * 3`), dce removed the operands.
-    assert!(report.ran[0].1.is_yes());
-    assert!(!report.ran[1].1.is_yes());
+    // Nothing to specialize; fold changed the module (`2 * 3`), dce removed
+    // the operands; nothing else had anything to do.
+    assert!(!report.ran[0].1.is_yes());
+    assert!(report.ran[1].1.is_yes());
     assert!(!report.ran[2].1.is_yes());
-    assert!(report.ran[3].1.is_yes());
-    assert!(!report.ran[4].1.is_yes());
-    assert!(!report.ran[5].1.is_yes());
+    assert!(!report.ran[3].1.is_yes());
+    assert!(report.ran[4].1.is_yes());
+    assert!(report.ran[5..].iter().all(|(_, c)| !c.is_yes()));
     // A second run finds nothing left to do.
     let again = default_pipeline().verify_each(true).run(&mut m).unwrap();
     assert!(again.ran.iter().all(|(_, c)| !c.is_yes()), "{again:?}");
@@ -679,4 +702,48 @@ fn the_cholesky_explanation_joins_into_the_checkers_sentence() {
          b is Vector[3]. Factor A = L·Lᵀ (L lower-triangular), solve L·y = b, \
          then Lᵀ·x = y. x = A⁻¹·b is Vector[3], and A⁻¹ is never formed."
     );
+}
+
+#[test]
+fn norm_and_dot_go_through_every_pass_untouched_and_keep_failing() {
+    // The passes treat `norm` and `dot` as opaque operations that can fail:
+    // the arrays around them fuse, a scalar `norm` of a constant folds, and
+    // an unused one that overflows is neither removed nor moved.
+    let (o, report) = same_before_and_after(
+        "v = [3 m, 4 m]\nw = [1 N, 2 N]\n\
+         u = (v + v * 2) / norm(v - v * 0.5 + [1 m, 1 m])\n\
+         print(u, dot(v * 2, w) + 1 J, norm(-3 m), norm(0 m))\n\
+         d = norm([1e200, 1e200])\nprint(d)\n",
+    );
+    assert_eq!(o.error, None);
+    assert!(o.stdout.starts_with("["), "{}", o.stdout);
+    assert!(
+        report.explanations.iter().any(|x| x.pass == "fold"),
+        "the norm of a constant scalar folds: {:#?}",
+        report.explanations
+    );
+    let (o, _) = same_before_and_after(
+        "print(1)\nunused = norm([1.7e308, 1.7e308])\nprint(2)\n\
+         also = dot([1e200, 1e200], [1e200, 1e200])\n",
+    );
+    assert_eq!(o.stdout, "1\n");
+    assert_eq!(o.error.map(|e| e.0).as_deref(), Some("arithmetic overflow"));
+    let (o, _) = same_before_and_after("print(1)\nunused = dot([1e200, 1e200], [1e200, 1e200])\n");
+    assert_eq!(o.stdout, "1\n");
+    assert_eq!(o.error.map(|e| e.0).as_deref(), Some("arithmetic overflow"));
+}
+
+#[test]
+fn norm_and_dot_keep_their_operand_labels_through_every_pass() {
+    // The mismatch labels both operands' spans; the passes must keep them.
+    let (o, _) =
+        same_before_and_after("def id(a):\n    return a\nprint(dot(id([1, 2, 3]), id([1, 2])))\n");
+    assert_eq!(o.stdout, "");
+    let diagnostic = o.diagnostic.expect("fails");
+    assert!(diagnostic.contains("one length"), "{diagnostic}");
+    let (o, _) = same_before_and_after("def id(a):\n    return a\nprint(norm(id(true)))\n");
+    assert!(o
+        .diagnostic
+        .expect("fails")
+        .contains("`norm` needs a vector"));
 }

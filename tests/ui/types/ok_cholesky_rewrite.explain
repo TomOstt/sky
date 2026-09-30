@@ -25,3 +25,9 @@ tests/ui/types/ok_cholesky_rewrite.sky:11:5: note: `inv(K⁻¹) @ (f + f)` is re
    |     ^^^^^^^^^^^^^^^^^^
    |         --- positive definite
    = note: rewrite `(K⁻¹)⁻¹ @ (f + f)` to a Cholesky solve: K⁻¹ is Matrix[3,3] and PositiveDefinite, (f + f) is Vector[3]. Factor (K⁻¹) = L·Lᵀ (L lower-triangular), solve L·y = (f + f), then Lᵀ·x = y. x = (K⁻¹)⁻¹·(f + f) is Vector[3], and (K⁻¹)⁻¹ is never formed.
+
+tests/ui/types/ok_cholesky_rewrite.sky:11:17: note: [PAR-003] this elementwise `add` over 3 elements is not parallelized: it may fail and is small
+   |
+11 | w = inv(K⁻¹) @ (f + f)
+   |                 ^^^^^
+   = note: because 3 elements is under the threshold of 262144: splitting it across threads costs more than it saves

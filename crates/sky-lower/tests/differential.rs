@@ -20,6 +20,8 @@ fn interpret(src: &str) -> (String, Result<(), String>) {
         // `sky run` honours the checker's Cholesky rewrites.
         let checked = sky_types::check_module(&ast, src);
         let mut env = RuntimeEnv::with_prelude();
+        // ... and its chain plans (order, solves), as SIR does.
+        env.add_chain_plans(&checked.chains);
         let mut out = Vec::new();
         let r =
             sky_interp::run_module_with(&ast, src, &mut env, &mut out, &checked.cholesky_solves);
@@ -831,4 +833,45 @@ fn generated_programs_mean_the_same_lowered() {
         failed * 3 < compared * 2,
         "{failed} of {compared} fail at run time"
     );
+}
+
+#[test]
+fn planned_chains_run_alike_in_both() {
+    // The checker plans these (order, solves, a division, a transpose) and
+    // both engines follow the plan: the same output, bit for bit.
+    let src = "\
+A = [[1, 2], [3, 4]]
+B = [[0.5, 1], [1, 0.25]]
+C = [[2, 0.1], [0, 2]]
+v = [1, 2]
+print(A @ B @ C @ v)
+print(inv(A) @ inv(B) @ v)
+print(v @ inv(A), inv(A) @ B, inv(A) @ inv(B))
+D: Diagonal Matrix[2, 2] = [[2, 0], [0, 8]]
+print(inv(D) @ v, v @ inv(D), inv(D) @ A)
+Q = identity(2)
+print(inv(Q) @ v)
+";
+    let out = agree(src);
+    assert_eq!(out.lines().count(), 5, "{out}");
+    let m = lower_ok(src);
+    let text = sky_ir::print(&m);
+    for op in ["solve[lu]", "solve.right[lu]", "solve[diagonal]"] {
+        assert!(text.contains(op), "{op} in\n{text}");
+    }
+}
+
+#[test]
+fn a_planned_chain_that_fails_fails_alike() {
+    for src in [
+        "A = [[1, 2], [2, 4]]\nprint(1)\nprint(inv(A) @ [1, 2])\n",
+        "A = [[1e200, 2], [3, 4]]\nprint(A @ A @ A @ [1e200, 1])\n",
+    ] {
+        let m = lower_ok(src);
+        let (want_out, want) = interpret(src);
+        let (got_out, got) = run_main(&m);
+        assert_eq!(got_out, want_out, "{src}");
+        assert!(want.is_err(), "{src}");
+        assert_eq!(normalized(&got), normalized(&want), "{src}");
+    }
 }

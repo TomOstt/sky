@@ -78,6 +78,7 @@ pub(crate) fn exits_stmt(s: &Stmt) -> Exits {
         | StmtKind::Solve(_)
         | StmtKind::Assert { .. }
         | StmtKind::Accuracy { .. }
+        | StmtKind::Cost { .. }
         | StmtKind::Pass => Exits::default(),
     }
 }

@@ -46,13 +46,15 @@ pub fn table(results: &[Measurement], cfg: Config) -> String {
         ENGINES[0].1.to_string(),
         ENGINES[1].1.to_string(),
         ENGINES[2].1.to_string(),
+        ENGINES[3].1.to_string(),
         "b/a".to_string(),
         "c/a".to_string(),
         "c/b".to_string(),
+        "d/c".to_string(),
         "output".to_string(),
     ]];
     for m in results {
-        let [a, b, c] = &m.engines[..] else {
+        let [a, b, c, d] = &m.engines[..] else {
             continue;
         };
         rows.push(vec![
@@ -61,9 +63,11 @@ pub fn table(results: &[Measurement], cfg: Config) -> String {
             cell(a),
             cell(b),
             cell(c),
+            cell(d),
             ratio(b, a),
             ratio(c, a),
             ratio(c, b),
+            ratio(d, c),
             if m.mismatch.is_none() {
                 "same"
             } else {

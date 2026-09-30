@@ -1,0 +1,15 @@
+# Rewrites that keep every bit: a transpose feeding a product is never
+# materialized (`matmul[ta]`), a matrix times its own transpose computes one
+# triangle (`alg=syrk`, and the result is Symmetric, so its transpose is
+# itself), and a Diagonal matrix scales rows or columns.
+A: Matrix[40, 30]
+B: Matrix[40, 20]
+D: Diagonal Matrix[40, 40]
+E: Diagonal Matrix[20, 20]
+x = Aᵀ @ B
+gram = Aᵀ @ A
+outer = A @ Aᵀ
+same = transpose(gram)
+rows = D @ B
+cols = B @ E
+print(x, gram, outer, same, rows, cols)

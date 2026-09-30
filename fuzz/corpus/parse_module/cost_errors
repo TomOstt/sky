@@ -1,0 +1,5 @@
+0def f(A: Matrix[N, N]):
+    cost flops <= 2 N^3
+    cost flops == N^99999999999
+    cost bytes == 1e300 / 0
+    return A

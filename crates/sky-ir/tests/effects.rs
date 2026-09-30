@@ -368,3 +368,30 @@ fn @outer(%a: num[L; ()]) -> () {{
     assert_eq!(parse(&text).unwrap(), m);
     verify(&m).unwrap();
 }
+
+#[test]
+fn norm_and_dot_can_fail_and_are_otherwise_pure() {
+    // A sum of squares can overflow, so both fail; neither prints or calls.
+    let t = format!(
+        "{HEAD}
+fn @length(%v: num[L; (3)]) -> (num[L; ()]) {{
+  %n = norm %v : num[L; ()]
+  return %n
+}}
+fn @inner(%a: num[L; (3)], %b: num[T; (3)]) -> (num[L·T; ()]) {{
+  %d = dot %a, %b : num[L·T; ()]
+  return %d
+}}
+"
+    );
+    assert_eq!(effects_of(&t), ["fail", "fail"]);
+    for k in [sky_ir::OpKind::Norm, sky_ir::OpKind::Dot] {
+        let p = k.properties();
+        assert!(p.effects.contains(Effect::Fail) && !p.effects.contains(Effect::Io));
+        assert!(!p.terminator && !p.associative_real);
+    }
+    // `dot(a, b) == dot(b, a)` bit for bit: the products commute and the
+    // sum runs in the same order. `norm` has one operand.
+    assert!(sky_ir::OpKind::Dot.properties().commutative);
+    assert!(!sky_ir::OpKind::Norm.properties().commutative);
+}

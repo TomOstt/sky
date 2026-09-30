@@ -8,7 +8,9 @@
 use proptest::prelude::*;
 use sky_ir::Module;
 
-use crate::default_pipeline;
+use sky_ir::PassManager;
+
+use crate::default_passes_without_specialize;
 
 fn lower(src: &str) -> Module {
     sky_lower::lower_source(src).unwrap_or_else(|e| panic!("lowering failed on:\n{src}\n{e}"))
@@ -17,7 +19,10 @@ fn lower(src: &str) -> Module {
 /// The module after the default pipeline, and the rule ids it explained.
 fn optimized(src: &str) -> (Module, Vec<String>) {
     let mut m = lower(src);
-    let report = default_pipeline()
+    // Without `specialize`, which would give each constant call a function of
+    // its own (see `specialize_tests` for the two together): these tests are
+    // about what `contracts` proves from the calls of a function.
+    let report = default_passes_without_specialize(PassManager::new())
         .verify_each(true)
         .run(&mut m)
         .expect("the pipeline runs");
@@ -182,7 +187,9 @@ fn a_dropped_check_leaves_the_failures_of_its_condition_alone() {
 fn explanations_say_what_was_known() {
     let src = "def f(h: m) -> m:\n    requires h >= 0 m\n    return h\nprint(f(2 m), f(7 m))\n";
     let mut m = lower(src);
-    let report = default_pipeline().run(&mut m).expect("runs");
+    let report = default_passes_without_specialize(PassManager::new())
+        .run(&mut m)
+        .expect("runs");
     let x = report
         .explanations
         .iter()

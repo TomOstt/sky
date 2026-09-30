@@ -1,0 +1,19 @@
+sir edition 2026
+
+fn @<main>() -> () effects(io, fail) @ 0..503 {
+  %A = input "A" : num[1; (40, 30)] @ 278..295
+  %B = input "B" : num[1; (40, 20)] @ 296..313
+  %D = input "D" : num[1; (40, 40); {Symmetric, Diagonal}] @ 314..340
+  %E = input "E" : num[1; (20, 20); {Symmetric, Diagonal}] @ 341..367
+  %4 = transpose %A : num[1; (30, 40)] @ 372..376
+  %x = matmul %4, %B : num[1; (30, 20)] @ 372..380 (372..376, 379..380)
+  %6 = transpose %A : num[1; (30, 40)] @ 388..392
+  %gram = matmul %6, %A : num[1; (30, 30)] @ 388..396 (388..392, 395..396)
+  %8 = transpose %A : num[1; (30, 40)] @ 409..413
+  %outer = matmul %A, %8 : num[1; (40, 40)] @ 405..413 (405..406, 409..413)
+  %same = transpose %gram : num[1; (30, 30)] @ 421..436
+  %rows = matmul %D, %B : num[1; (40, 20)] @ 444..449 (444..445, 448..449)
+  %cols = matmul %B, %E : num[1; (40, 20)] @ 457..462 (457..458, 461..462)
+  print %x, %gram, %outer, %same, %rows, %cols @ 463..502
+  return @ 0..503
+}

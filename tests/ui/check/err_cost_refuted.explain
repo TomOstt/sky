@@ -1,0 +1,121 @@
+tests/ui/check/err_cost_refuted.sky:2:5: note: cost of `mm`: 2·K·M·N flops, 1 allocation of M·N floats
+  |
+2 | def mm(A: Matrix[N, K], B: Matrix[K, M]) -> Matrix[N, M]:
+  |     ^^
+  = note: memory traffic: 8·K·M + 8·K·N bytes read, 8·M·N bytes written
+
+tests/ui/check/err_cost_refuted.sky:3:5: error: `mm` costs 2·K·M·N flops, which is more than `2 * N^3`
+  |
+3 |     cost flops <= 2 * N^3
+  |     ^^^^^^^^^^^^^^^^^^^^^ the cost is more than this
+4 |     return A @ B
+  |            ----- `A @ B` costs 2·K·M·N flops
+  = note: for example with K = 2, M = 1 and N = 1: it costs 4 flops, and the contract says 2
+  = note: the dominant term of the excess is 2·K·M·N, which the bound does not cover
+  = note: proven false by the static cost model: a cost contract holds for every size from 1 up, lower-order terms included
+  = help: the cost is exactly 2·K·M·N: write `cost flops <= 2 * K * M * N`
+
+tests/ui/check/err_cost_refuted.sky:6:5: note: cost of `step`: 2·N flops, 1 allocation of N floats
+  |
+6 | def step(v: Vector[N], w: Vector[N]) -> Vector[N]:
+  |     ^^^^
+  = note: memory traffic: 16·N bytes read, 8·N bytes written
+
+tests/ui/check/err_cost_refuted.sky:7:5: error: `step` costs 1 allocation, not 0 as `cost allocations == 0` states
+  |
+7 |     cost allocations == 0
+  |     ^^^^^^^^^^^^^^^^^^^^^ the cost is more than this
+8 |     return v + 2 * w
+  |            --------- `v + 2 * w` costs 1 allocation
+  = note: proven false by the static cost model: a cost contract holds for every size from 1 up, lower-order terms included
+
+tests/ui/check/err_cost_refuted.sky:8:12: note: [FUSE-001] `v + 2 * w` is rewritten to `fused(2, w, v)`
+  |
+8 |     return v + 2 * w
+  |            ^^^^^^^^^
+  = note: applied by the `fuse` pass
+  = note: because fused 2 elementwise operations into one kernel; saves 1 temporary array of shape Vector[N]
+  = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[N]
+  = note: because 2 of the operations can fail (`mul`, `add`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
+
+tests/ui/check/err_cost_refuted.sky:8:12: note: [PAR-001] this elementwise kernel runs on 8 threads once it has at least 2048 elements
+  |
+8 |     return v + 2 * w
+  |            ^^^^^^^^^
+  = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+  = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+  = note: because 2 of its operations can fail (`mul`, `add`): if chunks fail, the failing operation that comes first in program order is reported, at its lowest failing element, which is the error a sequential run gives
+
+tests/ui/check/err_cost_refuted.sky:10:5: note: cost of `lower_order`: 2·N³ + N² flops, 2 allocations of N² floats
+   |
+10 | def lower_order(A: Matrix[N, N]) -> Matrix[N, N]:
+   |     ^^^^^^^^^^^
+12 |     return A @ A + A
+   |            ----- hot spot: `A @ A` costs 2·N³ flops
+   |            --------- hot spot: `A @ A + A` costs N² flops
+   = note: memory traffic: 32·N² bytes read, 16·N² bytes written
+
+tests/ui/check/err_cost_refuted.sky:11:5: error: `lower_order` costs 2·N³ + N² flops, which is more than `2 * N^2`
+   |
+11 |     cost flops <= 2 * N^2
+   |     ^^^^^^^^^^^^^^^^^^^^^ the cost is more than this
+12 |     return A @ A + A
+   |            ----- `A @ A` costs 2·N³ flops
+   = note: for example with N = 1: it costs 3 flops, and the contract says 2
+   = note: the dominant term of the excess is 2·N³, which the bound does not cover
+   = note: proven false by the static cost model: a cost contract holds for every size from 1 up, lower-order terms included
+   = help: the cost is exactly 2·N³ + N²: write `cost flops <= 2 * N^3 + N^2`
+
+tests/ui/check/err_cost_refuted.sky:12:12: note: [PAR-001] this elementwise `add` runs on 8 threads once it has at least 262144 elements
+   |
+12 |     return A @ A + A
+   |            ^^^^^^^^^
+   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+   = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
+
+tests/ui/check/err_cost_refuted.sky:14:5: note: cost of `loop`: N² flops, N allocations (N² floats in all)
+   |
+14 | def loop(v: Vector[N]) -> Vector[N]:
+   |     ^^^^
+   = note: memory traffic: 8·N² bytes read, 8·N² bytes written
+
+tests/ui/check/err_cost_refuted.sky:15:5: error: `loop` costs N² flops, which is more than `1000 * N`
+   |
+15 |     cost flops <= 1000 * N
+   |     ^^^^^^^^^^^^^^^^^^^^^^ the cost is more than this
+17 |         v = v * 2
+   |             ----- `v * 2` costs N² flops
+   = note: for example with N = 10000: it costs 100000000 flops, and the contract says 10000000
+   = note: the dominant term of the excess is N², which the bound does not cover
+   = note: proven false by the static cost model: a cost contract holds for every size from 1 up, lower-order terms included
+   = help: the cost is exactly N²: write `cost flops <= N^2`
+
+tests/ui/check/err_cost_refuted.sky:17:13: note: [PAR-001] this elementwise `mul` runs on 8 threads once it has at least 262144 elements
+   |
+17 |         v = v * 2
+   |             ^^^^^
+   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+   = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
+
+tests/ui/check/err_cost_refuted.sky:20:5: note: cost of `too_few`: N flops, 1 allocation of N floats
+   |
+20 | def too_few(v: Vector[N]) -> Vector[N]:
+   |     ^^^^^^^
+   = note: memory traffic: 8·N bytes read, 8·N bytes written
+
+tests/ui/check/err_cost_refuted.sky:21:5: error: `too_few` costs N flops, not 3·N as `cost flops == 3 * N` states
+   |
+21 |     cost flops == 3 * N
+   |     ^^^^^^^^^^^^^^^^^^^ the cost is less than this
+   = note: for example with N = 1: it costs 1 flop, and the contract says 3
+   = note: proven false by the static cost model: a cost contract holds for every size from 1 up, lower-order terms included
+
+tests/ui/check/err_cost_refuted.sky:22:12: note: [PAR-001] this elementwise `mul` runs on 8 threads once it has at least 262144 elements
+   |
+22 |     return v * 2
+   |            ^^^^^
+   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+   = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it

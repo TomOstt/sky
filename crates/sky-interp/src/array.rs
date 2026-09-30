@@ -212,8 +212,14 @@ pub fn matmul(l: &Value, r: &Value, whole: Span, lspan: Span, rspan: Span) -> R<
         .with_secondary(lspan, shape_text(d1))
         .with_secondary(rspan, shape_text(d2)));
     }
+    // Vector @ vector is a dot product, a single reduction, in the fixed
+    // order of `linalg::dot`; every other product accumulates each entry in
+    // the naive order (see the spec's "Arrays: reproducible arithmetic").
     let data = all_finite(
-        linalg::matmul(a, m.unwrap_or(1), k, b, n.unwrap_or(1)),
+        match (m, n) {
+            (None, None) => vec![linalg::dot(a, b)],
+            _ => linalg::matmul(a, m.unwrap_or(1), k, b, n.unwrap_or(1)),
+        },
         whole,
     )?;
     Ok(match (m, n) {

@@ -5,6 +5,11 @@
 //! diagnostic (message, primary span and label, secondary labels, notes,
 //! help), or both succeed.
 //!
+//! The native side compiles the same SIR (as lowered, and after the default
+//! optimization pipeline) to machine code with `sky_jit` and must agree with
+//! the tree-walker in the same way; a program native code refuses to compile
+//! fails the test.
+//!
 //! The SIR side runs `sky_lower::lower_source`, which also verifies the
 //! lowered module, so every program here is checked three ways: same
 //! output, same errors, and valid SIR.
@@ -35,7 +40,7 @@ fn rendered(d: &Diagnostic, src: &str) -> String {
 /// a valid program: a differential test on a program `sky run` refuses
 /// would compare nothing. Also returns the `A⁻¹ @ b` sites the checker
 /// rewrote to Cholesky solves, which `sky run` honours.
-fn parse_checked(src: &str) -> (sky_ast::Module, HashSet<Span>) {
+fn parse_checked(src: &str) -> (sky_ast::Module, HashSet<Span>, sky_types::Checked) {
     let lexed = sky_syntax::lex(src).unwrap_or_else(|_| panic!("lex error in {src:?}"));
     let (module, errors) = sky_ast::parse_module(&lexed.tokens, src);
     assert!(errors.is_empty(), "parse errors in {src:?}: {errors:?}");
@@ -47,15 +52,17 @@ fn parse_checked(src: &str) -> (sky_ast::Module, HashSet<Span>) {
         .map(|d| d.message.clone())
         .collect();
     assert!(errs.is_empty(), "check errors in {src:?}: {errs:?}");
-    (module, checked.cholesky_solves)
+    let solves = checked.cholesky_solves.clone();
+    (module, solves, checked)
 }
 
 /// The `sky run` side: exactly what `sky-cli`'s `run` does after checking.
 fn run_tree_walker(src: &str) -> Outcome {
-    let (module, solves) = parse_checked(src);
+    let (module, solves, checked) = parse_checked(src);
     sky_ast::with_deep_stack(|| {
         let mut out = Vec::new();
         let mut env = RuntimeEnv::with_prelude();
+        env.add_chain_plans(&checked.chains);
         // A derivative runs on SIR through `sky-derive`, as in `sky run`.
         let mut derivatives = SirDerivatives::new(&module, src);
         let result = run_module_with_derivatives(
@@ -97,6 +104,37 @@ fn run_ir(ir: &sky_ir::Module, src: &str) -> Outcome {
     })
 }
 
+/// What the native engine does with `ir`. Every program of this file must
+/// compile: a refusal fails the test, naming the program.
+fn run_native(ir: &sky_ir::Module, src: &str) -> Outcome {
+    sky_ast::with_deep_stack(|| {
+        let compiled = sky_jit::compile(ir)
+            .unwrap_or_else(|e| panic!("native code refused a program:\n{src}\n{e}"));
+        let mut out = Vec::new();
+        // A value the checker could not type that is not what a declaration
+        // says stops native code, and SIR runs the program instead (what
+        // `sky run` does); nothing in this file's programs does that.
+        let (result, deopt) =
+            compiled.run_or_rerun(&mut out, |w| sky_ir_interp::run(ir, &mut { w }));
+        assert!(!deopt, "native code deoptimized on:\n{src}");
+        Outcome {
+            stdout: String::from_utf8(out).expect("utf-8 output"),
+            error: result.as_ref().err().map(|e| e.message.clone()),
+            diagnostic: result.err().map(|e| rendered(&e.to_diagnostic(), src)),
+        }
+    })
+}
+
+/// `ir` after the default optimization pipeline, as `sky run` runs it.
+fn optimized(ir: &sky_ir::Module) -> sky_ir::Module {
+    let mut ir = ir.clone();
+    sky_opt::default_pipeline()
+        .verify_each(true)
+        .run(&mut ir)
+        .expect("the pipeline runs");
+    ir
+}
+
 /// The two resource-limit errors. Which one trips first depends on how much
 /// Rust stack each interpreter spends per call (a debug tree-walker runs out
 /// of stack budget before 1000 calls; the leaner SIR interpreter reaches the
@@ -129,6 +167,14 @@ fn assert_same(src: &str) -> Outcome {
             normalized(actual),
             normalized(expected.clone()),
             "SIR interpreter differs from `sky run` on:\n{src}"
+        );
+    }
+    let ir = sky_lower::lower_source(src).expect("lowers");
+    for (which, m) in [("lowered", ir.clone()), ("optimized", optimized(&ir))] {
+        assert_eq!(
+            normalized(run_native(&m, src)),
+            normalized(expected.clone()),
+            "native code ({which} SIR) differs from `sky run` on:\n{src}"
         );
     }
     expected
@@ -530,7 +576,9 @@ print(a, b, c, d)
     let ir = sky_lower::lower_source(src).expect("lowers");
     let text = sky_ir::print(&ir);
     assert_eq!(text.matches("solve[cholesky]").count(), 3, "{text}");
-    assert_eq!(text.matches("inverse").count(), 1, "{text}");
+    // `(K + K)⁻¹` has no tags: a general solve (LU), no inverse formed.
+    assert_eq!(text.matches("solve[lu]").count(), 1, "{text}");
+    assert_eq!(text.matches("inverse").count(), 0, "{text}");
     assert_eq!(assert_same(src).error, None);
 }
 
@@ -883,10 +931,11 @@ type Located = Option<(String, Span, String)>;
 /// the span and the whole rendered diagnostic: they must be the same,
 /// including where they point and every label.
 fn located_errors(src: &str) -> (Located, Located) {
-    let (module, solves) = parse_checked(src);
+    let (module, solves, checked) = parse_checked(src);
     let walker = sky_ast::with_deep_stack(|| {
         let mut out = Vec::new();
         let mut env = RuntimeEnv::with_prelude();
+        env.add_chain_plans(&checked.chains);
         let mut derivatives = SirDerivatives::new(&module, src);
         run_module_with_derivatives(&module, src, &mut env, &mut out, &solves, &mut derivatives)
             .err()
@@ -898,6 +947,18 @@ fn located_errors(src: &str) -> (Located, Located) {
             .err()
             .map(|e| (e.message.clone(), e.span, rendered(&e.to_diagnostic(), src)))
     });
+    // Native code fails at the same place with the same diagnostic.
+    let native = sky_ast::with_deep_stack(|| {
+        let compiled = sky_jit::compile(&ir)
+            .unwrap_or_else(|e| panic!("native code refused a program:\n{src}\n{e}"));
+        let (result, deopt) =
+            compiled.run_or_rerun(&mut Vec::new(), |w| sky_ir_interp::run(&ir, &mut { w }));
+        assert!(!deopt, "native code deoptimized on:\n{src}");
+        result
+            .err()
+            .map(|e| (e.message.clone(), e.span, rendered(&e.to_diagnostic(), src)))
+    });
+    assert_eq!(native, sir, "native code differs from SIR on:\n{src}");
     (walker, sir)
 }
 
@@ -1620,4 +1681,429 @@ fn a_derivative_of_a_function_with_a_contract_keeps_the_contract() {
         same_failure(src),
         "precondition of `f` failed: x must be positive (`x > 0 m`, x = -1 m)"
     );
+}
+
+// ----- `norm` and `dot`: one function for both engines -----
+//
+// SIR runs `sky_interp::vecfn::norm` and `dot`, the functions `sky run`
+// calls, with the call's span and the arguments' spans, so results and
+// diagnostics are byte-identical.
+
+#[test]
+fn norm_and_dot_of_vectors_matrices_and_scalars() {
+    let o = assert_same(
+        "\
+v = [3 m, 4 m]
+w = [1 N, 2 N]
+A = [[1, 2], [2, 4]]
+print(norm(v), norm(-3 m), norm(A), norm([0, 0]))
+print(dot(v, w), dot([1, 2, 3], [4, 5, 6]), dot(v, v))
+print(norm([1e200, 1e200]), norm([1e-200, 1e-200]))
+d = dot(v, w)
+print(d > 10 N*m, norm(v) == 5 m)
+",
+    );
+    assert_eq!(o.error, None);
+    assert_eq!(o.stdout.lines().next(), Some("5 m 3 m 5 0"), "{}", o.stdout);
+}
+
+#[test]
+fn norm_and_dot_in_functions_with_symbolic_sizes() {
+    let o = assert_same(
+        "\
+def length(v: Vector[N] m) -> m:
+    return norm(v)
+def work(f: Vector[N] N, d: Vector[N] m) -> J:
+    return dot(f, d)
+def unit(v: Vector[N] m):
+    return v / norm(v)
+print(length([3 m, 4 m, 0 m]), work([1 N, 2 N], [3 m, 4 m]))
+print(unit([3 m, 4 m]))
+",
+    );
+    assert_eq!(o.error, None);
+    assert_eq!(o.stdout.lines().next(), Some("5 m 11 J"), "{}", o.stdout);
+}
+
+#[test]
+fn norm_and_dot_fail_alike() {
+    // Overflow: the call is the span, as in `sky run`.
+    let msg = same_failure("print(norm([1.7e308, 1.7e308]))\n");
+    assert_eq!(msg, "arithmetic overflow");
+    let msg = same_failure("print(dot([1e200, 1e200], [1e200, 1e200]))\n");
+    assert_eq!(msg, "arithmetic overflow");
+    // Vectors of different lengths, known only at run time: both operands
+    // are labelled with their spans.
+    let src = "def f(a, b):\n    return dot(a, b)\nprint(f([1, 2, 3], [1, 2]))\n";
+    let msg = same_failure(src);
+    assert!(msg.contains("one length"), "{msg}");
+    // Operands that the checker could not type and that are not vectors.
+    let src = "def f(a):\n    return norm(a)\nprint(f(true))\n";
+    let msg = same_failure(src);
+    assert!(msg.starts_with("`norm` needs a vector"), "{msg}");
+    let src = "def f(a, b):\n    return dot(a, b)\nprint(f([1, 2], 3))\n";
+    let msg = same_failure(src);
+    assert!(msg.starts_with("`dot` needs two vectors"), "{msg}");
+    let src = "def f(a, b):\n    return dot(a, b)\nprint(f([[1, 2], [3, 4]], [[1, 2], [3, 4]]))\n";
+    let msg = same_failure(src);
+    assert!(msg.starts_with("`dot` needs two vectors"), "{msg}");
+    // Output before the failure is the same too.
+    let o = assert_same("print(norm([3, 4]))\nprint(norm([1.7e308, 1.7e308]))\nprint(9)\n");
+    assert_eq!(o.stdout, "5\n");
+}
+
+#[test]
+fn a_gradient_of_the_natural_potential_through_norm() {
+    let o = assert_same(
+        "def U(p: Vector[3] m) -> J:\n    return -2 J*m / norm(p)\n\
+         print(grad(U)([1 m, 2 m, 2 m]))\n\
+         print(-grad(U)([3 m, 0 m, 4 m]))\n",
+    );
+    assert_eq!(o.error, None);
+    assert!(o.stdout.starts_with("[0.0740"), "{}", o.stdout);
+}
+
+#[test]
+fn the_gradient_of_norm_at_the_origin_fails_alike() {
+    let o = assert_same(
+        "def f(p: Vector[2] m) -> m:\n    return norm(p)\n\
+         print(1)\nprint(grad(f)([0 m, 0 m]))\n",
+    );
+    assert_eq!(o.stdout, "1\n");
+    assert_eq!(o.error.as_deref(), Some("division by zero"));
+}
+
+#[test]
+fn the_derivative_through_norm_and_dot_of_a_position_vector() {
+    let o = assert_same(
+        "def speed2(t: s) -> m^2/s^2:\n    v = [3 m/s^2 * t, 4 m/s]\n    return dot(v, v)\n\
+         def speed(t: s) -> m/s:\n    return norm([3 m/s^2 * t, 4 m/s])\n\
+         print(derivative(speed2, t)(2 s))\nprint(derivative(speed, t)(0 s))\n",
+    );
+    assert_eq!(o.error, None);
+}
+
+// ----- planned `@` chains: the order, solves instead of inverses -----
+//
+// The checker plans a chain (`sky_types::chain`) and both engines follow the
+// plan, so they must agree bit for bit, and fail with the same diagnostic.
+
+const CHAIN_DATA: &str = "\
+A = [[1, 2], [3, 4]]
+B = [[0, 1], [1, 0]]
+C = [[2, 0], [0, 2]]
+v = [1, 2]
+";
+
+fn ir_text(src: &str) -> String {
+    sky_ir::print(&sky_lower::lower_source(src).expect("lowers"))
+}
+
+/// The number of operations named `op` (as `%x = op ...`) in the text.
+fn count_ops(text: &str, op: &str) -> usize {
+    text.lines()
+        .filter(|l| l.contains(&format!("= {op} ")) || l.contains(&format!("= {op}[")))
+        .count()
+}
+
+#[test]
+fn a_reassociated_chain_agrees_and_matches_the_written_order_on_integers() {
+    let src = format!("{CHAIN_DATA}print(A @ B @ C @ v)\n");
+    let o = assert_same(&src);
+    assert_eq!(o.error, None);
+    // Integers are exact in either order, so the written order (forced by
+    // parentheses) prints the same.
+    let forced = format!("{CHAIN_DATA}print(((A @ B) @ C) @ v)\n");
+    assert_eq!(assert_same(&forced).stdout, o.stdout);
+    // The plan is on the IR: A @ (B @ (C @ v)), three products.
+    let text = ir_text(&src);
+    assert_eq!(count_ops(&text, "matmul"), 3, "{text}");
+    let lines: Vec<&str> = text.lines().filter(|l| l.contains("= matmul ")).collect();
+    // The first product multiplies C and v (the innermost of the plan).
+    assert!(lines[0].contains("%C, %v"), "{text}");
+}
+
+#[test]
+fn a_parenthesized_group_is_computed_as_written() {
+    let src = format!("{CHAIN_DATA}print(A @ (B @ C) @ v)\nprint((A @ B) @ C @ v)\n");
+    let o = assert_same(&src);
+    assert_eq!(o.error, None);
+    assert_eq!(o.stdout.lines().count(), 2);
+}
+
+#[test]
+fn inverses_in_a_chain_become_solves_in_both() {
+    let data = "A = [[4, 1], [1, 3]]\nB = [[2, 0], [1, 5]]\nb = [1, 2]\nM = [[1, 2], [3, 4]]\n";
+    // inv(A) @ inv(B) @ b: two solves and no inverse.
+    let src = format!("{data}print(inv(A) @ inv(B) @ b)\n");
+    let o = assert_same(&src);
+    assert_eq!(o.error, None);
+    let text = ir_text(&src);
+    assert_eq!(count_ops(&text, "solve"), 2, "{text}");
+    assert_eq!(count_ops(&text, "inverse"), 0, "{text}");
+    // x @ A⁻¹, a transposed solve.
+    let src = format!("{data}print(b @ inv(A))\nprint(M @ inv(A))\n");
+    assert_eq!(assert_same(&src).error, None);
+    let text = ir_text(&src);
+    assert_eq!(count_ops(&text, "solve.right"), 2, "{text}");
+    // A⁻¹ @ B with a matrix of right-hand sides, and the inverse of a
+    // product.
+    let src = format!("{data}print(inv(A) @ M)\nprint(inv(A) @ inv(B))\nprint(inv(A) @ b @ b)\n");
+    assert_eq!(assert_same(&src).error, None);
+    let text = ir_text(&src);
+    assert!(text.contains("solve[lu]"), "{text}");
+    // A⁻¹ @ B⁻¹ is (B @ A)⁻¹: a product and one inverse.
+    assert_eq!(count_ops(&text, "inverse"), 1, "{text}");
+}
+
+#[test]
+fn a_diagonal_solve_and_an_orthogonal_transpose_agree() {
+    let src = "\
+D: Diagonal Matrix[3, 3] = [[2, 0, 0], [0, 4, 0], [0, 0, 8]]
+b = [1, 2, 3]
+M = [[1, 2, 3], [4, 5, 6], [7, 8, 10]]
+print(inv(D) @ b, b @ inv(D))
+print(inv(D) @ M)
+Q = identity(3)
+print(inv(Q) @ b, Q⁻¹ @ M)
+";
+    let o = assert_same(src);
+    assert_eq!(o.error, None);
+    assert_eq!(
+        o.stdout,
+        "[0.5, 0.5, 0.375] [0.5, 0.5, 0.375]\n[[0.5, 1, 1.5], [1, 1.25, 1.5], [0.875, 1, 1.25]]\n[1, 2, 3] [[1, 2, 3], [4, 5, 6], [7, 8, 10]]\n"
+    );
+    let text = ir_text(src);
+    assert!(text.contains("solve[diagonal]"), "{text}");
+    assert!(text.contains("solve.right[diagonal]"), "{text}");
+    // The Orthogonal inverse is a transpose; no inverse, no solve for Q.
+    assert_eq!(count_ops(&text, "inverse"), 0, "{text}");
+    assert!(text.contains("= transpose "), "{text}");
+}
+
+#[test]
+fn a_diagonal_parameter_is_solved_by_division_in_both() {
+    // (The interpreters verify the tag as a promise; a lie cannot be told
+    // through a typed call, which lowering rejects: see the `sky_interp::solve`
+    // tests for the error.)
+    let src = "\
+def f(D: Diagonal Matrix[2, 2], b: Vector[2]):
+    return inv(D) @ b
+D: Diagonal Matrix[2, 2] = [[1, 0], [0, 2]]
+print(f(D, [1, 2]))
+";
+    assert_eq!(assert_same(src).stdout, "[1, 1]\n");
+    assert!(ir_text(src).contains("solve[diagonal]"));
+}
+
+#[test]
+fn a_singular_matrix_in_a_chain_fails_alike_in_both() {
+    for src in [
+        "A = [[1, 2], [2, 4]]\nb = [1, 2]\nprint(inv(A) @ b)\n",
+        "A = [[1, 2], [2, 4]]\nb = [1, 2]\nprint(b @ inv(A))\n",
+        "A = [[1, 2], [2, 4]]\nB = [[1, 2], [3, 4]]\nprint(inv(A) @ inv(B))\n",
+        "A = [[1, 2], [2, 4]]\nB = [[1, 2], [3, 4]]\nb = [1, 2]\nprint(inv(B) @ inv(A) @ b)\n",
+        "A = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]\nM = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]\nprint(inv(A) @ M)\n",
+        "D: Diagonal Matrix[2, 2] = [[1, 0], [0, 1e-30]]\nprint(inv(D) @ [1, 1])\n",
+    ] {
+        let (walker, sir) = located_errors(src);
+        assert!(walker.is_some(), "{src}");
+        assert_eq!(walker, sir, "{src}");
+        assert_eq!(walker.unwrap().0, "the matrix is singular", "{src}");
+    }
+}
+
+#[test]
+fn the_error_is_the_inverses_error_word_for_word() {
+    // Unplanned (an untyped parameter), the inverse fails; planned (typed),
+    // the solve fails: the same message, label and note, on the same operand.
+    let planned = "def f(A: Matrix[2, 2], b: Vector[2]):\n    return inv(A) @ b\nprint(f([[1, 2], [2, 4]], [1, 2]))\n";
+    let unplanned = "def f(A, b):\n    return inv(A) @ b\nprint(f([[1, 2], [2, 4]], [1, 2]))\n";
+    let (p, _) = located_errors(planned);
+    let (u, _) = located_errors(unplanned);
+    let (p, u) = (p.unwrap(), u.unwrap());
+    assert_eq!(p.0, u.0);
+    assert!(p.2.contains("this matrix has no inverse"), "{}", p.2);
+    assert!(p.2.contains("this is Matrix[2,2]"), "{}", p.2);
+}
+
+#[test]
+fn shapes_the_checker_cannot_see_still_agree() {
+    // Unannotated parameters have no types, so nothing is planned and both
+    // engines multiply as written, or fail the same way.
+    let src = "def f(A, b):\n    return inv(A) @ b\nprint(f([[2, 0], [0, 4]], [1, 2]))\nprint(f([[1, 2, 3], [4, 5, 6]], [1, 2]))\n";
+    let (walker, sir) = located_errors(src);
+    assert_eq!(walker, sir);
+    assert!(walker.is_some());
+}
+
+#[test]
+fn a_chain_in_a_function_body_and_in_a_loop() {
+    let src = "\
+def f(A: Matrix[N, N], B: Matrix[N, N], v: Vector[N]):
+    return A @ B @ v
+A = [[1, 2], [3, 4]]
+B = [[0, 1], [1, 0]]
+print(f(A, B, [1, 2]))
+print(f(B, A, [3, 4]))
+C = [[2, 0], [0, 2]]
+x = [1, 1]
+i = 0
+while i < 3:
+    x = A @ B @ C @ x
+    i += 1
+print(x)
+";
+    let o = assert_same(src);
+    assert_eq!(o.error, None);
+    assert_eq!(o.stdout.lines().count(), 3);
+    let text = ir_text(src);
+    // The function's body has the chain as A @ (B @ v).
+    assert!(text.contains("fn @f"), "{text}");
+}
+
+#[test]
+fn operands_are_evaluated_once_and_left_to_right_whatever_the_plan_does() {
+    let src = "\
+def a() -> Matrix[2, 2]:
+    print(\"a\")
+    return [[1, 2], [3, 4]]
+def b() -> Matrix[2, 2]:
+    print(\"b\")
+    return [[0, 1], [1, 0]]
+def c() -> Matrix[2, 2]:
+    print(\"c\")
+    return [[2, 0], [0, 2]]
+def d() -> Vector[2]:
+    print(\"d\")
+    return [1, 2]
+def e() -> Matrix[2, 2]:
+    print(\"e\")
+    return [[4, 1], [1, 3]]
+print(a() @ b() @ c() @ d())
+print(inv(e()) @ a() @ d())
+print(d() @ inv(e()))
+print(inv(e()) @ inv(a()) @ d())
+";
+    let o = assert_same(src);
+    assert_eq!(o.error, None);
+    let printed: Vec<&str> = o.stdout.lines().filter(|l| l.len() == 1).collect();
+    assert_eq!(
+        printed.join(""),
+        "abcd".to_string() + "ead" + "de" + "ead",
+        "{}",
+        o.stdout
+    );
+}
+
+#[test]
+fn an_error_in_an_operand_stops_the_chain_before_any_product() {
+    let src = "\
+def f() -> Matrix[2, 2]:
+    print(\"f\")
+    return [[1, 2], [3, 4]]
+def g() -> Vector[2]:
+    print(\"g\")
+    return [1 / 0, 1]
+A = [[1, 2], [3, 4]]
+print(A @ A @ f() @ g())
+";
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "f\ng\n");
+    assert_eq!(o.error.as_deref(), Some("division by zero"));
+}
+
+// ----- reproducible array arithmetic -----
+
+/// A matrix literal whose entries are cheap, deterministic and not exact
+/// sums, so a different order of additions shows in the printed bits.
+fn matrix_literal(rows: usize, cols: usize, seed: usize) -> String {
+    let row = |i: usize| {
+        let entries: Vec<String> = (0..cols)
+            .map(|j| {
+                let x = ((i * 31 + j * 17 + seed * 7) % 23) as f64 / 7.0 - 1.5;
+                format!("{x}")
+            })
+            .collect();
+        format!("[{}]", entries.join(", "))
+    };
+    let all: Vec<String> = (0..rows).map(row).collect();
+    format!("[{}]", all.join(", "))
+}
+
+#[test]
+fn long_reductions_and_blocked_products_are_the_same_bits_in_both_engines() {
+    // Vectors of 9 and 33 entries take the interleaved-sums dot product;
+    // the 9-by-70 product and its transpose cross the kernel's block edges.
+    let v9 = "[1e16, 1, -1e16, 1, 1, 1, 1, 1, 0.5]";
+    let vector = |n: usize, seed: usize| {
+        let items: Vec<String> = (0..n)
+            .map(|i| format!("{}", ((i * 13 + seed) % 19) as f64 / 3.0 - 2.5))
+            .collect();
+        format!("[{}]", items.join(", "))
+    };
+    let src = format!(
+        "\
+v = {v9}
+w = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+print(v @ w)
+a = {}
+b = {}
+print(a @ b)
+A = {}
+B = {}
+C = A @ B
+print(C)
+print(Cᵀ @ C)
+",
+        vector(33, 1),
+        vector(33, 5),
+        matrix_literal(9, 70, 1),
+        matrix_literal(70, 11, 2),
+    );
+    let o = assert_same(&src);
+    assert_eq!(o.error, None, "{}", o.stdout);
+}
+
+#[test]
+fn lu_solves_and_gram_products_of_larger_matrices_are_the_same_bits_in_both_engines() {
+    // A 40 by 40 system takes the recursive LU (panels of 16 and a GEMM
+    // update); `x @ A⁻¹` runs the two transposed triangular solves; the
+    // Gram products of a 20 by 40 matrix take the lower-triangle kernel.
+    let strong = |n: usize, seed: usize| {
+        let row = |i: usize| {
+            let entries: Vec<String> = (0..n)
+                .map(|j| {
+                    let x = ((i * 29 + j * 13 + seed * 5) % 31) as f64 / 9.0 - 1.7;
+                    format!("{}", if i == j { x + 12.0 } else { x })
+                })
+                .collect();
+            format!("[{}]", entries.join(", "))
+        };
+        let all: Vec<String> = (0..n).map(row).collect();
+        format!("[{}]", all.join(", "))
+    };
+    let vector = |n: usize, seed: usize| {
+        let items: Vec<String> = (0..n)
+            .map(|i| format!("{}", ((i * 7 + seed) % 17) as f64 / 3.0 - 2.5))
+            .collect();
+        format!("[{}]", items.join(", "))
+    };
+    let src = format!(
+        "\
+S = {}
+b = {}
+print(S⁻¹ @ b)
+print(b @ S⁻¹)
+B = {}
+print(B @ Bᵀ)
+print(Bᵀ @ B)
+",
+        strong(40, 3),
+        vector(40, 4),
+        matrix_literal(20, 40, 5),
+    );
+    let o = assert_same(&src);
+    assert_eq!(o.error, None, "{}", o.stdout);
+    assert_eq!(o.stdout.lines().count(), 4, "{}", o.stdout);
 }

@@ -218,6 +218,16 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
                 f(name.span);
                 stack.push(Node::Expr(tolerance));
             }
+            StmtKind::Cost {
+                metric_span,
+                op_span,
+                bound,
+                ..
+            } => {
+                f(*metric_span);
+                f(*op_span);
+                stack.push(Node::Expr(bound));
+            }
             StmtKind::Expr(e) => stack.push(Node::Expr(e)),
             StmtKind::Assign { target, value } => {
                 stack.push(Node::Target(target));

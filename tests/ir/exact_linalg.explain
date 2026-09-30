@@ -1,0 +1,70 @@
+tests/ir/exact_linalg.sky:9:5: note: [LA-TRANSPOSE-001] `Aᵀ @ B` is rewritten to `matmul[ta](A, B)`
+  |
+9 | x = Aᵀ @ B
+  |     ^^^^^^
+  = note: applied by the `transposes` pass
+  = note: because the transposed operand is a matrix: `matmul[ta]` reads it transposed, so the 40·30 element copy that `transpose` makes is never made
+  = note: because exact: `matmul[ta]` is defined as the transpose followed by the product, so every bit and every error is the same; a kernel may read the operand with swapped strides
+  = note: because the flops are unchanged: 48,000
+
+tests/ir/exact_linalg.sky:10:8: note: [LA-TRANSPOSE-001] `Aᵀ @ A` is rewritten to `matmul[ta](A, A)`
+   |
+10 | gram = Aᵀ @ A
+   |        ^^^^^^
+   = note: applied by the `transposes` pass
+   = note: because the transposed operand is a matrix: `matmul[ta]` reads it transposed, so the 40·30 element copy that `transpose` makes is never made
+   = note: because exact: `matmul[ta]` is defined as the transpose followed by the product, so every bit and every error is the same; a kernel may read the operand with swapped strides
+   = note: because the flops are unchanged: 72,000
+
+tests/ir/exact_linalg.sky:10:8: note: [LA-GRAM-001] `Aᵀ @ A` is rewritten to `matmul[ta,alg=syrk](A, A)`
+   |
+10 | gram = Aᵀ @ A
+   |        ^^^^^^
+   = note: applied by the `structure` pass
+   = note: because A is multiplied by its own transpose: entries (i, j) and (j, i) sum the same products (`aₚᵢ·aₚⱼ` and `aₚⱼ·aₚᵢ`, and multiplication commutes) in the same order
+   = note: because one triangle is computed and mirrored: 37,200 flops instead of 72,000
+   = note: because exact: the result is bit for bit the general product's, and bitwise symmetric (its type gains the Symmetric tag)
+
+tests/ir/exact_linalg.sky:11:9: note: [LA-TRANSPOSE-001] `A @ Aᵀ` is rewritten to `matmul[tb](A, A)`
+   |
+11 | outer = A @ Aᵀ
+   |         ^^^^^^
+   = note: applied by the `transposes` pass
+   = note: because the transposed operand is a matrix: `matmul[tb]` reads it transposed, so the 40·30 element copy that `transpose` makes is never made
+   = note: because exact: `matmul[tb]` is defined as the transpose followed by the product, so every bit and every error is the same; a kernel may read the operand with swapped strides
+   = note: because the flops are unchanged: 96,000
+
+tests/ir/exact_linalg.sky:11:9: note: [LA-GRAM-001] `A @ Aᵀ` is rewritten to `matmul[tb,alg=syrk](A, A)`
+   |
+11 | outer = A @ Aᵀ
+   |         ^^^^^^
+   = note: applied by the `structure` pass
+   = note: because A is multiplied by its own transpose: entries (i, j) and (j, i) sum the same products (`aₚᵢ·aₚⱼ` and `aₚⱼ·aₚᵢ`, and multiplication commutes) in the same order
+   = note: because one triangle is computed and mirrored: 49,200 flops instead of 96,000
+   = note: because exact: the result is bit for bit the general product's, and bitwise symmetric (its type gains the Symmetric tag)
+
+tests/ir/exact_linalg.sky:12:8: note: [LA-SYMMETRIC-001] `gramᵀ` is rewritten to `gram`
+   |
+12 | same = transpose(gram)
+   |        ^^^^^^^^^^^^^^^
+   = note: applied by the `structure` pass
+   = note: because gram is Matrix[30,30] and Symmetric: aᵢⱼ == aⱼᵢ exactly, so its transpose has the same bits
+   = note: because exact: no 30·30 element copy is made
+
+tests/ir/exact_linalg.sky:13:8: note: [LA-DIAGONAL-001] `D @ B` is rewritten to `diag.mul[left](D, B)`
+   |
+13 | rows = D @ B
+   |        ^^^^^
+   = note: applied by the `structure` pass
+   = note: because D is Matrix[40,40] and Diagonal: every off-diagonal entry is exactly zero, so the product scales the rows of B by its diagonal
+   = note: because exact: entry (i, j) is `0.0 + d·x` in either form (the other terms add ±0 to a sum that starts at +0.0), so every bit is the same, including the sign of a zero
+   = note: because 800 multiplications instead of 64,000 flops
+
+tests/ir/exact_linalg.sky:14:8: note: [LA-DIAGONAL-001] `B @ E` is rewritten to `diag.mul[right](B, E)`
+   |
+14 | cols = B @ E
+   |        ^^^^^
+   = note: applied by the `structure` pass
+   = note: because E is Matrix[20,20] and Diagonal: every off-diagonal entry is exactly zero, so the product scales the columns of B by its diagonal
+   = note: because exact: entry (i, j) is `0.0 + d·x` in either form (the other terms add ±0 to a sum that starts at +0.0), so every bit is the same, including the sign of a zero
+   = note: because 800 multiplications instead of 32,000 flops

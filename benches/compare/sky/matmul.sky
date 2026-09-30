@@ -1,0 +1,15 @@
+# Dense matmul, C = A @ B on {{N}} x {{N}} matrices, repeated {{R}} times; each
+# repetition rescales the product so the next one depends on it (power
+# iteration). Inputs are outer products plus the identity, so they are dense.
+# Prints the last sum of C and two corner entries of A.
+A = {{COL:0:N}} @ {{ROW:1:N}} + identity({{N}})
+B = {{COL:2:N}} @ {{ROW:3:N}} + identity({{N}})
+ones_r = {{ROW:ones:N}}
+ones_c = {{COL:ones:N}}
+s = 1.0
+C = A  # bound before the loop: SIR does not lower an array first bound inside one yet
+for r in range({{R}}):
+    C = A @ B
+    s = (ones_r @ C @ ones_c)[0, 0]
+    A = C / s
+print(s, A[0, 0], A[{{N}} - 1, {{N}} - 1])

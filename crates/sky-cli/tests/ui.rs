@@ -95,7 +95,10 @@ fn ui() {
             if explain {
                 cmd.arg("--explain");
             }
+            // The parallelism notes speak of the thread count; the goldens
+            // must not depend on the machine's cores.
             cmd.arg(&rel_arg)
+                .env("SKY_THREADS", "8")
                 .current_dir(&root)
                 .output()
                 .expect("run sky")

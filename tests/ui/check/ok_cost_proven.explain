@@ -1,0 +1,168 @@
+tests/ui/check/ok_cost_proven.sky:2:5: note: cost of `gram`: M²·N + M·N flops, 1 allocation of M² floats
+  |
+2 | def gram(A: Matrix[N, M]) -> Matrix[M, M]:
+  |     ^^^^
+  = note: memory traffic: 16·M·N bytes read, 8·M² bytes written
+
+tests/ui/check/ok_cost_proven.sky:3:5: note: `gram` costs M²·N + M·N flops, within `2 * N * M^2`
+  |
+3 |     cost flops <= 2 * N * M^2
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: proven from the static cost model, for every size from 1 up
+  = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:4:12: note: [LA-TRANSPOSE-001] `Aᵀ @ A` is rewritten to `matmul[ta](A, A)`
+  |
+4 |     return Aᵀ @ A
+  |            ^^^^^^
+  = note: applied by the `transposes` pass
+  = note: because the transposed operand is a matrix: `matmul[ta]` reads it transposed, so the N·M element copy that `transpose` makes is never made
+  = note: because exact: `matmul[ta]` is defined as the transpose followed by the product, so every bit and every error is the same; a kernel may read the operand with swapped strides
+  = note: because the flops are unchanged: 2·N·M²
+
+tests/ui/check/ok_cost_proven.sky:4:12: note: [LA-GRAM-001] `Aᵀ @ A` is rewritten to `matmul[ta,alg=syrk](A, A)`
+  |
+4 |     return Aᵀ @ A
+  |            ^^^^^^
+  = note: applied by the `structure` pass
+  = note: because A is multiplied by its own transpose: entries (i, j) and (j, i) sum the same products (`aₚᵢ·aₚⱼ` and `aₚⱼ·aₚᵢ`, and multiplication commutes) in the same order
+  = note: because one triangle is computed and mirrored: N·M² + N·M flops instead of 2·N·M²
+  = note: because exact: the result is bit for bit the general product's, and bitwise symmetric (its type gains the Symmetric tag)
+
+tests/ui/check/ok_cost_proven.sky:6:5: note: cost of `step`: 2·N flops, 1 allocation of N floats
+  |
+6 | def step(v: Vector[N], w: Vector[N]) -> Vector[N]:
+  |     ^^^^
+  = note: memory traffic: 16·N bytes read, 8·N bytes written
+
+tests/ui/check/ok_cost_proven.sky:7:5: note: `step` costs exactly 2·N flops, as `cost flops == 2 * N` states
+  |
+7 |     cost flops == 2 * N
+  |     ^^^^^^^^^^^^^^^^^^^
+  = note: proven from the static cost model, for every size from 1 up
+  = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:8:5: note: `step` costs exactly 1 allocation, as `cost allocations == 1` states
+  |
+8 |     cost allocations == 1
+  |     ^^^^^^^^^^^^^^^^^^^^^
+  = note: proven from the static cost model, for every size from 1 up
+  = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:9:5: note: `step` costs exactly 8·N bytes written, as `cost bytes_written == 8 * N` states
+  |
+9 |     cost bytes_written == 8 * N
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: proven from the static cost model, for every size from 1 up
+  = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:10:12: note: [FUSE-001] `v + 2 * w` is rewritten to `fused(2, w, v)`
+   |
+10 |     return v + 2 * w
+   |            ^^^^^^^^^
+   = note: applied by the `fuse` pass
+   = note: because fused 2 elementwise operations into one kernel; saves 1 temporary array of shape Vector[N]
+   = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[N]
+   = note: because 2 of the operations can fail (`mul`, `add`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
+
+tests/ui/check/ok_cost_proven.sky:10:12: note: [PAR-001] this elementwise kernel runs on 8 threads once it has at least 2048 elements
+   |
+10 |     return v + 2 * w
+   |            ^^^^^^^^^
+   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+   = note: because 2 of its operations can fail (`mul`, `add`): if chunks fail, the failing operation that comes first in program order is reported, at its lowest failing element, which is the error a sequential run gives
+
+tests/ui/check/ok_cost_proven.sky:12:5: note: cost of `solve_spd`: N³/3 + 2·N² flops, 2 allocations (N² + N floats in all)
+   |
+12 | def solve_spd(A: PositiveDefinite Matrix[N, N], b: Vector[N]) -> Vector[N]:
+   |     ^^^^^^^^^
+   = note: memory traffic: 8·N² + 8·N bytes read, 8·N² + 8·N bytes written
+
+tests/ui/check/ok_cost_proven.sky:13:5: note: `solve_spd` costs N³/3 + 2·N² flops, within `N^3 + 2 * N^2`
+   |
+13 |     cost flops <= N^3 + 2 * N^2
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: proven from the static cost model, for every size from 1 up
+   = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:14:12: note: `A⁻¹ @ b` is rewritten to a Cholesky solve
+   |
+14 |     return A⁻¹ @ b
+   |            ^^^^^^^
+   |            - positive definite
+   = note: rewrite `A⁻¹ @ b` to a Cholesky solve: A is Matrix[N,N] and PositiveDefinite, b is Vector[N]. Factor A = L·Lᵀ (L lower-triangular), solve L·y = b, then Lᵀ·x = y. x = A⁻¹·b is Vector[N], and A⁻¹ is never formed.
+
+tests/ui/check/ok_cost_proven.sky:16:5: note: cost of `hyp`: 4 flops
+   |
+16 | def hyp(a: m, b: m) -> m:
+   |     ^^^
+
+tests/ui/check/ok_cost_proven.sky:17:5: note: `hyp` costs 4 flops, within `4`
+   |
+17 |     cost flops <= 4
+   |     ^^^^^^^^^^^^^^^
+   = note: proven from the static cost model, for every size from 1 up
+   = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:18:5: note: `hyp` costs exactly 0 allocations, as `cost allocations == 0` states
+   |
+18 |     cost allocations == 0
+   |     ^^^^^^^^^^^^^^^^^^^^^
+   = note: proven from the static cost model, for every size from 1 up
+   = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:21:5: note: cost of `relax`: N² flops, N allocations (N² floats in all)
+   |
+21 | def relax(v: Vector[N]) -> Vector[N]:
+   |     ^^^^^
+   = note: memory traffic: 8·N² bytes read, 8·N² bytes written
+
+tests/ui/check/ok_cost_proven.sky:22:5: note: `relax` costs N² flops, within `N^2`
+   |
+22 |     cost flops <= N^2
+   |     ^^^^^^^^^^^^^^^^^
+   = note: proven from the static cost model, for every size from 1 up
+   = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:24:13: note: [PAR-001] this elementwise `mul` runs on 8 threads once it has at least 262144 elements
+   |
+24 |         v = v * 2
+   |             ^^^^^
+   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+   = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
+
+tests/ui/check/ok_cost_proven.sky:27:5: note: cost of `pick`: at most 2·N flops, at most 1 allocation (N floats in all)
+   |
+27 | def pick(v: Vector[N], w: Vector[N]) -> Vector[N]:
+   |     ^^^^
+30 |     if v[0] > 1:
+   |        ---- hot spot: `v[0]` costs 8 bytes of memory traffic
+31 |         r = v * 2 + w
+   |             --------- hot spot: `v * 2 + w` costs 2·N flops
+   = note: memory traffic: at most 16·N + 8 bytes read, at most 8·N bytes written
+
+tests/ui/check/ok_cost_proven.sky:28:5: note: `pick` costs at most 2·N flops, within `3 * N`
+   |
+28 |     cost flops <= 3 * N
+   |     ^^^^^^^^^^^^^^^^^^^
+   = note: proven from the static cost model, for every size from 1 up
+   = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/ok_cost_proven.sky:31:13: note: [FUSE-001] `v * 2 + w` is rewritten to `fused(v, 2, w)`
+   |
+31 |         r = v * 2 + w
+   |             ^^^^^^^^^
+   = note: applied by the `fuse` pass
+   = note: because fused 2 elementwise operations into one kernel; saves 1 temporary array of shape Vector[N]
+   = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[N]
+   = note: because 2 of the operations can fail (`mul`, `add`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
+
+tests/ui/check/ok_cost_proven.sky:31:13: note: [PAR-001] this elementwise kernel runs on 8 threads once it has at least 2048 elements
+   |
+31 |         r = v * 2 + w
+   |             ^^^^^^^^^
+   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+   = note: because 2 of its operations can fail (`mul`, `add`): if chunks fail, the failing operation that comes first in program order is reported, at its lowest failing element, which is the error a sequential run gives

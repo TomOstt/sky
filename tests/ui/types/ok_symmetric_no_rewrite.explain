@@ -1,0 +1,9 @@
+tests/ui/types/ok_symmetric_no_rewrite.sky:5:5: note: [LA-CHAIN-001] `S⁻¹ @ b` is rewritten to `solve[lu](S, b)`
+  |
+5 | x = S⁻¹ @ b
+  |     ^^^^^^^
+  = note: applied by the checker: the tree-walker and SIR both follow this choice
+  = note: S⁻¹ is Matrix[3,3], b is Vector[3]
+  = note: S is a general square matrix: LU with partial pivoting (S = P·L·U), then two triangular solves; S⁻¹ is never formed
+  = note: estimated cost: 126 flops as written, 36 flops after the rewrite, about 3.5x fewer
+  = note: not bit-identical to the written form: solving rounds differently from forming the inverse and multiplying, and is at least as accurate (spec, "Algorithm choice")

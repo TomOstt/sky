@@ -498,3 +498,92 @@ fn the_spring_example() {
     close(&u, &[0.05, 0.15], 1e-15);
     assert!(u.to_string().ends_with(" m]"), "{u}");
 }
+
+// ---------------------------------------------------------------------------
+// Reproducible arithmetic (spec "Arrays: reproducible arithmetic").
+
+/// The dot product in the spec's order: left to right below 8 terms,
+/// otherwise 8 interleaved partial sums and the fixed tree.
+fn spec_dot(a: &[f64], b: &[f64]) -> f64 {
+    let p: Vec<f64> = a.iter().zip(b).map(|(x, y)| x * y).collect();
+    if p.len() < 8 {
+        return p.iter().fold(0.0, |s, x| s + x);
+    }
+    let mut s = [0.0_f64; 8];
+    for (i, x) in p.iter().enumerate() {
+        s[i % 8] += x;
+    }
+    ((s[0] + s[4]) + (s[2] + s[6])) + ((s[1] + s[5]) + (s[3] + s[7]))
+}
+
+fn literal(xs: &[f64]) -> String {
+    let items: Vec<String> = xs.iter().map(|x| format!("{x:e}")).collect();
+    format!("[{}]", items.join(", "))
+}
+
+#[test]
+fn dots_sum_in_the_fixed_order() {
+    // Sums that round differently left to right and by the tree.
+    let a = [1e16, 1.0, -1e16, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5];
+    let b = [1.0; 9];
+    let tree = spec_dot(&a, &b);
+    let sequential = a.iter().fold(0.0, |s, x| s + x);
+    assert_ne!(
+        tree, sequential,
+        "the test input must tell the orders apart"
+    );
+    let (la, lb) = (literal(&a), literal(&b));
+    assert_eq!(data(&run(&format!("dot({la}, {lb})")).unwrap()), [tree]);
+    // `a @ b` of two vectors is the same reduction, so `dot(a, b)` and
+    // `a @ b` agree to the bit.
+    assert_eq!(data(&run(&format!("{la} @ {lb}")).unwrap()), [tree]);
+    // `norm` sums the squares in the same order.
+    let squares: Vec<f64> = a.iter().map(|x| x * x).collect();
+    let want = spec_dot(&[1.0; 9], &squares).sqrt();
+    let got = data(&run(&format!("norm({la})")).unwrap())[0];
+    assert!(
+        (got - want).abs() <= 1e-15 * want || got.to_bits() == want.to_bits(),
+        "{got} vs {want}"
+    );
+    // Fewer than 8 terms: left to right, as before.
+    let c = [0.1, 0.2, 0.3];
+    let sequential = c.iter().fold(0.0, |s, x| s + x * 1.0);
+    assert_eq!(
+        data(&run(&format!("dot({}, [1, 1, 1])", literal(&c))).unwrap()),
+        [sequential]
+    );
+}
+
+#[test]
+fn a_sum_of_negative_zeros_is_zero() {
+    assert_eq!(data(&run("dot([0, 0], [-1, -1])").unwrap())[0].to_bits(), 0);
+    assert_eq!(data(&run("[0, 0] @ [-1, -1]").unwrap())[0].to_bits(), 0);
+}
+
+#[test]
+fn matrix_products_keep_the_naive_order_at_every_size() {
+    use crate::linalg;
+    // Big enough for blocking, packing and more than one thread.
+    let (m, k, n) = (140, 100, 150);
+    let a: Vec<f64> = (0..m * k)
+        .map(|i| ((i * 7919 + 13) % 2003) as f64 / 1000.0 - 1.0)
+        .collect();
+    let b: Vec<f64> = (0..k * n)
+        .map(|i| ((i * 104_729 + 7) % 1999) as f64 / 1000.0 - 1.0)
+        .collect();
+    let mut naive = vec![0.0; m * n];
+    for i in 0..m {
+        for j in 0..n {
+            let mut s = 0.0;
+            for p in 0..k {
+                s += a[i * k + p] * b[p * n + j];
+            }
+            naive[i * n + j] = s;
+        }
+    }
+    let got = linalg::matmul(&a, m, k, &b, n);
+    assert!(got
+        .iter()
+        .zip(&naive)
+        .all(|(g, w)| g.to_bits() == w.to_bits()));
+}

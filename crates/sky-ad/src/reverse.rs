@@ -42,7 +42,10 @@
 use std::collections::{HashMap, HashSet};
 
 use sky_diag::Span;
-use sky_ir::{Effect, Function, FunctionBuilder, Module, OpData, OpKind, SliceAxis, Type, ValueId};
+use sky_ir::{
+    Effect, Function, FunctionBuilder, Module, OpData, OpKind, SliceAxis, SolveMethod, Type,
+    ValueId,
+};
 use sky_types::{Shape, ShapeDim};
 use sky_units::Dimension;
 
@@ -663,6 +666,31 @@ impl Rev<'_> {
                 self.acc(a, c, span)
             }
             OpKind::MatMul => self.adjoint_matmul(op, rb),
+            // r = ‖a‖: ā += (r̄ / r) a. r̄ has dim(F)/dim(a), so r̄ / r is
+            // dim(F)/dim(a)², and times `a` gives dim(F)/dim(a), the
+            // adjoint's. At ‖a‖ = 0 the division fails, as in the tangent.
+            OpKind::Norm => {
+                let [a] = self.d.operands(op)?;
+                let (pa, pr) = (self.d.primal(a)?, self.d.primal(r)?);
+                let q = self.div(rb, pr, span)?;
+                let c = self.mul(pa, q, span)?;
+                self.acc(a, c, span)
+            }
+            // r = a·b: ā += r̄ b, b̄ += r̄ a, as for the product of two
+            // vectors.
+            OpKind::Dot => {
+                let [a, b] = self.d.operands(op)?;
+                let (pa, pb) = (self.d.primal(a)?, self.d.primal(b)?);
+                if self.d.active[a.index()] {
+                    let c = self.mul(pb, rb, span)?;
+                    self.acc(a, c, span)?;
+                }
+                if self.d.active[b.index()] {
+                    let c = self.mul(pa, rb, span)?;
+                    self.acc(b, c, span)?;
+                }
+                Ok(())
+            }
             OpKind::Transpose => {
                 let [a] = self.d.operands(op)?;
                 let c = if self.d.shape_of(a).rank() == 0 {
@@ -672,15 +700,37 @@ impl Rev<'_> {
                 };
                 self.acc(a, c, span)
             }
-            // r = A⁻¹ b: b̄ += A⁻ᵀ r̄ = solve(A, r̄) (A is symmetric), and
-            // Ā += -b̄ rᵀ.
+            // r = A⁻¹ b: b̄ += A⁻ᵀ r̄, and Ā += -b̄ rᵀ. A Cholesky or a
+            // Diagonal A is symmetric, so A⁻ᵀ r̄ is solve(A, r̄); an LU
+            // solve has any square A, and A⁻ᵀ r̄ is the transposed solve
+            // r̄ A⁻¹ (of r̄ as a row, or of each column of a matrix).
             OpKind::Solve { method } => {
                 let [a, b] = self.d.operands(op)?;
                 let (pa, pr) = (self.d.primal(a)?, self.d.primal(r)?);
                 let ty = self.adj_ty(b)?;
-                let bbar = self
-                    .d
-                    .emit(OpKind::Solve { method: *method }, vec![pa, rb], ty, span);
+                let bbar = if *method == SolveMethod::Lu {
+                    if self.d.shape_of(r).rank() == 1 {
+                        self.d.emit(
+                            OpKind::SolveRight { method: *method },
+                            vec![rb, pa],
+                            ty,
+                            span,
+                        )
+                    } else {
+                        let rbt = self.transpose(rb, span)?;
+                        let n = self.d.new_num(rbt)?;
+                        let solved = self.d.emit(
+                            OpKind::SolveRight { method: *method },
+                            vec![rbt, pa],
+                            self.d.untagged(&n),
+                            span,
+                        );
+                        self.transpose(solved, span)?
+                    }
+                } else {
+                    self.d
+                        .emit(OpKind::Solve { method: *method }, vec![pa, rb], ty, span)
+                };
                 self.acc(b, bbar, span)?;
                 if self.d.active[a.index()] {
                     let prod = if self.d.shape_of(r).rank() == 1 {
@@ -688,6 +738,40 @@ impl Rev<'_> {
                     } else {
                         let rt = self.transpose(pr, span)?;
                         self.matmul(bbar, rt, span)?
+                    };
+                    let c = self.neg(prod, span)?;
+                    self.acc(a, c, span)?;
+                }
+                Ok(())
+            }
+            // r = x A⁻¹: x̄ += r̄ A⁻ᵀ, that is x̄ᵀ = A⁻¹ r̄ᵀ, a solve with
+            // any method; Ā += -rᵀ x̄.
+            OpKind::SolveRight { method } => {
+                let [x, a] = self.d.operands(op)?;
+                let (pa, pr) = (self.d.primal(a)?, self.d.primal(r)?);
+                let ty = self.adj_ty(x)?;
+                let xbar = if self.d.shape_of(r).rank() == 1 {
+                    self.d
+                        .emit(OpKind::Solve { method: *method }, vec![pa, rb], ty, span)
+                } else {
+                    let rbt = self.transpose(rb, span)?;
+                    let n = self.d.new_num(rbt)?;
+                    let dim = self.d.dim_div(n.dim, self.d.dim_of(a)?)?;
+                    let solved = self.d.emit(
+                        OpKind::Solve { method: *method },
+                        vec![pa, rbt],
+                        shaped_type(dim, n.shape.clone(), n.repr),
+                        span,
+                    );
+                    self.transpose(solved, span)?
+                };
+                self.acc(x, xbar, span)?;
+                if self.d.active[a.index()] {
+                    let prod = if self.d.shape_of(r).rank() == 1 {
+                        self.d.outer(pr, xbar, span)?
+                    } else {
+                        let rt = self.transpose(pr, span)?;
+                        self.matmul(rt, xbar, span)?
                     };
                     let c = self.neg(prod, span)?;
                     self.acc(a, c, span)?;

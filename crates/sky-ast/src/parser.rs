@@ -25,9 +25,9 @@ use sky_diag::{display_capped, Diagnostic, Label};
 use sky_syntax::{Kw, Span, Token, TokenKind};
 
 use crate::ast::{
-    span_text, AssertKind, AssignTarget, BinaryOp, Block, BoolOp, CompoundOp, DimExpr, Expr,
-    ExprKind, Ident, IndexItem, Literal, Module, Param, ShapeAnn, ShapeKind, Stmt, StmtKind,
-    TypeExpr, UnaryOp, UnitExpr, TAG_NAMES,
+    span_text, AssertKind, AssignTarget, BinaryOp, Block, BoolOp, CompoundOp, CostMetric, CostOp,
+    DimExpr, Expr, ExprKind, Ident, IndexItem, Literal, Module, Param, ShapeAnn, ShapeKind, Stmt,
+    StmtKind, TypeExpr, UnaryOp, UnitExpr, TAG_NAMES,
 };
 use crate::precedence::{
     bool_binding_power, infix_binding_power, is_postfix_start, prefix_binding_power, AS_BP,
@@ -688,35 +688,44 @@ impl<'t, 's> Parser<'t, 's> {
     fn check_contract_placement(&mut self, stmts: &[Stmt], in_def: bool) {
         let mut head = in_def;
         for s in stmts {
-            match &s.kind {
+            let word = match &s.kind {
                 StmtKind::Assert {
                     kind: kind @ (AssertKind::Requires | AssertKind::Ensures),
                     ..
-                } if !head => {
-                    let word = kind.keyword();
-                    let err = if in_def {
-                        ParseError::new(
-                            format!("`{word}` must come before the other statements of the function body"),
-                            s.span,
-                        )
-                        .with_help("write the contract lines first, right after the `def` line")
-                    } else {
-                        ParseError::new(
-                            format!("`{word}` is only allowed at the start of a function body"),
-                            s.span,
-                        )
-                        .with_help(
-                            "state a function's contract with `requires` and `ensures` right after its `def` line; use `assert` to check a condition here",
-                        )
-                    };
-                    self.errors.push(err);
+                } => kind.keyword(),
+                StmtKind::Cost { .. } => "cost",
+                _ => {
+                    head = false;
+                    continue;
                 }
-                StmtKind::Assert {
-                    kind: AssertKind::Requires | AssertKind::Ensures,
-                    ..
-                } => {}
-                _ => head = false,
+            };
+            if head {
+                continue;
             }
+            let err = if in_def {
+                ParseError::new(
+                    format!("`{word}` must come before the other statements of the function body"),
+                    s.span,
+                )
+                .with_help("write the contract lines first, right after the `def` line")
+            } else if word == "cost" {
+                ParseError::new(
+                    "`cost` is only allowed at the start of a function body",
+                    s.span,
+                )
+                .with_help(
+                    "state a function's performance contract with `cost` right after its `def` line",
+                )
+            } else {
+                ParseError::new(
+                    format!("`{word}` is only allowed at the start of a function body"),
+                    s.span,
+                )
+                .with_help(
+                    "state a function's contract with `requires` and `ensures` right after its `def` line; use `assert` to check a condition here",
+                )
+            };
+            self.errors.push(err);
         }
     }
 
@@ -796,6 +805,9 @@ impl<'t, 's> Parser<'t, 's> {
     fn parse_stmt(&mut self) -> Option<Stmt> {
         if self.at_accuracy() {
             return self.parse_accuracy();
+        }
+        if self.at_cost() {
+            return self.parse_cost();
         }
         let first = match self.peek() {
             TokenKind::Keyword(Kw::Return) => return self.parse_return(),
@@ -909,6 +921,88 @@ impl<'t, 's> Parser<'t, 's> {
         let stmt = Stmt {
             span: kw.span.join(tolerance.span),
             kind: StmtKind::Accuracy { name, tolerance },
+        };
+        self.expect_stmt_end(&stmt, None)?;
+        Some(stmt)
+    }
+
+    /// Whether the statement starts with `cost` followed by a name: the
+    /// contextual performance contract `cost flops <= 2 * N^3`. Two names
+    /// side by side are never a valid expression, so nothing else is taken.
+    fn at_cost(&self) -> bool {
+        self.nth(0).is_some_and(|t| {
+            t.kind == TokenKind::Ident && span_text(self.src, t.span) == Some("cost")
+        }) && self.nth(1).is_some_and(|t| t.kind == TokenKind::Ident)
+    }
+
+    /// `cost measure <= bound` or `cost measure == bound`, with `cost`
+    /// current.
+    fn parse_cost(&mut self) -> Option<Stmt> {
+        let kw = self.bump();
+        let metric_tok = self.bump();
+        let word = span_text(self.src, metric_tok.span).unwrap_or("");
+        let Some(metric) = CostMetric::from_keyword(word) else {
+            let known: Vec<String> = CostMetric::ALL
+                .iter()
+                .map(|m| format!("`{}`", m.keyword()))
+                .collect();
+            // A time is the obvious thing to ask for, and is not offered.
+            let mut help = format!("measure one of {}", known.join(", "));
+            if matches!(
+                word,
+                "runtime" | "time" | "seconds" | "duration" | "latency" | "ms" | "ns"
+            ) {
+                help.push_str(
+                    "; a time is not a contract: it varies with the machine and its load, so it cannot be proven, while the count of operations and bytes is the same everywhere",
+                );
+            }
+            self.errors.push(
+                ParseError::new(
+                    format!(
+                        "`{}` is not something a `cost` line measures",
+                        self.text(metric_tok.span)
+                    ),
+                    metric_tok.span,
+                )
+                .with_secondary(kw.span, "this states a performance contract")
+                .with_help(help),
+            );
+            return None;
+        };
+        let op_tok = self.current();
+        let op = match op_tok.kind {
+            TokenKind::Le => CostOp::Le,
+            TokenKind::Eq => CostOp::Eq,
+            _ => {
+                let found = self.describe(op_tok);
+                let mut err = ParseError::new(
+                    format!("expected `<=` or `==` after `cost {word}`, found {found}"),
+                    op_tok.span,
+                )
+                .with_secondary(kw.span, "this states a performance contract");
+                err = match op_tok.kind {
+                    TokenKind::Lt | TokenKind::Gt | TokenKind::Ge => err.with_help(
+                        "a cost contract is an upper bound (`<=`) or an exact count (`==`)",
+                    ),
+                    _ => err.with_help(format!(
+                        "write `cost {word} <= 2 * N^3` (at most) or `cost {word} == 0` (exactly)"
+                    )),
+                };
+                self.errors.push(err);
+                return None;
+            }
+        };
+        self.bump();
+        let bound = self.expr_bp(0)?;
+        let stmt = Stmt {
+            span: kw.span.join(bound.span),
+            kind: StmtKind::Cost {
+                metric,
+                metric_span: metric_tok.span,
+                op,
+                op_span: op_tok.span,
+                bound,
+            },
         };
         self.expect_stmt_end(&stmt, None)?;
         Some(stmt)

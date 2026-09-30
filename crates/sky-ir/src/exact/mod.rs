@@ -49,12 +49,20 @@
 //! (no range, no proof), because its operations check their operands at run
 //! time. Values with a chosen representation other than `f64` are skipped
 //! too, since their rounding is not `f64`'s.
+//!
+//! Static shapes are trusted the same way: an array value has the shape its
+//! type says (as lowering already trusts it when it writes a constant for
+//! `len`). That is what lets [`Proof::InBounds`] say that `v[1]` on a
+//! `Vector[3]` cannot fail, and gives `len(v)` a value: the specialization
+//! pass (`sky_opt::specialize`) makes shapes concrete, and this is where a
+//! concrete shape pays off.
 
 pub mod range;
 mod sym;
 
 use crate::ir::{Function, OpId, Repr, Type, ValueId};
-use crate::op::{MathFn, OpKind};
+use crate::op::{MathFn, OpKind, SliceAxis};
+use sky_types::ShapeDim;
 use sky_units::Rational;
 
 pub use range::{Range, Step};
@@ -196,6 +204,11 @@ pub enum Proof {
     /// A power or a math function: the operands are inside its domain, and
     /// the result fits an `f64`.
     Domain,
+    /// `index` or `slice`: every position is a constant integer inside the
+    /// static length of its axis. `len`: the operand is a typed array.
+    /// (Static shapes are trusted like static dimensions: a typed value has
+    /// the shape its type says. See "Trust".)
+    InBounds,
 }
 
 /// The result of [`analyze`]: a table indexed by [`ValueId`] and [`OpId`].
@@ -286,6 +299,12 @@ impl Analysis {
                 "the base is {}, so the power is defined, and the result is {result}, which fits an f64",
                 text(op.operands.first())
             ),
+            (Proof::InBounds, OpKind::Len) => {
+                "the operand is an array, so it has a length".to_string()
+            }
+            (Proof::InBounds, _) => {
+                "every position is a constant inside the static shape of the array".to_string()
+            }
         })
     }
 
@@ -327,6 +346,13 @@ impl Analysis {
         match &op.kind {
             OpKind::If => self.join_arms(f, id),
             OpKind::While | OpKind::Call { .. } => self.finite_results(f, id),
+            OpKind::Index | OpKind::Slice { .. } | OpKind::Len => {
+                self.finite_results(f, id);
+                self.proofs[id.index()] = self.in_bounds(f, id).then_some(Proof::InBounds);
+                if let Some(k) = self.static_length(f, id) {
+                    self.set(op.results[0], k);
+                }
+            }
             _ => match self.transfer(f, id) {
                 Some((known, proof)) => {
                     self.set(op.results[0], known);
@@ -334,6 +360,97 @@ impl Analysis {
                 }
                 None => self.finite_results(f, id),
             },
+        }
+    }
+
+    /// `len` of an array whose first axis has a static length is that
+    /// length, exactly.
+    fn static_length(&self, f: &Function, id: OpId) -> Option<Known> {
+        let op = f.op(id);
+        let ([base], [res]) = (&op.operands[..], &op.results[..]) else {
+            return None;
+        };
+        if !matches!(op.kind, OpKind::Len) || !is_scalar_f64(f, *res) {
+            return None;
+        }
+        let Type::Number(n) = f.ty(*base) else {
+            return None;
+        };
+        let ShapeDim::Known(len) = n.shape.dims().first()? else {
+            return None;
+        };
+        let x = *len as f64;
+        Some(Known {
+            ideal: dyadic(x).map(Sym::rational),
+            range: Range::point(x),
+        })
+    }
+
+    /// Whether `index`, `slice` or `len` provably cannot fail: the operand
+    /// is a typed array, and every position is a constant, dimensionless,
+    /// non-negative integer inside the static length of its axis (a range
+    /// `lo:hi` needs `lo < hi <= length`).
+    fn in_bounds(&self, f: &Function, id: OpId) -> bool {
+        let op = f.op(id);
+        let Some(&base) = op.operands.first() else {
+            return false;
+        };
+        let Type::Number(array) = f.ty(base) else {
+            return false;
+        };
+        if array.shape.rank() == 0 {
+            return false;
+        }
+        if matches!(op.kind, OpKind::Len) {
+            return op.operands.len() == 1;
+        }
+        // The value of position operand `i`, if it is a constant.
+        let position = |v: ValueId| -> Option<u64> {
+            let dimensionless = matches!(f.ty(v), Type::Number(n) if n.dim.is_dimensionless());
+            let x = self.known(v)?.range.as_point()?;
+            (dimensionless && x >= 0.0 && x.fract() == 0.0 && x < 2f64.powi(53)).then_some(x as u64)
+        };
+        let length = |axis: usize| match array.shape.dims().get(axis)? {
+            ShapeDim::Known(n) => Some(*n),
+            ShapeDim::Var(_) => None,
+        };
+        match &op.kind {
+            OpKind::Index => {
+                let idx = &op.operands[1..];
+                !idx.is_empty()
+                    && idx.len() <= array.shape.rank()
+                    && idx.iter().enumerate().all(|(axis, &v)| {
+                        matches!((position(v), length(axis)), (Some(i), Some(n)) if i < n)
+                    })
+            }
+            OpKind::Slice { axes } => {
+                if axes.len() > array.shape.rank() {
+                    return false;
+                }
+                let mut next = 1;
+                axes.iter().enumerate().all(|(axis, item)| {
+                    let Some(n) = length(axis) else { return false };
+                    let mut take = |present: bool| -> Option<Option<u64>> {
+                        if !present {
+                            return Some(None);
+                        }
+                        let v = *op.operands.get(next)?;
+                        next += 1;
+                        Some(Some(position(v)?))
+                    };
+                    match item {
+                        SliceAxis::At => matches!(take(true), Some(Some(i)) if i < n),
+                        SliceAxis::Range { start, stop } => {
+                            let (Some(lo), Some(hi)) = (take(*start), take(*stop)) else {
+                                return false;
+                            };
+                            let (lo, hi) = (lo.unwrap_or(0), hi.unwrap_or(n));
+                            lo < hi && hi <= n
+                        }
+                    }
+                })
+            }
+            _ => false,
         }
     }
 

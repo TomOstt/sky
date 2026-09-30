@@ -1,6 +1,6 @@
 [package]
 name = "sky-opt"
-description = "Optimization passes over SIR and the default pipeline: constant folding, e-graph rewriting, dead-code elimination, elementwise kernel fusion, Cholesky solve selection"
+description = "Optimization passes over SIR and the default pipeline: constant folding, e-graph rewriting, dead-code elimination, elementwise kernel fusion, Cholesky solve selection, specialization on shapes and values"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,5 +20,7 @@ proptest = { version = "1", default-features = false, features = ["std"] }
 sky-ad = { path = "../sky-ad" }
 sky-ast = { path = "../sky-ast" }
 sky-ir-interp = { path = "../sky-ir-interp" }
+# The fuzz harness these tests include also compares native code.
+sky-jit = { path = "../sky-jit" }
 sky-lower = { path = "../sky-lower" }
 sky-syntax = { path = "../sky-syntax" }

@@ -544,6 +544,23 @@ pub enum StmtKind {
         name: Ident,
         tolerance: Expr,
     },
+    /// `cost flops <= 2 * N^3`: a performance contract of a function
+    /// (spec "Performance contracts"). It only parses in the header of a
+    /// `def` body, with `requires` and `ensures`, and is proven or refuted
+    /// by `sky check` from the static cost model; running a program ignores
+    /// it. `cost` is a contextual word: only a statement that starts with
+    /// `cost` and a name is this one, so `cost` stays an ordinary
+    /// identifier everywhere else. `bound` is any expression here; the
+    /// checker requires a polynomial in the sizes of the parameters.
+    Cost {
+        metric: CostMetric,
+        /// The name of the measure as written (`flops`).
+        metric_span: Span,
+        op: CostOp,
+        /// The whole `<=` or `==` token.
+        op_span: Span,
+        bound: Expr,
+    },
     /// `target op= value`, e.g. `x += 1`. Its own node, not desugared to
     /// `x = x + 1`: the target is evaluated once and errors point at `+=`.
     CompoundAssign {
@@ -604,6 +621,68 @@ pub enum StmtKind {
     Equation(Box<Equation>),
     /// `sol = solve name from a to b with ...: options`: solves an equation.
     Solve(Box<Solve>),
+}
+
+/// What a `cost` line measures (spec "Performance contracts").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum CostMetric {
+    /// Floating-point operations.
+    Flops,
+    /// Bytes of arrays read by array operations.
+    BytesRead,
+    /// Bytes of arrays written by array operations.
+    BytesWritten,
+    /// `bytes_read + bytes_written`: the memory traffic.
+    Bytes,
+    /// Arrays allocated (a count).
+    Allocations,
+    /// Bytes allocated for arrays.
+    AllocatedBytes,
+}
+
+impl CostMetric {
+    pub const ALL: [CostMetric; 6] = [
+        CostMetric::Flops,
+        CostMetric::BytesRead,
+        CostMetric::BytesWritten,
+        CostMetric::Bytes,
+        CostMetric::Allocations,
+        CostMetric::AllocatedBytes,
+    ];
+
+    /// The word in the source.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            CostMetric::Flops => "flops",
+            CostMetric::BytesRead => "bytes_read",
+            CostMetric::BytesWritten => "bytes_written",
+            CostMetric::Bytes => "bytes",
+            CostMetric::Allocations => "allocations",
+            CostMetric::AllocatedBytes => "allocated_bytes",
+        }
+    }
+
+    pub fn from_keyword(word: &str) -> Option<CostMetric> {
+        CostMetric::ALL.into_iter().find(|m| m.keyword() == word)
+    }
+}
+
+/// The comparison of a `cost` line: an upper bound or an exact count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CostOp {
+    /// `<=`
+    Le,
+    /// `==`
+    Eq,
+}
+
+impl CostOp {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            CostOp::Le => "<=",
+            CostOp::Eq => "==",
+        }
+    }
 }
 
 /// Which contract statement an [`StmtKind::Assert`] is.

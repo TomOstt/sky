@@ -90,6 +90,16 @@ fn auto_falls_back_and_sir_refuses() {
         "{e}"
     );
     assert!(e.contains("--engine=auto"), "{e}");
+
+    let native = run_engine("engines_native", PENDULUM, Some("native"));
+    assert_eq!(native.status.code(), Some(1));
+    assert_eq!(out(&native), "");
+    assert!(
+        err(&native)
+            .contains("error: cannot run natively: uncertainty (`±`) is not supported by SIR yet"),
+        "{}",
+        err(&native)
+    );
 }
 
 #[test]

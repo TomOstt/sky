@@ -11,12 +11,12 @@ See `spec/v0.1.md` for the v0.1 scope.
 - **Units are types.** `42.195 km / (2 h + 35 min)` is a speed, and `print(pace as km/h)` shows it in the unit you ask for. Adding a length to a time is an error at check time, not a wrong number at run time.
 - **Physical constants are built in.** `c`, `G`, `g_n`, `ħ` and others are predefined, with CODATA values.
 - **Derivatives are exact and typed.** `derivative(position, t)(2 s)` (or `(∂position/∂t)(2 s)`) is computed by automatic differentiation, so there is no finite-difference error. Its type is a velocity. `-grad(U)(1 m, 2 m)` of an energy is a force vector in N.
-- **Matrix properties are proven, then used.** Sky checks that a `PositiveDefinite` matrix literal really is positive definite. `K⁻¹ @ f` then runs as a Cholesky solve, so the inverse is never formed.
+- **Matrix properties are proven, then used.** Sky checks that a `PositiveDefinite` matrix literal really is positive definite. `K⁻¹ @ f` then runs as a Cholesky solve, so the inverse is never formed; other tags pick other algorithms (division for `Diagonal`, a transpose for `Orthogonal`, LU for any square matrix), and an unparenthesized `A @ B @ C @ v` is associated by the compiler to cost the fewest flops. `--explain` shows each choice with its estimated flops.
 - **Loops and functions stay checked.** A `while` loop over a falling projectile keeps its time, height and speed in their units through every step.
 
 [`examples/orbit.sky`](examples/orbit.sky) shows the numerics built so far. It is a year of Earth's orbit, with the force written as `-grad(U)(r)` of a potential. The script states its tolerance and that energy is conserved. Sky picks a symplectic integrator and explains the choice, and energy drifts by about 4e-12. The same file checks a contract (`requires`, `assert`) and carries a measurement's uncertainty (`1.000 ± 0.005 m`) through a formula.
 
-The expected output of each example is next to it (`showcase.out`, `orbit.out`). A test runs every example on both engines and compares the output byte for byte.
+The expected output of each example is next to it (`showcase.out`, `orbit.out`). A test runs every example on every engine and compares the output byte for byte.
 
 ## Status
 
@@ -59,15 +59,36 @@ print(explain(sol))              # which method ran, and why
 
 `sky check --explain` says what the checker found in each `solve` (a second-order system, so a symplectic integrator applies; what is to be conserved) without running it. Equations run on the tree-walking interpreter (SIR cannot lower them yet, so `--engine=auto` falls back). See "Differential equations" in `spec/v0.1.md`.
 
+A function states what it costs in its header, next to `requires` and `ensures`, and `sky check` proves it (or refutes it, as an error) from the program, without running it. The cost is a polynomial in the sizes of the arrays, in floating-point operations, bytes moved and allocations; `--explain` reports it for every function, even without contracts, with the hot spots.
+
+```sky
+def gram(A: Matrix[N, M]) -> Matrix[M, M]:
+    cost flops <= 2 * N * M^2       # proven: `gram` costs 2·M²·N flops
+    return Aᵀ @ A
+
+def mm(A: Matrix[N, K], B: Matrix[K, M]) -> Matrix[N, M]:
+    cost flops <= 2 * N^3           # error: `A @ B` costs 2·K·M·N flops
+    return A @ B
+```
+
+A loop the model cannot bound is a warning, not silence (`unbounded (loop at line 7)`). Time is not a contract: it is noise, and a contract that is sometimes false is not one. See "Performance contracts" in `spec/v0.1.md`.
+
 ```
 sky check file.sky            # diagnostics on stderr; exit 1 on any error
 sky check --explain file.sky  # also show the edition, the checker's rewrites (A⁻¹ @ b → Cholesky solve), what it found in each `solve`, and what the optimization passes did
 sky check --emit-ir file.sky  # print the program's IR (SIR text) on stdout; --emit-ir=lower, =after:fold|egraph|dce|cholesky, =final
 sky run file.sky              # check, then run; only a clean file runs. print() writes to stdout
 sky repl                      # expressions echo their value; blocks (def, if, while, for) continue on `...` lines until an empty line
-sky run --engine=sir file.sky # pick the engine: ast (tree-walker, the default), sir (lower to SIR, run it), auto
+sky run --engine=sir file.sky # pick the engine: ast (tree-walker, the default), sir (lower to SIR, run it), native (compile the SIR to machine code), auto
+sky run --engine=sir --threads=4 file.sky  # SIR runs big elementwise kernels and independent pure calls on 4 threads (SKY_THREADS; 1 is sequential); the output never depends on it
+sky check --emit=clif file.sky # print the Cranelift IR the native engine compiles
 sky repl                      # one line at a time; expressions echo their value
+sky hw                        # what this machine can do (SIMD, cores, caches, memory) and what Sky uses each for
+sky tune                      # measure kernel parameters (block sizes, unroll factors) here and remember the winners
+sky tune --show               # list the remembered results; --reset forgets them
 ```
+
+Phase 4 has started with the machine. `sky hw` discovers the CPU, its SIMD features, core counts (performance and efficiency), cache sizes and memory, with no `unsafe` code and no dependencies, and a stable fingerprint of the machine. `sky tune` times each tunable kernel's candidate parameters on this machine and stores the winners in a small text file in your cache directory (`SKY_TUNE_DB` overrides it), keyed by that fingerprint. Tuning changes speed, never results, and the file is data only: it is written only when you run `sky tune`, and it is not a saved session. The kernels that use it are still to come; today two demo tunables exercise the machinery.
 
 ```
 $ sky repl
@@ -97,7 +118,7 @@ M = 5.972e24 kg
 mass = 1000 kg
 
 def U(p: Vector[3] m) -> J:
-    return -G * M * mass / sqrt(p @ p)      # G is the constant of gravitation
+    return -G * M * mass / norm(p)          # G is the constant of gravitation
 
 p = [7000 km, 0 km, 0 km]
 print(-grad(U)(p))                          # [-8134.473387755101 N, 0 N, 0 N]: toward the origin
@@ -115,7 +136,7 @@ f.sky:2:5: note: [ALG-001] `x * 1` is rewritten to `x`
   = note: because multiplying a finite float by 1 gives it back bit for bit, and cannot overflow
 ```
 
-`sky run` has two engines that print the same bytes, on stdout and stderr, with the same exit status. The default, `--engine=ast`, is the tree-walking interpreter: it is faster than the SIR engine today (see Benchmarks), and the default switches to SIR once SIR is the faster one. `--engine=auto` lowers the program to SIR, runs the optimization pipeline with verification, and executes it on the SIR reference interpreter; a program SIR cannot express yet (iterating over an array, a `range` bound computed at run time, an input declaration inside a function, ...) silently runs on the tree-walking interpreter instead. `--engine=sir` never falls back and reports such a program as an error (`cannot run on SIR: ...`), and `--engine=ast` uses the tree-walker, which also stays as the oracle the SIR engine is tested against. A runtime error found on SIR is re-run on the tree-walker, with its output discarded, so that it is pointed at and labelled exactly as before (see "Running programs" in `spec/v0.1.md`).
+`sky run` has three engines that print the same bytes, on stdout and stderr, with the same exit status. The default, `--engine=ast`, is the tree-walking interpreter, which also stays as the oracle the other engines are tested against. `--engine=sir` lowers the program to SIR, runs the optimization pipeline with verification, and executes it on the SIR reference interpreter. `--engine=native` compiles the same optimized SIR to machine code through Cranelift (`crates/sky-jit`) and runs that; it is over 100 times faster than the interpreters on a loop of scalar arithmetic (see Benchmarks). `--engine=auto` picks native code, then SIR, then the tree-walker: a program native code cannot take runs on SIR, and a program SIR cannot express yet (iterating over an array, a `range` bound computed at run time, an input declaration inside a function, ...) silently runs on the tree-walking interpreter instead. `--engine=sir` and `--engine=native` never fall back and report such a program as an error (`cannot run on SIR: ...`, `cannot run natively: ...`). A runtime error found on SIR is re-run on the tree-walker, with its output discarded, so that it is pointed at and labelled exactly as before (see "Running programs" in `spec/v0.1.md`).
 
 Numbers are always finite: division by zero and overflow are runtime errors, not `inf` or `NaN`. See "Running programs" in `spec/v0.1.md`. The REPL keeps no session file.
 
@@ -145,6 +166,7 @@ crates/
   sky-ast/      typed AST with source spans, and the parser
   sky-units/    dimensions and the unit table
   sky-types/    type checker (units, shapes, matrix properties)
+  sky-linalg/   dense linear algebra kernels (GEMM, Cholesky, LU, inverse) with a fixed order of arithmetic
   sky-project/  project root discovery, sky.toml manifest, import resolution
   sky-interp/   tree-walking interpreter
   sky-ir/       SIR: data model, verifier, effects, text format, pass manager
@@ -164,7 +186,7 @@ fuzz/           cargo-fuzz targets for the lexer, parser and manifest
 
 ## Benchmarks
 
-`sky-bench` times each program in `benches/programs/` through three engines: (a) the tree-walking interpreter (`sky run`), (b) lowering plus the SIR interpreter with no passes, and (c) lowering plus `sky_opt::default_pipeline` plus the SIR interpreter. It also times the compile-side phases (lex, parse, check, lower, pipeline, verify), and it fails if the three engines do not print identical output. Every workload prints a checksum, so none can be skipped.
+`sky-bench` times each program in `benches/programs/` through four engines: (a) the tree-walking interpreter (`sky run`), (b) lowering plus the SIR interpreter with no passes, (c) lowering plus `sky_opt::default_pipeline` plus the SIR interpreter, and (d) the same optimized SIR compiled to machine code (`sky-jit`). It also times the compile-side phases (lex, parse, check, lower, pipeline, verify, and the native compile), and it fails if the four engines do not print identical output. Every workload prints a checksum, so none can be skipped.
 
 ```
 cargo run --release -p sky-bench                              # all workloads, a table on stdout
@@ -176,7 +198,11 @@ cargo run --release -p sky-bench -- --quick                   # tiny sizes, a sm
 
 Always use `--release`: debug timings mean nothing. Each engine runs `--reps` times, interleaved, and the table shows the median with the range as a percentage of it; the JSON keeps every sample (integer nanoseconds, schema version 1) so runs can be compared over time. On a busy machine the median drifts upward; the minimum is the steadier number. Set `SKY_BENCH_REV` to record a commit in the JSON.
 
-The workloads are `scalar_loop` (10^6 iterations of arithmetic with units), `recursion` (`fib(25)`), `math_calls` (`for` over `range` with math functions), `array_chain` (elementwise vector chains), `matmul` (`@` on small matrices), `cholesky` (`K⁻¹ @ f` on a PositiveDefinite literal), `derivative` (`derivative(f, t)(x)` in a loop) and `gradient` (`grad(U)(p)` of a spring-network potential of a position vector, by reverse mode, in a loop). To add one, put a `.sky` file in `benches/programs/` whose first line is `# bench: N=<full> quick=<small>` and which sets its size with a line `N = <full>`, then list it in `crates/sky-bench/src/bench.rs` (a test fails if a file is not listed).
+`sky-bench par` measures automatic parallelism instead (`cargo run --release -p sky-bench -- par [--threads 1,2,4,8] [--reps N] [--quick]`): the speedup of a fused kernel, an elementwise `add` and two or four independent calls over threads and sizes, and the break-even sizes the default thresholds (`sky_ir::parallel::Config`) are set from.
+
+The workloads are `scalar_loop` (10^6 iterations of arithmetic with units), `recursion` (`fib(25)`), `math_calls` (`for` over `range` with math functions), `array_chain` (elementwise vector chains), `matmul` (`@` on small matrices), `chain_order` (`A @ B @ C @ v` with 500×500 matrices, which the compiler associates as `A @ (B @ (C @ v))`) against `chain_order_forced` (the same with `((A @ B) @ C) @ v`, forced by parentheses), `cholesky` (`K⁻¹ @ f` on a PositiveDefinite literal), `derivative` (`derivative(f, t)(x)` in a loop) and `gradient` (`grad(U)(p)` of a spring-network potential of a position vector, by reverse mode, in a loop). To add one, put a `.sky` file in `benches/programs/` whose first line is `# bench: N=<full> quick=<small>` and which sets its size with a line `N = <full>`, then list it in `crates/sky-bench/src/bench.rs` (a test fails if a file is not listed).
+
+The chain workloads show what choosing the association buys (spec, "Algorithm choice"): on one release run, `chain_order` took about 3 ms and `chain_order_forced` about 540 ms per engine (roughly 165×, the flop model predicts 334×: 500,500,000 flops as written, 1,500,000 after), with the outputs identical across the three engines. The machine was busy, so read it as an order of magnitude and re-run it on a quiet one. The `+` in their setup lines (`identity(500) + identity(500)`) drops the tags `identity` carries, so the matrices are dense and untagged, and the lines end in `# N` so `--quick` can swap the literal size.
 
 The `bench` workflow (`.github/workflows/bench.yml`) runs the suite in release mode weekly and on manual dispatch, never on pull requests, and uploads the JSON as an artifact.
 

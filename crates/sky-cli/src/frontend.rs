@@ -1,7 +1,8 @@
 //! The front end shared by `check`, `run` and `repl`: lex, parse, and
 //! type-check one source text, and collect every diagnostic.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use sky_ast::{Module, ParseError};
 use sky_diag::{Diagnostic, Severity, SourceFile, Span};
@@ -23,6 +24,9 @@ pub struct FrontEnd {
     /// The `A⁻¹ @ b` sites the checker rewrote to Cholesky solves, which the
     /// interpreter must honour (see `sky_interp::run_module_with`).
     pub cholesky_solves: HashSet<Span>,
+    /// The `@` chains the checker planned (order, solves), which the
+    /// interpreter must honour too (see `sky_interp::RuntimeEnv::add_chain_plans`).
+    pub chains: HashMap<Span, Arc<sky_types::ChainPlan>>,
     /// The checker's whole result, when the module parsed: `sky run`'s SIR
     /// engine lowers with it (lowering reads the types the checker recorded
     /// and must not re-derive them). Its diagnostics are also in
@@ -55,7 +59,7 @@ impl FrontEnd {
 /// first edition-dependent rule has one place to read it, and no phase can
 /// forget to ask.
 pub fn analyze(src: &str, env: Env, explain: bool, edition: Edition) -> FrontEnd {
-    analyze_ir(src, env, explain, false, false, edition)
+    analyze_ir(src, env, explain, false, false, 1, edition)
 }
 
 /// [`analyze`], and with `explain` or `emit_ir`, also lowers a program the
@@ -64,6 +68,9 @@ pub fn analyze(src: &str, env: Env, explain: bool, edition: Edition) -> FrontEnd
 /// notes in source order; with `emit_ir`, [`FrontEnd::ir`] keeps the text of
 /// every stage. A program that cannot be lowered is not an error here:
 /// [`FrontEnd::ir`] says why.
+///
+/// `threads` is the thread count the parallelism notes of `explain` speak
+/// of (`--threads`, `SKY_THREADS`).
 ///
 /// With `budgets` (`sky check`), the `accuracy` statements are checked by the
 /// roundoff analysis (see [`crate::accuracy`]), and with `explain` too the
@@ -74,6 +81,7 @@ pub fn analyze_ir(
     explain: bool,
     emit_ir: bool,
     budgets: bool,
+    threads: usize,
     _edition: Edition,
 ) -> FrontEnd {
     let mut ir_out = None;
@@ -82,6 +90,7 @@ pub fn analyze_ir(
     let mut checked_out = None;
     let mut env_out = env.clone();
     let mut solves = HashSet::new();
+    let mut chains = HashMap::new();
     let mut diagnostics: Vec<Diagnostic> = match sky_syntax::lex(src) {
         Err(e) => e.diagnostics().cloned().collect(),
         Ok(lexed) => {
@@ -92,7 +101,7 @@ pub fn analyze_ir(
                 // checker never reports on a statement the parser dropped.
                 let checked = sky_types::check_module_with(&module, src, env);
                 if (explain || emit_ir) && !checked.has_errors() {
-                    let outcome = ir::build(&module, src, &checked, emit_ir, explain);
+                    let outcome = ir::build(&module, src, &checked, emit_ir, explain, threads);
                     match &outcome {
                         ir::Outcome::Ready(ready) => pass_notes = ready.notes.clone(),
                         // Only `--emit-ir` says so: `--explain` alone stays
@@ -112,9 +121,27 @@ pub fn analyze_ir(
                         explain,
                     ));
                 }
+                if budgets && !checked.has_errors() {
+                    diagnostics.extend(crate::cost::diagnostics(&module, src, &checked, explain));
+                }
                 if explain {
                     diagnostics.extend(checked.ode_notes.iter().cloned());
                     diagnostics.extend(checked.rewrites.iter().map(|r| r.to_diagnostic(src)));
+                    diagnostics.extend(checked.chain_notes.iter().cloned());
+                    if checked.chain_notes_omitted > 0 {
+                        let last = checked
+                            .chain_notes
+                            .last()
+                            .map_or(Span::point(0), |d| d.primary.span);
+                        let n = checked.chain_notes_omitted;
+                        diagnostics.push(Diagnostic::note(
+                            format!(
+                                "{n} more chain rewrite{} not shown",
+                                if n == 1 { "" } else { "s" }
+                            ),
+                            last,
+                        ));
+                    }
                     if checked.rewrites_omitted > 0 {
                         let last = checked.rewrites.last().map_or(Span::point(0), |r| r.span);
                         diagnostics.push(Diagnostic::note(
@@ -135,6 +162,7 @@ pub fn analyze_ir(
                 diagnostics.append(&mut pass_notes);
                 env_out = checked.env.clone();
                 solves = checked.cholesky_solves.clone();
+                chains = checked.chains.clone();
                 checked_out = Some(checked);
                 module_out = Some(module);
             } else {
@@ -152,6 +180,7 @@ pub fn analyze_ir(
         module: module_out,
         env: env_out,
         cholesky_solves: solves,
+        chains,
         checked: checked_out,
         ir: ir_out,
         ok,

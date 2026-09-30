@@ -239,7 +239,8 @@ impl Lower<'_> {
                 self.accuracy(s, name, tolerance);
                 Ok(())
             }
-            StmtKind::Pass => Ok(()),
+            // Proven or refuted from the SIR by `sky check`; nothing to run.
+            StmtKind::Cost { .. } | StmtKind::Pass => Ok(()),
             // Differential equations run on the tree-walker only: the
             // solvers (`sky-ode`) call back into the evaluator for every
             // right-hand side, and SIR has no such operation yet.

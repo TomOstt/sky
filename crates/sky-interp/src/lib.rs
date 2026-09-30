@@ -40,6 +40,7 @@
 
 pub mod arith;
 pub mod array;
+mod chain_exec;
 pub mod contract;
 mod derivative;
 mod env;
@@ -49,11 +50,14 @@ mod eval;
 mod literal;
 pub mod math;
 pub mod show;
+pub mod solve;
+#[cfg(test)]
+mod solve_tests;
 pub mod uncertain;
 mod uncertain_format;
 mod uncertain_math;
 mod value;
-mod vecfn;
+pub mod vecfn;
 
 #[cfg(test)]
 mod array_tests;

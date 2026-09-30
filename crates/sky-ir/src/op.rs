@@ -10,6 +10,7 @@
 //! infinite or NaN (overflow, division by zero, a non-real power) fails at
 //! run time, which is why most arithmetic has [`Effect::Fail`].
 
+pub use sky_types::{Algorithm, Side, SolveMethod};
 use sky_units::Rational;
 
 use crate::ir::{Effect, EffectSet};
@@ -34,23 +35,6 @@ impl CmpOp {
             CmpOp::Le => "le",
             CmpOp::Gt => "gt",
             CmpOp::Ge => "ge",
-        }
-    }
-}
-
-/// How `solve` solves `A x = b`. Chosen by a strategy pass, never written
-/// by users in v1.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum SolveMethod {
-    /// `A` is PositiveDefinite: factor `A = L·Lᵀ`, then two triangular
-    /// solves. `A⁻¹` is never formed.
-    Cholesky,
-}
-
-impl SolveMethod {
-    pub fn mnemonic(self) -> &'static str {
-        match self {
-            SolveMethod::Cholesky => "cholesky",
         }
     }
 }
@@ -269,14 +253,72 @@ pub enum OpKind {
     Math(MathFn),
     /// `A @ B`: two operands, one result.
     MatMul,
+    /// `norm(x)`: one operand (a number, vector or matrix), one result: the
+    /// Euclidean length of a vector (the Frobenius norm of a matrix, the
+    /// absolute value of a scalar), a scalar of the operand's dimension. The
+    /// evaluation is `sky_interp::vecfn::norm`, the function `sky run` calls
+    /// too, scaled for extreme entries so that a vector of `1e200`s has a
+    /// norm. Effect `Fail`: a norm can overflow the finite range, and an
+    /// operand that is not a number fails with the interpreter's error at
+    /// the operand's span.
+    Norm,
+    /// `dot(a, b)`: two operands (vectors of one length), one result: their
+    /// inner product, a scalar in the product of the operands' dimensions.
+    /// Evaluated by `sky_interp::vecfn::dot`. Effect `Fail`: the sum can
+    /// overflow, and operands that are not two vectors of one length fail
+    /// with the interpreter's error (the length mismatch labels both
+    /// operands' spans). It takes no matrices: that is `matmul`.
+    Dot,
     /// `Aᵀ`: one operand, one result. Pure: it can't fail. A scalar is its
     /// own transpose and a matrix `M×N` becomes `N×M`; a vector or a
     /// higher-rank tensor has no transpose.
     Transpose,
     /// `A⁻¹ @ b` computed without forming `A⁻¹`: two operands (`A`, `b`),
-    /// one result. Produced by the Cholesky rewrite pass.
+    /// one result of `b`'s shape (`b` is a vector or a matrix with as many
+    /// rows as `A`) and the dimension of `b` over `A`'s. Produced by the
+    /// algorithm-choosing rewrites (Cholesky for a PositiveDefinite `A`, LU
+    /// for any square `A`, division for a Diagonal one).
     Solve {
         method: SolveMethod,
+    },
+    /// `X @ A⁻¹` computed without forming `A⁻¹` (a transposed solve): two
+    /// operands (`X`, `A`), one result of `X`'s shape (`X` is a vector or a
+    /// matrix with as many columns as `A`) and the dimension of `X` over
+    /// `A`'s. A vector `x` is a row: the result is the vector `y` with
+    /// `y @ A = x`. The methods are those of [`OpKind::Solve`], applied to
+    /// `Aᵀ` without forming it.
+    SolveRight {
+        method: SolveMethod,
+    },
+    /// `matmul` with attributes: two operands, one result. `ta` and `tb`
+    /// say that the matrix operand is transposed **without materializing the
+    /// transpose**: `matmul[ta] A, B` is `matmul(transpose(A), B)`, and the
+    /// result type is that product's. A flag may only be set on an operand
+    /// that is a matrix (a vector has no transpose). `algorithm` is the
+    /// algorithm class (see [`Algorithm`]); `Auto` leaves it to the engine.
+    ///
+    /// **This is the contract a fast kernel implements**: the reference
+    /// interpreter materializes the transpose with the same function as
+    /// `transpose` and multiplies with the same function as `matmul`, so a
+    /// kernel that reads `A` with swapped strides and accumulates in the
+    /// same order gives the same bits. Plain `matmul` is the case with no
+    /// attribute; a pass emits `matmul[...]` only when it has one to record.
+    MatMulEx {
+        ta: bool,
+        tb: bool,
+        algorithm: Algorithm,
+    },
+    /// `D @ X` or `X @ D` for a Diagonal `D`, computed as a scaling of
+    /// rows or columns: two operands (`D`, `X` for [`Side::Left`], `X`, `D`
+    /// for [`Side::Right`]), one result of `X`'s shape (`X` a vector or a
+    /// matrix that fits). **Exactly the bits of `matmul`**: entry `(i, j)`
+    /// is `0.0 + dᵢ·xᵢⱼ` (or `0.0 + xᵢⱼ·dⱼ`), because every other term of
+    /// the sum is a product with an exact zero, which adds `±0` to a sum
+    /// that started at `+0.0`. O(n²) instead of O(n³). The operand's
+    /// Diagonal tag is a promise the interpreter verifies (an off-diagonal
+    /// entry that is not zero is a run-time error).
+    DiagMul {
+        side: Side,
     },
 
     // ----- display -----
@@ -561,7 +603,12 @@ impl OpKind {
             OpKind::Inverse => "inverse",
             OpKind::MatMul => "matmul",
             OpKind::Transpose => "transpose",
+            OpKind::Norm => "norm",
+            OpKind::Dot => "dot",
             OpKind::Solve { .. } => "solve",
+            OpKind::SolveRight { .. } => "solve.right",
+            OpKind::MatMulEx { .. } => "matmul",
+            OpKind::DiagMul { .. } => "diag.mul",
             OpKind::Show { .. } => "show",
 
             OpKind::ArrayLiteral { .. } => "array.literal",
@@ -590,6 +637,32 @@ impl OpKind {
             OpKind::Return => "return",
             OpKind::Print => "print",
             OpKind::Assert { .. } => "assert",
+        }
+    }
+
+    /// The bracketed attributes of the array algorithm operations, as the
+    /// text format writes them after the mnemonic (`[lu]`, `[ta,alg=syrk]`,
+    /// `[left]`), or `None` for a kind without any.
+    pub fn algorithm_attrs(&self) -> Option<String> {
+        match self {
+            OpKind::Solve { method } | OpKind::SolveRight { method } => {
+                Some(format!("[{}]", method.mnemonic()))
+            }
+            OpKind::DiagMul { side } => Some(format!("[{}]", side.text())),
+            OpKind::MatMulEx { ta, tb, algorithm } => {
+                let mut parts = Vec::new();
+                if *ta {
+                    parts.push("ta".to_string());
+                }
+                if *tb {
+                    parts.push("tb".to_string());
+                }
+                if *algorithm != Algorithm::Auto {
+                    parts.push(format!("alg={}", algorithm.mnemonic()));
+                }
+                Some(format!("[{}]", parts.join(",")))
+            }
+            _ => None,
         }
     }
 
@@ -624,8 +697,17 @@ impl OpKind {
             // A false condition fails.
             OpKind::Assert { .. } => (fail, false, false, false),
             // A singular matrix or a zero scalar fails.
-            OpKind::Inverse | OpKind::Solve { .. } => (fail, false, false, false),
+            OpKind::Inverse | OpKind::Solve { .. } | OpKind::SolveRight { .. } => {
+                (fail, false, false, false)
+            }
             OpKind::MatMul => (fail, false, false, true),
+            // The sum of squares (or products) can overflow; `dot` is
+            // commutative exactly, as each product is and the sum runs in
+            // the same order.
+            OpKind::Norm => (fail, false, false, false),
+            OpKind::Dot => (fail, false, true, false),
+            // Overflow, and a broken Diagonal promise, fail.
+            OpKind::MatMulEx { .. } | OpKind::DiagMul { .. } => (fail, false, false, false),
             // A bad or out-of-bounds index, or a bad size, fails.
             OpKind::Index
             | OpKind::Slice { .. }

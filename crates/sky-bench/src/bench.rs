@@ -6,18 +6,21 @@
 //! swaps that number for the `quick` one in smoke runs, so the tests exercise
 //! the whole harness in milliseconds.
 //!
-//! Each workload runs through three engines:
+//! Each workload runs through four engines:
 //!
 //! * `tree_walker` (a): `sky run`'s interpreter, exactly as the CLI drives it
 //!   (derivatives go through `sky-derive`, Cholesky sites from the checker);
 //! * `sir` (b): lowering, then the SIR reference interpreter, no passes;
 //! * `sir_opt` (c): lowering, then `sky_opt::default_pipeline`, then the SIR
-//!   interpreter.
+//!   interpreter;
+//! * `native` (d): the same optimized SIR compiled to machine code by
+//!   `sky-jit`, then run.
 //!
 //! Only the run itself is timed for an engine (the program is compiled
 //! before). The compile-side phases (lex, parse, check, lower, pipeline,
-//! verify) are timed separately. Engines alternate within a repetition, so
-//! slow drift (thermal throttling, a noisy neighbour) hits all three alike.
+//! verify, and the native compile) are timed separately. Engines alternate
+//! within a repetition, so slow drift (thermal throttling, a noisy
+//! neighbour) hits all four alike.
 
 use std::time::Instant;
 
@@ -50,6 +53,14 @@ const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../benches/programs/matmul.sky"),
     ),
     (
+        "chain_order",
+        include_str!("../../../benches/programs/chain_order.sky"),
+    ),
+    (
+        "chain_order_forced",
+        include_str!("../../../benches/programs/chain_order_forced.sky"),
+    ),
+    (
         "cholesky",
         include_str!("../../../benches/programs/cholesky.sky"),
     ),
@@ -60,6 +71,10 @@ const SOURCES: &[(&str, &str)] = &[
     (
         "gradient",
         include_str!("../../../benches/programs/gradient.sky"),
+    ),
+    (
+        "vec3_physics",
+        include_str!("../../../benches/programs/vec3_physics.sky"),
     ),
 ];
 
@@ -108,8 +123,17 @@ impl Program {
         let from = format!("N = {}", self.full);
         let to = format!("N = {}", self.quick);
         let mut out = String::with_capacity(self.source.len());
+        // An array's size must be a literal (`identity(500)`), so a line that
+        // ends in `# N` has its `(<full>)` swapped for `(<quick>)` as well.
+        let (paren_from, paren_to) = (format!("({})", self.full), format!("({})", self.quick));
         for line in self.source.lines() {
-            out.push_str(if line == from { &to } else { line });
+            if line == from {
+                out.push_str(&to);
+            } else if line.ends_with("# N") {
+                out.push_str(&line.replace(&paren_from, &paren_to));
+            } else {
+                out.push_str(line);
+            }
             out.push('\n');
         }
         out
@@ -143,26 +167,29 @@ pub struct Config {
 }
 
 /// The engines, in report order: JSON key, and the label in the table.
-pub const ENGINES: [(&str, &str); 3] = [
+pub const ENGINES: [(&str, &str); 4] = [
     ("tree_walker", "tree-walk (a)"),
     ("sir", "SIR (b)"),
     ("sir_opt", "SIR+opt (c)"),
+    ("native", "native (d)"),
 ];
 
 /// The compile-side phases, in the order they run.
-pub const PHASES: [&str; 6] = ["lex", "parse", "check", "lower", "pipeline", "verify"];
+pub const PHASES: [&str; 7] = [
+    "lex", "parse", "check", "lower", "pipeline", "verify", "native",
+];
 
 /// What measuring one workload found.
 pub struct Measurement {
     pub name: &'static str,
     pub size: u64,
-    /// Run times of the three [`ENGINES`].
+    /// Run times of the four [`ENGINES`].
     pub engines: Vec<Stats>,
     /// Compile times of the [`PHASES`].
     pub phases: Vec<Stats>,
     /// The program's stdout (the tree-walker's), the checksum.
     pub output: String,
-    /// `None` if all three engines printed the same bytes in every
+    /// `None` if all four engines printed the same bytes in every
     /// repetition, else what differed.
     pub mismatch: Option<String>,
     /// Lines of printed SIR before and after the pipeline.
@@ -223,10 +250,12 @@ pub fn measure(program: &Program, cfg: Config) -> Result<Measurement, String> {
             report.map_err(|e| format!("pipeline failed: {e}"))?;
             let (t_verify, verified) = timed(|| sky_ir::verify(&opt));
             verified.map_err(|e| format!("invalid IR after the pipeline: {e:?}"))?;
+            let (t_native, native) = timed(|| sky_jit::compile(&opt));
+            let native = native.map_err(|e| e.to_string())?;
             if let Some(rec) = record {
                 for (col, t) in rec
                     .iter_mut()
-                    .zip([t_lex, t_parse, t_check, t_lower, t_pipe, t_verify])
+                    .zip([t_lex, t_parse, t_check, t_lower, t_pipe, t_verify, t_native])
                 {
                     col.push(t);
                 }
@@ -234,8 +263,10 @@ pub fn measure(program: &Program, cfg: Config) -> Result<Measurement, String> {
             Ok(Compiled {
                 module,
                 solves: checked.cholesky_solves,
+                chains: checked.chains,
                 raw,
                 opt,
+                native,
             })
         };
 
@@ -285,8 +316,10 @@ pub fn measure(program: &Program, cfg: Config) -> Result<Measurement, String> {
 struct Compiled {
     module: sky_ast::Module,
     solves: std::collections::HashSet<sky_diag::Span>,
+    chains: std::collections::HashMap<sky_diag::Span, std::sync::Arc<sky_types::ChainPlan>>,
     raw: sky_ir::Module,
     opt: sky_ir::Module,
+    native: sky_jit::Compiled,
 }
 
 /// Runs one engine (index into [`ENGINES`]) and returns its stdout.
@@ -295,6 +328,7 @@ fn run_engine(engine: usize, c: &Compiled, src: &str) -> Result<Vec<u8>, String>
     match engine {
         0 => {
             let mut env = RuntimeEnv::with_prelude();
+            env.add_chain_plans(&c.chains);
             // As in `sky run`: a derivative runs on SIR through `sky-derive`.
             let mut derivatives = SirDerivatives::new(&c.module, src);
             run_module_with_derivatives(
@@ -308,6 +342,7 @@ fn run_engine(engine: usize, c: &Compiled, src: &str) -> Result<Vec<u8>, String>
             .map_err(|e| e.message.clone())?;
         }
         1 => sky_ir_interp::run(&c.raw, &mut out).map_err(|e| e.to_string())?,
+        3 => c.native.run(&mut out).map_err(|e| e.to_string())?,
         _ => sky_ir_interp::run(&c.opt, &mut out).map_err(|e| e.to_string())?,
     }
     Ok(out)
@@ -348,7 +383,7 @@ mod tests {
     }
 
     /// The whole harness on tiny sizes: every workload compiles, runs
-    /// through all three engines, and the engines agree.
+    /// through all four engines, and the engines agree.
     #[test]
     fn smoke_every_workload_agrees_across_engines() {
         let cfg = Config {

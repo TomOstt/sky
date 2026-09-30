@@ -234,6 +234,22 @@ impl Diff<'_> {
         self.sum_all(p, span)
     }
 
+    /// The sum over all entries of `u ⊙ w` for two values of one shape (the
+    /// inner product of two vectors, the Frobenius product of two matrices,
+    /// the product of two scalars): a scalar of dimension `dim(u) dim(w)`.
+    /// Vectors use the `dot` operation, so the derivative of `norm` and
+    /// `dot` reads as they do.
+    pub(crate) fn inner(&mut self, u: ValueId, w: ValueId, span: Span) -> Res<ValueId> {
+        let (nu, nw) = (self.new_num(u)?, self.new_num(w)?);
+        let dim = self.dim_mul(nu.dim, nw.dim)?;
+        let ty = number_type(dim, nu.repr);
+        match nu.shape.rank() {
+            0 => Ok(self.emit(OpKind::Mul, vec![u, w], ty, span)),
+            1 => Ok(self.emit(OpKind::Dot, vec![u, w], ty, span)),
+            _ => self.hadamard_sum(u, w, span),
+        }
+    }
+
     /// `v[i]` for a constant position `i`.
     pub(crate) fn element(&mut self, v: ValueId, i: u64, span: Span) -> Res<ValueId> {
         let n = self.new_num(v)?;

@@ -1,10 +1,15 @@
-tests/ir/exact.sky:6:13: note: [DCE-002] `x / 2` is removed
+tests/ir/exact.sky:5:5: note: cost of `halve`: 1 flop
+  |
+5 | def halve(x: m) -> m:
+  |     ^^^^^
+
+tests/ir/exact.sky:6:13: note: [DCE-001] `x / 2` is removed
   |
 6 |     spare = x / 2
   |             ^^^^^
-  = note: applied by the `dce` pass
+  = note: applied by the `specialize` pass
   = note: because `spare` is never used
-  = note: because `div` can fail in general, but not here: the divisor is 2 (never zero) and the result is at most 8.988465674311579e307 in size, which fits an f64, so removing it cannot change what the program does
+  = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
 
 tests/ir/exact.sky:9:8: note: [DCE-002] `sqrt(2)` is removed
   |
@@ -27,6 +32,16 @@ tests/ir/exact.sky:11:9: note: [ALG-010] `sqrt(5) / sqrt(5)` is rewritten to `1`
    |         ^^^^^^^^^^^^^^^^^
    = note: applied by the `egraph` pass
    = note: because x / x is exactly 1 in IEEE arithmetic for every finite nonzero x; the exactness analysis proved x is not zero, and x itself cannot fail, since the rewrite stops evaluating it
+
+tests/ir/exact.sky:12:7: note: [SPEC-001] specialized `halve` for x = 3 at this call: 0 checks removed
+   |
+12 | print(halve(3 m), gap, ratio)
+   |       ^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 0 run-time checks removed: operations that can fail in `halve` and cannot in `halve[x=3]`
+   = note: because the argument for `x` is the constant 3
+   = note: because in `halve[x=3]`: 2 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
 
 tests/ir/exact.sky:13:1: note: printed value of `0.1 + 0.2` is accurate to within 9.3e-17 relative
    |

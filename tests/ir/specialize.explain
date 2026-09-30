@@ -1,0 +1,92 @@
+tests/ir/specialize.sky:7:5: note: cost of `dot`: 2·N flops
+   |
+ 7 | def dot(a: Vector[N], b: Vector[N]) -> Scalar:
+   |     ^^^
+11 |         total += a[i] * b[i]
+   |         -------------------- hot spot: `total += a[i] * b[i]` costs N flops
+   |                  ---- hot spot: `a[i]` costs 8·N bytes of memory traffic
+   |                  ----------- hot spot: `a[i] * b[i]` costs N flops
+   = note: memory traffic: 16·N bytes read
+
+tests/ir/specialize.sky:10:5: note: [SPEC-003] this loop runs exactly 3 times in `dot[N=3]`, so it is unrolled
+   |
+10 |     while i < len(a):
+   |     ^^^^^^^^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because in `dot[N=3]` the loop's condition is a constant on each check (3 iterations)
+   = note: because its operations run in the same order with the same spans, so errors and output are unchanged
+
+tests/ir/specialize.sky:12:9: note: [DCE-001] `i += 1` is removed
+   |
+12 |         i += 1
+   |         ^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because `i` is never used
+   = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
+
+tests/ir/specialize.sky:15:5: note: cost of `scale`: at most 3 flops
+   |
+15 | def scale(k: Scalar, x: Scalar) -> Scalar:
+   |     ^^^^^
+
+tests/ir/specialize.sky:20:5: note: cost of `twice`: 1 flop
+   |
+20 | def twice(x: Scalar) -> Scalar:
+   |     ^^^^^
+
+tests/ir/specialize.sky:25:7: note: [SPEC-001] specialized `dot` for N = 3 at this call: 2 checks removed
+   |
+25 | print(dot(u, v), scale(2, 3), scale(0, 4))
+   |       ^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 2 run-time checks removed: operations that can fail in `dot` and cannot in `dot[N=3]`
+   = note: because the argument for `a` is a Vector[3], so N = 3
+   = note: because in `dot[N=3]`: 1 `len` is read from the now-known shape
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize.sky:25:18: note: [SPEC-001] specialized `scale` for k = 2, x = 3 at this call: 2 checks removed
+   |
+25 | print(dot(u, v), scale(2, 3), scale(0, 4))
+   |                  ^^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 2 run-time checks removed: operations that can fail in `scale` and cannot in `scale[k=2,x=3]`
+   = note: because the argument for `k` is the constant 2
+   = note: because the argument for `x` is the constant 3
+   = note: because in `scale[k=2,x=3]`: 2 branches decided, 3 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize.sky:25:31: note: [SPEC-001] specialized `scale` for k = 0, x = 4 at this call: 2 checks removed
+   |
+25 | print(dot(u, v), scale(2, 3), scale(0, 4))
+   |                               ^^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 2 run-time checks removed: operations that can fail in `scale` and cannot in `scale[k=0,x=4]`
+   = note: because the argument for `k` is the constant 0
+   = note: because the argument for `x` is the constant 4
+   = note: because in `scale[k=0,x=4]`: 2 branches decided, 4 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize.sky:26:7: note: [SPEC-001] specialized `twice` for x = 2 at this call: 1 check removed
+   |
+26 | print(twice(2), twice(1 + 1))
+   |       ^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time check removed: operations that can fail in `twice` and cannot in `twice[x=2]`
+   = note: because the argument for `x` is the constant 2
+   = note: because in `twice[x=2]`: 1 operation folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize.sky:26:17: note: [SPEC-002] this call uses the existing specialization `twice[x=2]`
+   |
+26 | print(twice(2), twice(1 + 1))
+   |                 ^^^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because the argument for `x` is the constant 2
+
+tests/ir/specialize.sky:26:23: note: [FOLD-FLOAT-001] `1 + 1` is rewritten to `2`
+   |
+26 | print(twice(2), twice(1 + 1))
+   |                       ^^^^^
+   = note: applied by the `fold` pass
+   = note: because every operand is a constant
+   = note: because the result is the reference interpreter's own, bit for bit, and it cannot fail at run time

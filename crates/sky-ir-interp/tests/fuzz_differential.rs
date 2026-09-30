@@ -59,6 +59,10 @@ struct Stats {
     limit: u64,
     printed: usize,
     known: BTreeMap<&'static str, u64>,
+    /// Why native code refused programs, and how many times.
+    native_refusals: BTreeMap<String, u64>,
+    /// Programs on which native code deoptimized.
+    native_deopts: u64,
     errors: BTreeMap<String, u64>,
     sources: String,
 }
@@ -71,6 +75,10 @@ impl Stats {
         self.printed += o.printed;
         for (k, v) in o.known {
             *self.known.entry(k).or_default() += v;
+        }
+        self.native_deopts += o.native_deopts;
+        for (k, v) in o.native_refusals {
+            *self.native_refusals.entry(k).or_default() += v;
         }
         for (k, v) in o.errors {
             *self.errors.entry(k).or_default() += v;
@@ -96,6 +104,10 @@ fn run_lane(first: u64, end: u64, lane: u64, lanes: u64, keep_sources: bool) -> 
                     // The kind of error, without the operand values.
                     let kind: String = e.chars().take(34).collect();
                     *stats.errors.entry(kind).or_default() += 1;
+                }
+                stats.native_deopts += u64::from(o.native_deopt);
+                if let Some(why) = o.native_refusal {
+                    *stats.native_refusals.entry(why).or_default() += 1;
                 }
                 if let Some(id) = o.known {
                     *stats.known.entry(id).or_default() += 1;
@@ -137,6 +149,12 @@ fn generated_programs_agree_in_both_engines() {
     eprintln!(
         "{} programs: {} stop with a run-time error ({} of them resource limits), {} bytes printed; known bugs tolerated: {:?}",
         stats.programs, stats.failed, stats.limit, stats.printed, stats.known
+    );
+    eprintln!(
+        "native code refused {} programs: {:#?}; deoptimized on {}",
+        stats.native_refusals.values().sum::<u64>(),
+        stats.native_refusals,
+        stats.native_deopts
     );
     if !default_run {
         eprintln!("errors: {:#?}", stats.errors);

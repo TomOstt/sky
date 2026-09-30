@@ -199,6 +199,17 @@ impl Stmt {
                 write_expr(&mut out, tolerance, src);
                 out.push(')');
             }
+            StmtKind::Cost {
+                metric, op, bound, ..
+            } => {
+                out.push_str("(cost ");
+                out.push_str(metric.keyword());
+                out.push(' ');
+                out.push_str(op.symbol());
+                out.push(' ');
+                write_expr(&mut out, bound, src);
+                out.push(')');
+            }
             StmtKind::Pass => out.push_str("(pass)"),
             StmtKind::Break => out.push_str("(break)"),
             StmtKind::Continue => out.push_str("(continue)"),

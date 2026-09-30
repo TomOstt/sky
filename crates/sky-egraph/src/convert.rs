@@ -59,6 +59,24 @@ pub(crate) fn rewrite_function(
     func: &mut Function,
     cfg: &RewriteConfig,
 ) -> (Vec<Rewrite>, Vec<SegmentReport>) {
+    // egg times its rebuilds and its runner with `quanta`, whose first use
+    // calibrates the CPU counter against the OS clock: about 200 ms, paid by
+    // every `sky` process that optimizes, before any work. Without a time
+    // limit (the default, so the result does not depend on the machine's
+    // speed) egg never needs the time, so it gets a mock clock, which needs
+    // no calibration. A configured limit keeps the real clock.
+    if cfg.time_limit.is_none() {
+        let (clock, _mock) = quanta::Clock::mock();
+        return quanta::with_clock(&clock, || rewrite_function_timed(func, cfg));
+    }
+    rewrite_function_timed(func, cfg)
+}
+
+/// [`rewrite_function`] under whatever clock is current.
+fn rewrite_function_timed(
+    func: &mut Function,
+    cfg: &RewriteConfig,
+) -> (Vec<Rewrite>, Vec<SegmentReport>) {
     let mut rewrites = Vec::new();
     let mut reports = Vec::new();
     let uses = use_counts(func);

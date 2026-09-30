@@ -474,6 +474,8 @@ impl Lower<'_> {
                     direct.insert(n.to_string());
                 }
             }
+            // Only the checker reads a `cost` line (its names are sizes).
+            StmtKind::Cost { .. } => {}
             // A nested `def` is its own function. Equations do not lower
             // (see `stmt`), so what they read does not matter.
             StmtKind::Def { .. }

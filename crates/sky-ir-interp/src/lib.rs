@@ -56,9 +56,15 @@
 
 mod machine;
 mod math;
+mod native;
+mod par;
 
 #[cfg(test)]
 mod fused_tests;
+#[cfg(test)]
+mod native_tests;
+#[cfg(test)]
+mod par_tests;
 #[cfg(test)]
 mod tests;
 
@@ -69,7 +75,10 @@ use std::ops::Deref;
 use sky_diag::{Diagnostic, Span};
 use sky_interp::RuntimeError;
 pub use sky_interp::Value;
+pub use sky_ir::parallel::Config as ParConfig;
 use sky_ir::Module;
+
+pub use native::JitOptions;
 
 /// A failure while running SIR, located at the failing operation.
 ///
@@ -127,7 +136,32 @@ impl std::error::Error for IrRuntimeError {}
 /// can supply one in v0.1, so it fails there with the error `sky run` gives
 /// on the same file, after the output before it.
 pub fn run(module: &Module, out: &mut impl Write) -> Result<(), IrRuntimeError> {
-    machine::call(module, Module::MAIN, Vec::new(), out).map(|_| ())
+    run_with(module, out, &ParConfig::from_env())
+}
+
+/// [`run`] with an explicit parallel configuration (`SKY_THREADS` and the
+/// measured thresholds are what [`run`] uses). Whatever `cfg` says, the
+/// output and the error are the ones of a sequential run, byte for byte:
+/// see `sky_ir::parallel` for what runs concurrently and why that cannot
+/// show. `cfg.threads == 1` is the sequential interpreter.
+pub fn run_with(
+    module: &Module,
+    out: &mut impl Write,
+    cfg: &ParConfig,
+) -> Result<(), IrRuntimeError> {
+    machine::call_par(module, Module::MAIN, Vec::new(), out, cfg).map(|_| ())
+}
+
+/// [`call`] with an explicit parallel configuration, as [`run_with`] is
+/// [`run`].
+pub fn call_with(
+    module: &Module,
+    name: &str,
+    args: Vec<Value>,
+    out: &mut impl Write,
+    cfg: &ParConfig,
+) -> Result<Vec<Value>, IrRuntimeError> {
+    machine::call_par(module, name, args, out, cfg)
 }
 
 /// Calls the module function `name` with `args` and returns its results.
@@ -155,4 +189,24 @@ pub fn call_metered(
     call: Span,
 ) -> Result<Vec<Value>, IrRuntimeError> {
     machine::call_metered(module, name, args, out, stack, Some(call))
+}
+
+/// [`call`] with the native-kernel options chosen: see [`JitOptions`]. The
+/// results and errors are the same for every choice.
+pub fn call_with_jit(
+    module: &Module,
+    name: &str,
+    args: Vec<Value>,
+    out: &mut dyn Write,
+    jit: JitOptions,
+) -> Result<Vec<Value>, IrRuntimeError> {
+    machine::call_with_jit(
+        module,
+        name,
+        args,
+        out,
+        sky_interp::arith::StackMeter::new(),
+        None,
+        jit,
+    )
 }

@@ -358,6 +358,15 @@ pub struct Module {
     pub functions: Vec<Function>,
 }
 
+/// The name a user knows a function by: `f` for `f` and for its
+/// specializations `f[N=3]`, `f[x=2]` (`sky_opt::specialize`). A user
+/// function's name is an identifier, so the first `[` starts the marker; a
+/// diagnostic that names a callee ("calling `f` here") uses this, so a
+/// specialization never changes what a run-time error says.
+pub fn source_name(name: &str) -> &str {
+    name.split('[').next().unwrap_or(name)
+}
+
 impl Module {
     /// The name of the function holding a file's top-level statements. Not
     /// a valid Sky identifier, so it can't clash with a user function.

@@ -1,0 +1,20 @@
+sir edition 2026
+
+fn @<main>() -> () effects(io, fail) @ 0..697 {
+  %A = input "A" : num[1; (100, 100)] @ 368..387
+  %B = input "B" : num[1; (100, 100)] @ 388..407
+  %D = input "D" : num[1; (100, 100); {Symmetric, Diagonal}] @ 408..436
+  %Q = input "Q" : num[1; (100, 100); {Orthogonal}] @ 437..467
+  %P = input "P" : num[1; (100, 100); {Symmetric, PositiveDefinite}] @ 468..504
+  %b = input "b" : num[1; (100)] @ 505..519
+  %lu = solve[lu] %A, %b : num[1; (100)] @ 525..535 (525..526, 534..535)
+  %right = solve.right[lu] %b, %A : num[1; (100)] @ 544..554 (544..545, 552..553)
+  %diag = solve[diagonal] %D, %b : num[1; (100)] @ 562..572 (562..563, 571..572)
+  %orth = matmul[ta] %Q, %b : num[1; (100)] @ 580..590 (580..581, 589..590)
+  %chol = solve[cholesky] %P, %b : num[1; (100)] @ 598..608 (598..599, 607..608)
+  %11 = matmul %B, %A : num[1; (100, 100)] @ 616..631 (625..626, 616..617)
+  %pair = inverse %11 : num[1; (100, 100)] @ 616..631 (616..631)
+  %many = solve[lu] %A, %B : num[1; (100, 100)] @ 639..649 (639..640, 648..649)
+  print %lu, %right, %diag, %orth, %chol, %pair, %many @ 650..696
+  return @ 0..697
+}

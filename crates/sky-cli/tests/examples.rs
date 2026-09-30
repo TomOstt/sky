@@ -22,7 +22,7 @@ fn examples_print_their_expected_output_on_both_engines() {
         seen += 1;
         let expected = fs::read_to_string(path.with_extension("out"))
             .unwrap_or_else(|e| panic!("{}: missing .out file: {e}", path.display()));
-        for engine in ["ast", "auto", "sir"] {
+        for engine in ["ast", "auto", "sir", "native"] {
             let out = Command::new(env!("CARGO_BIN_EXE_sky"))
                 .arg("run")
                 .arg(format!("--engine={engine}"))
@@ -30,7 +30,12 @@ fn examples_print_their_expected_output_on_both_engines() {
                 .output()
                 .expect("run sky");
             let stderr = String::from_utf8_lossy(&out.stderr);
-            if engine == "sir" && stderr.contains(": error: cannot run on SIR: ") {
+            let declined = match engine {
+                "sir" => stderr.contains(": error: cannot run on SIR: "),
+                "native" => stderr.contains(": error: cannot run natively: "),
+                _ => false,
+            };
+            if declined {
                 assert_eq!(out.status.code(), Some(1), "{stderr}");
                 assert!(out.stdout.is_empty(), "a declined program prints nothing");
                 continue;

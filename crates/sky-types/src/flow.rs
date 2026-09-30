@@ -633,6 +633,7 @@ impl Checker<'_> {
         }
         self.diverged = false;
         let entry = self.begin_contracts(params, body);
+        self.check_cost_lines(&fname, params, body);
         self.block(body);
         let ends_diverged = self.diverged;
         let ctx = self.fns.pop();

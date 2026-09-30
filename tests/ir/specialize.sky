@@ -1,0 +1,26 @@
+# A call whose arguments have facts the callee's signature lacks gets a clone
+# of the callee that knows them. `dot` is written for any size N and called
+# with 3-vectors: its clone has N = 3, `len(a)` is 3 and the loop runs three
+# times, so it is unrolled. `scale` is called with constants: each call gets a
+# clone with the constants baked in, and its branches are decided. The second
+# `twice(2)` reuses the first's clone.
+def dot(a: Vector[N], b: Vector[N]) -> Scalar:
+    total = 0
+    i = 0
+    while i < len(a):
+        total += a[i] * b[i]
+        i += 1
+    return total
+
+def scale(k: Scalar, x: Scalar) -> Scalar:
+    if k > 1:
+        return x * k
+    return x / (k + 1)
+
+def twice(x: Scalar) -> Scalar:
+    return x + x
+
+u = [1, 2, 3]
+v = [4, 5, 6]
+print(dot(u, v), scale(2, 3), scale(0, 4))
+print(twice(2), twice(1 + 1))

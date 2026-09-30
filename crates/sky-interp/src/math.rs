@@ -74,7 +74,26 @@ pub fn apply(f: MathFn, args: &[Value], whole: Span, spans: &[Span]) -> R<Value>
         ),
         MathDimError::Overflow => RuntimeError::new("dimension exponent too large", whole),
     })?;
-    let x = nums[0];
+    Ok(Value::number(
+        apply_f64(
+            f,
+            nums[0],
+            nums.get(1).copied().unwrap_or(0.0),
+            whole,
+            span_of(0),
+        )?,
+        dim,
+    ))
+}
+
+/// `f(x)`, or `f(x, y)` for the two-argument functions (`y` is ignored by
+/// the others), on finite `f64`s, after the dimensions were checked: the
+/// numeric core of [`apply`], with the same domain errors, finiteness check
+/// and `-0` normalisation. `whole` is the call's span and `first` the first
+/// argument's. Native code calls it for the functions it does not inline, so
+/// it computes the same bits as `apply`.
+pub fn apply_f64(f: MathFn, x: f64, y: f64, whole: Span, first: Span) -> R<f64> {
+    let name = f.name();
     let domain = |what: &str| {
         RuntimeError::new(format!("`{name}` of {what} has no real value"), whole)
             .with_label(format!("`{name}` is undefined here"))
@@ -82,7 +101,7 @@ pub fn apply(f: MathFn, args: &[Value], whole: Span, spans: &[Span]) -> R<Value>
     };
     let r = match f {
         MathFn::Sqrt if x < 0.0 => {
-            return Err(domain("a negative number").with_secondary(span_of(0), "this is negative"))
+            return Err(domain("a negative number").with_secondary(first, "this is negative"))
         }
         MathFn::Sqrt => x.sqrt(),
         MathFn::Cbrt => x.cbrt(),
@@ -94,7 +113,7 @@ pub fn apply(f: MathFn, args: &[Value], whole: Span, spans: &[Span]) -> R<Value>
             } else {
                 "a negative number"
             };
-            return Err(domain(what).with_secondary(span_of(0), format!("this is {what}")));
+            return Err(domain(what).with_secondary(first, format!("this is {what}")));
         }
         MathFn::Log => x.ln(),
         MathFn::Log10 => x.log10(),
@@ -103,26 +122,27 @@ pub fn apply(f: MathFn, args: &[Value], whole: Span, spans: &[Span]) -> R<Value>
         MathFn::Cos => x.cos(),
         MathFn::Tan => x.tan(),
         MathFn::Asin | MathFn::Acos if x.abs() > 1.0 => {
-            return Err(domain("a number outside [-1, 1]")
-                .with_secondary(span_of(0), "this is outside [-1, 1]"))
+            return Err(
+                domain("a number outside [-1, 1]").with_secondary(first, "this is outside [-1, 1]")
+            )
         }
         MathFn::Asin => x.asin(),
         MathFn::Acos => x.acos(),
         MathFn::Atan => x.atan(),
-        MathFn::Atan2 if x == 0.0 && nums[1] == 0.0 => {
+        MathFn::Atan2 if x == 0.0 && y == 0.0 => {
             return Err(domain("the zero vector").with_note("the angle of (0, 0) is undefined"))
         }
-        MathFn::Atan2 => x.atan2(nums[1]),
-        MathFn::Hypot => x.hypot(nums[1]),
-        MathFn::Min => x.min(nums[1]),
-        MathFn::Max => x.max(nums[1]),
+        MathFn::Atan2 => x.atan2(y),
+        MathFn::Hypot => x.hypot(y),
+        MathFn::Min => x.min(y),
+        MathFn::Max => x.max(y),
         MathFn::Floor => x.floor(),
         MathFn::Ceil => x.ceil(),
         MathFn::Round => x.round(),
         MathFn::Expm1 => x.exp_m1(),
         MathFn::Log1p if x <= -1.0 => {
             let what = if x == -1.0 { "-1" } else { "a number below -1" };
-            return Err(domain(what).with_secondary(span_of(0), format!("this is {what}")));
+            return Err(domain(what).with_secondary(first, format!("this is {what}")));
         }
         MathFn::Log1p => x.ln_1p(),
         MathFn::Sinh => x.sinh(),
@@ -130,12 +150,12 @@ pub fn apply(f: MathFn, args: &[Value], whole: Span, spans: &[Span]) -> R<Value>
         MathFn::Tanh => x.tanh(),
         MathFn::Asinh => asinh(x),
         MathFn::Acosh if x < 1.0 => {
-            return Err(domain("a number below 1").with_secondary(span_of(0), "this is below 1"))
+            return Err(domain("a number below 1").with_secondary(first, "this is below 1"))
         }
         MathFn::Acosh => acosh(x),
         MathFn::Atanh if x.abs() >= 1.0 => {
             return Err(domain("a number outside (-1, 1)")
-                .with_secondary(span_of(0), "this is outside (-1, 1)")
+                .with_secondary(first, "this is outside (-1, 1)")
                 .with_note("atanh(x) grows without bound as x approaches 1 or -1"))
         }
         MathFn::Atanh => x.atanh(),
@@ -144,7 +164,7 @@ pub fn apply(f: MathFn, args: &[Value], whole: Span, spans: &[Span]) -> R<Value>
         MathFn::Sign => x.signum(),
     };
     // `+ 0.0` turns `-0.0` into `0.0`.
-    Ok(Value::number(finite(r, whole)? + 0.0, dim))
+    Ok(finite(r, whole)? + 0.0)
 }
 
 /// Above this the `+ 1` under the square root of `asinh`/`acosh` is below

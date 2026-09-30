@@ -40,18 +40,23 @@ use crate::util::{op_text, reachable_ops};
 pub fn dce(m: &mut Module) -> Vec<Rewrite> {
     let mut out = Vec::new();
     for f in &mut m.functions {
-        // Removing an unused operation changes no other value, so one
-        // analysis serves the whole fixed point.
-        let facts = exact::analyze(f);
-        loop {
-            let used = used_values(f);
-            let body = f.body;
-            if !sweep_region(f, body, &used, &facts, &mut out) {
-                break;
-            }
-        }
+        dce_function(f, &mut out);
     }
     out
+}
+
+/// [`dce`] on one function.
+pub(crate) fn dce_function(f: &mut Function, out: &mut Vec<Rewrite>) {
+    // Removing an unused operation changes no other value, so one
+    // analysis serves the whole fixed point.
+    let facts = exact::analyze(f);
+    loop {
+        let used = used_values(f);
+        let body = f.body;
+        if !sweep_region(f, body, &used, &facts, out) {
+            break;
+        }
+    }
 }
 
 fn used_values(f: &Function) -> Vec<bool> {

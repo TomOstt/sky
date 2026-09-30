@@ -1626,3 +1626,83 @@ fn expect_number_checks_a_number_or_unknown_operand_and_gives_it_back() {
         );
     }
 }
+
+#[test]
+fn norm_keeps_the_dimension_and_takes_any_number() {
+    accepts(&unary(OpKind::Norm, vec3(), len()));
+    accepts(&unary(OpKind::Norm, mat(Dimension::LENGTH, 2, 3), len()));
+    accepts(&unary(OpKind::Norm, len(), len()));
+    rejects(
+        &unary(OpKind::Norm, vec3(), area()),
+        "the result of `norm` should have dimension L, found L²",
+    );
+    rejects(
+        &unary(OpKind::Norm, vec3(), vec3()),
+        "the result of `norm` should have shape Scalar",
+    );
+    rejects(
+        &unary(OpKind::Norm, Type::Bool, len()),
+        "operand 0 of `norm` must be a number",
+    );
+    // The type of an operand the checker could not give is checked at run
+    // time, and the result is then loose.
+    accepts(&unary(OpKind::Norm, Type::Unknown, Type::Unknown));
+}
+
+#[test]
+fn dot_multiplies_the_dimensions_of_two_vectors_of_one_length() {
+    let per_time = num(
+        Dimension::TIME,
+        Shape::vector(3),
+        TagSet::EMPTY,
+        Repr::Unchosen,
+    );
+    let prod = Type::scalar(Dimension::LENGTH * Dimension::TIME);
+    accepts(&binary(OpKind::Dot, vec3(), per_time.clone(), prod));
+    accepts(&binary(OpKind::Dot, vec3(), vec3(), area()));
+    rejects(
+        &binary(OpKind::Dot, vec3(), per_time.clone(), area()),
+        "the result of `dot` should have dimension L·T",
+    );
+    rejects(
+        &binary(OpKind::Dot, vec3(), per_time, len()),
+        "the result of `dot` should have dimension L·T",
+    );
+    // Vectors of one length, and only vectors.
+    let vec4 = num(
+        Dimension::LENGTH,
+        Shape::vector(4),
+        TagSet::EMPTY,
+        Repr::Unchosen,
+    );
+    rejects(
+        &binary(OpKind::Dot, vec3(), vec4, area()),
+        "shape mismatch at axis 0",
+    );
+    rejects(
+        &binary(OpKind::Dot, len(), vec3(), area()),
+        "operand 0 of `dot` must be a vector, found",
+    );
+    rejects(
+        &binary(OpKind::Dot, mat(Dimension::LENGTH, 3, 3), vec3(), area()),
+        "operand 0 of `dot` must be a vector",
+    );
+    rejects(
+        &binary(OpKind::Dot, vec3(), vec3(), vec3()),
+        "the result of `dot` should have shape Scalar",
+    );
+}
+
+#[test]
+fn norm_and_dot_take_one_and_two_operands() {
+    let mut b = start(vec![vec3()], vec![len()]);
+    let x = b.params()[0];
+    let r = b.op1(OpKind::Norm, vec![x, x], len(), sp(3, 4));
+    ret(&mut b, vec![r]);
+    rejects(&one_fn(b.finish()), "`norm` takes 1 operand(s), found 2");
+    let mut b = start(vec![vec3()], vec![area()]);
+    let x = b.params()[0];
+    let r = b.op1(OpKind::Dot, vec![x], area(), sp(3, 4));
+    ret(&mut b, vec![r]);
+    rejects(&one_fn(b.finish()), "`dot` takes 2 operand(s), found 1");
+}

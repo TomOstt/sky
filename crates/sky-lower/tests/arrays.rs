@@ -219,15 +219,16 @@ fn zeros_and_identity_take_their_sizes_as_operands_and_are_typed_by_the_checker(
 }
 
 #[test]
-fn a_recorded_cholesky_site_is_a_solve_and_others_stay_inverse_and_matmul() {
+fn a_recorded_cholesky_site_is_a_solve_and_an_untagged_one_an_lu_solve() {
     let m = lower_ok(
         "K: PositiveDefinite Matrix[2, 2] = [[4, 1], [1, 3]]\nf = [1, 2]\n\
          a = K⁻¹ @ f\nb = inv(K) @ f\nc = (K⁻¹) @ f\nd = (K + K)⁻¹ @ f\ne = K @ f\n",
     );
     let f = main_fn(&m);
-    assert_eq!(count(f, "solve"), 3);
-    assert_eq!(count(f, "inverse"), 1);
-    assert_eq!(count(f, "matmul"), 2);
+    // `d` is a solve too, an LU one: `(K + K)` carries no tags.
+    assert_eq!(count(f, "solve"), 4);
+    assert_eq!(count(f, "inverse"), 0);
+    assert_eq!(count(f, "matmul"), 1);
     for name in ["a", "b", "c"] {
         let op = f.op(def_op(f, named(f, name)).expect("op"));
         assert_eq!(
@@ -244,15 +245,33 @@ fn a_recorded_cholesky_site_is_a_solve_and_others_stay_inverse_and_matmul() {
         assert_eq!(op.operands[1], named(f, "f"));
         assert_eq!(dims(number(f, named(f, name))), [2]);
     }
-    // The one inverse is `(K + K)⁻¹`, whose operand is a sum.
-    let inverse = f.op(top_op(f, "inverse"));
-    let operand = f.op(def_op(f, inverse.operands[0]).expect("op"));
+    // `(K + K)⁻¹ @ f` solves against the sum, by LU.
+    let d = f.op(def_op(f, named(f, "d")).expect("op"));
+    assert_eq!(
+        d.kind,
+        OpKind::Solve {
+            method: sky_ir::SolveMethod::Lu
+        }
+    );
+    let operand = f.op(def_op(f, d.operands[0]).expect("op"));
     assert_eq!(operand.kind, OpKind::Add);
 }
 
 #[test]
-fn an_inverse_of_an_untagged_matrix_is_not_a_solve() {
+fn an_inverse_of_an_untagged_matrix_is_an_lu_solve_and_a_named_inverse_stays() {
     let m = lower_ok("K = [[4, 1], [1, 3]]\nf = [1, 2]\nu = K⁻¹ @ f\n");
+    let f = main_fn(&m);
+    assert_eq!(count(f, "solve"), 1);
+    let u = f.op(def_op(f, named(f, "u")).expect("op"));
+    assert_eq!(
+        u.kind,
+        OpKind::Solve {
+            method: sky_ir::SolveMethod::Lu
+        }
+    );
+    assert_eq!(top_kinds(f).iter().filter(|k| **k == "inverse").count(), 0);
+    // An inverse the program names is formed: `M @ f` is a product.
+    let m = lower_ok("K = [[4, 1], [1, 3]]\nf = [1, 2]\nM = K⁻¹\nu = M @ f\n");
     let f = main_fn(&m);
     assert_eq!(count(f, "solve"), 0);
     assert_eq!(top_kinds(f).iter().filter(|k| **k == "inverse").count(), 1);

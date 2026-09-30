@@ -366,6 +366,26 @@ pub fn all_ops() -> Module {
     );
     let count = b.op1(OpKind::Len, vec![lit], one(), sp(0, 0));
     let root2 = b.op1(OpKind::Math(MathFn::Sqrt), vec![sq], len(), sp(0, 0));
+    // The vector builtins keep their operands' spans.
+    let (_, length) = b.op_with_spans(
+        OpKind::Norm,
+        vec![row],
+        vec![sp(61, 64)],
+        vec![len()],
+        sp(56, 65),
+    );
+    let (_, inner) = b.op_with_spans(
+        OpKind::Dot,
+        vec![row, row],
+        vec![sp(70, 73), sp(75, 78)],
+        vec![num(
+            Dimension::LENGTH * Dimension::LENGTH,
+            Shape::scalar(),
+            TagSet::EMPTY,
+            Repr::Unchosen,
+        )],
+        sp(66, 79),
+    );
     let mut last_cmp = c3;
     for op in [
         CmpOp::Eq,
@@ -454,7 +474,7 @@ pub fn all_ops() -> Module {
         OpKind::Print,
         vec![
             called[0], c4, c5, input, a_inv, prod, at, solved, neg, root, p, recip, c2, c3, shown,
-            entry, row, part, whole, head, zs, zm, eye, count, root2,
+            entry, row, part, whole, head, zs, zm, eye, count, root2, length[0], inner[0],
         ],
         vec![],
         sp(1, 9),

@@ -287,7 +287,7 @@ impl Lower<'_> {
 
     /// `A` if `e` is `A⁻¹` or `inv(A)` (the builtin, not a user's own
     /// `inv`), possibly parenthesized: the forms the checker rewrites.
-    fn inverted_operand<'x>(&self, e: &'x Expr) -> Option<&'x Expr> {
+    pub(crate) fn inverted_operand<'x>(&self, e: &'x Expr) -> Option<&'x Expr> {
         match &strip_parens(e).kind {
             ExprKind::Inverse { operand, .. } => Some(operand),
             ExprKind::Call { callee, args } => match (&callee.kind, args.as_slice()) {

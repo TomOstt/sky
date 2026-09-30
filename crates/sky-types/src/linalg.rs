@@ -1,54 +1,37 @@
 //! Dense linear algebra on row-major `f64` slices.
 //!
-//! Plain loops, no dependencies (`faer` comes later). Everything here is
-//! pure numerics: no spans, no dimensions, no values. The interpreter's
-//! value layer (`sky_interp::array`) checks shapes, attaches dimensions and
-//! turns the failures below into runtime errors.
+//! The kernels live in the `sky-linalg` crate (packed, blocked, vectorized
+//! and threaded, with a fixed order of operations that makes every engine
+//! and machine give the same bits; see its docs and the spec's "Arrays:
+//! reproducible arithmetic"). This module is the checker's and interpreter's door to
+//! them: `sky-types` re-exports them here and `sky-interp` re-exports this
+//! module as `sky_interp::linalg`, so the checker and the interpreter share
+//! one implementation. That matters for the checker's numerical warnings
+//! ([`crate::numerics`]), which call [`inverse`]: "this matrix is singular"
+//! at check time is by construction the verdict `sky run` gives.
 //!
-//! The code lives in `sky-types` (and `sky-interp` re-exports it as
-//! `sky_interp::linalg`) so the checker and the interpreter share one
-//! implementation: the checker's numerical warnings ([`crate::numerics`])
-//! call [`inverse`], so "this matrix is singular" at check time is by
-//! construction the verdict `sky run` gives.
+//! Everything here is pure numerics: no spans, no dimensions, no values. The
+//! interpreter's value layer (`sky_interp::array`) checks shapes, attaches
+//! dimensions and turns the failures below into runtime errors.
 //!
-//! Matrices are `n` by `n` (or `m` by
-//! `k`, as the signature says) in row-major order: entry `(i, j)` of an
-//! `m` by `n` matrix is `a[i * n + j]`.
+//! Matrices are `n` by `n` (or `m` by `k`, as the signature says) in
+//! row-major order: entry `(i, j)` of an `m` by `n` matrix is `a[i * n + j]`.
 //!
-//! Sums accumulate in index order starting from `+0.0`, so results are
-//! deterministic and never contain `-0.0` from an empty or all-zero sum.
+//! Sums accumulate in the order the spec fixes, starting from `+0.0`, so
+//! results are deterministic and never contain `-0.0` from an empty or
+//! all-zero sum.
 
-/// Why a factorization or inverse failed.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum LinalgError {
-    /// No pivot large enough: the matrix has no inverse (or is so close to
-    /// singular that its inverse would be noise).
-    Singular,
-    /// Cholesky needs `aᵢⱼ == aⱼᵢ` exactly.
-    NotSymmetric,
-    /// Cholesky found a pivot that is not positive, at this row.
-    NotPositiveDefinite { row: usize },
-}
+pub use sky_linalg::{
+    cholesky, cholesky_solve, dot, is_symmetric, lu, set_threads, sum_squares, sum_squares_scaled,
+    syrk, LinalgError, Lu,
+};
 
-/// `a * b` for `a` (m by k) and `b` (k by n): an m by n matrix.
+/// `a * b` for `a` (m by k) and `b` (k by n): an m by n matrix. Each entry
+/// is accumulated in the naive order (`c = 0; c = c + a*b`, `k` ascending)
+/// with no fused multiply-add.
 pub fn matmul(a: &[f64], m: usize, k: usize, b: &[f64], n: usize) -> Vec<f64> {
     debug_assert_eq!((a.len(), b.len()), (m * k, k * n));
-    let mut out = Vec::with_capacity(m * n);
-    for i in 0..m {
-        for j in 0..n {
-            let mut s = 0.0;
-            for p in 0..k {
-                s += a[i * k + p] * b[p * n + j];
-            }
-            out.push(s);
-        }
-    }
-    out
-}
-
-/// Whether the `n` by `n` matrix `a` equals its transpose entry for entry.
-pub fn is_symmetric(a: &[f64], n: usize) -> bool {
-    (0..n).all(|i| (i + 1..n).all(|j| a[i * n + j] == a[j * n + i]))
+    sky_linalg::gemm(a, m, k, b, n)
 }
 
 /// The inverse of an `n` by `n` matrix by Gauss-Jordan elimination with
@@ -65,122 +48,12 @@ pub fn is_symmetric(a: &[f64], n: usize) -> bool {
 /// and mirrored ([`crate::needs_mirroring`]).
 pub fn inverse(a: &[f64], n: usize) -> Result<Vec<f64>, LinalgError> {
     debug_assert_eq!(a.len(), n * n);
-    let mut m = a.to_vec();
-    let mut inv = vec![0.0; n * n];
-    for i in 0..n {
-        inv[i * n + i] = 1.0;
-    }
-    let scale = a.iter().fold(0.0_f64, |s, x| s.max(x.abs()));
-    let tol = n as f64 * f64::EPSILON * scale;
-    for col in 0..n {
-        let mut pivot = col;
-        for r in col + 1..n {
-            if m[r * n + col].abs() > m[pivot * n + col].abs() {
-                pivot = r;
-            }
-        }
-        let size = m[pivot * n + col].abs();
-        if size.is_nan() || size <= tol {
-            return Err(LinalgError::Singular);
-        }
-        if pivot != col {
-            for j in 0..n {
-                m.swap(pivot * n + j, col * n + j);
-                inv.swap(pivot * n + j, col * n + j);
-            }
-        }
-        let d = m[col * n + col];
-        for j in 0..n {
-            m[col * n + j] /= d;
-            inv[col * n + j] /= d;
-        }
-        for r in 0..n {
-            if r == col {
-                continue;
-            }
-            let f = m[r * n + col];
-            if f == 0.0 {
-                continue;
-            }
-            for j in 0..n {
-                m[r * n + j] -= f * m[col * n + j];
-                inv[r * n + j] -= f * inv[col * n + j];
-            }
-        }
-    }
-    // `x + 0.0` turns a `-0.0` (from `0 / negative`) into `0.0`.
-    for x in &mut inv {
-        *x += 0.0;
-    }
-    if crate::needs_mirroring(crate::TagOp::Inverse) && is_symmetric(a, n) {
-        for i in 0..n {
-            for j in i + 1..n {
-                inv[j * n + i] = inv[i * n + j];
-            }
-        }
-    }
-    Ok(inv)
-}
-
-/// The lower-triangular Cholesky factor `L` (row-major, zeros above the
-/// diagonal) of a symmetric positive-definite `n` by `n` matrix: `A = L·Lᵀ`.
-/// Only exactly symmetric matrices are factored, and every pivot must be
-/// positive.
-pub fn cholesky(a: &[f64], n: usize) -> Result<Vec<f64>, LinalgError> {
-    debug_assert_eq!(a.len(), n * n);
-    if !is_symmetric(a, n) {
-        return Err(LinalgError::NotSymmetric);
-    }
-    let mut l = vec![0.0; n * n];
-    for j in 0..n {
-        let mut d = a[j * n + j];
-        for k in 0..j {
-            d -= l[j * n + k] * l[j * n + k];
-        }
-        if d.is_nan() || d <= 0.0 || !d.is_finite() {
-            return Err(LinalgError::NotPositiveDefinite { row: j });
-        }
-        let ljj = d.sqrt();
-        l[j * n + j] = ljj;
-        for i in j + 1..n {
-            let mut s = a[i * n + j];
-            for k in 0..j {
-                s -= l[i * n + k] * l[j * n + k];
-            }
-            l[i * n + j] = s / ljj;
-        }
-    }
-    Ok(l)
-}
-
-/// Solves `A·X = B` given the Cholesky factor `l` of `A` (`n` by `n`) and `B`
-/// (`n` by `k`, row-major): forward substitution `L·Y = B`, then back
-/// substitution `Lᵀ·X = Y`. A vector is the `k = 1` case.
-pub fn cholesky_solve(l: &[f64], n: usize, b: &[f64], k: usize) -> Vec<f64> {
-    debug_assert_eq!((l.len(), b.len()), (n * n, n * k));
-    let mut x = b.to_vec();
-    for c in 0..k {
-        // L·y = b
-        for i in 0..n {
-            let mut s = x[i * k + c];
-            for j in 0..i {
-                s -= l[i * n + j] * x[j * k + c];
-            }
-            x[i * k + c] = s / l[i * n + i];
-        }
-        // Lᵀ·x = y
-        for i in (0..n).rev() {
-            let mut s = x[i * k + c];
-            for j in i + 1..n {
-                s -= l[j * n + i] * x[j * k + c];
-            }
-            x[i * k + c] = s / l[i * n + i];
-        }
-    }
-    for v in &mut x {
-        *v += 0.0;
-    }
-    x
+    sky_linalg::inverse_with(
+        a,
+        n,
+        crate::needs_mirroring(crate::TagOp::Inverse),
+        sky_linalg::default_threads(),
+    )
 }
 
 #[cfg(test)]

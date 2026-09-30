@@ -1,0 +1,19 @@
+# `A⁻¹ @ b` means the solution of A x = b: the inverse is never formed. The
+# method follows the tags: LU for a general square matrix, division for a
+# Diagonal one, Q⁻¹ = Qᵀ for an Orthogonal one (and Cholesky for a
+# PositiveDefinite one, explained by the checker's older note). `x @ A⁻¹` is a
+# transposed solve, and `A⁻¹ @ B⁻¹` is `(B @ A)⁻¹`.
+A: Matrix[100, 100]
+B: Matrix[100, 100]
+D: Diagonal Matrix[100, 100]
+Q: Orthogonal Matrix[100, 100]
+P: PositiveDefinite Matrix[100, 100]
+b: Vector[100]
+lu = A⁻¹ @ b
+right = b @ inv(A)
+diag = D⁻¹ @ b
+orth = Q⁻¹ @ b
+chol = P⁻¹ @ b
+pair = A⁻¹ @ B⁻¹
+many = A⁻¹ @ B
+print(lu, right, diag, orth, chol, pair, many)

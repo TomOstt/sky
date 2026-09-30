@@ -61,8 +61,8 @@ use crate::ir::{
     Edition, Effect, EffectSet, Module, NumberType, OpId, RegionId, Repr, Type, ValueId,
 };
 use crate::op::{
-    AssertKind, BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind, SliceAxis,
-    SolveMethod,
+    Algorithm, AssertKind, BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind, Side,
+    SliceAxis, SolveMethod,
 };
 use crate::verify::MAX_REGION_DEPTH;
 
@@ -696,172 +696,19 @@ impl<'a> Parser<'a> {
         let word_at = self.pos;
         let word = self.word();
         let mut operands: Option<Vec<ValueId>> = None;
-        let kind = match word {
-            "const.float" => {
-                self.skip_inline();
-                OpKind::ConstFloat {
-                    bits: self.float_bits()?,
-                }
-            }
-            "const.rational" => {
-                self.skip_inline();
-                OpKind::ConstRational(self.rational()?)
-            }
-            "const.bool" => {
-                self.skip_inline();
-                let at = self.pos;
-                match self.word() {
-                    "true" => OpKind::ConstBool(true),
-                    "false" => OpKind::ConstBool(false),
-                    _ => {
-                        return self.err_at(at, self.pos.max(at + 1), "expected `true` or `false`")
-                    }
-                }
-            }
-            "const.str" => OpKind::ConstStr(self.string()?),
-            "const.nothing" => OpKind::ConstNothing,
-            "literal.error" => {
-                self.expect('[')?;
-                self.skip_inline();
-                let at = self.pos;
-                let word = self.word();
-                let Some(error) = LiteralError::ALL.into_iter().find(|e| e.text() == word) else {
-                    return self.err_at(
-                        at,
-                        self.pos.max(at + 1),
-                        "expected `too_large` or `overflow`",
-                    );
-                };
-                self.expect(']')?;
-                OpKind::LiteralError { error }
-            }
-            "input" => {
-                self.skip_inline();
-                OpKind::Input {
-                    name: self.string()?,
-                }
-            }
-            "show" => {
-                self.skip_inline();
-                OpKind::Show {
-                    unit: self.string()?,
-                }
-            }
-            "add" => OpKind::Add,
-            "sub" => OpKind::Sub,
-            "mul" => OpKind::Mul,
-            "div" => OpKind::Div,
-            "neg" => OpKind::Neg,
-            "pow" => OpKind::Pow,
-            "pow.const" => {
-                self.expect('[')?;
-                self.skip_inline();
-                let exponent = self.rational()?;
-                self.expect(']')?;
-                OpKind::PowConst { exponent }
-            }
-            "inverse" => OpKind::Inverse,
-            "matmul" => OpKind::MatMul,
-            "transpose" => OpKind::Transpose,
-            "solve" => {
-                self.expect('[')?;
-                self.skip_inline();
-                let at = self.pos;
-                let method = match self.word() {
-                    "cholesky" => SolveMethod::Cholesky,
-                    _ => return self.err_at(at, self.pos.max(at + 1), "expected `cholesky`"),
-                };
-                self.expect(']')?;
-                OpKind::Solve { method }
-            }
-            "array.literal" => {
-                self.skip_inline();
-                let cols = if self.peek() == Some('[') {
-                    self.expect('[')?;
-                    self.skip_inline();
-                    let c = self.uint()?;
-                    self.expect(']')?;
-                    Some(c)
-                } else {
-                    None
-                };
-                OpKind::ArrayLiteral { cols }
-            }
-            "index" => OpKind::Index,
-            "slice" => {
-                self.expect('[')?;
-                let mut axes = Vec::new();
-                loop {
-                    axes.push(self.slice_axis()?);
-                    self.skip_inline();
-                    if !self.eat(',') {
-                        break;
-                    }
-                }
-                self.expect(']')?;
-                OpKind::Slice { axes }
-            }
-            "zeros" => OpKind::Zeros,
-            "identity" => OpKind::Identity,
-            "len" => OpKind::Len,
-            "fused" => OpKind::Fused,
-            "cmp.eq" => OpKind::Cmp(CmpOp::Eq),
-            "cmp.ne" => OpKind::Cmp(CmpOp::Ne),
-            "cmp.lt" => OpKind::Cmp(CmpOp::Lt),
-            "cmp.le" => OpKind::Cmp(CmpOp::Le),
-            "cmp.gt" => OpKind::Cmp(CmpOp::Gt),
-            "cmp.ge" => OpKind::Cmp(CmpOp::Ge),
-            "not" => OpKind::Not,
-            "expect.bool" => {
-                self.expect('[')?;
-                self.skip_inline();
-                let at = self.pos;
-                let word = self.word();
-                let Some(context) = BoolContext::ALL.into_iter().find(|c| c.keyword() == word)
-                else {
-                    return self.err_at(
-                        at,
-                        self.pos.max(at + 1),
-                        "expected `and`, `or`, `not`, `if` or `while`",
-                    );
-                };
-                self.expect(']')?;
-                OpKind::ExpectBool { context }
-            }
-            "expect.number" => {
-                self.expect('[')?;
-                self.skip_inline();
-                let at = self.pos;
-                let word = self.word();
-                let Some(context) = NumberContext::ALL.into_iter().find(|c| c.text() == word)
-                else {
-                    return self.err_at(at, self.pos.max(at + 1), "expected `pos` or `inv`");
-                };
-                self.expect(']')?;
-                OpKind::ExpectNumber { context }
-            }
-            "assert" => self.assert_attrs()?,
-            "if" => OpKind::If,
-            "while" => OpKind::While,
-            "yield" => OpKind::Yield,
-            "condition" => OpKind::Condition,
-            "return" => OpKind::Return,
-            "print" => OpKind::Print,
-            "call" => {
-                self.expect('@')?;
-                let callee = self.fn_name()?;
-                self.expect('(')?;
-                operands = Some(self.operands(fs)?);
-                self.expect(')')?;
-                OpKind::Call { callee }
-            }
-            "" => return self.err("expected an operation"),
-            other => match MathFn::ALL.into_iter().find(|f| f.mnemonic() == other) {
-                Some(f) => OpKind::Math(f),
-                None => {
-                    return self.err_at(word_at, self.pos, format!("unknown operation `{other}`"));
-                }
-            },
+        // Every other operation's keyword and attributes are read by
+        // `op_kind`, out of line: `op` recurses once per region level (up to
+        // `MAX_REGION_DEPTH`), so its frame must stay small whatever the
+        // number of operations the text format has.
+        let kind = if word == "call" {
+            self.expect('@')?;
+            let callee = self.fn_name()?;
+            self.expect('(')?;
+            operands = Some(self.operands(fs)?);
+            self.expect(')')?;
+            OpKind::Call { callee }
+        } else {
+            self.op_kind(word, word_at)?
         };
         let operands = match operands {
             Some(o) => o,
@@ -973,6 +820,263 @@ impl<'a> Parser<'a> {
             func,
             names,
         })
+    }
+
+    /// The kind of an operation from its keyword `word` (read at
+    /// `word_at`) and its attributes; `call` is read by [`Self::op`].
+    #[inline(never)]
+    fn op_kind(&mut self, word: &str, word_at: usize) -> Res<OpKind> {
+        Ok(match word {
+            "const.float" => {
+                self.skip_inline();
+                OpKind::ConstFloat {
+                    bits: self.float_bits()?,
+                }
+            }
+            "const.rational" => {
+                self.skip_inline();
+                OpKind::ConstRational(self.rational()?)
+            }
+            "const.bool" => {
+                self.skip_inline();
+                let at = self.pos;
+                match self.word() {
+                    "true" => OpKind::ConstBool(true),
+                    "false" => OpKind::ConstBool(false),
+                    _ => {
+                        return self.err_at(at, self.pos.max(at + 1), "expected `true` or `false`")
+                    }
+                }
+            }
+            "const.str" => OpKind::ConstStr(self.string()?),
+            "const.nothing" => OpKind::ConstNothing,
+            "literal.error" => {
+                self.expect('[')?;
+                self.skip_inline();
+                let at = self.pos;
+                let word = self.word();
+                let Some(error) = LiteralError::ALL.into_iter().find(|e| e.text() == word) else {
+                    return self.err_at(
+                        at,
+                        self.pos.max(at + 1),
+                        "expected `too_large` or `overflow`",
+                    );
+                };
+                self.expect(']')?;
+                OpKind::LiteralError { error }
+            }
+            "input" => {
+                self.skip_inline();
+                OpKind::Input {
+                    name: self.string()?,
+                }
+            }
+            "show" => {
+                self.skip_inline();
+                OpKind::Show {
+                    unit: self.string()?,
+                }
+            }
+            "add" => OpKind::Add,
+            "sub" => OpKind::Sub,
+            "mul" => OpKind::Mul,
+            "div" => OpKind::Div,
+            "neg" => OpKind::Neg,
+            "pow" => OpKind::Pow,
+            "pow.const" => {
+                self.expect('[')?;
+                self.skip_inline();
+                let exponent = self.rational()?;
+                self.expect(']')?;
+                OpKind::PowConst { exponent }
+            }
+            "inverse" => OpKind::Inverse,
+            // One out-of-line reader for the operations with algorithm
+            // attributes: this function recurses per nesting level, so
+            // every arm here adds to a frame that is paid 1000 times.
+            name @ ("matmul" | "diag.mul" | "solve" | "solve.right") => self.algorithm_op(name)?,
+            "transpose" => OpKind::Transpose,
+            "norm" => OpKind::Norm,
+            "dot" => OpKind::Dot,
+            "array.literal" => {
+                self.skip_inline();
+                let cols = if self.peek() == Some('[') {
+                    self.expect('[')?;
+                    self.skip_inline();
+                    let c = self.uint()?;
+                    self.expect(']')?;
+                    Some(c)
+                } else {
+                    None
+                };
+                OpKind::ArrayLiteral { cols }
+            }
+            "index" => OpKind::Index,
+            "slice" => {
+                self.expect('[')?;
+                let mut axes = Vec::new();
+                loop {
+                    axes.push(self.slice_axis()?);
+                    self.skip_inline();
+                    if !self.eat(',') {
+                        break;
+                    }
+                }
+                self.expect(']')?;
+                OpKind::Slice { axes }
+            }
+            "zeros" => OpKind::Zeros,
+            "identity" => OpKind::Identity,
+            "len" => OpKind::Len,
+            "fused" => OpKind::Fused,
+            "cmp.eq" => OpKind::Cmp(CmpOp::Eq),
+            "cmp.ne" => OpKind::Cmp(CmpOp::Ne),
+            "cmp.lt" => OpKind::Cmp(CmpOp::Lt),
+            "cmp.le" => OpKind::Cmp(CmpOp::Le),
+            "cmp.gt" => OpKind::Cmp(CmpOp::Gt),
+            "cmp.ge" => OpKind::Cmp(CmpOp::Ge),
+            "not" => OpKind::Not,
+            "expect.bool" => {
+                self.expect('[')?;
+                self.skip_inline();
+                let at = self.pos;
+                let word = self.word();
+                let Some(context) = BoolContext::ALL.into_iter().find(|c| c.keyword() == word)
+                else {
+                    return self.err_at(
+                        at,
+                        self.pos.max(at + 1),
+                        "expected `and`, `or`, `not`, `if` or `while`",
+                    );
+                };
+                self.expect(']')?;
+                OpKind::ExpectBool { context }
+            }
+            "expect.number" => {
+                self.expect('[')?;
+                self.skip_inline();
+                let at = self.pos;
+                let word = self.word();
+                let Some(context) = NumberContext::ALL.into_iter().find(|c| c.text() == word)
+                else {
+                    return self.err_at(at, self.pos.max(at + 1), "expected `pos` or `inv`");
+                };
+                self.expect(']')?;
+                OpKind::ExpectNumber { context }
+            }
+            "assert" => self.assert_attrs()?,
+            "if" => OpKind::If,
+            "while" => OpKind::While,
+            "yield" => OpKind::Yield,
+            "condition" => OpKind::Condition,
+            "return" => OpKind::Return,
+            "print" => OpKind::Print,
+            "" => return self.err("expected an operation"),
+            other => match MathFn::ALL.into_iter().find(|f| f.mnemonic() == other) {
+                Some(f) => OpKind::Math(f),
+                None => {
+                    return self.err_at(word_at, self.pos, format!("unknown operation `{other}`"));
+                }
+            },
+        })
+    }
+
+    /// `matmul` (with or without attributes), `diag.mul[side]`, `solve[m]`
+    /// and `solve.right[m]`.
+    #[inline(never)]
+    fn algorithm_op(&mut self, name: &str) -> Res<OpKind> {
+        match name {
+            "matmul" if self.peek() != Some('[') => Ok(OpKind::MatMul),
+            "matmul" => self.matmul_attrs(),
+            "diag.mul" => self.diag_mul_side(),
+            "solve" => Ok(OpKind::Solve {
+                method: self.solve_method()?,
+            }),
+            _ => Ok(OpKind::SolveRight {
+                method: self.solve_method()?,
+            }),
+        }
+    }
+
+    /// `[left]` or `[right]`: the side of a `diag.mul`.
+    #[inline(never)]
+    fn diag_mul_side(&mut self) -> Res<OpKind> {
+        self.expect('[')?;
+        self.skip_inline();
+        let at = self.pos;
+        let side = match self.word() {
+            "left" => Side::Left,
+            "right" => Side::Right,
+            _ => return self.err_at(at, self.pos.max(at + 1), "expected `left` or `right`"),
+        };
+        self.expect(']')?;
+        Ok(OpKind::DiagMul { side })
+    }
+
+    /// `[cholesky]`, `[lu]` or `[diagonal]`: the method of a `solve`.
+    #[inline(never)]
+    fn solve_method(&mut self) -> Res<SolveMethod> {
+        self.expect('[')?;
+        self.skip_inline();
+        let at = self.pos;
+        let word = self.word();
+        let Some(method) = SolveMethod::ALL.into_iter().find(|m| m.mnemonic() == word) else {
+            return self.err_at(
+                at,
+                self.pos.max(at + 1),
+                "expected `cholesky`, `lu` or `diagonal`",
+            );
+        };
+        self.expect(']')?;
+        Ok(method)
+    }
+
+    /// The `[ta,tb,alg=NAME]` of a `matmul` with attributes: any of the
+    /// three, in this order, at least one.
+    #[inline(never)]
+    fn matmul_attrs(&mut self) -> Res<OpKind> {
+        self.expect('[')?;
+        let (mut ta, mut tb, mut algorithm) = (false, false, Algorithm::Auto);
+        loop {
+            self.skip_inline();
+            let at = self.pos;
+            match self.word() {
+                "ta" if !ta && !tb && algorithm == Algorithm::Auto => ta = true,
+                "tb" if !tb && algorithm == Algorithm::Auto => tb = true,
+                "alg" if algorithm == Algorithm::Auto => {
+                    self.expect('=')?;
+                    self.skip_inline();
+                    let at = self.pos;
+                    let name = self.word();
+                    match Algorithm::ALL
+                        .into_iter()
+                        .find(|a| *a != Algorithm::Auto && a.mnemonic() == name)
+                    {
+                        Some(a) => algorithm = a,
+                        None => {
+                            return self.err_at(
+                                at,
+                                self.pos.max(at + 1),
+                                "expected `dot`, `matvec`, `vecmat`, `gemm` or `syrk`",
+                            )
+                        }
+                    }
+                }
+                _ => {
+                    return self.err_at(
+                        at,
+                        self.pos.max(at + 1),
+                        "expected `ta`, `tb` or `alg=NAME`, each once and in this order",
+                    )
+                }
+            }
+            self.skip_inline();
+            if !self.eat(',') {
+                break;
+            }
+        }
+        self.expect(']')?;
+        Ok(OpKind::MatMulEx { ta, tb, algorithm })
     }
 
     /// One item of a `slice`'s `[...]`: `at`, `:`, `lo:`, `:hi` or `lo:hi`.

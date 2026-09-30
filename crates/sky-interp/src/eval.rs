@@ -321,7 +321,8 @@ impl<'a> Interp<'a> {
             StmtKind::Pass => Ok(Flow::Normal(None)),
             // A budget is a claim about the program, checked by `sky check`;
             // running it changes nothing.
-            StmtKind::Accuracy { .. } => Ok(Flow::Normal(None)),
+            // Statements about the program, not steps of it.
+            StmtKind::Accuracy { .. } | StmtKind::Cost { .. } => Ok(Flow::Normal(None)),
             StmtKind::Break => Ok(Flow::Break),
             StmtKind::Continue => Ok(Flow::Continue),
             StmtKind::Equation(eq) => {
@@ -620,6 +621,13 @@ impl<'a> Interp<'a> {
     /// span of the whole expression) the interpreter factors `A` and solves
     /// for `b`, and never forms `A⁻¹`.
     fn matmul(&mut self, e: &Expr, lhs: &Expr, rhs: &Expr) -> R<Value> {
+        // A chain the checker planned (order, solves): its plan, exactly as
+        // SIR runs it. See `sky_types::chain`.
+        if let Some(plan) = self.env.chain_plan(e.span).cloned() {
+            if let Some(v) = self.run_chain(lhs, rhs, &plan)? {
+                return Ok(v);
+            }
+        }
         if self.solves.contains(&e.span) {
             if let Some(a) = self.inverted_operand(lhs) {
                 let av = self.eval(a)?;
@@ -634,7 +642,7 @@ impl<'a> Interp<'a> {
 
     /// `A` if `e` is `A⁻¹` or `inv(A)` (the builtin, not a user's own
     /// `inv`), possibly parenthesized: the forms the checker rewrites.
-    fn inverted_operand<'x>(&self, e: &'x Expr) -> Option<&'x Expr> {
+    pub(crate) fn inverted_operand<'x>(&self, e: &'x Expr) -> Option<&'x Expr> {
         let mut e = e;
         while let ExprKind::Paren(inner) = &e.kind {
             e = inner;
@@ -904,11 +912,17 @@ impl<'a> Interp<'a> {
     }
 }
 
-/// The `requires` and `ensures` lines a function body starts with.
+/// The `requires` and `ensures` lines a function body starts with (its
+/// `cost` lines, which state no run-time behaviour, are skipped over).
 fn contract_head(body: &Block) -> impl Iterator<Item = &Stmt> {
     body.stmts
         .iter()
-        .take_while(|s| is_contract(s, AssertKind::Requires) || is_contract(s, AssertKind::Ensures))
+        .take_while(|s| {
+            is_contract(s, AssertKind::Requires)
+                || is_contract(s, AssertKind::Ensures)
+                || matches!(s.kind, StmtKind::Cost { .. })
+        })
+        .filter(|s| !matches!(s.kind, StmtKind::Cost { .. }))
 }
 
 /// Whether `s` is a `requires` or `ensures` line (of kind `kind`).

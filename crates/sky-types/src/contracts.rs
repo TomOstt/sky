@@ -59,17 +59,21 @@ pub(crate) struct EntryScope {
 }
 
 /// The leading `requires`/`ensures` statements of a `def` body (the parser
-/// only allows them there).
+/// only allows them there), with the `cost` lines among them skipped: a
+/// performance contract is checked apart (`crate::cost`).
 fn head(body: &Block) -> impl Iterator<Item = &Stmt> {
-    body.stmts.iter().take_while(|s| {
-        matches!(
-            s.kind,
-            StmtKind::Assert {
-                kind: AssertKind::Requires | AssertKind::Ensures,
-                ..
-            }
-        )
-    })
+    body.stmts
+        .iter()
+        .take_while(|s| {
+            matches!(
+                s.kind,
+                StmtKind::Assert {
+                    kind: AssertKind::Requires | AssertKind::Ensures,
+                    ..
+                } | StmtKind::Cost { .. }
+            )
+        })
+        .filter(|s| !matches!(s.kind, StmtKind::Cost { .. }))
 }
 
 fn ensures_of(body: &Block) -> Vec<&Expr> {

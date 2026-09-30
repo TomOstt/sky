@@ -1,0 +1,19 @@
+sir edition 2026
+
+fn @<main>() -> () effects(io, fail, call) @ 0..550 {
+  %0 = call @"powers[x=2]"() : num[1; ()] @ 520..529
+  print %0 @ 514..530
+  %1 = call @"volume[l=3]"() : num[L³; ()] @ 537..548
+  print %1 @ 531..549
+  return @ 0..550
+}
+
+fn @"powers[x=2]"() -> (num[1; ()]) effects(fail) @ 292..476 {
+  %0 = const.float 49189.53921356237 : num[1; ()] @ 435..476
+  return %0 @ 292..476
+}
+
+fn @"volume[l=3]"() -> (num[L³; ()]) effects(fail) @ 478..512 {
+  %0 = const.float 27 : num[L³; ()] @ 507..512
+  return %0 @ 478..512
+}

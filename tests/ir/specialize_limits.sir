@@ -1,0 +1,102 @@
+sir edition 2026
+
+fn @<main>() -> () effects(io, fail, call) @ 0..521 {
+  %0 = call @"k[x=1]"() : num[1; ()] @ 439..443
+  %1 = call @"k[x=2]"() : num[1; ()] @ 445..449
+  %2 = call @"k[x=3]"() : num[1; ()] @ 451..455
+  %3 = call @"k[x=4]"() : num[1; ()] @ 457..461
+  %4 = call @"k[x=5]"() : num[1; ()] @ 463..467
+  print %0, %1, %2, %3, %4 @ 433..468
+  %5 = call @"k[x=6]"() : num[1; ()] @ 475..479
+  %6 = call @"k[x=7]"() : num[1; ()] @ 481..485
+  %7 = call @"k[x=8]"() : num[1; ()] @ 487..491
+  %8 = const.float 9 : num[1; ()] @ 495..496
+  %9 = call @k(%8) : num[1; ()] @ 493..497
+  %10 = const.float 10 : num[1; ()] @ 501..503
+  %11 = call @k(%10) : num[1; ()] @ 499..504
+  print %5, %6, %7, %9, %11 @ 469..505
+  %12 = call @"fact[n=5]"() : unknown @ 512..519
+  print %12 @ 506..520
+  return @ 0..521
+}
+
+fn @k(%x: num[1; ()]) -> (num[1; ()]) effects(fail) @ 292..340 {
+  %1 = const.float 2 : num[1; ()] @ 335..336
+  %2 = mul %x, %1 : num[1; ()] @ 331..336 (331..332, 335..336)
+  %3 = const.float 1 : num[1; ()] @ 339..340
+  %4 = add %2, %3 : num[1; ()] @ 331..340 (331..336, 339..340)
+  return %4 @ 292..340
+}
+
+fn @"k[x=1]"() -> (num[1; ()]) effects(fail) @ 292..340 {
+  %0 = const.float 3 : num[1; ()] @ 331..340
+  return %0 @ 292..340
+}
+
+fn @"k[x=2]"() -> (num[1; ()]) effects(fail) @ 292..340 {
+  %0 = const.float 5 : num[1; ()] @ 331..340
+  return %0 @ 292..340
+}
+
+fn @"k[x=3]"() -> (num[1; ()]) effects(fail) @ 292..340 {
+  %0 = const.float 7 : num[1; ()] @ 331..340
+  return %0 @ 292..340
+}
+
+fn @"k[x=4]"() -> (num[1; ()]) effects(fail) @ 292..340 {
+  %0 = const.float 9 : num[1; ()] @ 331..340
+  return %0 @ 292..340
+}
+
+fn @"k[x=5]"() -> (num[1; ()]) effects(fail) @ 292..340 {
+  %0 = const.float 11 : num[1; ()] @ 331..340
+  return %0 @ 292..340
+}
+
+fn @"k[x=6]"() -> (num[1; ()]) effects(fail) @ 292..340 {
+  %0 = const.float 13 : num[1; ()] @ 331..340
+  return %0 @ 292..340
+}
+
+fn @"k[x=7]"() -> (num[1; ()]) effects(fail) @ 292..340 {
+  %0 = const.float 15 : num[1; ()] @ 331..340
+  return %0 @ 292..340
+}
+
+fn @"k[x=8]"() -> (num[1; ()]) effects(fail) @ 292..340 {
+  %0 = const.float 17 : num[1; ()] @ 331..340
+  return %0 @ 292..340
+}
+
+fn @"fact[n=5]"() -> (unknown) effects(fail, call) @ 342..431 {
+  %0 = const.float 5 : num[1; ()] @ 342..431
+  %1 = call @"fact[n=4]"() : unknown @ 420..431
+  %2 = mul %0, %1 : unknown @ 416..431 (416..417, 420..431)
+  return %2 @ 342..431
+}
+
+fn @"fact[n=4]"() -> (unknown) effects(fail, call) @ 342..431 {
+  %0 = const.float 4 : num[1; ()] @ 342..431
+  %1 = call @"fact[n=3]"() : unknown @ 420..431
+  %2 = mul %0, %1 : unknown @ 416..431 (416..417, 420..431)
+  return %2 @ 342..431
+}
+
+fn @"fact[n=3]"() -> (unknown) effects(fail, call) @ 342..431 {
+  %0 = const.float 3 : num[1; ()] @ 342..431
+  %1 = call @"fact[n=2]"() : unknown @ 420..431
+  %2 = mul %0, %1 : unknown @ 416..431 (416..417, 420..431)
+  return %2 @ 342..431
+}
+
+fn @"fact[n=2]"() -> (unknown) effects(fail, call) @ 342..431 {
+  %0 = const.float 2 : num[1; ()] @ 342..431
+  %1 = call @"fact[n=1]"() : unknown @ 420..431
+  %2 = mul %0, %1 : unknown @ 416..431 (416..417, 420..431)
+  return %2 @ 342..431
+}
+
+fn @"fact[n=1]"() -> (unknown) effects(fail, call) @ 342..431 {
+  %0 = const.float 1 : num[1; ()] @ 403..404
+  return %0 @ 342..431
+}

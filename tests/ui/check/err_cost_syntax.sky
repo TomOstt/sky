@@ -1,0 +1,14 @@
+# Where a `cost` line may be, and what it says.
+cost flops <= 1
+
+def f(x: m) -> m:
+    y = x
+    cost flops <= 1
+    return y
+
+def g(x: m) -> m:
+    cost speed <= 1
+    cost flops < 1
+    cost runtime <= 10 ms
+    cost flops
+    return x

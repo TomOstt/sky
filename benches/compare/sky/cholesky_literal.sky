@@ -1,0 +1,12 @@
+# The Cholesky workload with K written out as a literal, which the checker can
+# prove positive definite (up to 32 x 32), so `K⁻¹ @ f` is a Cholesky solve on
+# every engine. Same K as the other languages build: c1 c1ᵀ + c2 c2ᵀ + n I.
+K: PositiveDefinite Matrix[{{N}}, {{N}}] = {{KMAT:N}}
+f = {{VEC:2:N}}
+ones = {{VEC:ones:N}}
+acc = 0.0
+x = f
+for r in range({{R}}):
+    x = K⁻¹ @ ((1 + r) * f)
+    acc = acc + x[0] + x[{{N}} - 1] + ones @ x
+print(acc, x[0], x[{{N}} - 1])

@@ -35,6 +35,10 @@ fn run_engine(name: &str, src: &str, engine: Option<&str>) -> Output {
 /// The marker of a forced SIR run refusing a program that does not lower.
 const NOT_ON_SIR: &str = "error: cannot run on SIR:";
 
+/// The marker of a forced native run refusing a program that does not lower
+/// or does not compile.
+const NOT_NATIVE: &str = "error: cannot run natively:";
+
 /// The two limits that stop unbounded recursion. Which one trips first
 /// depends on how much Rust stack each engine spends per call (a debug
 /// tree-walker runs out of its stack budget before 1000 calls), not on the
@@ -44,37 +48,42 @@ fn hit_a_limit(o: &Output) -> bool {
     e.contains("recursion is too deep") || e.contains("nests too deeply")
 }
 
-/// Runs the program under `--engine=ast` and `--engine=sir` and asserts that
-/// they agree on stdout, stderr and exit status, byte for byte. A program
-/// SIR does not lower is refused by `--engine=sir` (that is the only thing
-/// it may do differently); it is then reported, so the caller can tell a
-/// comparison from a fallback. Returns whether SIR ran the program.
+/// Runs the program under `--engine=ast`, `--engine=sir` and
+/// `--engine=native` and asserts that they agree on stdout, stderr and exit
+/// status, byte for byte. A program SIR does not lower is refused by
+/// `--engine=sir` and by `--engine=native` (that is the only thing they may
+/// do differently); it is then reported, so the caller can tell a comparison
+/// from a fallback. Returns whether SIR ran the program.
 fn engines_agree(name: &str, src: &str) -> bool {
     let ast = run_engine(name, src, Some("ast"));
-    let sir = run_engine(name, src, Some("sir"));
-    if err(&sir).contains(NOT_ON_SIR) {
-        assert_eq!(sir.status.code(), Some(1), "{}", err(&sir));
-        assert_eq!(out(&sir), "", "a refused program prints nothing");
-        eprintln!("REFUSED {name}: {}", err(&sir));
-        return false;
+    let mut ran = true;
+    for (engine, marker) in [("sir", NOT_ON_SIR), ("native", NOT_NATIVE)] {
+        let other = run_engine(name, src, Some(engine));
+        if err(&other).contains(marker) {
+            assert_eq!(other.status.code(), Some(1), "{}", err(&other));
+            assert_eq!(out(&other), "", "a refused program prints nothing");
+            eprintln!("REFUSED {name} ({engine}): {}", err(&other));
+            ran = false;
+            continue;
+        }
+        assert_eq!(
+            other.status.code(),
+            ast.status.code(),
+            "{engine} exit status of:\n{src}"
+        );
+        assert_eq!(out(&other), out(&ast), "{engine} stdout of:\n{src}");
+        if !(hit_a_limit(&ast) && hit_a_limit(&other)) {
+            assert_eq!(err(&other), err(&ast), "{engine} stderr of:\n{src}");
+        }
     }
-    assert_eq!(
-        sir.status.code(),
-        ast.status.code(),
-        "exit status of:\n{src}"
-    );
-    assert_eq!(out(&sir), out(&ast), "stdout of:\n{src}");
-    if !(hit_a_limit(&ast) && hit_a_limit(&sir)) {
-        assert_eq!(err(&sir), err(&ast), "stderr of:\n{src}");
-    }
-    true
+    ran
 }
 
 /// Writes `src` to a fresh script and runs `sky run` on it, under the
 /// default engine (`auto`). Every program the tests here run is also run
-/// under `--engine=ast` and `--engine=sir` and the three must agree
-/// (see [`engines_agree`]), so each of these tests is also a differential
-/// test of the SIR engine against the tree-walker.
+/// under `--engine=ast`, `--engine=sir` and `--engine=native` and the four
+/// must agree (see [`engines_agree`]), so each of these tests is also a
+/// differential test of the SIR and native engines against the tree-walker.
 fn run_script(name: &str, src: &str) -> Output {
     let auto = run_engine(name, src, None);
     let ast = run_engine(name, src, Some("ast"));
@@ -907,6 +916,36 @@ fn run_the_force_of_a_gravitational_potential_points_to_the_origin() {
 }
 
 #[test]
+fn run_the_force_of_the_natural_potential_with_norm() {
+    // The potential written as it reads, `-G M m / norm(p)`, is
+    // differentiated on SIR: the force is the same as with `sqrt(p @ p)`.
+    let head =
+        "M = 5.972e24 kg\nmass = 1000 kg\ndef U(p: Vector[3] m) -> J:\n    return -G * M * mass / ";
+    let tail = "\nq = [3 km, 0 km, 4 km]\nprint(-grad(U)(q))\nprint(norm(-grad(U)(q)))\n";
+    let mut outputs = Vec::new();
+    for (name, body) in [("natural", "norm(p)"), ("sqrt", "sqrt(p @ p)")] {
+        for engine in ["ast", "sir"] {
+            let o = run_engine(name, &format!("{head}{body}{tail}"), Some(engine));
+            assert_eq!(err(&o), "", "{name} on {engine}");
+            outputs.push((name, engine, out(&o)));
+        }
+    }
+    for (name, engine, stdout) in &outputs {
+        // At 5 km along (3, 0, 4)/5: 15.9 GN, split 3:0:4 and pointing inward.
+        let lines: Vec<&str> = stdout.lines().collect();
+        assert_eq!(lines.len(), 2, "{name} on {engine}: {stdout}");
+        assert_eq!(
+            lines[0], "[-9566140704 N, 0 N, -12754854272 N]",
+            "{name} on {engine}"
+        );
+        assert!(lines[1].ends_with(" N"), "{name} on {engine}: {}", lines[1]);
+    }
+    // Both engines agree on the whole output, whichever spelling.
+    assert_eq!(outputs[0].2, outputs[1].2);
+    assert_eq!(outputs[0].2, outputs[2].2);
+}
+
+#[test]
 fn run_the_gradient_of_a_spring_network_potential_with_a_matrix() {
     // U = 1/2 d.(K d) with d = p - p0 and K symmetric: F = -K d.
     let program = "K = [[300, -100, 0], [-100, 200, -50], [0, -50, 100]] * 1 N/m\n\
@@ -1326,6 +1365,33 @@ const ENGINE_PROGRAMS: &[(&str, bool, &str)] = &[
         "eng-string-add",
         false,
         "print(\"before\")\ns = \"a\" + \"b\"\n",
+    ),
+    // `norm` and `dot` run on SIR through the tree-walker's own functions,
+    // errors and their labels included.
+    (
+        "eng-norm-dot",
+        true,
+        "v = [3 m, 4 m]\nf = [1 N, 2 N]\nprint(norm(v), norm(-2 s), dot(v, f), norm([1e200, 1e200]))\nprint(v / norm(v))\n",
+    ),
+    (
+        "eng-norm-overflow",
+        true,
+        "print(\"before\")\nprint(norm([1.7e308, 1.7e308]))\n",
+    ),
+    (
+        "eng-dot-labels",
+        true,
+        "def id(a):\n    return a\nprint(dot(id([1, 2, 3]), id([1, 2])))\n",
+    ),
+    (
+        "eng-norm-not-a-vector",
+        true,
+        "def id(a):\n    return a\nprint(norm(id(true)))\n",
+    ),
+    (
+        "eng-gradient-norm",
+        true,
+        "def U(p: Vector[3] m) -> J:\n    return -2 J*m / norm(p)\nprint(grad(U)([1 m, 2 m, 2 m]))\nprint(grad(U)([0 m, 0 m, 0 m]))\n",
     ),
     (
         "eng-input-in-func",

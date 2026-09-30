@@ -235,8 +235,13 @@ impl Printer<'_> {
             OpKind::PowConst { exponent } => {
                 let _ = write!(self.out, "[{exponent}]");
             }
-            OpKind::Solve { method } => {
-                let _ = write!(self.out, "[{}]", method.mnemonic());
+            OpKind::Solve { .. }
+            | OpKind::SolveRight { .. }
+            | OpKind::MatMulEx { .. }
+            | OpKind::DiagMul { .. } => {
+                if let Some(attrs) = op.kind.algorithm_attrs() {
+                    self.out.push_str(&attrs);
+                }
             }
             OpKind::LiteralError { error } => {
                 let _ = write!(self.out, "[{}]", error.text());

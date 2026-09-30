@@ -518,3 +518,82 @@ fn unknown_types_are_not_analysed() {
     assert!(an.known(d).is_none());
     assert_eq!(an.proof(op_of(&f, d)), None);
 }
+
+/// Analyses the single function of the SIR text and returns the proof of
+/// the operation whose result is named `name`.
+fn proof_of(text: &str, name: &str) -> (Option<Proof>, Option<Known>) {
+    let m = crate::parse::parse(text).expect("parses");
+    crate::verify::verify(&m).expect("valid");
+    let f = &m.functions[0];
+    let v = f
+        .values
+        .iter()
+        .position(|d| d.name.as_deref() == Some(name))
+        .map(|i| ValueId(i as u32))
+        .expect("named value");
+    let an = analyze(f);
+    (an.proof(op_of(f, v)), an.known(v).cloned())
+}
+
+const SHAPES: &str = "sir edition 2026
+
+fn @f(%v: num[1; (3)], %a: num[1; (2, 3)], %w: num[1; (N#0)], %u: unknown) -> () effects(fail) {
+  %c0 = const.float 0 : num[1; ()]
+  %c2 = const.float 2 : num[1; ()]
+  %c3 = const.float 3 : num[1; ()]
+  %c4 = const.float 4 : num[1; ()]
+  %cm = const.float -1 : num[1; ()]
+  %h = const.float 0.5 : num[1; ()]
+  %ok = index %v, %c2 : num[1; ()]
+  %past = index %v, %c3 : num[1; ()]
+  %neg = index %v, %cm : num[1; ()]
+  %frac = index %v, %h : num[1; ()]
+  %cell = index %a, %c0, %c2 : num[1; ()]
+  %cellx = index %a, %c2, %c0 : num[1; ()]
+  %row = index %a, %c0 : num[1; (3)]
+  %sym = index %w, %c0 : num[1; ()]
+  %dyn = index %u, %c0 : unknown
+  %run = slice[lo:hi] %v, %c0, %c2 : num[1; (2)]
+  %empty = slice[lo:hi] %v, %c2, %c2 : num[1; (0)]
+  %over = slice[lo:hi] %v, %c0, %c4 : num[1; (3)]
+  %n = len %v : num[1; ()]
+  %nw = len %w : num[1; ()]
+  %nu = len %u : num[1; ()]
+  return
+}
+";
+
+#[test]
+fn indices_inside_a_static_shape_are_proven_in_bounds() {
+    let p = |name| proof_of(SHAPES, name).0;
+    assert_eq!(p("ok"), Some(Proof::InBounds));
+    assert_eq!(p("cell"), Some(Proof::InBounds));
+    assert_eq!(p("row"), Some(Proof::InBounds));
+    assert_eq!(p("run"), Some(Proof::InBounds));
+    // Out of bounds, negative, fractional: they fail, so no proof.
+    assert_eq!(p("past"), None);
+    assert_eq!(p("neg"), None);
+    assert_eq!(p("frac"), None);
+    // The second axis has 3 entries, the first 2: index 2 on axis 0 fails.
+    assert_eq!(p("cellx"), None);
+    // A symbolic size, an unknown type, an empty or too long range: no proof.
+    assert_eq!(p("sym"), None);
+    assert_eq!(p("dyn"), None);
+    assert_eq!(p("empty"), None);
+    assert_eq!(p("over"), None);
+}
+
+#[test]
+fn len_of_a_typed_array_cannot_fail_and_a_static_one_is_known() {
+    let (proof, known) = proof_of(SHAPES, "n");
+    assert_eq!(proof, Some(Proof::InBounds));
+    let k = known.expect("a static length is known");
+    assert_eq!(k.range.as_point(), Some(3.0));
+    assert!(k.faithful());
+    // A symbolic length is not known, but `len` of a typed array still succeeds.
+    let (proof, known) = proof_of(SHAPES, "nw");
+    assert_eq!(proof, Some(Proof::InBounds));
+    assert_eq!(known.unwrap().range, Range::FINITE);
+    // An unknown-typed operand may not be an array.
+    assert_eq!(proof_of(SHAPES, "nu").0, None);
+}

@@ -29,6 +29,9 @@ fn sky(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_sky"))
         .arg("check")
         .args(args)
+        // The parallelism notes speak of the thread count; the goldens
+        // must not depend on the machine's cores.
+        .env("SKY_THREADS", "8")
         .current_dir(root())
         .output()
         .expect("run sky")

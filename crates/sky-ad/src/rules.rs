@@ -27,7 +27,10 @@
 //! | `A⁻¹` (matrix) | `-(r ta r)` |
 //! | `A @ B` | `tA @ B + A @ tB` |
 //! | `Aᵀ` | `tAᵀ` |
+//! | `norm(a)` | `(a·ta) / r`, summed over all entries (`a` a vector, matrix or scalar); fails at `r = 0` as `sqrt` does |
+//! | `dot(a, b)` | `dot(ta, b) + dot(a, tb)` |
 //! | `solve(A, b)` = `A⁻¹ b` | `solve(A, tb - tA @ r)` |
+//! | `solve.right(x, A)` = `x A⁻¹` | `solve.right(tx - r @ tA, A)` |
 //! | `[a, b, ...]` (`array.literal`) | `[ta, tb, ...]`, a zero for an entry that does not depend on `x` |
 //! | `A[i]`, `A[lo:hi]` | `tA[i]`, `tA[lo:hi]` (the positions are integers: no tangent) |
 //! | `zeros`, `identity`, `len` | none (integers) |
@@ -252,6 +255,39 @@ impl Diff<'_> {
                     (None, None) => None,
                 })
             }
+            OpKind::Norm => {
+                // r = ‖a‖: tr = (a·ta) / r, the sum over all entries of `a`
+                // times its tangent. a·ta has dim(a)²/dim(x) and r has
+                // dim(a), so the quotient is dim(r)/dim(x). At ‖a‖ = 0 the
+                // division fails, as `sqrt`'s does at 0: the norm has no
+                // derivative there.
+                let [a] = self.operands(op)?;
+                let Some(ta) = self.tan_of(a) else {
+                    return Ok(None);
+                };
+                let (pa, pr) = (self.primal(a)?, self.primal(r)?);
+                let num = self.inner(pa, ta, span)?;
+                let ty = self.tangent_ty(r)?;
+                Ok(Some(self.emit(OpKind::Div, vec![num, pr], ty, span)))
+            }
+            OpKind::Dot => {
+                // r = a·b: tr = ta·b + a·tb. Each term has
+                // dim(a) dim(b) / dim(x) = dim(r)/dim(x).
+                let [a, b] = self.operands(op)?;
+                let ty = self.tangent_ty(r)?;
+                let (pa, pb) = (self.primal(a)?, self.primal(b)?);
+                let left = self
+                    .tan_of(a)
+                    .map(|ta| self.emit(OpKind::Dot, vec![ta, pb], ty.clone(), span));
+                let right = self
+                    .tan_of(b)
+                    .map(|tb| self.emit(OpKind::Dot, vec![pa, tb], ty.clone(), span));
+                Ok(match (left, right) {
+                    (Some(l), Some(rt)) => Some(self.emit(OpKind::Add, vec![l, rt], ty, span)),
+                    (Some(t), None) | (None, Some(t)) => Some(t),
+                    (None, None) => None,
+                })
+            }
             OpKind::Transpose => {
                 // Transposing only moves entries: tr = ta^T (a scalar is its
                 // own transpose).
@@ -285,6 +321,31 @@ impl Diff<'_> {
                 Ok(Some(self.emit(
                     OpKind::Solve { method: *method },
                     vec![pa, rhs],
+                    ty,
+                    span,
+                )))
+            }
+            OpKind::SolveRight { method } => {
+                // r = x A⁻¹, so r A = x and tr A + r tA = tx:
+                // tr = (tx - r tA) A⁻¹, a transposed solve with the same A.
+                // r tA has dim(x)/dim(A) dim(A)/dim(w) = dim(x)/dim(w), the
+                // type of tx.
+                let [x, a] = self.operands(op)?;
+                let (pa, pr) = (self.primal(a)?, self.primal(r)?);
+                let rhs_ty = self.tangent_ty(x)?;
+                let via_a = self
+                    .tan_of(a)
+                    .map(|ta| self.emit(OpKind::MatMul, vec![pr, ta], rhs_ty.clone(), span));
+                let rhs = match (self.tan_of(x), via_a) {
+                    (Some(tx), Some(t)) => self.emit(OpKind::Sub, vec![tx, t], rhs_ty, span),
+                    (Some(tx), None) => tx,
+                    (None, Some(t)) => self.emit(OpKind::Neg, vec![t], rhs_ty, span),
+                    (None, None) => return Ok(None),
+                };
+                let ty = self.tangent_ty(r)?;
+                Ok(Some(self.emit(
+                    OpKind::SolveRight { method: *method },
+                    vec![rhs, pa],
                     ty,
                     span,
                 )))

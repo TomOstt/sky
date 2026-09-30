@@ -1,0 +1,30 @@
+tests/ir/specialize_sign.sky:13:5: note: cost of `h`: 1 flop
+   |
+13 | def h(x: Scalar) -> Scalar:
+   |     ^
+
+tests/ir/specialize_sign.sky:16:1: note: printed value of `h(abs(z) + 1)` is accurate to within 1.1e-16 relative
+   |
+16 | print(g(abs(z) + 1), g(-1 - abs(z)), h(abs(z) + 1))
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: a proven bound on the rounding error against the exact real result (roundoff analysis)
+
+tests/ir/specialize_sign.sky:16:7: note: [SPEC-001] specialized `g` for x > 0 at this call: 0 checks removed
+   |
+16 | print(g(abs(z) + 1), g(-1 - abs(z)), h(abs(z) + 1))
+   |       ^^^^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 0 run-time checks removed: operations that can fail in `g` and cannot in `g[x>0]`
+   = note: because the argument for `x` is positive (at least 1)
+   = note: because in `g[x>0]`: 1 comparison decided by the sign, 2 branches decided, 1 operation folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
+tests/ir/specialize_sign.sky:16:22: note: [SPEC-001] specialized `g` for x < 0 at this call: 0 checks removed
+   |
+16 | print(g(abs(z) + 1), g(-1 - abs(z)), h(abs(z) + 1))
+   |                      ^^^^^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 0 run-time checks removed: operations that can fail in `g` and cannot in `g[x<0]`
+   = note: because the argument for `x` is negative (at most -1)
+   = note: because in `g[x<0]`: 1 comparison decided by the sign, 2 branches decided, 1 operation folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged

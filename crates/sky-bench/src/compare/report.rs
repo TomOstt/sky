@@ -511,7 +511,8 @@ pub fn interpretation(run: &Run) -> Vec<String> {
     }
 
     // 2. Where Sky wins.
-    let mut wins: Vec<(Kind, String)> = Vec::new();
+    // (kind, example case, whether the win was over a compiled baseline)
+    let mut wins: Vec<(Kind, String, bool)> = Vec::new();
     let mut any_compiled_win = false;
     for (rid, rlabel) in REFS {
         let mut list: Vec<String> = Vec::new();
@@ -524,10 +525,14 @@ pub fn interpretation(run: &Run) -> Vec<String> {
                         label(eng),
                         fmt_ratio(t / base).replace("**", "")
                     ));
-                    if !wins.iter().any(|(k, _)| *k == c.case.kind) {
-                        wins.push((c.case.kind, c.case.id.clone()));
+                    let compiled = rid != "python" && rid != "numpy";
+                    if !wins
+                        .iter()
+                        .any(|(k, _, cm)| *k == c.case.kind && *cm == compiled)
+                    {
+                        wins.push((c.case.kind, c.case.id.clone(), compiled));
                     }
-                    if rid != "python" && rid != "numpy" {
+                    if compiled {
                         any_compiled_win = true;
                     }
                 }
@@ -543,12 +548,17 @@ pub fn interpretation(run: &Run) -> Vec<String> {
     if !any_compiled_win {
         out.push("**Sky did not beat compiled C, compiled Rust or the hand-tuned library on any workload in this run.** Any claim that it is faster than them is unsupported by these numbers.".to_string());
     }
-    for (kind, example) in &wins {
-        out.push(format!(
-            "Why Sky wins on {:?} workloads (for example `{example}`): {}.",
-            kind,
-            win_reason(*kind)
-        ));
+    for (kind, example, compiled) in &wins {
+        if *compiled {
+            out.push(format!(
+                "Sky beat a compiled baseline on a {kind:?} workload (`{example}`). This harness cannot say why from the numbers alone; the likely candidates are that the C and Rust rows are plain source, not hand-vectorised or hand-blocked code, and that a fixed cost dominates a short run. Check that cell's spread and the floors before trusting it."
+            ));
+        } else {
+            out.push(format!(
+                "Why Sky beats CPython on {kind:?} workloads (for example `{example}`): {}.",
+                win_reason(*kind)
+            ));
+        }
     }
 
     // 3. Where it loses.
@@ -638,6 +648,24 @@ pub fn interpretation(run: &Run) -> Vec<String> {
                 "**Ratios are floor-limited** where the fastest baseline takes under 3x an empty process ({}): {}. There the ratio measures start-up and the front end as much as the computation.",
                 fmt_time(floor as f64),
                 near.join(", ")
+            ));
+        }
+    }
+
+    // 5b. Fixed costs of the Sky engines themselves.
+    if let Some(min) = run.floors.sky_ns.iter().map(|(_, n)| *n).min() {
+        let heavy: Vec<String> = run
+            .floors
+            .sky_ns
+            .iter()
+            .filter(|(_, n)| *n > 50_000_000 && *n > 5 * min)
+            .map(|(e, n)| format!("`{e}` ({})", fmt_time(*n as f64)))
+            .collect();
+        if !heavy.is_empty() {
+            out.push(format!(
+                "**Fixed cost of Sky's engines:** an empty program (`print(1)`) takes {} on the fastest engine but far longer on {}. That start-up cost is paid on every run and is included in every Sky number above, so it decides the short cases.",
+                fmt_time(min as f64),
+                heavy.join(", ")
             ));
         }
     }
@@ -763,7 +791,7 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("did not beat compiled C"), "{text}");
-        assert!(text.contains("Why Sky wins on Matmul"), "{text}");
+        assert!(text.contains("Why Sky beats CPython on Matmul"), "{text}");
     }
 
     #[test]

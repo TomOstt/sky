@@ -171,11 +171,13 @@
 //! run's; and a call is started only while the caller has used at most half
 //! the budget (otherwise it is called in place), as in the interpreter.
 //!
-//! What is worth starting differs from the interpreter: native code runs an
-//! operation about `NATIVE_CALL_COST_SCALE` times faster, so a call must cost
-//! that many times the estimate to be worth a thread (`Config::for_native`).
-//! Native code is compiled for one thread configuration, which decides the
-//! windows (`sky build` executables have none).
+//! What is worth a thread differs from the interpreter: native code runs an
+//! operation so much faster that a call must cost `NATIVE_CALL_COST_SCALE`
+//! times the estimate, and a kernel have `NATIVE_FUSED_WORK_SCALE` times the
+//! work, to be worth one (`Config::for_native`; `sky-bench par --native`
+//! measures the break-evens). Native code is compiled for one thread
+//! configuration, which decides the windows (`sky build` executables have
+//! none).
 //!
 //! # Limits
 //!
@@ -662,7 +664,8 @@ fn build(module: &SirModule, emit: bool, relaxed: bool, slp: Slp, par: &Config) 
             dims: sh.dims,
             sites: sh.sites,
             relaxed,
-            par: par.clone(),
+            // The thresholds native code splits at (see `Config::for_native`).
+            par: par.for_native(),
         },
         main: Some(main),
         clif,

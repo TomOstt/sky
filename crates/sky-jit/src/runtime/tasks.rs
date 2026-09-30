@@ -23,6 +23,10 @@
 //!   inside rayon (it starts no calls of its own and runs its kernels on
 //!   itself), because a rayon worker that waits runs other jobs meanwhile, and
 //!   another call's runtime state must never be installed inside a call's.
+//! * **By the thread that joins.** Waking a worker costs tens of microseconds,
+//!   so a thread that joins its calls runs the ones no worker has started yet
+//!   itself, on its own state (see [`Task::claim`]): a call is run once, by
+//!   whichever thread gets to it first, and the outcome is the same.
 //! * **In place** (on the calling thread, at once) when the caller has used
 //!   more than half of the stack budget (so that a run that would stop with
 //!   "the program nests too deeply" stops at the same call), when the caller
@@ -49,6 +53,7 @@
 //! The one `unsafe` operation is calling a thunk by address; see
 //! [`call_thunk`].
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 
 use sky_interp::arith::{stack_address, STACK_BUDGET};
@@ -95,11 +100,22 @@ pub(super) struct Task {
     site: i32,
     args: Vec<u64>,
     nres: usize,
+    /// Whether some thread has taken the call to run it (see [`Task::claim`]).
+    claimed: AtomicBool,
     state: Mutex<TaskState>,
     finished: Condvar,
 }
 
 impl Task {
+    /// Takes the call to run it, if nobody has: true for exactly one caller.
+    /// A worker takes a call when it starts it; a thread that joins takes the
+    /// calls no worker has started yet and runs them itself (waking a worker
+    /// costs tens of microseconds, and the thread would only wait), so a call
+    /// is run once, by whichever thread gets to it first.
+    fn claim(&self) -> bool {
+        !self.claimed.swap(true, Ordering::AcqRel)
+    }
+
     /// Waits until the call has ended.
     fn wait(&self) {
         let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
@@ -187,6 +203,38 @@ fn take_outcome(st: &mut State, on_worker: bool) -> Outcome {
 /// the caller). The thunk runs outside the state's borrow: the native code
 /// it runs calls back into the runtime.
 fn run_here(task: &Task) -> Done {
+    crate::par::count_call(false);
+    // The calling thread may have an error pending (a join after a failure in
+    // the window runs the calls no worker started), and operands half pushed
+    // for an operation that never ran: the call must start from a clean state,
+    // or its own failure would not be stored (the first failure stays), the
+    // pending one would be taken for it, and the operands would be its own.
+    let pending = with(None, |st| {
+        Some((
+            st.error.take(),
+            std::mem::take(&mut st.deopt),
+            std::mem::take(&mut st.stack_trip),
+            std::mem::take(&mut st.args),
+            std::mem::take(&mut st.raw),
+            std::mem::take(&mut st.unpacked),
+        ))
+    });
+    let done = run_here_clean(task);
+    if let Some((error, deopt, stack_trip, args, raw, unpacked)) = pending {
+        with((), |st| {
+            st.error = error;
+            st.deopt = deopt;
+            st.stack_trip = stack_trip;
+            st.args = args;
+            st.raw = raw;
+            st.unpacked = unpacked;
+        });
+    }
+    done
+}
+
+/// [`run_here`] on a runtime state with nothing pending.
+fn run_here_clean(task: &Task) -> Done {
     let mut res = vec![0u64; task.nres];
     // SAFETY: `task.thunk` was made by `sky_rt_spawn` from an address native
     // code took of the thunk of this program, which is alive while the run
@@ -226,6 +274,11 @@ thread_local! {
 
 /// Runs the call on a worker, on a runtime state of its own.
 fn run_on_worker(task: Arc<Task>) {
+    // A thread that joined first has taken it.
+    if !task.claim() {
+        return;
+    }
+    crate::par::count_call(true);
     let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| worker_body(&task)));
     let done = ran.unwrap_or_else(|_| Done {
         outcome: Outcome::Err(internal("a worker panicked")),
@@ -244,7 +297,7 @@ fn worker_body(task: &Task) -> Done {
     let guard = begin_with(task.program.clone(), &mut sink, kernels);
     // Half of the run's budget: a call that needs more is run again on the
     // calling thread, which has the run's whole stack.
-    let limit = stack_address().saturating_sub(STACK_BUDGET / 2) as i64;
+    let limit = stack_address().saturating_sub(crate::par::worker_stack_budget()) as i64;
     let mut res = vec![0u64; task.nres];
     // SAFETY: as in `run_here`; the worker's state is installed.
     let status = unsafe {
@@ -331,16 +384,17 @@ pub extern "C" fn sky_rt_spawn(
         site,
         args,
         nres: nres.max(0) as usize,
+        claimed: AtomicBool::new(false),
         state: Mutex::new(TaskState::Running),
         finished: Condvar::new(),
     });
-    crate::par::count_call(pool.is_some());
     match pool {
         Some(pool) => {
             let t = task.clone();
             pool.spawn(move || run_on_worker(t));
         }
         None => {
+            task.claim();
             let done = run_here(&task);
             task.finish(done);
         }
@@ -358,11 +412,11 @@ pub extern "C" fn sky_rt_spawn(
     });
 }
 
-/// Waits for every call the group has started, and returns 0 if they all
-/// succeeded. Otherwise it installs the outcome of the earliest failing one as
+/// Waits for every call the group has started. It returns 0 if they all
+/// succeeded; otherwise it installs the outcome of the earliest failing one as
 /// the run's pending error (replacing any: see the module docs) and returns
-/// 1. Safe to call again: the calls started since are waited for, the outcome
-/// is the same.
+/// one. It is safe to call again: the calls started since are waited for, and
+/// the outcome is the same.
 #[no_mangle]
 pub extern "C" fn sky_rt_join(group: i64) -> i32 {
     let Some(tasks) = with(None, |st| {
@@ -381,11 +435,17 @@ pub extern "C" fn sky_rt_join(group: i64) -> i32 {
         if resolved {
             continue;
         }
+        // A call no worker has started yet is run here, now.
+        if crate::par::help_at_join() && task.claim() {
+            let done = run_here(task);
+            task.finish(done);
+        }
         let mut done = task.take().unwrap_or(Done {
             outcome: Outcome::Err(internal("a started call left nothing")),
             res: Vec::new(),
         });
         if let Outcome::Retry = done.outcome {
+            crate::par::count_retry();
             done = run_here(task);
         }
         with((), |st| {

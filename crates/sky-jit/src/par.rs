@@ -12,7 +12,7 @@
 //! kernels (`add`, `sub`, `mul`, `div`, `neg` on arrays).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use rayon::prelude::*;
@@ -36,12 +36,16 @@ pub struct Stats {
     /// Calls of a window that ran on the calling thread (the stack was deep,
     /// or the caller was a worker).
     pub calls_in_place: u64,
+    /// Calls that ran out of a worker's stack budget and were run again on
+    /// the calling thread.
+    pub calls_retried: u64,
 }
 
 static KERNELS_SPLIT: AtomicU64 = AtomicU64::new(0);
 static ELEMENTWISE_SPLIT: AtomicU64 = AtomicU64::new(0);
 static CALLS_ON_WORKERS: AtomicU64 = AtomicU64::new(0);
 static CALLS_IN_PLACE: AtomicU64 = AtomicU64::new(0);
+static CALLS_RETRIED: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn count_kernel() {
     KERNELS_SPLIT.fetch_add(1, Ordering::Relaxed);
@@ -60,6 +64,47 @@ pub(crate) fn count_call(on_worker: bool) {
     what.fetch_add(1, Ordering::Relaxed);
 }
 
+pub(crate) fn count_retry() {
+    CALLS_RETRIED.fetch_add(1, Ordering::Relaxed);
+}
+
+/// A test hook: the stack budget of a worker that runs a started call, in
+/// bytes, instead of half of the run's (`usize::MAX`: the default). A tiny
+/// one makes every started call that makes calls run out of stack on its
+/// worker and be run again on the calling thread, which the output must not
+/// show.
+static WORKER_BUDGET: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+#[doc(hidden)]
+pub fn set_worker_stack_budget_for_tests(bytes: Option<usize>) {
+    WORKER_BUDGET.store(bytes.unwrap_or(usize::MAX), Ordering::Relaxed);
+}
+
+/// The stack budget of a worker running a started call: half of the run's.
+pub(crate) fn worker_stack_budget() -> usize {
+    match WORKER_BUDGET.load(Ordering::Relaxed) {
+        usize::MAX => sky_interp::arith::STACK_BUDGET / 2,
+        n => n,
+    }
+}
+
+thread_local! {
+    static HELP_AT_JOIN: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// A test hook, for the current thread: whether a thread that joins the calls
+/// it started runs the ones no worker has started yet (the default; see
+/// `runtime::tasks`). Tests turn it off to make workers run every call, and
+/// compare both: the output must not show which thread ran what.
+#[doc(hidden)]
+pub fn set_help_at_join_for_tests(on: bool) {
+    HELP_AT_JOIN.with(|h| h.set(on));
+}
+
+pub(crate) fn help_at_join() -> bool {
+    HELP_AT_JOIN.with(std::cell::Cell::get)
+}
+
 /// The counts so far (see [`Stats`]).
 pub fn stats() -> Stats {
     Stats {
@@ -67,6 +112,7 @@ pub fn stats() -> Stats {
         elementwise_split: ELEMENTWISE_SPLIT.load(Ordering::Relaxed),
         calls_on_workers: CALLS_ON_WORKERS.load(Ordering::Relaxed),
         calls_in_place: CALLS_IN_PLACE.load(Ordering::Relaxed),
+        calls_retried: CALLS_RETRIED.load(Ordering::Relaxed),
     }
 }
 
@@ -87,7 +133,7 @@ pub const WORKER_STACK_BYTES: usize = 32 * 1024 * 1024;
 /// Work on this pool is leaf work: pure loops over slices that wait for
 /// nothing, so it cannot deadlock however it nests.
 pub fn pool_for(threads: usize) -> Option<Arc<ThreadPool>> {
-    static POOLS: OnceLock<Mutex<HashMap<usize, Option<Arc<ThreadPool>>>>> = OnceLock::new();
+    static POOLS: Pools = OnceLock::new();
     pool_in(&POOLS, threads, "sky-par")
 }
 
@@ -103,7 +149,7 @@ pub fn pool_for(threads: usize) -> Option<Arc<ThreadPool>> {
 /// ([`on_call_worker`]), and what it runs does not start calls or split
 /// kernels and elementwise operations, it runs them on the worker.
 pub fn call_pool_for(threads: usize) -> Option<Arc<ThreadPool>> {
-    static POOLS: OnceLock<Mutex<HashMap<usize, Option<Arc<ThreadPool>>>>> = OnceLock::new();
+    static POOLS: Pools = OnceLock::new();
     pool_in(&POOLS, threads, "sky-call")
 }
 
@@ -123,11 +169,10 @@ pub(crate) fn on_call_worker() -> bool {
     CALL_WORKER.with(std::cell::Cell::get)
 }
 
-fn pool_in(
-    pools: &'static OnceLock<Mutex<HashMap<usize, Option<Arc<ThreadPool>>>>>,
-    threads: usize,
-    name: &'static str,
-) -> Option<Arc<ThreadPool>> {
+/// The pools of one kind, by thread count.
+type Pools = OnceLock<Mutex<HashMap<usize, Option<Arc<ThreadPool>>>>>;
+
+fn pool_in(pools: &'static Pools, threads: usize, name: &'static str) -> Option<Arc<ThreadPool>> {
     let mut pools = pools
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()

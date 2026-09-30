@@ -62,14 +62,14 @@ use std::sync::Arc;
 
 use sky_diag::Span;
 use sky_interp::arith::{
-    arith, equal, expect_bool, expect_number, order, pow, pow_scalar, reciprocal,
-    recursion_too_deep, sign, stack_exhausted, ArithOp,
+    arith, equal, expect_bool, expect_number, order, pow, pow_scalar, range_bound, range_step,
+    reciprocal, recursion_too_deep, sign, stack_exhausted, ArithOp,
 };
 use sky_interp::array::{self, Ix};
 use sky_interp::contract;
 use sky_interp::solve;
 use sky_interp::{RuntimeError, Value};
-use sky_ir::{BlockData, CmpOp, Function, Module, OpData, OpKind, SliceAxis, Type};
+use sky_ir::{BlockData, CmpOp, Function, Module, OpData, OpKind, RangePart, SliceAxis, Type};
 use sky_units::{Dimension, MathFn, Rational};
 
 type R<T> = Result<T, RuntimeError>;
@@ -943,6 +943,10 @@ fn eval_op(
             Ok(Value::Bool(expect_bool(context.keyword(), arg(0)?, s)?))
         }
         OpKind::Assume => Ok(arg(0)?.clone()),
+        OpKind::ExpectRange { part } => match part {
+            RangePart::Bound => range_bound(arg(0)?, s),
+            RangePart::Step => range_step(arg(0)?, s),
+        },
         OpKind::ExpectNumber { context } => {
             let v = arg(0)?;
             expect_number(context.keyword(), v, s)?;

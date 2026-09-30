@@ -11,9 +11,10 @@
 //! records none it passes its own for each.
 
 use sky_diag::Span;
+use sky_types::MAX_RANGE_BOUND;
 use sky_units::{Dimension, Rational};
 
-use crate::{RuntimeError, Value};
+use crate::{format_number, RuntimeError, Value};
 
 /// The result type of every fallible evaluation step.
 pub type R<T> = Result<T, RuntimeError>;
@@ -195,6 +196,71 @@ pub fn expect_number(what: &str, v: &Value, span: Span) -> R<()> {
         Value::Number { .. } | Value::Array { .. } => Ok(()),
         other => Err(needs_a_number(what, other, span)),
     }
+}
+
+/// A bound or step of `range`: a dimensionless integer of magnitude at
+/// most [`MAX_RANGE_BOUND`].
+pub fn range_int(v: &Value, span: Span) -> R<i64> {
+    let Value::Number { value, dim } = v else {
+        return Err(RuntimeError::new(
+            format!("`range` needs an integer, found {}", v.kind()),
+            span,
+        )
+        .with_label(format!("this is {}", v.kind())));
+    };
+    if !dim.is_dimensionless() {
+        return Err(RuntimeError::new(
+            format!(
+                "`range` needs a dimensionless integer, found {}",
+                describe(dim)
+            ),
+            span,
+        )
+        .with_label(format!("this is {}", describe(dim)))
+        .with_note("a count of steps has no unit"));
+    }
+    if value.fract() != 0.0 {
+        return Err(RuntimeError::new(
+            format!("`range` needs an integer, found {}", format_number(*value)),
+            span,
+        )
+        .with_label("not an integer"));
+    }
+    if value.abs() > MAX_RANGE_BOUND as f64 {
+        return Err(RuntimeError::new(
+            format!(
+                "the bound {} of `range` is too large",
+                format_number(*value)
+            ),
+            span,
+        )
+        .with_label("too large")
+        .with_note("a bound may be at most 2^53 in size"));
+    }
+    Ok(*value as i64)
+}
+
+/// `range_int` as a value: the number, a dimensionless scalar (a `-0` is
+/// `0`, as the loop counts in integers). The SIR operation
+/// `expect.range[bound]`, for a bound or step computed at run time.
+pub fn range_bound(v: &Value, span: Span) -> R<Value> {
+    range_int(v, span).map(|n| Value::scalar(n as f64))
+}
+
+/// `v`, the step of a `range` that `range_bound` accepted, if it is not zero.
+/// The SIR operation `expect.range[step]`.
+pub fn range_step(v: &Value, span: Span) -> R<Value> {
+    match v {
+        Value::Number { value, .. } if *value == 0.0 => Err(zero_step(span)),
+        other => Ok(other.clone()),
+    }
+}
+
+/// The error of a `range` whose step is zero (`at`: the step's span).
+pub fn zero_step(at: Span) -> RuntimeError {
+    RuntimeError::new("the step of `range` cannot be zero", at)
+        .with_label("zero step")
+        .with_note("the index would never move, so the loop would never end")
 }
 
 /// `-v` or `+v`. An array is negated in its own buffer, since it is owned

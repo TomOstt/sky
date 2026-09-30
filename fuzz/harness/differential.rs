@@ -1323,7 +1323,8 @@ impl Gen<'_> {
             }, // 11 probe
             // 12 an input declaration: the run ends there, so it is rare
             if self.ind == 0 && !self.in_fn { 1 } else { 0 },
-            2, // 13 an assertion
+            2,                            // 13 an assertion
+            if loopable { 6 } else { 0 }, // 14 for
         ];
         match self.c.weighted(&w) {
             0 => {
@@ -1368,6 +1369,7 @@ impl Gen<'_> {
                 self.assert_stmt();
                 Exit::Falls
             }
+            14 => self.for_stmt(depth),
             _ => {
                 self.poly_probe();
                 Exit::Falls
@@ -1384,7 +1386,7 @@ impl Gen<'_> {
     /// engines must check it at run time.
     fn contract_cond(&mut self, depth: u32) -> String {
         let vars: Vec<(String, Ty)> = self.vars.iter().map(|v| (v.name.clone(), v.ty)).collect();
-        let cond = match self.c.weighted(&[40, 16, 14 + self.risk, 2]) {
+        let cond = match self.c.weighted(&[40, 16, 14 + self.risk, 4]) {
             0 if !vars.is_empty() => {
                 let (n, ty) = self.c.pick(&vars).clone();
                 match ty {
@@ -1828,6 +1830,157 @@ impl Gen<'_> {
         }
         self.ind -= 1;
         self.block(depth + 1);
+        self.loops -= 1;
+        self.mult = mult;
+        Exit::Falls
+    }
+
+    /// The header of a `for` over `range`: its text after `range` and the
+    /// number of iterations to budget for. Bounds are mostly literals (which
+    /// the checker checks), but also names and calls the checker cannot read
+    /// as constants, so the interpreter's checks of a computed bound or step
+    /// (a whole number, not too large, no unit, a step that is not zero) are
+    /// compared too: a fraction, a huge bound, a zero step, a value of unknown
+    /// type that is a Bool, an array or has a unit.
+    fn range_header(&mut self) -> (String, u64) {
+        let count = |lo: i64, hi: i64, step: i64| -> u64 {
+            let n = if step > 0 {
+                (hi - lo + step - 1) / step
+            } else {
+                (lo - hi - step - 1) / -step
+            };
+            n.max(0) as u64
+        };
+        match self.c.weighted(&[6, 3, 3, 7, 4, 3, 3, 2, 3]) {
+            // range(n)
+            0 => {
+                let n = self.small(0, 5);
+                (format!("({n})"), n as u64)
+            }
+            // range(a, b)
+            1 => {
+                let a = self.small(-2, 4);
+                let b = a + self.small(-1, 5);
+                (format!("({a}, {b})"), count(a, b, 1))
+            }
+            // range(a, b, s), literals
+            2 => {
+                let a = self.small(-3, 7);
+                let b = self.small(-3, 7);
+                let s = *self.c.pick(&[1, 2, 3, -1, -2]);
+                (format!("({a}, {b}, {s})"), count(a, b, s))
+            }
+            // Computed whole numbers.
+            3 => {
+                let (a, b, s) = (
+                    self.small(0, 3),
+                    self.small(2, 4),
+                    *self.c.pick(&[1, 2, -1]),
+                );
+                let na = self.bound(&format!("{} - 1", a + 1));
+                let nb = self.bound(&format!("{b} * 1"));
+                let ns = self.bound(&format!("{} / {}", s * 2, 2));
+                let (lo, hi) = if s > 0 { (a, b) } else { (b, a) };
+                let text = match self.c.below(4) {
+                    0 => format!("({nb})"),
+                    1 => format!("({na}, {nb})"),
+                    2 => format!("({na}, {nb}, {ns})"),
+                    _ => format!("({lo}, {hi}, {ns})"),
+                };
+                let n = count(lo, hi, s).max(count(0, b, 1)).min(5);
+                (text, n)
+            }
+            // A bound that is not a whole number.
+            4 => {
+                let n = self.bound_of(&["5 / 2", "1 / 3", "-0.5", "2.000001"]);
+                match self.c.below(3) {
+                    0 => (format!("({n})"), 0),
+                    1 => (format!("(0, {n})"), 0),
+                    _ => (format!("(0, 3, {n})"), 0),
+                }
+            }
+            // A zero step, computed.
+            5 => {
+                let z = self.bound_of(&["3 - 3", "0 * 5", "-(2 - 2)"]);
+                (format!("(0, 3, {z})"), 0)
+            }
+            // Too large, or huge but fine (the range is then empty).
+            6 => match self.c.below(3) {
+                0 => {
+                    let n = self.bound("2 ^ 60");
+                    (format!("({n})"), 0)
+                }
+                1 => {
+                    let n = self.bound("10 ^ 300");
+                    (format!("(0, 2, {n})"), 0)
+                }
+                _ => {
+                    let n = self.bound("2 ^ 53");
+                    (format!("({n}, {n})"), 0)
+                }
+            },
+            // A value the checker cannot type: whatever it is fails or runs
+            // at run time.
+            7 => match self.unknown.clone() {
+                Some(u) => {
+                    let arg = *self
+                        .c
+                        .pick(&["3", "2.5", "1 m", "true", "[1, 2]", "-1", "2 ^ 54"]);
+                    let n = self.bound(&format!("{u}({arg})"));
+                    match self.c.below(2) {
+                        0 => (format!("({n})"), 3),
+                        _ => (format!("(0, {n})"), 3),
+                    }
+                }
+                None => ("(2)".to_string(), 2),
+            },
+            // Computed, negative direction and empty.
+            _ => {
+                let lo = self.small(0, 4);
+                let a = self.bound(&format!("{} + 1", lo));
+                let s = self.bound("-1 * 1");
+                (format!("({a}, 0, {s})"), 5)
+            }
+        }
+    }
+
+    /// A name bound just before a loop to `value`, which the checker does
+    /// not read as a constant.
+    fn bound(&mut self, value: &str) -> String {
+        let n = self.fresh("n");
+        self.line(&format!("{n} = {value}"));
+        n
+    }
+
+    /// [`Self::bound`] of one of `values`.
+    fn bound_of(&mut self, values: &[&str]) -> String {
+        let value = *self.c.pick(values);
+        self.bound(value)
+    }
+
+    /// A small integer: `lo` and up to `span - 1` more.
+    fn small(&mut self, lo: i64, span: usize) -> i64 {
+        lo + self.c.below(span) as i64
+    }
+
+    fn for_stmt(&mut self, depth: usize) -> Exit {
+        let (header, iterations) = self.range_header();
+        let i = self.fresh("i");
+        self.line(&format!("for {i} in range{header}:"));
+        let mult = self.mult;
+        self.mult *= iterations.max(1);
+        self.loops += 1;
+        let mark = self.vars.len();
+        self.vars.push(Var {
+            name: i,
+            ty: Ty::Num(ZERO),
+            assign: false,
+            update: false,
+            module: !self.in_fn && self.ind == 0,
+            retype: false,
+        });
+        self.block(depth + 1);
+        self.vars.truncate(mark);
         self.loops -= 1;
         self.mult = mult;
         Exit::Falls

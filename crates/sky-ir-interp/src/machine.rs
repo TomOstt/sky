@@ -41,8 +41,9 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use rayon::prelude::*;
 use sky_diag::Span;
 use sky_interp::arith::{
-    arith_owned, arity_mismatch, equal, expect_bool, expect_number, order, pow, reciprocal,
-    recursion_too_deep, sign, ArithOp, Operand, StackMeter, MAX_CALL_DEPTH, STACK_BUDGET,
+    arith_owned, arity_mismatch, equal, expect_bool, expect_number, order, pow, range_bound,
+    range_step, reciprocal, recursion_too_deep, sign, ArithOp, Operand, StackMeter, MAX_CALL_DEPTH,
+    STACK_BUDGET,
 };
 use sky_interp::array::{self, Ix};
 use sky_interp::contract;
@@ -51,7 +52,7 @@ use sky_interp::Value;
 use sky_ir::parallel::{CallGroup, Config, FnPlan, Role};
 use sky_ir::{
     BlockData, BlockId, CmpOp, Function, Lifetimes, Module, NumberType, OpData, OpId, OpKind,
-    RegionId, SliceAxis, Type, ValueId,
+    RangePart, RegionId, SliceAxis, Type, ValueId,
 };
 use sky_units::{Dimension, Rational};
 
@@ -1477,6 +1478,17 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             act.define1(op, Value::Bool(b))
         }
         OpKind::Assert { .. } => assert_op(act, op),
+
+        // The checks of a `range` bound or step computed at run time.
+        OpKind::ExpectRange { part } => {
+            let [a] = fixed(op)?;
+            let v = act.get(a, s)?.clone();
+            let out = match part {
+                RangePart::Bound => range_bound(&v, s)?,
+                RangePart::Step => range_step(&v, s)?,
+            };
+            act.define(op, vec![out])
+        }
 
         // A tag promise: the value as it is (the retag is the type's).
         OpKind::Assume => {

@@ -252,6 +252,9 @@ impl Printer<'_> {
             OpKind::ExpectNumber { context } => {
                 let _ = write!(self.out, "[{}]", context.text());
             }
+            OpKind::ExpectRange { part } => {
+                let _ = write!(self.out, "[{}]", part.text());
+            }
             OpKind::Assert {
                 kind,
                 text,

@@ -61,8 +61,8 @@ use crate::ir::{
     Edition, Effect, EffectSet, Module, NumberType, OpId, RegionId, Repr, Type, ValueId,
 };
 use crate::op::{
-    Algorithm, AssertKind, BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind, Side,
-    SliceAxis, SolveMethod,
+    Algorithm, AssertKind, BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind,
+    RangePart, Side, SliceAxis, SolveMethod,
 };
 use crate::verify::MAX_REGION_DEPTH;
 
@@ -963,6 +963,17 @@ impl<'a> Parser<'a> {
                 };
                 self.expect(']')?;
                 OpKind::ExpectNumber { context }
+            }
+            "expect.range" => {
+                self.expect('[')?;
+                self.skip_inline();
+                let at = self.pos;
+                let word = self.word();
+                let Some(part) = RangePart::ALL.into_iter().find(|p| p.text() == word) else {
+                    return self.err_at(at, self.pos.max(at + 1), "expected `bound` or `step`");
+                };
+                self.expect(']')?;
+                OpKind::ExpectRange { part }
             }
             "assume" => OpKind::Assume,
             "assert" => self.assert_attrs()?,

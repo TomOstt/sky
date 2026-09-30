@@ -747,6 +747,160 @@ print(first([1, 2, 3]))
     assert_eq!(o.stdout.lines().count(), 5, "{}", o.stdout);
 }
 
+// ----- `range` with a bound or step computed at run time -----
+
+#[test]
+fn a_range_with_computed_bounds_and_steps_counts_like_the_tree_walker() {
+    let src = "\
+N = 4
+total = 0
+for i in range(N):
+    total += i
+print(total)
+def count(n):
+    t = 0
+    for i in range(n):
+        t += i
+    return t
+print(count(5), count(0), count(-3))
+def steps(a, b, s):
+    t = 0
+    for i in range(a, b, s):
+        t += i
+    return t
+print(steps(0, 10, 3), steps(10, 0, -3), steps(10, 0, 3), steps(-0, 3, 1))
+M = 2 * N
+S = M - 5
+for j in range(M, 0, -S):
+    print(j)
+print(count(6 / 2), count(2 ^ 3))
+";
+    let o = assert_same(src);
+    assert_eq!(o.error, None, "{}", o.stdout);
+    assert_eq!(o.stdout.lines().count(), 7, "{}", o.stdout);
+}
+
+#[test]
+fn a_computed_range_bound_that_is_not_a_whole_number_is_the_same_error() {
+    let src = "\
+n = 5 / 2
+print(\"before\")
+for i in range(n):
+    print(i)
+print(\"after\")
+";
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "before\n");
+    assert_eq!(
+        o.error.as_deref(),
+        Some("`range` needs an integer, found 2.5")
+    );
+    // Each of the three arguments, and the argument's own span.
+    for (call, found) in [
+        ("range(a, 4, 1)", "0.5"),
+        ("range(0, a, 1)", "0.5"),
+        ("range(0, 4, a)", "0.5"),
+    ] {
+        let src = format!("a = 1 / 2\nfor i in {call}:\n    print(i)\n");
+        let o = assert_same(&src);
+        assert_eq!(
+            o.error.as_deref(),
+            Some(format!("`range` needs an integer, found {found}").as_str()),
+            "{call}"
+        );
+    }
+}
+
+#[test]
+fn a_computed_range_bound_that_is_too_large_is_the_same_error() {
+    for bound in ["2 ^ 53 + 2", "-(2 ^ 60)", "10 ^ 300"] {
+        let src = format!("n = {bound}\nfor i in range(n):\n    print(i)\n");
+        let o = assert_same(&src);
+        let message = o.error.unwrap_or_default();
+        assert!(
+            message.contains("of `range` is too large"),
+            "{bound}: {message}"
+        );
+    }
+    // 2^53 itself is fine: the loop is empty (or would take forever, so it
+    // starts from the far end).
+    let o = assert_same("n = 2 ^ 53\nfor i in range(n, n):\n    print(i)\nprint(\"ok\")\n");
+    assert_eq!(o.stdout, "ok\n");
+}
+
+#[test]
+fn a_computed_zero_step_is_the_same_error_after_the_bounds_are_read() {
+    let src = "\
+def bound(x):
+    print(\"bound\", x)
+    return x
+s = 3 - 3
+print(\"start\")
+for i in range(bound(0), bound(5), bound(s)):
+    print(i)
+";
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "start\nbound 0\nbound 5\nbound 0\n");
+    assert_eq!(
+        o.error.as_deref(),
+        Some("the step of `range` cannot be zero")
+    );
+    // The step is checked after every argument: a bad bound wins.
+    let src = "s = 0\nn = 1 / 2\nfor i in range(0, n, s):\n    print(i)\n";
+    let o = assert_same(src);
+    assert_eq!(
+        o.error.as_deref(),
+        Some("`range` needs an integer, found 0.5")
+    );
+    // Also -0.
+    let o = assert_same("s = -(1 - 1)\nfor i in range(0, 3, s):\n    print(i)\n");
+    assert_eq!(
+        o.error.as_deref(),
+        Some("the step of `range` cannot be zero")
+    );
+}
+
+#[test]
+fn a_range_argument_of_unknown_type_is_checked_as_the_tree_walker_does() {
+    // The checker cannot type an unannotated parameter, so what it is (a
+    // Bool, an array, a number with a unit) is found out when the loop
+    // starts.
+    let def = "def count(n):\n    t = 0\n    for i in range(n):\n        t += i\n    return t\n";
+    for (arg, message) in [
+        ("true", "`range` needs an integer, found a Bool"),
+        ("[1, 2]", "`range` needs an integer, found a vector"),
+        ("3 m", "`range` needs a dimensionless integer, found length"),
+        ("2.5", "`range` needs an integer, found 2.5"),
+    ] {
+        let src = format!("{def}print(count({arg}))\n");
+        let o = assert_same(&src);
+        let got = o.error.unwrap_or_default();
+        assert!(got.starts_with(message), "{arg}: {got}");
+    }
+}
+
+#[test]
+fn a_computed_range_in_a_function_reads_its_bounds_once_and_runs_nested_loops() {
+    let src = "\
+def tri(n):
+    t = 0
+    for i in range(n):
+        for j in range(i + 1):
+            t += 1
+    return t
+print(tri(4), tri(10))
+k = 3
+acc = 0
+for i in range(k):
+    for j in range(k - i):
+        acc += 10 ^ i
+        k = 1
+print(acc, k)
+";
+    let o = assert_same(src);
+    assert_eq!(o.error, None, "{}", o.stdout);
+}
+
 #[test]
 fn literals_arithmetic_and_builtins_agree() {
     let o = assert_same(

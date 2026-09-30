@@ -158,6 +158,36 @@ fn nothing_that_fails_at_run_time_is_folded() {
 }
 
 #[test]
+fn a_range_check_of_a_good_constant_folds_away_and_a_bad_one_stays() {
+    use sky_ir::RangePart;
+    let check = |x: f64, part: RangePart| {
+        let mut b = main_builder();
+        let c = flt(&mut b, x);
+        let r = b.op1(OpKind::ExpectRange { part }, vec![c], num(), sp());
+        print(&mut b, r);
+        let mut m = finish_main(b);
+        fold(&mut m);
+        verify(&m).expect("still well formed");
+        kind_of(&m.functions[0], r)
+    };
+    for part in RangePart::ALL {
+        assert!(matches!(check(4.0, part), OpKind::ConstFloat { .. }));
+        assert!(matches!(check(-3.0, part), OpKind::ConstFloat { .. }));
+    }
+    // What would fail at run time is left to fail there.
+    for bad in [2.5, 1e300, -(2f64.powi(60))] {
+        assert!(matches!(
+            check(bad, RangePart::Bound),
+            OpKind::ExpectRange { .. }
+        ));
+    }
+    assert!(matches!(
+        check(0.0, RangePart::Step),
+        OpKind::ExpectRange { .. }
+    ));
+}
+
+#[test]
 fn dimension_mismatch_is_not_folded() {
     let len = Type::scalar(Dimension::LENGTH);
     let mut b = main_builder();

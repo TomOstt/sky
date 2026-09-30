@@ -151,6 +151,28 @@ impl NumberContext {
     }
 }
 
+/// Which check of a `range` an [`OpKind::ExpectRange`] makes.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum RangePart {
+    /// A bound or step: a dimensionless whole number of magnitude at most
+    /// 2^53.
+    Bound,
+    /// A step: not zero.
+    Step,
+}
+
+impl RangePart {
+    pub const ALL: [RangePart; 2] = [RangePart::Bound, RangePart::Step];
+
+    /// The text format's attribute.
+    pub fn text(self) -> &'static str {
+        match self {
+            RangePart::Bound => "bound",
+            RangePart::Step => "step",
+        }
+    }
+}
+
 /// Why a literal has no value, for [`OpKind::LiteralError`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum LiteralError {
@@ -500,6 +522,31 @@ pub enum OpKind {
         context: NumberContext,
     },
 
+    /// `expect.range[bound] a`, `expect.range[step] a`: one operand, one
+    /// result. The run-time checks of a `range` whose bound or step the
+    /// checker could not read as a constant (`for i in range(n)`); the
+    /// interpreter makes them when the loop starts, and so does SIR.
+    ///
+    /// * `bound` gives the operand back as a dimensionless scalar if it is
+    ///   a dimensionless whole number of magnitude at most 2^53, and
+    ///   otherwise fails with `sky run`'s error ("`range` needs an
+    ///   integer, found 2.5", "`range` needs a dimensionless integer,
+    ///   found length", "the bound 1e300 of `range` is too large") at the
+    ///   operation's span, which lowering sets to the argument's. A typed
+    ///   number can still fail; an operand that is not a number fails the
+    ///   same way, which only an operand of unknown type can be.
+    /// * `step` gives the (already checked) step back and fails with "the
+    ///   step of `range` cannot be zero" if it is zero, at the operation's
+    ///   span, which lowering sets to the step argument's.
+    ///
+    /// Lowering makes the `bound` check right after each argument is
+    /// evaluated, left to right, and the `step` check after the last, as
+    /// the interpreter does. Arguments that are literals are not checked
+    /// here: the checker did. Effect `Fail`.
+    ExpectRange {
+        part: RangePart,
+    },
+
     // ----- structured control flow -----
     /// `if`: one Bool operand (the condition) and two regions, `then` and
     /// `else`. Each region's block takes no arguments and ends in `yield`
@@ -644,6 +691,7 @@ impl OpKind {
             OpKind::Not => "not",
             OpKind::ExpectBool { .. } => "expect.bool",
             OpKind::ExpectNumber { .. } => "expect.number",
+            OpKind::ExpectRange { .. } => "expect.range",
             OpKind::If => "if",
             OpKind::While => "while",
             OpKind::Yield => "yield",
@@ -709,7 +757,9 @@ impl OpKind {
             // Converting to a tiny unit can overflow.
             OpKind::Show { .. } => (fail, false, false, false),
             // A value that is not a Bool fails.
-            OpKind::ExpectBool { .. } | OpKind::ExpectNumber { .. } => (fail, false, false, false),
+            OpKind::ExpectBool { .. }
+            | OpKind::ExpectNumber { .. }
+            | OpKind::ExpectRange { .. } => (fail, false, false, false),
             // A false condition fails.
             OpKind::Assert { .. } => (fail, false, false, false),
             // A singular matrix or a zero scalar fails.

@@ -49,7 +49,7 @@ pub use ir::{
 pub use lifetime::{Lifetimes, ReuseSite};
 pub use op::{
     Algorithm, AssertKind, BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind,
-    OpProperties, Side, SliceAxis, SolveMethod,
+    OpProperties, RangePart, Side, SliceAxis, SolveMethod,
 };
 pub use parse::{parse, ParseError};
 pub use pass::{

@@ -1113,6 +1113,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 }
                 self.generic(id, op)
             }
+            OpKind::ExpectRange { .. } => self.generic(id, op),
             OpKind::ExpectNumber { .. } => {
                 let a = self.operand(op, 0)?;
                 if let (Rep::F64, Some(d)) = (a.rep, self.operand_dim(op, 0)) {

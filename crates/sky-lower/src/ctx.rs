@@ -105,10 +105,6 @@ pub(crate) struct Lower<'a> {
     /// The derivative functions `derivative(f, x)(...)` calls need, built
     /// once the module's functions exist (see `derivative.rs`).
     pub(crate) derivatives: Vec<Wanted>,
-    /// Lowering for execution ([`crate::lower_for_run`]): refuse what would
-    /// run differently from `sky run`'s tree walker, instead of lowering it
-    /// faithfully as far as SIR can say.
-    pub(crate) for_run: bool,
     /// The `accuracy` declarations met so far (see `accuracy.rs`).
     pub(crate) goals: Vec<sky_ir::roundoff::Goal>,
 }

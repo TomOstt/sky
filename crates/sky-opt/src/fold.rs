@@ -48,10 +48,12 @@
 //!   the e-graph's business and are not always float-exact.
 
 use sky_diag::Span;
-use sky_interp::arith::{arith, equal, expect_bool, order, pow, reciprocal, sign, ArithOp};
+use sky_interp::arith::{
+    arith, equal, expect_bool, order, pow, range_bound, range_step, reciprocal, sign, ArithOp,
+};
 use sky_interp::Value;
 use sky_ir::exact::{self, Analysis};
-use sky_ir::{CmpOp, Function, Module, OpId, OpKind, Type, ValueId};
+use sky_ir::{CmpOp, Function, Module, OpId, OpKind, RangePart, Type, ValueId};
 use sky_units::{Dimension, Rational};
 
 use crate::rewrite::Rewrite;
@@ -204,6 +206,10 @@ fn eval(kind: &OpKind, args: &[Value], s: Span) -> Option<Value> {
             };
             Some(Value::Bool(holds))
         }
+        (OpKind::ExpectRange { part }, 1) => match part {
+            RangePart::Bound => range_bound(&args[0], s).ok(),
+            RangePart::Step => range_step(&args[0], s).ok(),
+        },
         (OpKind::Not, 1) => expect_bool("not", &args[0], s)
             .ok()
             .map(|b| Value::Bool(!b)),
@@ -288,6 +294,7 @@ fn fold_op(
             | OpKind::Norm
             | OpKind::Cmp(_)
             | OpKind::Not
+            | OpKind::ExpectRange { .. }
     );
     let [result] = op.results[..] else {
         return false;

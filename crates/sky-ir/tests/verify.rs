@@ -1628,6 +1628,32 @@ fn expect_number_checks_a_number_or_unknown_operand_and_gives_it_back() {
 }
 
 #[test]
+fn expect_range_takes_a_number_or_unknown_and_gives_a_dimensionless_scalar() {
+    use sky_ir::RangePart;
+    for part in RangePart::ALL {
+        let kind = OpKind::ExpectRange { part };
+        accepts(&unary(kind.clone(), one(), one()));
+        accepts(&unary(kind.clone(), Type::Unknown, one()));
+        // A typed operand that can never pass is still the run time's to
+        // fail: the checker types the ones it can.
+        accepts(&unary(kind.clone(), len(), one()));
+        accepts(&unary(kind.clone(), Type::Unknown, Type::Unknown));
+        rejects(
+            &unary(kind.clone(), Type::Bool, one()),
+            "needs a number or unknown operand",
+        );
+        rejects(
+            &unary(kind.clone(), one(), len()),
+            "must be a dimensionless scalar",
+        );
+        rejects(
+            &unary(kind, one(), vec3()),
+            "must be a dimensionless scalar",
+        );
+    }
+}
+
+#[test]
 fn assume_changes_only_the_tags() {
     let n = || Shape::matrix(3, 3);
     let plain = num(Dimension::LENGTH, n(), TagSet::EMPTY, Repr::Unchosen);

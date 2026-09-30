@@ -255,6 +255,8 @@ fn generated_programs_agree_in_both_engines() {
         "false",
         "\"hi\"",
         "while true:",
+        "for ",
+        "range(",
         "def f",
         "assert ",
         "requires ",

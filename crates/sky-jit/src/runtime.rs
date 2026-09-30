@@ -54,6 +54,7 @@
 #![allow(unsafe_code)]
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io::Write;
 use std::ptr::NonNull;
 use std::rc::Rc;
@@ -161,6 +162,10 @@ struct State {
     written: usize,
     /// The value table of a `fused` body, kept between calls.
     scratch: Vec<Option<Value>>,
+    /// Compiled `fused` kernels of this run, by the operation's address
+    /// (stable while the run borrows the module; the state, and so the
+    /// cache, is per run).
+    kernels: HashMap<usize, KernelEntry>,
     out: NonNull<dyn Write>,
 }
 
@@ -207,6 +212,7 @@ pub(crate) fn begin(program: Arc<Program>, out: &mut dyn Write) -> RunGuard {
             deopt: false,
             written: 0,
             scratch: Vec::new(),
+            kernels: HashMap::new(),
             out,
         });
     });
@@ -516,14 +522,16 @@ pub(crate) extern "C" fn sky_rt_op(site: i32) -> i64 {
     with(0, |st| {
         let args = std::mem::take(&mut st.args);
         let mut scratch = std::mem::take(&mut st.scratch);
+        let mut kernels = std::mem::take(&mut st.kernels);
         let result = match st.program.op(site) {
-            Some((f, op)) => eval_op(f, op, &args, &mut scratch),
+            Some((f, op)) => eval_op(f, op, &args, &mut scratch, &mut kernels),
             None => Err(internal("unknown site")),
         };
         let mut args = args;
         args.clear();
         st.args = args;
         st.scratch = scratch;
+        st.kernels = kernels;
         match result {
             Ok(v) => st.alloc(Rc::new(v)),
             Err(e) => {
@@ -553,7 +561,7 @@ fn fail_with(st: &mut State, site: i32, values: &[f64]) {
             .unwrap_or(Dimension::DIMENSIONLESS);
         args.push(Arg::Val(Value::number(*x, dim)));
     }
-    match eval_op(f, op, &args, &mut Vec::new()) {
+    match eval_op(f, op, &args, &mut Vec::new(), &mut HashMap::new()) {
         Err(e) => st.fail(e),
         Ok(_) => st.fail(internal(format!(
             "`{}` failed inline but succeeds in the runtime",
@@ -814,7 +822,13 @@ fn malformed(what: impl std::fmt::Display, span: Span) -> RuntimeError {
 
 /// Evaluates a non-control-flow operation on evaluated operands: the glue of
 /// `pure_op` in `sky-ir-interp`'s `machine.rs`, over the same functions.
-fn eval_op(func: &Function, op: &OpData, a: &[Arg], scratch: &mut Vec<Option<Value>>) -> R<Value> {
+fn eval_op(
+    func: &Function,
+    op: &OpData,
+    a: &[Arg],
+    scratch: &mut Vec<Option<Value>>,
+    kernels: &mut HashMap<usize, KernelEntry>,
+) -> R<Value> {
     let s = op.span;
     let arg = |i: usize| -> R<&Value> {
         a.get(i).map(Arg::get).ok_or_else(|| {
@@ -914,7 +928,7 @@ fn eval_op(func: &Function, op: &OpData, a: &[Arg], scratch: &mut Vec<Option<Val
             expect_number(context.keyword(), v, s)?;
             Ok(v.clone())
         }
-        OpKind::Fused => fused(func, op, a, scratch),
+        OpKind::Fused => fused(func, op, a, scratch, kernels),
         other => Err(malformed(
             format!("unexpected `{}` in the native runtime", other.mnemonic()),
             s,
@@ -999,7 +1013,76 @@ fn slice(op: &OpData, a: &[Arg], axes: &[SliceAxis]) -> R<Value> {
 /// (`fused_op` in `sky-ir-interp`): each body operation is the operation of
 /// the same kind on numbers, except `neg`, which is `0 - x`. This is the
 /// entry point a compiled kernel replaces.
-fn fused(func: &Function, op: &OpData, a: &[Arg], vals: &mut Vec<Option<Value>>) -> R<Value> {
+/// What the run knows of one `fused` operation: the operand kinds its kernel
+/// was compiled (or refused) for, the kernel, and how many elements the
+/// interpreted loop has run for it.
+#[derive(Default)]
+pub(crate) struct KernelEntry {
+    sigs: Vec<crate::kernel::InputSig>,
+    kernel: Option<crate::kernel::Kernel>,
+    interpreted: usize,
+}
+
+/// Elements a `fused` operation runs interpreted before its body is
+/// compiled: compiling costs about what interpreting this many does (the
+/// SIR interpreter's threshold, `JitOptions::DEFAULT_THRESHOLD`).
+const KERNEL_THRESHOLD: usize = 512;
+
+/// A compiled kernel for `op` if one pays, run on the operands: its result
+/// and error are the loop's below (see `crate::kernel`). `None`: run the loop.
+fn fused_native(
+    op: &OpData,
+    func: &Function,
+    a: &[Arg],
+    count: usize,
+    kernels: &mut HashMap<usize, KernelEntry>,
+) -> Option<R<(Vec<f64>, Dimension)>> {
+    use crate::kernel::{compile_kernel, Input, InputSig};
+    let mut sigs = Vec::with_capacity(a.len());
+    let mut args = Vec::with_capacity(a.len());
+    for input in a {
+        match input.get() {
+            Value::Array { data, dim, .. } => {
+                sigs.push(InputSig {
+                    dim: *dim,
+                    array: true,
+                });
+                args.push(Input::Array(data));
+            }
+            Value::Number { value, dim } => {
+                sigs.push(InputSig {
+                    dim: *dim,
+                    array: false,
+                });
+                args.push(Input::Scalar(*value));
+            }
+            _ => return None,
+        }
+    }
+    let entry = kernels.entry(op as *const OpData as usize).or_default();
+    if entry.sigs != sigs {
+        entry.interpreted = entry.interpreted.saturating_add(count);
+        if entry.interpreted < KERNEL_THRESHOLD {
+            return None;
+        }
+        entry.kernel = compile_kernel(func, op, &sigs).ok();
+        entry.sigs = sigs;
+    }
+    let kernel = entry.kernel.as_ref()?;
+    Some(
+        kernel
+            .run_alloc(&args, count)
+            .map(|data| (data, kernel.output_dim())),
+    )
+}
+
+fn fused(
+    func: &Function,
+    op: &OpData,
+    a: &[Arg],
+    vals: &mut Vec<Option<Value>>,
+    kernels: &mut HashMap<usize, KernelEntry>,
+) -> R<Value> {
     let s = op.span;
     let [region] = op.regions[..] else {
         return Err(malformed("`fused` takes one region", s));
@@ -1053,6 +1136,10 @@ fn fused(func: &Function, op: &OpData, a: &[Arg], vals: &mut Vec<Option<Value>>)
         return Err(malformed("`fused` needs an array operand", s));
     };
     let count: usize = dims.iter().product();
+    if let Some(done) = fused_native(op, func, a, count, kernels) {
+        let (data, dim) = done?;
+        return Ok(Value::array(dims.clone(), data, dim));
+    }
     // The body's values, in a buffer the runtime keeps between calls (a value
     // is always set before it is read, so nothing is cleared).
     if vals.len() < func.values.len() {
@@ -1188,7 +1275,7 @@ fn body_eval(func: &Function, op: &OpData, vals: &mut [Option<Value>]) -> R<()> 
             for v in &op.operands {
                 args.push(Arg::Val(value_of(vals, *v, s)?.clone()));
             }
-            eval_op(func, op, &args, &mut Vec::new())?
+            eval_op(func, op, &args, &mut Vec::new(), &mut HashMap::new())?
         }
     };
     let [r] = op.results[..] else {

@@ -1119,15 +1119,11 @@ impl<'a, 'm> FnTx<'a, 'm> {
         }
     }
 
-    /// `fused`: **the call site for `crate::kernel::compile_kernel`.** Today
-    /// the runtime runs the body the interpreter's way (`runtime::fused`,
-    /// reached through [`FnTx::generic`]: the operands are pushed, the result
-    /// is a handle). To use compiled kernels, compile one here from
-    /// `(self.f, op, &input_sigs)` (the input signatures come from the
-    /// operands' types: dimension, array or broadcast scalar), keep it with
-    /// the module's other data, and have the runtime run it on the operands'
-    /// values in `runtime::fused` in place of the body loop. A kernel has the
-    /// interpreter's exact result and error, so nothing else changes.
+    /// `fused`: the runtime runs it (`runtime::fused`, reached through
+    /// [`FnTx::generic`]: the operands are pushed, the result is a handle).
+    /// Once an operation has run about 512 elements, the runtime compiles its
+    /// body with `crate::kernel::compile_kernel` and runs the SIMD kernel,
+    /// which has the interpreted loop's exact result and error.
     fn fused(&mut self, id: OpId, op: &'m OpData) -> Res<()> {
         self.generic(id, op)
     }

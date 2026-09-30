@@ -34,6 +34,14 @@ pub fn host_isa() -> Result<OwnedTargetIsa, String> {
     flags.set("opt_level", "speed").map_err(|e| e.to_string())?;
     // Code is placed wherever the JIT's allocator puts it.
     flags.set("is_pic", "false").map_err(|e| e.to_string())?;
+    // A function returns its status and all of its results (a derivative
+    // function: status, value, derivative). x86-64 System V has two return
+    // registers for integers and two for floats, so Cranelift refuses more
+    // unless the extras go through a hidden return area, which this allows.
+    // AArch64 has more return registers, which is why only x86-64 needs it.
+    flags
+        .set("enable_multi_ret_implicit_sret", "true")
+        .map_err(|e| e.to_string())?;
     let isa_builder = cranelift_native::builder().map_err(|e| e.to_string())?;
     isa_builder
         .finish(settings::Flags::new(flags))

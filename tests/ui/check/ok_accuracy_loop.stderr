@@ -1,0 +1,7 @@
+tests/ui/check/ok_accuracy_loop.sky:8:5: warning: cannot prove that `s` is accurate to within 1e-9 (relative)
+  |
+8 |     accuracy s within 1e-9
+  |     ^^^^^^^^^^^^^^^^^^^^^^ the budget is declared here
+5 |     while i < n:
+  |     ------------ is a loop whose number of iterations the analysis does not know
+  = note: the analysis could not bound the error at all

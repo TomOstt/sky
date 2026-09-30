@@ -1,0 +1,13 @@
+crates/sky-ast/tests/ui/err_equation_body.sky:3:7: error: second derivatives are not supported
+  |
+3 |     x'' = 1 m/s^2
+  |       ^
+  |      - the first derivative
+  = help: write the velocity as a variable of its own: `v: m/s`, `x' = v`, `v' = ...`
+
+crates/sky-ast/tests/ui/err_equation_body.sky:4:7: error: expected `:`, `'` or `=` after `y`, found integer literal `1`
+  |
+4 |     y 1
+  |       ^
+  |     - this name
+  = help: declare it (`x: m`), give its derivative (`x' = ...`), or define it (`a = ...`)

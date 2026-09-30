@@ -6,6 +6,7 @@ use sky_diag::{display_safe, SourceFile};
 use sky_project::{Project, SystemIdentity};
 use sky_syntax::Edition;
 
+mod accuracy;
 mod frontend;
 mod ir;
 mod repl;
@@ -13,7 +14,7 @@ mod run;
 
 const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] <file.sky>\n       sky run [--engine=auto|ast|sir] <file.sky>\n       sky repl\n\n\
                      <stage> is `lower`, `final` (the default), or `after:<pass>` for one of\n\
-                     fold, egraph, dce, cholesky\n\
+                     fold, egraph, contracts, dce, fuse, cholesky\n\
                      --engine picks how `sky run` executes: `ast` (the tree-walking\n\
                      interpreter, the default), `sir` (lower to SIR, run the optimized IR),\n\
                      or `auto` (SIR, falling back to the tree-walker for programs SIR cannot\n\
@@ -255,6 +256,7 @@ fn check_source(
         sky_types::Env::with_prelude(),
         opts.explain,
         opts.emit_ir.is_some(),
+        true,
         edition,
     );
     // Pass the source unchanged: spans are byte offsets into it, and the

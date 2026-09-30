@@ -1,0 +1,4 @@
+equation e(t: s):
+    x: m
+    x'' = 1 m/s^2
+    y 1

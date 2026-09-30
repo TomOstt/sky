@@ -1,0 +1,16 @@
+tests/ui/check/ok_equation.sky:10:7: note: `orbit` is a second-order system, so a symplectic integrator applies
+   |
+10 | sol = solve orbit from 0 s to 1 yr with r = [1 AU, 0 m], v = [0 m/s, 29.8 km/s]:
+   |       ^^^^^^^^^^^
+   = note: `r' = v`, and the accelerations depend only on `t` and the positions, not on the velocities
+   = note: tolerance: 1e-9
+   = note: to be conserved: `energy`; the solver monitors the drift of each and reports it
+   = note: the method is chosen when the program runs; `print(explain(sol))` says which, and why
+
+tests/ui/check/ok_equation.sky:22:5: note: `decay` is a general first-order system
+   |
+22 | d = solve decay from 0 s to 4 s with n = 1
+   |     ^^^^^^^^^^^
+   = note: the equations of `decay` have no second-order structure (no `q' = v` with `v'` free of `v`), so only general-purpose methods apply
+   = note: no tolerance given: the solver's default applies
+   = note: the method is chosen when the program runs; `print(explain(sol))` says which, and why

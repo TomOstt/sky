@@ -177,9 +177,33 @@ impl Stmt {
                 }
                 out.push(')');
             }
+            StmtKind::Assert {
+                kind,
+                cond,
+                message,
+            } => {
+                out.push('(');
+                out.push_str(kind.keyword());
+                out.push(' ');
+                write_expr(&mut out, cond, src);
+                if let Some(m) = message {
+                    out.push(' ');
+                    out.push_str(text(src, *m));
+                }
+                out.push(')');
+            }
+            StmtKind::Accuracy { name, tolerance } => {
+                out.push_str("(accuracy ");
+                out.push_str(text(src, name.span));
+                out.push(' ');
+                write_expr(&mut out, tolerance, src);
+                out.push(')');
+            }
             StmtKind::Pass => out.push_str("(pass)"),
             StmtKind::Break => out.push_str("(break)"),
             StmtKind::Continue => out.push_str("(continue)"),
+            StmtKind::Equation(eq) => out.push_str(&crate::parser::equation_sexpr(eq, src)),
+            StmtKind::Solve(solve) => out.push_str(&crate::parser::solve_sexpr(solve, src)),
         }
         out
     }
@@ -299,6 +323,7 @@ fn write_expr(out: &mut String, e: &Expr, src: &str) {
         ExprKind::Index { base, items } => write_index(out, base, items, src),
         ExprKind::Attribute { base, name } => write_attr(out, base, name.span, src),
         ExprKind::Paren(inner) => node(out, "paren", src, &[inner]),
+        ExprKind::PlusMinus { value, sigma, .. } => node(out, "plusminus", src, &[value, sigma]),
         ExprKind::IfElse { then, cond, else_ } => node(out, "ifelse", src, &[cond, then, else_]),
         ExprKind::As { value, unit, .. } => {
             out.push_str("(as ");

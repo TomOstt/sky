@@ -338,14 +338,13 @@ fn an_empty_for_body_says_use_pass() {
 
 #[test]
 fn reserved_words_are_reserved() {
-    for word in ["equation", "solve", "field"] {
-        let errors = module_errors(&format!("{word} u:\n    pass\nx = 1\n"));
-        assert_eq!(errors.len(), 1, "{word}: {errors:#?}");
-        assert_eq!(
-            errors[0].message,
-            format!("`{word}` is reserved for a future version")
-        );
-    }
+    // `equation` and `solve` are statements now (see tests/ode.rs).
+    let errors = module_errors("field u:\n    pass\nx = 1\n");
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert_eq!(
+        errors[0].message,
+        "`field` is reserved for a future version"
+    );
 }
 
 #[test]

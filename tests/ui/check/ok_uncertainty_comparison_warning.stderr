@@ -1,0 +1,15 @@
+tests/ui/check/ok_uncertainty_comparison_warning.sky:5:6: warning: comparing an uncertain value compares only its nominal value
+  |
+5 | if a > b:
+  |      ^ `>` ignores the uncertainty
+  |    - this value may carry an uncertainty
+  = note: a comparison looks at the central values alone, so `a < b` can hold even when `a` and `b` agree within their uncertainties
+  = help: to ask whether two values agree, compare their difference with its uncertainty: `abs(nominal(a - b)) < 2 * uncertainty(a - b)`
+
+tests/ui/check/ok_uncertainty_comparison_warning.sky:7:13: warning: comparing an uncertain value compares only its nominal value
+  |
+7 | print(a - b < 0.1 m/s^2)
+  |             ^ `<` ignores the uncertainty
+  |       ----- this value may carry an uncertainty
+  = note: a comparison looks at the central values alone, so `a < b` can hold even when `a` and `b` agree within their uncertainties
+  = help: to ask whether two values agree, compare their difference with its uncertainty: `abs(nominal(a - b)) < 2 * uncertainty(a - b)`

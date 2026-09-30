@@ -1,0 +1,6 @@
+(= m (plusminus (unit 5.31 kg) (unit 0.02 kg)))
+(= g (plusminus (unit 9.81 (/ m (^ s 2))) (unit 0.05 (/ m (^ s 2)))))
+(= t (plusminus (unit 1.5 s) (unit 20 ms)))
+(= v (plusminus m dm))
+(= w (plusminus (+ a b) (* c d)))
+(call print (as m g))

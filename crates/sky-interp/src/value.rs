@@ -9,6 +9,8 @@ use sky_ast::Block;
 use sky_diag::Span;
 use sky_units::{BaseDim, Dimension, Rational, UNITS};
 
+use crate::uncertain::Uncertain;
+
 /// A runtime value.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -21,6 +23,10 @@ pub enum Value {
         value: f64,
         dim: Dimension,
     },
+    /// A number with an uncertainty (`5.31 ± 0.02 kg`): the sibling of
+    /// [`Value::Number`] for a value that is not exact. See
+    /// [`crate::uncertain`].
+    Uncertain(Uncertain),
     /// A vector (one entry in `dims`) or matrix (two) of numbers that share
     /// one dimension, row-major: entry `(i, j)` of an `m` by `n` matrix is
     /// `data[i * n + j]`. Every entry is finite, `data.len()` is the product
@@ -43,6 +49,40 @@ pub enum Value {
     None,
     /// A function defined with `def`.
     Func(Arc<Function>),
+    /// An `equation`, or the solution a `solve` gave (see [`OdeValue`]).
+    Ode(Arc<OdeValue>),
+}
+
+/// The two values of the differential-equation feature.
+#[derive(Clone, Debug, PartialEq)]
+pub enum OdeValue {
+    /// `equation name(t: s): ...`, ready to be solved.
+    Equation(EquationValue),
+    /// What `solve` returns: read its fields with `sol.name`.
+    Solution(SolutionValue),
+}
+
+/// An equation: its source form and the functions it may call.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EquationValue {
+    pub equation: sky_ast::Equation,
+    /// A stand-in for the equation's own scope: its name and the functions
+    /// in scope where it was written (calls in an equation bind where the
+    /// equation is defined, like the calls in a `def`). It has no
+    /// parameters and an empty body.
+    pub scope: Arc<Function>,
+}
+
+/// The result of a `solve`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SolutionValue {
+    pub equation: String,
+    /// The final time, each state variable at the final time, and each
+    /// conserved quantity there, in that order.
+    pub fields: Vec<(String, Value)>,
+    /// The solver's explanation: why this method, and what was observed,
+    /// one sentence per entry.
+    pub explanation: Vec<String>,
 }
 
 /// A user function: what a call needs to run it. The body is a copy of the
@@ -124,6 +164,7 @@ impl Value {
     pub fn kind(&self) -> &'static str {
         match self {
             Value::Number { .. } => "a number",
+            Value::Uncertain(_) => "an uncertain number",
             Value::Array { dims, .. } if dims.len() == 1 => "a vector",
             Value::Array { .. } => "a matrix",
             Value::Bool(_) => "a Bool",
@@ -131,6 +172,10 @@ impl Value {
             Value::Shown(_) => "a display value",
             Value::None => "none",
             Value::Func(_) => "a function",
+            Value::Ode(o) => match **o {
+                OdeValue::Equation(_) => "an equation",
+                OdeValue::Solution(_) => "a solution",
+            },
         }
     }
 
@@ -153,6 +198,16 @@ impl fmt::Display for Value {
                 f.write_str(&format_number(*value))?;
                 match si_unit(dim) {
                     Some(u) => write!(f, " {u}"),
+                    None => Ok(()),
+                }
+            }
+            Value::Uncertain(u) => {
+                f.write_str(&crate::uncertain_format::plus_minus_text(
+                    u.value,
+                    u.std_dev(),
+                ))?;
+                match si_unit(&u.dim) {
+                    Some(unit) => write!(f, " {unit}"),
                     None => Ok(()),
                 }
             }
@@ -187,6 +242,10 @@ impl fmt::Display for Value {
             Value::Shown(text) => f.write_str(text),
             Value::None => f.write_str("none"),
             Value::Func(func) => write!(f, "<function {}>", func.name),
+            Value::Ode(o) => match &**o {
+                OdeValue::Equation(e) => write!(f, "<equation {}>", e.scope.name),
+                OdeValue::Solution(s) => write!(f, "<solution of {}>", s.equation),
+            },
         }
     }
 }

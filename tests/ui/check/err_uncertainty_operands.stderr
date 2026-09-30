@@ -1,0 +1,33 @@
+tests/ui/check/err_uncertainty_operands.sky:2:9: error: an uncertainty cannot be negative
+  |
+2 | a = 5 ± -0.1
+  |         ^^^^ this is negative
+  = note: `±` takes a standard uncertainty, which is never negative
+  = help: write its magnitude: `x ± 0.1`
+
+tests/ui/check/err_uncertainty_operands.sky:3:12: error: `±` needs scalar operands
+  |
+3 | b = [1, 2] ± 0.1
+  |            ^
+  |     ------ this is Vector[2] [1]
+  |              --- this is Scalar [1]
+  = note: arrays cannot carry an uncertainty yet
+  = help: write `±` on each element you need
+
+tests/ui/check/err_uncertainty_operands.sky:4:5: error: `±` needs a number, found Bool
+  |
+4 | f = true ± 1
+  |     ^^^^ this is Bool
+  = note: v0.1 has no truthiness: a Bool is never a number
+
+tests/ui/check/err_uncertainty_operands.sky:5:5: error: `nominal` takes 1 argument, found 2
+  |
+5 | d = nominal(1, 2)
+  |     ^^^^^^^^^^^^^ wrong number of arguments
+  = help: call it as `nominal(x)`
+
+tests/ui/check/err_uncertainty_operands.sky:6:17: error: `uncertainty` takes a scalar, found an array
+  |
+6 | e = uncertainty([1, 2])
+  |                 ^^^^^^ this is Vector[2] [1]
+  = note: arrays cannot carry an uncertainty yet

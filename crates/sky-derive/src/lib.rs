@@ -5,8 +5,8 @@
 //! program transformation on SIR (`sky-ad`), so [`SirDerivatives`], the
 //! interpreter's [`DerivativeHook`], evaluates a derivative by
 //!
-//! 1. lowering the program's `def`s to SIR, once, on the first derivative
-//!    (`sky-lower`, which also verifies the module);
+//! 1. lowering the program's `def`s (and only those: `sky_lower::lower_defs`)
+//!    to SIR, once, on the first derivative;
 //! 2. building the derivative function of the requested `def` with
 //!    `sky_ad::differentiate_into` (once per function and parameter);
 //! 3. running it with the reference interpreter (`sky-ir-interp`) on the
@@ -20,11 +20,23 @@
 //!
 //! # What can go wrong
 //!
-//! The whole module is lowered, so a program `sky run` accepts but SIR
-//! cannot express yet (arrays) cannot evaluate a derivative, and a function
-//! `sky-ad` has no rule for is an error. Both are runtime errors on the
-//! derivative call that say so; the checker cannot know, because `sky check`
-//! never lowers.
+//! Only the `def`s are lowered: the module's values come from the tree
+//! walker, so top-level statements SIR cannot express yet (`equation`,
+//! `solve`, `±`) do not stop a derivative. A `def` SIR cannot express (an
+//! input declaration inside it, say) still cannot be differentiated, and a function `sky-ad` cannot differentiate (an
+//! unannotated parameter the derivative flows through, or the gradient of a
+//! loop over an array whose size is not known) is an error. Both are runtime
+//! errors on the derivative call that say so; the checker cannot know,
+//! because `sky check` never lowers.
+//!
+//! # Arrays
+//!
+//! The derivative with respect to an array parameter is its gradient: an
+//! array of the parameter's shape, which is the value this hook returns
+//! (`grad(U)(p)` for a potential `U` of a position vector `p`). `sky-ad`
+//! computes it in reverse mode, or by forward mode one entry at a time when
+//! the function loops; the function `d<f>/d<p>` has the same signature
+//! either way, so nothing here depends on which.
 
 #![forbid(unsafe_code)]
 
@@ -72,13 +84,15 @@ impl<'a> SirDerivatives<'a> {
                 if let Some(n) = note {
                     e = e.with_note(n);
                 }
-                e.with_note("derivatives run on SIR, so the whole program must lower to SIR")
+                e.with_note(
+                    "derivatives run on SIR, so every `def` in the program must lower to SIR",
+                )
             };
             let checked = sky_types::check_module_with(module, src, sky_types::Env::with_prelude());
             if checked.has_errors() {
                 return Err(fail("the program does not check".into(), None));
             }
-            let (sir, defs) = sky_lower::lower_with_defs(module, src, &checked)
+            let (sir, defs) = sky_lower::lower_defs(module, src, &checked)
                 .map_err(|e| fail(e.message, e.note))?;
             verified(&sir, at)?;
             Ok(Lowered { module: sir, defs })
@@ -143,8 +157,9 @@ impl DerivativeHook for SirDerivatives<'_> {
                 }
             }
         }
-        let results = sky_ir_interp::call_metered(&lowered.module, &name, args, out, request.stack)
-            .map_err(|e| (*e).clone())?;
+        let results =
+            sky_ir_interp::call_metered(&lowered.module, &name, args, out, request.stack, at)
+                .map_err(|e| (*e).clone())?;
         match results.as_slice() {
             // `(f(args), ∂f/∂x)`
             [_, derivative] => Ok(derivative.clone()),

@@ -1,0 +1,37 @@
+tests/ui/check/ok_accuracy_unproven.sky:3:5: note: [DCE-001] `1e-10` is removed
+  |
+3 | x = 1e-10
+  |     ^^^^^
+  = note: applied by the `dce` pass
+  = note: because `x` is never used
+  = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
+
+tests/ui/check/ok_accuracy_unproven.sky:4:5: warning: `log(1 + x)` loses digits when the term added to 1 is small
+  |
+4 | z = log(1 + x)
+  |     ^^^^^^^^^^ `1 + …` rounds away digits before the logarithm
+  = note: subtracting two nearly equal numbers cancels their leading digits, so the rounding errors they already carry become the leading digits of the result: two numbers correct to 16 digits that agree in their first 12 leave a difference correct to about 4. Here 1 + x is rounded to a multiple of about 2.2e-16 before `log` sees it, so when x is small the low digits of x are gone (the result log(1 + x) ≈ x has a large relative error, and is 0 for x below 1.1e-16). The function `log1p(x)`, log(1 + x) computed without forming 1 + x, is the standard cure
+  = help: write `log1p(x)`
+
+tests/ui/check/ok_accuracy_unproven.sky:4:9: note: [FOLD-FLOAT-001] `1 + 1e-10` is rewritten to `1.0000000001`
+  |
+4 | z = log(1 + x)
+  |         ^^^^^
+  = note: applied by the `fold` pass
+  = note: because every operand is a constant
+  = note: because the result is the reference interpreter's own, bit for bit, and it cannot fail at run time
+
+tests/ui/check/ok_accuracy_unproven.sky:5:1: warning: cannot prove that `z` is accurate to within 1e-12 (relative)
+  |
+5 | accuracy z within 1e-12
+  | ^^^^^^^^^^^^^^^^^^^^^^^ the budget is declared here
+4 | z = log(1 + x)
+  |     ---------- magnifies relative error: 8.3e-18 in its operands becomes 8.3e-8 in the result
+  = note: the analysis proves a relative error of at most 8.3e-8, which is more than the budget
+  = note: `log(1 + x)` is the cancellation reported by the warning above; its help gives a form without the loss
+
+tests/ui/check/ok_accuracy_unproven.sky:6:1: note: printed value of `z` is accurate to within 8.3e-8 relative
+  |
+6 | print(z)
+  | ^^^^^^^^
+  = note: a proven bound on the rounding error against the exact real result (roundoff analysis)

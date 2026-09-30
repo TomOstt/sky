@@ -64,7 +64,7 @@ use crate::ir::{
     BlockId, EffectSet, Function, Module, NumberType, OpData, OpId, RegionId, Type, ValueDef,
     ValueId,
 };
-use crate::op::{CmpOp, OpKind, SolveMethod};
+use crate::op::{AssertKind, CmpOp, OpKind, SolveMethod};
 use crate::print::effect_name;
 
 /// The deepest nesting of regions the verifier, printer and parser accept.
@@ -503,6 +503,21 @@ impl<'a> FnVerifier<'a> {
                 }
             }
         }
+        if !op.operand_spans.is_empty() && op.operand_spans.len() != op.expected_operand_spans() {
+            self.err_op(
+                o,
+                format!(
+                    "`{}` has {} operand span(s), but {} operand(s){}: they must be one per operand (or none)",
+                    op.kind.mnemonic(),
+                    op.operand_spans.len(),
+                    op.operands.len(),
+                    match &op.kind {
+                        OpKind::Slice { axes } => format!(" and {} axis item(s)", axes.len()),
+                        _ => String::new(),
+                    }
+                ),
+            );
+        }
         // Results are defined after the operation's regions have been walked
         // (they are not visible inside them), but their `def` links and
         // types are checked now.
@@ -622,6 +637,7 @@ impl<'a> FnVerifier<'a> {
             | OpKind::Identity
             | OpKind::Len
             | OpKind::ExpectBool { .. }
+            | OpKind::ExpectNumber { .. }
             | OpKind::Not => (Some(1), Some(1)),
             OpKind::ArrayLiteral { .. } | OpKind::Index | OpKind::Slice { .. } | OpKind::Zeros => {
                 (None, Some(1))
@@ -629,7 +645,9 @@ impl<'a> FnVerifier<'a> {
             OpKind::If => (Some(1), None),
             OpKind::Fused => (None, Some(1)),
             OpKind::While => (None, Some(op.operands.len())),
-            OpKind::Yield | OpKind::Return | OpKind::Print => (None, Some(0)),
+            OpKind::Yield | OpKind::Return | OpKind::Print | OpKind::Assert { .. } => {
+                (None, Some(0))
+            }
             OpKind::Condition => (None, Some(0)),
             OpKind::Call { .. } => (None, None),
             OpKind::Math(f) => (Some(f.arity()), Some(1)),
@@ -722,6 +740,76 @@ impl<'a> FnVerifier<'a> {
                     );
                 }
                 self.expect_bool_result(o, op);
+            }
+            OpKind::ExpectNumber { context } => {
+                // Only an operand the checker could not type needs the
+                // check; a typed one that is not a number can never pass it.
+                let t = self.f.ty(op.operands[0]);
+                if !matches!(t, Type::Number(_) | Type::Unknown) {
+                    self.err_op(
+                        o,
+                        format!(
+                            "`expect.number` needs a number or unknown operand, found {t} (`{}`)",
+                            context.keyword()
+                        ),
+                    );
+                } else if !matches!(self.f.ty(op.results[0]), Type::Unknown)
+                    && self.f.ty(op.results[0]) != t
+                {
+                    // Unknown is always fine: a pass that learns the
+                    // operand's type (folding an `if` away) leaves the
+                    // result as it was.
+                    self.err_op(
+                        o,
+                        format!(
+                            "the result of `expect.number` must be unknown or {t} like its operand, found {}",
+                            self.f.ty(op.results[0])
+                        ),
+                    );
+                }
+            }
+            OpKind::Assert {
+                kind,
+                text,
+                func,
+                names,
+                ..
+            } => {
+                if op.operands.len() != 1 + names.len() {
+                    self.err_op(
+                        o,
+                        format!(
+                            "`assert` takes a condition and {} value(s) for its names, found {} operand(s)",
+                            names.len(),
+                            op.operands.len()
+                        ),
+                    );
+                } else {
+                    let t = self.f.ty(op.operands[0]);
+                    if !matches!(t, Type::Bool | Type::Unknown) {
+                        self.err_op(
+                            o,
+                            format!("`assert` needs a Bool or unknown condition, found {t}"),
+                        );
+                    }
+                }
+                if text.is_empty() {
+                    self.err_op(o, "`assert` needs the text of its condition".to_string());
+                }
+                if func.is_some() != (*kind != AssertKind::Assert) {
+                    self.err_op(
+                        o,
+                        format!(
+                            "`assert[{}]` {} the function it belongs to",
+                            kind.keyword(),
+                            if *kind == AssertKind::Assert {
+                                "takes no name of"
+                            } else {
+                                "needs the name of"
+                            }
+                        ),
+                    );
+                }
             }
             OpKind::If => self.check_if(o, op),
             OpKind::While => self.check_while(o, op),

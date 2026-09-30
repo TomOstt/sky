@@ -1420,3 +1420,270 @@ mod math {
         assert!(msg(&e).starts_with("malformed IR"));
     }
 }
+
+// ----- operand spans: the diagnostic points at where an operand was read -----
+
+mod operand_spans {
+    use sky_diag::{Diagnostic, Span};
+    use sky_ir::{FunctionBuilder, MathFn, Module, NumberContext, OpKind, SliceAxis, Type};
+
+    use super::{call_fn, matrix, module, n, sp, vector};
+    use crate::Value;
+
+    fn at(a: u32, b: u32) -> Span {
+        Span::new(a, b)
+    }
+
+    /// Applies `kind` to `args` in a function of unknown types, recording
+    /// `spans` for the operands and `whole` for the operation, and returns
+    /// the error's diagnostic.
+    fn fail(kind: OpKind, args: Vec<Value>, spans: Vec<Span>, whole: Span) -> Diagnostic {
+        let mut b = FunctionBuilder::new("f", vec![Type::Unknown; args.len()], vec![], sp());
+        let params = b.params();
+        b.op_with_spans(kind, params, spans, vec![Type::Unknown], whole);
+        b.op(OpKind::Return, vec![], vec![], sp());
+        let m: Module = module(vec![b.finish()]);
+        call_fn(&m, "f", args).expect_err("fails").to_diagnostic()
+    }
+
+    fn secondary(d: &Diagnostic) -> Vec<(Span, String)> {
+        d.secondary
+            .iter()
+            .map(|l| (l.span, l.message.clone().unwrap_or_default()))
+            .collect()
+    }
+
+    #[test]
+    fn a_division_by_zero_labels_the_divisor() {
+        let d = fail(
+            OpKind::Div,
+            vec![n(1.0), n(0.0)],
+            vec![at(10, 11), at(14, 15)],
+            at(10, 15),
+        );
+        assert_eq!(d.primary.span, at(10, 15));
+        assert_eq!(d.primary.message.as_deref(), Some("this divides by zero"));
+        assert_eq!(secondary(&d), [(at(14, 15), "this is zero".to_string())]);
+        assert_eq!(d.notes.len(), 1);
+    }
+
+    #[test]
+    fn without_operand_spans_the_operation_span_stands_for_them() {
+        let d = fail(OpKind::Div, vec![n(1.0), n(0.0)], vec![], at(10, 15));
+        assert_eq!(secondary(&d), [(at(10, 15), "this is zero".to_string())]);
+    }
+
+    #[test]
+    fn a_dimension_mismatch_labels_both_operands() {
+        let len = Value::number(1.0, Dimension::LENGTH);
+        let time = Value::number(1.0, Dimension::TIME);
+        let d = fail(
+            OpKind::Add,
+            vec![len.clone(), time.clone()],
+            vec![at(1, 2), at(5, 6)],
+            at(1, 6),
+        );
+        assert_eq!(
+            secondary(&d),
+            [
+                (at(1, 2), "length".to_string()),
+                (at(5, 6), "time".to_string())
+            ]
+        );
+        let d = fail(
+            OpKind::Cmp(sky_ir::CmpOp::Lt),
+            vec![len, time],
+            vec![at(1, 2), at(5, 6)],
+            at(1, 6),
+        );
+        assert_eq!(d.message, "cannot compare length and time");
+        assert_eq!(secondary(&d).len(), 2);
+        assert_eq!(secondary(&d)[1].0, at(5, 6));
+    }
+
+    #[test]
+    fn a_unary_error_is_at_the_operand_not_the_operation() {
+        // `-x` is the span of `x` in `sky run` too.
+        let d = fail(
+            OpKind::Neg,
+            vec![Value::Bool(true)],
+            vec![at(5, 6)],
+            at(4, 6),
+        );
+        assert_eq!(d.primary.span, at(5, 6));
+        assert_eq!(d.message, "`-` needs a number, found a Bool");
+    }
+
+    #[test]
+    fn expect_number_fails_with_the_constructs_wording_at_its_span() {
+        for context in NumberContext::ALL {
+            let kind = OpKind::ExpectNumber { context };
+            let d = fail(kind.clone(), vec![Value::Bool(true)], vec![], at(7, 8));
+            assert_eq!(
+                d.message,
+                format!("`{}` needs a number, found a Bool", context.keyword())
+            );
+            assert_eq!(d.primary.span, at(7, 8));
+            // A number and an array are given back.
+            let mut b = FunctionBuilder::new("f", vec![Type::Unknown], vec![Type::Unknown], sp());
+            let x = b.params()[0];
+            let r = b.op1(kind, vec![x], Type::Unknown, sp());
+            b.op(OpKind::Return, vec![r], vec![], sp());
+            let m = module(vec![b.finish()]);
+            for v in [n(2.0), vector(&[1.0, 2.0])] {
+                assert_eq!(call_fn(&m, "f", vec![v.clone()]), Ok(vec![v]));
+            }
+        }
+    }
+
+    #[test]
+    fn an_index_error_points_at_the_index_and_labels_the_array() {
+        let a = vector(&[1.0, 2.0, 3.0]);
+        let d = fail(
+            OpKind::Index,
+            vec![a, n(5.0)],
+            vec![at(20, 21), at(22, 23)],
+            at(20, 24),
+        );
+        assert_eq!(d.primary.span, at(22, 23));
+        assert_eq!(
+            d.primary.message.as_deref(),
+            Some("valid indices are 0 to 2")
+        );
+        assert_eq!(
+            secondary(&d),
+            [(at(20, 21), "this is Vector[3]".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_slice_error_points_at_the_item_and_a_bad_bound_at_the_bound() {
+        let a = vector(&[1.0, 2.0, 3.0, 4.0]);
+        let kind = OpKind::Slice {
+            axes: vec![SliceAxis::Range {
+                start: true,
+                stop: false,
+            }],
+        };
+        // Operands: the array and the start; then the span of the item.
+        let d = fail(
+            kind.clone(),
+            vec![a.clone(), n(9.0)],
+            vec![at(1, 2), at(3, 4), at(3, 5)],
+            at(1, 6),
+        );
+        assert_eq!(
+            d.message,
+            "slice 9..4 is out of bounds for axis 0 with length 4"
+        );
+        assert_eq!(d.primary.span, at(3, 5));
+        assert_eq!(secondary(&d), [(at(1, 2), "this is Vector[4]".to_string())]);
+        let d = fail(
+            kind,
+            vec![a, n(-1.0)],
+            vec![at(1, 2), at(3, 4), at(3, 5)],
+            at(1, 6),
+        );
+        assert_eq!(d.message, "an index cannot be negative");
+        assert_eq!(d.primary.span, at(3, 4));
+    }
+
+    #[test]
+    fn a_math_domain_error_labels_the_argument() {
+        let d = fail(
+            OpKind::Math(MathFn::Sqrt),
+            vec![n(-4.0)],
+            vec![at(5, 7)],
+            at(0, 8),
+        );
+        assert_eq!(d.primary.span, at(0, 8));
+        assert_eq!(secondary(&d), [(at(5, 7), "this is negative".to_string())]);
+        let d = fail(
+            OpKind::Math(MathFn::Sqrt),
+            vec![Value::Bool(true)],
+            vec![at(5, 7)],
+            at(0, 8),
+        );
+        assert_eq!(d.primary.span, at(5, 7));
+    }
+
+    #[test]
+    fn an_array_literal_error_points_at_the_entry() {
+        let d = fail(
+            OpKind::ArrayLiteral { cols: None },
+            vec![n(1.0), Value::Bool(true)],
+            vec![at(1, 2), at(4, 8)],
+            at(0, 9),
+        );
+        assert_eq!(d.message, "an array element must be a number, found a Bool");
+        assert_eq!(d.primary.span, at(4, 8));
+    }
+
+    #[test]
+    fn linear_algebra_errors_label_the_operands() {
+        let a = matrix(1, 2, &[1.0, 2.0]);
+        let d = fail(
+            OpKind::MatMul,
+            vec![a.clone(), a],
+            vec![at(1, 2), at(5, 6)],
+            at(1, 6),
+        );
+        assert_eq!(
+            secondary(&d),
+            [
+                (at(1, 2), "Matrix[1,2]".to_string()),
+                (at(5, 6), "Matrix[1,2]".to_string())
+            ]
+        );
+        let d = fail(
+            OpKind::Inverse,
+            vec![matrix(2, 2, &[1.0, 2.0, 2.0, 4.0])],
+            vec![at(3, 4)],
+            at(3, 5),
+        );
+        assert_eq!(d.message, "the matrix is singular");
+        assert_eq!(
+            secondary(&d),
+            [(at(3, 4), "this is Matrix[2,2]".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_fused_body_reports_its_own_operations_spans() {
+        // The body's `div` has the spans it had before it was fused.
+        let mut b = FunctionBuilder::new(
+            "f",
+            vec![Type::Unknown, Type::Unknown],
+            vec![Type::Unknown],
+            sp(),
+        );
+        let [x, z] = b.params()[..] else {
+            unreachable!()
+        };
+        let (kernel, res) = b.op(OpKind::Fused, vec![x, z], vec![Type::Unknown], at(0, 9));
+        let outer = b.insertion_block();
+        let region = b.add_region(kernel);
+        let body = b.add_block(region, vec![Type::Unknown, Type::Unknown]);
+        b.set_insertion_block(body);
+        let [ex, ez] = b.func().block(body).args[..] else {
+            unreachable!()
+        };
+        let (_, q) = b.op_with_spans(
+            OpKind::Div,
+            vec![ex, ez],
+            vec![at(0, 1), at(8, 9)],
+            vec![Type::Unknown],
+            at(0, 9),
+        );
+        b.op(OpKind::Yield, vec![q[0]], vec![], sp());
+        b.set_insertion_block(outer);
+        b.op(OpKind::Return, vec![res[0]], vec![], sp());
+        let m = module(vec![b.finish()]);
+        let e = call_fn(&m, "f", vec![vector(&[1.0, 2.0]), n(0.0)]).expect_err("divides by zero");
+        let d = e.to_diagnostic();
+        assert_eq!(d.primary.span, at(0, 9));
+        assert_eq!(secondary(&d), [(at(8, 9), "this is zero".to_string())]);
+    }
+
+    use sky_units::Dimension;
+}

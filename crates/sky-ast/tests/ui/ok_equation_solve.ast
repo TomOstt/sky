@@ -1,0 +1,3 @@
+(equation orbit (time t (type (unit s))) (: r (type (Vector 2) (unit m))) (: v (type (Vector 2) (unit (/ m s)))) (d r v) (d v (/ (* (neg GM) r) (^ (call norm r) 3))))
+(solve sol orbit (unit 0 s) (unit 1 yr) (with (r (array (unit 1 AU) (unit 0 m))) (v (array (unit 0 (/ m s)) (unit 29.8 (/ km s))))) (tolerance 1e-9) (conserve energy (- (* 0.5 (^ (call norm v) 2)) (/ GM (call norm r))) (within 1e-6)))
+(call print (attr sol r))

@@ -1,0 +1,1 @@
+@f: `assert` is not allowed in the body of `fused` (op3) @ 1..2

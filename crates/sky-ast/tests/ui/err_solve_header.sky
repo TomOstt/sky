@@ -1,0 +1,4 @@
+sol = solve orbit 0 s to 1 yr
+sol = solve orbit from 0 s to 1 yr with r 1
+s = solve orbit from 0 s to 1 yr:
+    tol 1

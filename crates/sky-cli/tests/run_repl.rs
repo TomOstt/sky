@@ -876,6 +876,87 @@ fn run_evaluates_a_derivative_with_its_unit() {
 }
 
 #[test]
+fn run_the_force_of_a_gravitational_potential_points_to_the_origin() {
+    // U(p) = -G M m / |p|: F = -grad U has magnitude G M m / r^2 and points
+    // at the origin, in newtons, whatever the position vector's unit.
+    let program = "M = 5.972e24 kg\nmass = 1000 kg\n\
+         def U(p: Vector[3] m) -> J:\n    return -G * M * mass / sqrt(p @ p)\n\
+         p = [7000 km, 0 km, 0 km]\n\
+         F = -grad(U)(p)\n\
+         print(F)\n\
+         q = [3 km, 0 km, 4 km]\n\
+         print(-grad(U)(q))\n\
+         g: N = -grad(U)(q)[2]\n\
+         print(g)\n";
+    for engine in ["ast", "sir"] {
+        let o = run_engine("gravity", program, Some(engine));
+        assert_eq!(err(&o), "", "{engine}");
+        let stdout = out(&o);
+        let lines: Vec<&str> = stdout.lines().collect();
+        assert_eq!(lines.len(), 3, "{engine}: {stdout}");
+        // 7000 km: 3.986e17 / 4.9e13 = 8134.47 N along -x.
+        assert!(
+            lines[0].starts_with("[-8134.4733877551") && lines[0].ends_with(" N, 0 N, 0 N]"),
+            "{engine}: {}",
+            lines[0]
+        );
+        // At 5 km along (3, 0, 4)/5: 15.9 GN, split 3:0:4 and pointing inward.
+        assert_eq!(lines[1], "[-9566140704 N, 0 N, -12754854272 N]", "{engine}");
+        assert_eq!(lines[2], "-12754854272 N", "{engine}");
+    }
+}
+
+#[test]
+fn run_the_gradient_of_a_spring_network_potential_with_a_matrix() {
+    // U = 1/2 d.(K d) with d = p - p0 and K symmetric: F = -K d.
+    let program = "K = [[300, -100, 0], [-100, 200, -50], [0, -50, 100]] * 1 N/m\n\
+         p0 = [0.5 m, 0 m, 0.25 m]\n\
+         def U(p: Vector[3] m) -> J:\n    d = p - p0\n    return 0.5 * (d @ (K @ d))\n\
+         p = [0.6 m, 0.1 m, 0.2 m]\n\
+         print(U(p))\n\
+         print(-grad(U)(p))\n";
+    for engine in ["ast", "sir"] {
+        let o = run_engine("spring-network", program, Some(engine));
+        assert_eq!(err(&o), "", "{engine}");
+        let stdout = out(&o);
+        let lines: Vec<&str> = stdout.lines().collect();
+        assert_eq!(lines.len(), 2, "{engine}: {stdout}");
+        assert!(
+            lines[0].starts_with("1.87499999999999") && lines[0].ends_with(" J"),
+            "{}",
+            lines[0]
+        );
+        // -K d = -(20, 12.5, -10) N, to rounding.
+        assert!(
+            lines[1].starts_with("[-19.99999999999999")
+                && lines[1].contains(" N, -12.5")
+                && lines[1].ends_with(" N]"),
+            "{engine}: {}",
+            lines[1]
+        );
+    }
+}
+
+#[test]
+fn a_gradient_with_the_wrong_unit_is_a_check_error() {
+    // A gradient of an energy in a position is a force; adding it to an
+    // energy is the unit error before anything runs.
+    let o = run_script(
+        "gradient_unit",
+        "def U(p: Vector[3] m) -> J:\n    return 1 N/m * (p @ p)\n\
+         print(\"before\")\n\
+         print(U([1 m, 2 m, 3 m]) + grad(U)([1 m, 2 m, 3 m])[0])\n",
+    );
+    assert_eq!(out(&o), "");
+    assert!(
+        err(&o).contains("cannot add energy and force"),
+        "{}",
+        err(&o)
+    );
+    assert_eq!(o.status.code(), Some(1));
+}
+
+#[test]
 fn a_derivative_unit_error_is_a_check_error_and_nothing_runs() {
     let o = run_script(
         "derivative_unit",
@@ -1092,6 +1173,130 @@ const ENGINE_PROGRAMS: &[(&str, bool, &str)] = &[
         "eng-derivative-fails",
         true,
         "def root(a: m^2) -> m:\n    return sqrt(a)\nprint(derivative(root, a)(0 m^2))\n",
+    ),
+    // A runtime error's labels, notes and helps come from the operands' spans
+    // on SIR (no replay on the tree-walker): the whole stderr must be the
+    // tree-walker's, after the pass pipeline too. The values are passed through
+    // an unannotated function so the checker cannot see the error.
+    (
+        "eng-labels-div",
+        true,
+        "def id(a):\n    return a\nx = id(4)\nz = id(2) - 2\nprint(x / z)\n",
+    ),
+    (
+        "eng-labels-div-assign",
+        true,
+        "def id(a):\n    return a\nx = id(4)\nz = id(0)\nx /= z\n",
+    ),
+    (
+        "eng-labels-inverse",
+        true,
+        "def id(a):\n    return a\nx = id(0)\nprint(1 + x⁻¹)\n",
+    ),
+    (
+        "eng-labels-dims",
+        true,
+        "def id(a):\n    return a\nprint(id(1 m) + id(2 s))\n",
+    ),
+    (
+        "eng-labels-compare",
+        true,
+        "def id(a):\n    return a\nprint(id(1 m) < id(2 s))\n",
+    ),
+    (
+        "eng-labels-math",
+        true,
+        "def id(a):\n    return a\nprint(sqrt(id(0) - 4))\n",
+    ),
+    (
+        "eng-labels-pow",
+        true,
+        "def id(a):\n    return a\nprint(id(0 - 8) ^ id(1 / 3))\n",
+    ),
+    (
+        "eng-labels-index",
+        true,
+        "def id(a):\n    return a\nv = [1, 2, 3]\nprint(v[id(5)])\n",
+    ),
+    (
+        "eng-labels-index-negative",
+        true,
+        "def id(a):\n    return a\nv = [1, 2, 3]\nprint(v[id(0) - 1])\n",
+    ),
+    (
+        "eng-labels-slice",
+        true,
+        "def id(a):\n    return a\nv = [1, 2, 3, 4]\nprint(v[id(1):id(9)])\n",
+    ),
+    (
+        "eng-labels-slice-open",
+        true,
+        "def id(a):\n    return a\nA = [[1, 2], [3, 4]]\nprint(A[id(1), id(9):])\n",
+    ),
+    (
+        "eng-labels-shapes",
+        true,
+        "def id(a):\n    return a\nprint(id([1, 2]) + id([1, 2, 3]))\n",
+    ),
+    (
+        "eng-labels-matmul",
+        true,
+        "def id(a):\n    return a\nprint(id([[1, 2]]) @ id([[3, 4]]))\n",
+    ),
+    (
+        "eng-labels-chain",
+        true,
+        "a = [1, 2, 3]\nb = [1, 2, 3]\nz = 0\nprint((a + b) / z * 2)\n",
+    ),
+    (
+        "eng-labels-overflow-chain",
+        true,
+        "a = [1e200, 2, 3]\nz = 0\nprint((a * 1e200) / z + a)\n",
+    ),
+    (
+        "eng-unknown-plus",
+        true,
+        "def f(a):\n    return +a + a\nprint(f(2))\nprint(f(true))\n",
+    ),
+    (
+        "eng-unknown-inv",
+        true,
+        "def f(a):\n    return inv(a)\nprint(f(4))\nprint(f(true))\n",
+    ),
+    (
+        "eng-unknown-neg",
+        true,
+        "def f(a):\n    return -a\nprint(f(4))\nprint(f(\"s\"))\n",
+    ),
+    (
+        "eng-unknown-array-element",
+        true,
+        "def f(a):\n    return [a, 1]\nprint(f(2))\nprint(f(true))\n",
+    ),
+    (
+        "eng-gradient-gravity",
+        true,
+        "M = 5.972e24 kg\nmass = 1000 kg\ndef U(p: Vector[3] m) -> J:\n    return -G * M * mass / sqrt(p @ p)\np = [7000 km, 0 km, 0 km]\nprint(-grad(U)(p))\nprint(derivative(U, p)([0 m, 3 m, 4 m]))\n",
+    ),
+    (
+        "eng-gradient-spring",
+        true,
+        "K = [[300, -100, 0], [-100, 200, -50], [0, -50, 100]] * 1 N/m\np0 = [0.5 m, 0 m, 0.25 m]\ndef U(p: Vector[3] m) -> J:\n    d = p - p0\n    return 0.5 * (d @ (K @ d))\nprint(grad(U)([0.6 m, 0.1 m, 0.2 m]))\n",
+    ),
+    (
+        "eng-gradient-loop",
+        true,
+        "def f(p: Vector[3]) -> m:\n    print(\"called\")\n    acc = 0\n    i = 0\n    while i < 3:\n        acc = acc + p[i] * p[i] * (i + 1)\n        i += 1\n    return 1 m * acc\nprint(grad(f)([0.5, 1, 2]))\n",
+    ),
+    (
+        "eng-gradient-fails",
+        true,
+        "def root(p: Vector[2] m^2) -> m:\n    return sqrt(p[0]) + sqrt(p[1])\nprint(grad(root)([4 m^2, 1 m^2]))\nprint(grad(root)([4 m^2, 0 m^2]))\n",
+    ),
+    (
+        "eng-derivative-of-a-vector",
+        true,
+        "def r(t: s) -> Vector[2] m:\n    return [5 m/s^2 * t^2, 2 m/s * t]\nprint(derivative(r, t)(2 s))\n",
     ),
     (
         "eng-deep-recursion",
@@ -1493,4 +1698,27 @@ fn a_gradient_unit_error_is_a_check_error_and_nothing_runs() {
         err(&o)
     );
     assert_eq!(o.status.code(), Some(1));
+}
+
+#[test]
+fn run_the_gravitational_force_is_inverse_square_and_antiparallel_to_the_position() {
+    // |F| = G M m / r^2, and F points at the origin: the cosine of the angle
+    // between F and the position vector is -1.
+    let program = "M = 5.972e24 kg\nmass = 1000 kg\n\
+         def U(p: Vector[3] m) -> J:\n    return -G * M * mass / sqrt(p @ p)\n\
+         p = [3 km, -4 km, 12 km]\n\
+         F = -grad(U)(p)\n\
+         print(sqrt(F @ F) / (G * M * mass / (p @ p)))\n\
+         print((F @ p) / (sqrt(F @ F) * sqrt(p @ p)))\n";
+    for engine in ["ast", "sir"] {
+        let o = run_engine("gravity-shape", program, Some(engine));
+        assert_eq!(err(&o), "", "{engine}");
+        let stdout = out(&o);
+        let values: Vec<f64> = stdout
+            .lines()
+            .map(|l| l.parse().expect("a number"))
+            .collect();
+        assert!((values[0] - 1.0).abs() < 1e-12, "{engine}: {stdout}");
+        assert!((values[1] + 1.0).abs() < 1e-12, "{engine}: {stdout}");
+    }
 }

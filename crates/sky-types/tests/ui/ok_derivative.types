@@ -1,8 +1,12 @@
+U: function `U`
 branchy: Scalar [L·T⁻¹]
 f: Scalar [L·M·T⁻²]
+force: Vector[3] [L·M·T⁻²]
 half: Scalar [L²]
+path: function `path`
 piecewise: function `piecewise`
 position: function `position`
 spring: function `spring`
 total: Scalar [L·T⁻¹]
 v: Scalar [L·T⁻¹]
+velocity: Vector[3] [L·T⁻¹]

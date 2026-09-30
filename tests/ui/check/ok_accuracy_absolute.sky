@@ -1,0 +1,5 @@
+# An absolute budget takes a unit: at 1e8 m the spacing of an f64 is 1.5e-8 m,
+# so the rounding of the sum is at most 7.5e-9 m, within 10 nm.
+d = 1e8 m + 1 mm
+accuracy d within 10 nm
+print(d)

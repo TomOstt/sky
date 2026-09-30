@@ -1550,3 +1550,79 @@ fn show_takes_one_operand_and_gives_one_result() {
     ret(&mut b, vec![]);
     rejects(&one_fn(b.finish()), "`show` takes 1 operand(s), found 2");
 }
+
+// ----- operand spans -----
+
+/// `x + x` with the given operand spans.
+fn add_spans(spans: Vec<sky_diag::Span>) -> Module {
+    let mut b = start(vec![len()], vec![len()]);
+    let x = b.params()[0];
+    let (_, s) = b.op_with_spans(OpKind::Add, vec![x, x], spans, vec![len()], sp(1, 2));
+    ret(&mut b, vec![s[0]]);
+    one_fn(b.finish())
+}
+
+#[test]
+fn operand_spans_are_none_or_one_per_operand() {
+    accepts(&add_spans(vec![]));
+    accepts(&add_spans(vec![sp(1, 2), sp(3, 4)]));
+    for wrong in [vec![sp(1, 2)], vec![sp(1, 2), sp(3, 4), sp(5, 6)]] {
+        let e = rejects(&add_spans(wrong), "operand span(s), but 2 operand(s)");
+        assert_eq!(e[0].span, sp(1, 2), "the error points at the operation");
+    }
+}
+
+#[test]
+fn a_slice_also_has_a_span_per_axis_item() {
+    use sky_ir::SliceAxis;
+    let slice = |spans: Vec<sky_diag::Span>| {
+        let mut b = start(vec![vector(4)], vec![]);
+        let v = b.params()[0];
+        let zero = b.op1(
+            OpKind::ConstRational(Rational::ZERO),
+            vec![],
+            one(),
+            sp(0, 0),
+        );
+        let axes = vec![SliceAxis::Range {
+            start: true,
+            stop: false,
+        }];
+        b.op_with_spans(
+            OpKind::Slice { axes },
+            vec![v, zero],
+            spans,
+            vec![vector(4)],
+            sp(1, 9),
+        );
+        ret(&mut b, vec![]);
+        one_fn(b.finish())
+    };
+    // The base, the bound, and the item.
+    accepts(&slice(vec![sp(1, 2), sp(3, 4), sp(3, 5)]));
+    accepts(&slice(vec![]));
+    rejects(
+        &slice(vec![sp(1, 2), sp(3, 4)]),
+        "operand span(s), but 2 operand(s) and 1 axis item(s)",
+    );
+}
+
+#[test]
+fn expect_number_checks_a_number_or_unknown_operand_and_gives_it_back() {
+    use sky_ir::NumberContext;
+    for context in NumberContext::ALL {
+        let kind = OpKind::ExpectNumber { context };
+        accepts(&unary(kind.clone(), Type::Unknown, Type::Unknown));
+        accepts(&unary(kind.clone(), len(), len()));
+        // A pass that learned the operand's type leaves the result unknown.
+        accepts(&unary(kind.clone(), len(), Type::Unknown));
+        rejects(
+            &unary(kind.clone(), Type::Bool, Type::Bool),
+            "`expect.number` needs a number or unknown operand",
+        );
+        rejects(
+            &unary(kind, len(), one()),
+            "the result of `expect.number` must be unknown or",
+        );
+    }
+}

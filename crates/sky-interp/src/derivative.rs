@@ -179,6 +179,10 @@ impl Interp<'_> {
     /// respect to each of its parameters, in order, as a vector. The
     /// arguments are evaluated once, and the function runs once per
     /// parameter (forward mode: one derivative each).
+    ///
+    /// A function of one array parameter has one derivative, its gradient
+    /// (an array of the parameter's shape), which is the value: the checker
+    /// types `grad(f)` for such a function as `derivative(f, p)`.
     fn gradient_of(&mut self, call: &Expr, form: &Expr, dargs: &[Expr], args: &[Expr]) -> R<Value> {
         let [f_arg] = dargs else {
             return Err(RuntimeError::new(
@@ -190,7 +194,10 @@ impl Interp<'_> {
         let label = format!("grad({})", func.name);
         let values = self.derivative_arguments(&label, &func, call, args)?;
         let wrts: Vec<usize> = (0..func.params.len()).collect();
-        let derivatives = self.derivatives_at(call, &func, &wrts, values)?;
+        let mut derivatives = self.derivatives_at(call, &func, &wrts, values)?;
+        if let [Value::Array { .. }] = derivatives[..] {
+            return Ok(derivatives.remove(0));
+        }
         // The checker made sure the parameters share one dimension, so the
         // derivatives do; the vector has that one.
         let mut data = Vec::with_capacity(derivatives.len());

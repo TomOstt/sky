@@ -204,6 +204,7 @@ impl Checker<'_> {
             ),
             Ty::Bool => "a Bool".to_string(),
             Ty::Func(f) => format!("function `{}`", quote(f.name())),
+            Ty::Ode(o) => o.describe(),
             Ty::Unknown => "unknown".to_string(),
         }
     }
@@ -219,6 +220,7 @@ impl Checker<'_> {
             .to_string(),
             Ty::Bool => "Bool".to_string(),
             Ty::Func(f) => format!("function `{}`", quote(f.name())),
+            Ty::Ode(o) => o.describe(),
             Ty::Unknown => "?".to_string(),
         }
     }
@@ -249,6 +251,7 @@ impl Checker<'_> {
             // Two different functions under one name (a `def` in each branch)
             // can't be told apart at a call: calls to it are unchecked.
             (Ty::Func(f), Ty::Func(g)) => Some(if f == g { a.clone() } else { Ty::Unknown }),
+            (Ty::Ode(x), Ty::Ode(y)) => Some(if x == y { a.clone() } else { Ty::Unknown }),
             _ => None,
         }
     }
@@ -629,15 +632,21 @@ impl Checker<'_> {
             }
         }
         self.diverged = false;
+        let entry = self.begin_contracts(params, body);
         self.block(body);
         let ends_diverged = self.diverged;
         let ctx = self.fns.pop();
         self.loops = saved_loops;
 
+        let has_value = ctx
+            .as_ref()
+            .is_some_and(|c| c.declared.is_some() || c.returns.iter().any(|r| r.value.is_some()));
         let ret_ty = match ctx {
             Some(ctx) => self.finish_returns(name, &ctx, ends_diverged),
             None => Ty::Unknown,
         };
+        let result = has_value.then(|| self.env.resolve(&ret_ty));
+        self.finish_contracts(name.span, &fname, params, body, entry, result);
         // Signature with what the body taught us about its size variables.
         let params: Vec<ParamSig> = psigs
             .into_iter()
@@ -785,7 +794,7 @@ impl Checker<'_> {
                     );
                 }
             }
-            Ty::Bool | Ty::Func(_) => {
+            Ty::Bool | Ty::Func(_) | Ty::Ode(_) => {
                 let found = self.ty_label(&t);
                 self.error(
                     Diagnostic::error(format!("expected a number, found {found}"), vspan)
@@ -992,6 +1001,9 @@ impl Checker<'_> {
             };
             self.check_argument(&fname, &param.name, pt, ann, arg, t, &fresh);
         }
+        if sig.derivative.is_none() {
+            self.warn_call_breaks_contract(sig.def_span, &sig.name, args, span);
+        }
         match &sig.ret {
             Ty::Value(v) => {
                 let ty = self.substitute(&v.ty, &fresh);
@@ -1089,7 +1101,7 @@ impl Checker<'_> {
                     self.error(d);
                 }
             }
-            Ty::Bool | Ty::Func(_) => {
+            Ty::Bool | Ty::Func(_) | Ty::Ode(_) => {
                 let found = self.ty_label(t);
                 self.error(
                     Diagnostic::error(format!("expected a number, found {found}"), arg.span)

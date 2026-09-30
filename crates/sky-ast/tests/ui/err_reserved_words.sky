@@ -1,4 +1,3 @@
-equation spring:
+field spring:
     field u
-    solve u
 x = 1

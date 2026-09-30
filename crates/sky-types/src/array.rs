@@ -256,6 +256,16 @@ impl Checker<'_> {
                         .with_label("this is a function"),
                     );
                 }
+                Ty::Ode(o) => {
+                    ok = false;
+                    self.error(
+                        Diagnostic::error(
+                            format!("an array element must be a number, found {o}"),
+                            x.span,
+                        )
+                        .with_label(format!("this is {o}")),
+                    );
+                }
                 Ty::Unknown => ok = false,
             }
         }
@@ -350,6 +360,13 @@ impl Checker<'_> {
                         base.span,
                     )
                     .with_label("this is a function"),
+                );
+                return Ty::Unknown;
+            }
+            Ty::Ode(o) => {
+                self.error(
+                    Diagnostic::error(format!("cannot index {o}"), base.span)
+                        .with_label(format!("this is {o}")),
                 );
                 return Ty::Unknown;
             }
@@ -502,7 +519,7 @@ impl Checker<'_> {
                 );
                 return (None, false);
             }
-            Ty::Bool | Ty::Func(_) => {
+            Ty::Bool | Ty::Func(_) | Ty::Ode(_) => {
                 self.error(
                     Diagnostic::error(format!("an index must be an integer, found {t}"), x.span)
                         .with_label(format!("this is {t}")),

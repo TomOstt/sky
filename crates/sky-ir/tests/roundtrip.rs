@@ -52,6 +52,8 @@ fn all_ops_module_uses_every_mnemonic() {
         "cmp.ge",
         "not",
         "show",
+        "expect.bool",
+        "expect.number",
         "fused",
         "if",
         "while",
@@ -446,4 +448,87 @@ fn @main() -> () effects(io, fail) {
 }
 "
     );
+}
+
+// ----- operand spans -----
+
+/// `x + x` with the given operation span and operand spans.
+fn add_with_spans(span: sky_diag::Span, operand_spans: Vec<sky_diag::Span>) -> Module {
+    let mut b = FunctionBuilder::new("f", vec![len()], vec![len()], sp(0, 0));
+    let x = b.params()[0];
+    let (_, s) = b.op_with_spans(OpKind::Add, vec![x, x], operand_spans, vec![len()], span);
+    b.op(OpKind::Return, vec![s[0]], vec![], sp(0, 0));
+    module(vec![b.finish()])
+}
+
+#[test]
+fn operand_spans_print_after_the_span_and_only_when_known() {
+    let m = add_with_spans(sp(10, 20), vec![sp(10, 11), sp(14, 20)]);
+    let text = print(&m);
+    assert!(
+        text.contains("add %0, %0 : num[L; ()] @ 10..20 (10..11, 14..20)\n"),
+        "{text}"
+    );
+    assert_eq!(roundtrip(&m), m);
+    // Unknown spans are not printed, and read back as unknown.
+    let bare = add_with_spans(sp(10, 20), vec![]);
+    let text = print(&bare);
+    assert!(
+        text.contains("add %0, %0 : num[L; ()] @ 10..20\n"),
+        "{text}"
+    );
+    assert_eq!(roundtrip(&bare), bare);
+    assert!(roundtrip(&bare).functions[0].ops[0]
+        .operand_spans
+        .is_empty());
+}
+
+#[test]
+fn operand_spans_survive_an_operation_span_of_zero() {
+    // The operation's own span is written (`@ 0..0`) so the operand spans have
+    // a place to follow it.
+    let m = add_with_spans(sp(0, 0), vec![sp(3, 4), sp(0, 0)]);
+    let text = print(&m);
+    assert!(text.contains("@ 0..0 (3..4, 0..0)\n"), "{text}");
+    assert_eq!(roundtrip(&m), m);
+}
+
+#[test]
+fn canonicalize_keeps_operand_spans() {
+    let m = all_ops();
+    let with_spans = |m: &Module| {
+        m.functions[0]
+            .ops
+            .iter()
+            .filter(|o| !o.operand_spans.is_empty())
+            .count()
+    };
+    assert!(with_spans(&m) >= 4);
+    assert_eq!(with_spans(&canonicalize(&m)), with_spans(&m));
+    assert_eq!(canonicalize(&m), m);
+}
+
+#[test]
+fn a_slice_has_a_span_per_operand_and_per_axis() {
+    let text = print(&all_ops());
+    // `lit[lo:hi, at]` reads the array, two bounds and one position, and has
+    // two items.
+    assert!(
+        text.contains("@ 50..59 (50..51, 52..53, 54..55, 57..58, 52..55, 57..58)\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_malformed_operand_span_list_is_a_parse_error() {
+    let ok = print(&add_with_spans(sp(10, 20), vec![sp(10, 11), sp(14, 20)]));
+    for bad in [
+        ok.replace("(10..11, 14..20)", "(10..11, 14..20"),
+        ok.replace("(10..11, 14..20)", "(10..11,)"),
+        ok.replace("(10..11, 14..20)", "()"),
+        ok.replace("(10..11, 14..20)", "(10, 11)"),
+        ok.replace("(10..11, 14..20)", "(10..11 14..20)"),
+    ] {
+        assert!(parse(&bad).is_err(), "{bad}");
+    }
 }

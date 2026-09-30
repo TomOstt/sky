@@ -188,6 +188,7 @@ fn copy_block(
             .collect();
         let tys = op.results.iter().map(|&v| f.ty(v).clone()).collect();
         let (new_op, results) = b.op(op.kind.clone(), operands, tys, op.span);
+        b.set_operand_spans(new_op, op.operand_spans.clone());
         for (&old, new) in op.results.iter().zip(results) {
             map[old.index()] = Some(new);
         }

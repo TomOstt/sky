@@ -9,10 +9,12 @@ use sky_ir::{
     BlockId, Function, FunctionBuilder, Module, NumberType, OpData, OpId, OpKind, RegionId, Repr,
     Type, ValueDef, ValueId,
 };
+use sky_types::{Shape, TagSet};
 use sky_units::Dimension;
 
 use crate::analysis::analyze;
-use crate::{derivative_name, AdError};
+use crate::inline::inline_array_calls;
+use crate::{derivative_name, derivative_name_for, AdError, Kind, Task};
 
 pub(crate) type Res<T> = Result<T, AdError>;
 
@@ -30,17 +32,35 @@ pub(crate) struct Diff<'m> {
     /// Source value to its tangent, when it has one (`None` is a
     /// structural zero, which costs no code until something needs it).
     pub tan: Vec<Option<ValueId>>,
-    /// Derivative functions this one calls: `(callee, parameter)`.
-    pub needs: Vec<(String, usize)>,
+    /// Derivative functions this one calls.
+    pub needs: Vec<Task>,
+}
+
+/// What seeds the tangent of the parameter differentiated against.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Seed {
+    /// A scalar parameter `x`: `dx/dx = 1`.
+    Unit,
+    /// An array parameter `p`: the derivative in the direction of an extra
+    /// trailing parameter, a dimensionless array of `p`'s shape (a
+    /// Jacobian-vector product). A gradient is `n` of these with unit
+    /// vectors as directions, when reverse mode cannot be used.
+    Direction,
 }
 
 /// Builds the derivative of `f` with respect to parameter `wrt`, and
 /// returns the derivative functions it calls.
+///
+/// A scalar parameter ([`Seed::Unit`]) gives `df/dx(params...) -> (values...,
+/// tangents...)`. An array parameter ([`Seed::Direction`]) gives the
+/// directional derivative `df/dp#jvp(params..., direction)`, with the
+/// direction an extra trailing parameter.
 pub(crate) fn build(
     module: &Module,
     f: &Function,
     wrt: usize,
-) -> Res<(Function, Vec<(String, usize)>)> {
+    seed: Seed,
+) -> Res<(Function, Vec<Task>)> {
     let name = f.name.clone();
     let params = f.param_values();
     let Some(&x) = params.get(wrt) else {
@@ -50,14 +70,8 @@ pub(crate) fn build(
             params: params.len(),
         });
     };
-    let x_dim = match f.ty(x) {
-        Type::Number(n) if n.shape.rank() == 0 => n.dim,
-        Type::Number(_) => {
-            return Err(AdError::NonScalar {
-                func: name,
-                what: format!("parameter {wrt}"),
-            })
-        }
+    let x_ty = match f.ty(x) {
+        Type::Number(n) => n.clone(),
         Type::Unknown => {
             return Err(AdError::UnknownType {
                 func: name,
@@ -66,6 +80,12 @@ pub(crate) fn build(
         }
         _ => return Err(AdError::NonNumberParam { func: name, wrt }),
     };
+    if (x_ty.shape.rank() == 0) != (seed == Seed::Unit) {
+        return Err(AdError::Malformed {
+            func: name,
+            why: "the seed does not fit the parameter's shape".into(),
+        });
+    }
     if f.results.is_empty() {
         return Err(AdError::BadResult {
             func: name,
@@ -79,8 +99,7 @@ pub(crate) fn build(
             format!("result {i}")
         };
         match res_ty {
-            Type::Number(n) if n.shape.rank() == 0 => {}
-            Type::Number(_) => return Err(AdError::NonScalar { func: name, what }),
+            Type::Number(_) => {}
             Type::Unknown => return Err(AdError::UnknownType { func: name, what }),
             _ => {
                 return Err(AdError::BadResult {
@@ -91,12 +110,27 @@ pub(crate) fn build(
         }
     }
 
+    // Calls that pass or return arrays are inlined, so the derivative sees
+    // through them (a helper `displacement(p)` is part of the potential).
+    let inlined = inline_array_calls(module, f)?;
+    let f = &inlined;
+
+    let mut params_ty = f.params.clone();
+    if seed == Seed::Direction {
+        params_ty.push(Type::Number(NumberType {
+            dim: Dimension::DIMENSIONLESS,
+            shape: x_ty.shape.clone(),
+            tags: TagSet::EMPTY,
+            repr: x_ty.repr,
+        }));
+    }
+    let out_name = derivative_name_for(f, wrt, seed_kind(seed));
     let mut d = Diff {
         module,
         src: f,
         // The result types are filled in below once we can compute them.
-        b: FunctionBuilder::new(derivative_name(f, wrt), f.params.clone(), vec![], f.span),
-        x_dim,
+        b: FunctionBuilder::new(out_name.clone(), params_ty.clone(), vec![], f.span),
+        x_dim: x_ty.dim,
         active: analyze(f, wrt),
         map: vec![None; f.values.len()],
         tan: vec![None; f.values.len()],
@@ -106,20 +140,26 @@ pub(crate) fn build(
     for res_ty in &f.results {
         results.push(tangent_type_of(&d, res_ty)?);
     }
-    let mut b = FunctionBuilder::new(derivative_name(f, wrt), f.params.clone(), results, f.span);
+    let mut b = FunctionBuilder::new(out_name, params_ty, results, f.span);
     b.set_effects(f.effects);
     d.b = b;
 
-    for (old, new) in f.param_values().iter().zip(d.b.params()) {
-        d.map[old.index()] = Some(new);
+    let new_params = d.b.params();
+    for (old, new) in f.param_values().iter().zip(&new_params) {
+        d.map[old.index()] = Some(*new);
         if let Some(n) = &f.value(*old).name {
-            d.b.set_name(new, n.clone());
+            d.b.set_name(*new, n.clone());
         }
     }
-    // The seed: dx/dx = 1, dimensionless.
-    let seed_ty = d.tangent_ty(x)?;
-    let seed = d.konst(1.0, seed_ty, f.span);
-    d.tan[x.index()] = Some(seed);
+    let seed_value = match seed {
+        // The seed: dx/dx = 1, dimensionless.
+        Seed::Unit => {
+            let seed_ty = d.tangent_ty(x)?;
+            d.konst(1.0, seed_ty, f.span)
+        }
+        Seed::Direction => new_params[f.params.len()],
+    };
+    d.tan[x.index()] = Some(seed_value);
 
     let term = d.process_ops(f.entry())?;
     let t = f.op(term);
@@ -141,18 +181,37 @@ pub(crate) fn build(
     Ok((d.b.finish(), d.needs))
 }
 
+fn seed_kind(seed: Seed) -> Kind {
+    match seed {
+        Seed::Unit => Kind::Forward,
+        Seed::Direction => Kind::Jvp,
+    }
+}
+
 fn tangent_type_of(d: &Diff<'_>, ty: &Type) -> Res<Type> {
     let Type::Number(n) = ty else {
         unreachable!("checked by the caller")
     };
     let dim = d.dim_div(n.dim, d.x_dim)?;
-    Ok(number_type(dim, n.repr))
+    Ok(shaped_type(dim, n.shape.clone(), n.repr))
 }
 
+/// A scalar of dimension `dim`.
 pub(crate) fn number_type(dim: Dimension, repr: Repr) -> Type {
     Type::Number(NumberType {
         repr,
         ..NumberType::scalar(dim)
+    })
+}
+
+/// A number of dimension `dim` and shape `shape`, with no tags: what a
+/// tangent or an adjoint is.
+pub(crate) fn shaped_type(dim: Dimension, shape: Shape, repr: Repr) -> Type {
+    Type::Number(NumberType {
+        dim,
+        shape,
+        tags: TagSet::EMPTY,
+        repr,
     })
 }
 
@@ -195,14 +254,11 @@ impl Diff<'_> {
         a.pow_rat(e).map_err(|e| self.dim_err(e))
     }
 
-    /// The dimension of source value `v`, which must be a scalar number.
+    /// The dimension of source value `v`, which must be a number (of any
+    /// shape: an array's entries share one dimension).
     pub fn dim_of(&self, v: ValueId) -> Res<Dimension> {
         match self.src.ty(v) {
-            Type::Number(n) if n.shape.rank() == 0 => Ok(n.dim),
-            Type::Number(_) => Err(AdError::NonScalar {
-                func: self.src.name.clone(),
-                what: self.describe(v),
-            }),
+            Type::Number(n) => Ok(n.dim),
             Type::Unknown => Err(AdError::UnknownType {
                 func: self.src.name.clone(),
                 what: self.describe(v),
@@ -234,10 +290,18 @@ impl Diff<'_> {
             .map_or(Repr::Unchosen, |n| n.repr)
     }
 
-    /// The type of `v`'s tangent: `dim(v) / dim(x)`, a scalar.
+    /// The shape of source value `v` (a scalar's is `()`).
+    pub fn shape_of(&self, v: ValueId) -> Shape {
+        self.src
+            .ty(v)
+            .as_number()
+            .map_or_else(Shape::scalar, |n| n.shape.clone())
+    }
+
+    /// The type of `v`'s tangent: `dim(v) / dim(x)`, with the shape of `v`.
     pub fn tangent_ty(&self, v: ValueId) -> Res<Type> {
         let dim = self.dim_div(self.dim_of(v)?, self.x_dim)?;
-        Ok(number_type(dim, self.repr_of(v)))
+        Ok(shaped_type(dim, self.shape_of(v), self.repr_of(v)))
     }
 
     // ----- values -----
@@ -271,14 +335,15 @@ impl Diff<'_> {
             Some(t) => Ok(t),
             None => {
                 let ty = self.tangent_ty(v)?;
-                Ok(self.konst(0.0, ty, span))
+                let like = self.primal(v).ok();
+                self.zero_of(&ty, like, span)
             }
         }
     }
 
     // ----- structure -----
 
-    fn single_block(&self, r: RegionId) -> Res<BlockId> {
+    pub fn single_block(&self, r: RegionId) -> Res<BlockId> {
         match self.src.region(r).blocks[..] {
             [b] => Ok(b),
             _ => Err(self.malformed("a region must have exactly one block")),
@@ -306,6 +371,7 @@ impl Diff<'_> {
             OpKind::If => self.if_op(op),
             OpKind::While => self.while_op(op),
             OpKind::Call { callee } => self.call_op(op, callee),
+            OpKind::Fused => self.fused_op(op),
             OpKind::Yield | OpKind::Condition | OpKind::Return => {
                 Err(self.malformed("a terminator in the middle of a block"))
             }
@@ -325,7 +391,7 @@ impl Diff<'_> {
 
     /// Copies `op` (without regions) with mapped operands and records its
     /// results. Tangents are the caller's business.
-    fn copy_primal(&mut self, op: &OpData) -> Res<Vec<ValueId>> {
+    pub fn copy_primal(&mut self, op: &OpData) -> Res<Vec<ValueId>> {
         let operands = op
             .operands
             .iter()
@@ -496,6 +562,12 @@ impl Diff<'_> {
     /// argument with a tangent, chained by the rule
     /// `d f(a, b) = ∂f/∂a · ta + ∂f/∂b · tb`. The first call also gives the
     /// primal result.
+    ///
+    /// The chain rule is a product of numbers, so the arguments with
+    /// tangents must be scalars (a result may be an array: its derivative
+    /// scales by the scalar tangent). A call with an array argument is
+    /// inlined before differentiation ([`crate::inline`]), so one that gets
+    /// here is a recursive function's.
     fn call_op(&mut self, op: &OpData, callee: &str) -> Res<()> {
         let live: Vec<usize> = (0..op.operands.len())
             .filter(|i| self.tan_of(op.operands[*i]).is_some())
@@ -528,13 +600,27 @@ impl Diff<'_> {
             .collect::<Res<Vec<_>>>()?;
         let mut sums: Vec<Option<ValueId>> = vec![None; n];
         for (m, &k) in live.iter().enumerate() {
+            if self.shape_of(op.operands[k]).rank() != 0 {
+                return Err(self.unsupported(
+                    "call",
+                    &format!(
+                        "an argument of the call to `{callee}` is an array that depends on the \
+                         variable, and the call cannot be inlined (the function is recursive)"
+                    ),
+                ));
+            }
             let dname = derivative_name(target, k);
-            self.needs.push((callee.to_string(), k));
+            self.needs.push(Task {
+                func: callee.to_string(),
+                wrt: k,
+                kind: Kind::Forward,
+            });
             let mut tys: Vec<Type> = op.results.iter().map(|r| self.src.ty(*r).clone()).collect();
             for r in &op.results {
                 // dim(∂r/∂a_k) = dim(r) / dim(a_k)
-                tys.push(number_type(
+                tys.push(shaped_type(
                     self.dim_div(self.dim_of(*r)?, self.dim_of(op.operands[k])?)?,
+                    self.shape_of(*r),
                     self.repr_of(*r),
                 ));
             }
@@ -566,5 +652,104 @@ impl Diff<'_> {
             self.tan[r.index()] = sum;
         }
         Ok(())
+    }
+
+    /// `fused`: the primal kernel is copied, and the tangent is a second
+    /// kernel over the same operands and the operands' tangents, whose body
+    /// is the primal body with the scalar tangent rules applied elementwise
+    /// (the tangent of an elementwise function is the elementwise tangent).
+    /// A scalar operand (broadcast) with a tangent gives a scalar tangent
+    /// operand, broadcast in the same way.
+    fn fused_op(&mut self, op: &OpData) -> Res<()> {
+        let src = self.src;
+        let [r] = op.results[..] else {
+            return Err(self.malformed("`fused` has one result"));
+        };
+        self.copy_deep(op)?;
+        let live: Vec<usize> = (0..op.operands.len())
+            .filter(|i| self.tan_of(op.operands[*i]).is_some())
+            .collect();
+        if !self.active[r.index()] || live.is_empty() {
+            return Ok(());
+        }
+        let body = self.single_block(op.regions[0])?;
+        let ty = self.tangent_ty(r)?;
+        let mut operands = op
+            .operands
+            .iter()
+            .map(|v| self.primal(*v))
+            .collect::<Res<Vec<_>>>()?;
+        for &j in &live {
+            operands.push(self.tan_of(op.operands[j]).expect("live"));
+        }
+        let outer = self.b.insertion_block();
+        let (new_op, results) = self.b.op(OpKind::Fused, operands, vec![ty], op.span);
+        let region = self.b.add_region(new_op);
+        let args = src.block(body).args.clone();
+        let mut arg_tys: Vec<Type> = args.iter().map(|a| src.ty(*a).clone()).collect();
+        for &j in &live {
+            // The tangent of a body argument is a scalar of its dimension
+            // over `dim(x)`.
+            arg_tys.push(self.tangent_ty(args[j])?);
+        }
+        let blk = self.b.add_block(region, arg_tys);
+        let new_args = self.b.func().block(blk).args.clone();
+        for (j, a) in args.iter().enumerate() {
+            self.map[a.index()] = Some(new_args[j]);
+        }
+        for (k, &j) in live.iter().enumerate() {
+            self.tan[args[j].index()] = Some(new_args[args.len() + k]);
+        }
+        self.b.set_insertion_block(blk);
+        let term = src.op(self.process_ops(body)?);
+        let [y] = term.operands[..] else {
+            return Err(self.malformed("the body of `fused` yields one value"));
+        };
+        let ty = self.tangent_or_zero(y, term.span)?;
+        self.b.op(OpKind::Yield, vec![ty], vec![], term.span);
+        self.b.set_insertion_block(outer);
+        self.tan[r.index()] = Some(results[0]);
+        // The body's values are only meaningful inside it.
+        for a in &args {
+            self.tan[a.index()] = None;
+        }
+        Ok(())
+    }
+
+    /// Copies `op` with its regions (an `if` or `while` arm, a `fused`
+    /// body), without tangents: the primal computation only.
+    pub fn copy_deep(&mut self, op: &OpData) -> Res<Vec<ValueId>> {
+        let src = self.src;
+        let operands = op
+            .operands
+            .iter()
+            .map(|v| self.primal(*v))
+            .collect::<Res<Vec<_>>>()?;
+        let tys = op.results.iter().map(|r| src.ty(*r).clone()).collect();
+        let outer = self.b.insertion_block();
+        let (new_op, results) = self.b.op(op.kind.clone(), operands, tys, op.span);
+        for (old, new) in op.results.iter().zip(&results) {
+            self.map[old.index()] = Some(*new);
+            if let Some(n) = &src.value(*old).name {
+                self.b.set_name(*new, n.clone());
+            }
+        }
+        for &region in &op.regions {
+            let blk = self.single_block(region)?;
+            let r = self.b.add_region(new_op);
+            let args = &src.block(blk).args;
+            let arg_tys = args.iter().map(|a| src.ty(*a).clone()).collect();
+            let nb = self.b.add_block(r, arg_tys);
+            let new_args = self.b.func().block(nb).args.clone();
+            for (a, n) in args.iter().zip(&new_args) {
+                self.map[a.index()] = Some(*n);
+            }
+            self.b.set_insertion_block(nb);
+            for id in &src.block(blk).ops {
+                self.copy_deep(src.op(*id))?;
+            }
+        }
+        self.b.set_insertion_block(outer);
+        Ok(results)
     }
 }

@@ -1,10 +1,10 @@
-# What `grad(f)` accepts: a `def` with annotated scalar parameters and a
-# scalar result, called where it is written.
+# What `grad(f)` accepts: a `def` with annotated parameters (all scalars, or
+# one array) and a scalar result, called where it is written.
 def loose(x, y: m) -> m:
     return y
 
-def norm(v: Vector[3] m) -> m:
-    return v[0]
+def with_time(p: Vector[3] m, t: s) -> J:
+    return 1 N/m * (p @ p) * (t / 1 s)
 
 def path(t: s) -> Vector[3] m:
     return [t * 1 m/s, 1 m, 2 m]
@@ -16,7 +16,7 @@ def position(t: s) -> m:
     return 5 m/s^2 * t^2
 
 a = grad(loose)(1 m, 2 m)
-b = grad(norm)([1 m, 2 m, 3 m])
+b = grad(with_time)([1 m, 2 m, 3 m], 1 s)
 d = grad(path)(1 s)
 e = grad(sqrt)(4)
 f = grad(position, t)(1 s)

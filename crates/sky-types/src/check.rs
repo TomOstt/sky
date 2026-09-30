@@ -7,7 +7,7 @@
 //! truthiness, per the spec's "Booleans and conditions"), the builtin
 //! `print(...)` call, calls to user functions, and `derivative(f, x)(...)` (in [`crate::derivative`]). Array literals, indexing
 //! and the builtins `zeros`, `identity` and `len` are in [`crate::array`].
-//! Anything else (strings, attributes, `∂`, `∇`, calls to names that are not
+//! Anything else (strings, attributes other than those of a solution (see the `ode` module), `∂`, `∇`, calls to names that are not
 //! functions) is typed as [`Ty::Unknown`] without a diagnostic, and an
 //! operator with an unknown operand is unknown too, so one error never
 //! cascades.
@@ -66,6 +66,7 @@ use sky_units::{lookup, lookup_constant, suggest_unit, Dimension, Rational, CONS
 use crate::array::LiteralProof;
 use crate::flow::{FnCtx, FuncSig, LoopFrame};
 use crate::numerics::NumState;
+use crate::ode::OdeTy;
 use crate::provenance::{label_dim, Provenance};
 use crate::rewrite::{cholesky_rewrite, MatmulLhs, Rewrite};
 use crate::rules::{elementwise, inverse, matmul, transpose, TensorType};
@@ -107,6 +108,8 @@ pub enum Ty {
     Bool,
     /// A function defined with `def`: its signature, for checking calls.
     Func(Arc<FuncSig>),
+    /// An `equation`, or the solution a `solve` gave (see [`OdeTy`]).
+    Ode(Arc<OdeTy>),
     /// Not typed in this slice, or the result of an error already reported.
     Unknown,
 }
@@ -136,6 +139,7 @@ impl fmt::Display for Ty {
             Ty::Value(v) => v.fmt(f),
             Ty::Bool => f.write_str("Bool"),
             Ty::Func(sig) => write!(f, "function `{}`", sig.name()),
+            Ty::Ode(o) => o.fmt(f),
             Ty::Unknown => f.write_str("?"),
         }
     }
@@ -358,6 +362,10 @@ pub struct Checked {
     /// Types hold the shape variables as they were when the expression was
     /// typed: resolve them with [`Checked::resolve_ty`].
     pub expr_types: HashMap<Span, Ty>,
+    /// One note per `solve`, for `sky check --explain`: the structure the
+    /// checker found in the equation and what the solver will be asked for
+    /// (see the `ode` module).
+    pub ode_notes: Vec<Diagnostic>,
     /// The type given to each name a statement binds (`x = ...`, `x: T`,
     /// `x: T = ...`), keyed by the span of the name in the statement. For
     /// `x: T` without a value this is the declared type, which nothing else
@@ -411,10 +419,13 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         diverged: false,
         prov: Provenance::new(source),
         expr_types: HashMap::new(),
+        ode_notes: Vec::new(),
         binding_types: HashMap::new(),
         funcs: HashMap::new(),
         num: NumState::default(),
+        unc: crate::uncertain::UncertainState::default(),
         shown_ok: None,
+        contract_defs: HashMap::new(),
     };
     for stmt in &module.stmts {
         c.stmt(stmt);
@@ -426,6 +437,7 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         cholesky_solves: c.solves,
         env: c.env,
         expr_types: c.expr_types,
+        ode_notes: c.ode_notes,
         binding_types: c.binding_types,
         funcs: c.funcs,
     }
@@ -467,16 +479,23 @@ pub(crate) struct Checker<'s> {
     /// See [`Checked::expr_types`]. Recording is write-only: nothing in the
     /// walk reads these tables, so they cannot change a diagnostic.
     pub(crate) expr_types: HashMap<Span, Ty>,
+    /// See [`Checked::ode_notes`].
+    pub(crate) ode_notes: Vec<Diagnostic>,
     /// See [`Checked::binding_types`].
     binding_types: HashMap<Span, Ty>,
     /// See [`Checked::funcs`].
     pub(crate) funcs: HashMap<Span, Arc<FuncSig>>,
     /// What the numerical warnings remember (see [`crate::numerics`]).
     pub(crate) num: NumState,
+    /// What the uncertainty warning remembers (see [`crate::uncertain`]).
+    pub(crate) unc: crate::uncertain::UncertainState,
     /// The one `v as unit` the next `expr` call may type without an error:
     /// the argument of `print` or the expression statement being checked
     /// (see [`crate::display`]).
     pub(crate) shown_ok: Option<Span>,
+    /// The `requires` lines of the functions checked so far, by the span of
+    /// the `def`'s name (see [`crate::contracts`]).
+    pub(crate) contract_defs: HashMap<Span, Arc<crate::contracts::ContractDef>>,
 }
 
 /// Human wording for a dimension in error text: its name if it has one
@@ -747,6 +766,7 @@ impl<'s> Checker<'s> {
                 match target {
                     AssignTarget::Name(id) => {
                         self.note_binding(id.span, Some(value), None);
+                        self.note_uncertain_binding(self.ident(id), value);
                         let typed = matches!(t, Ty::Value(_));
                         self.bind_name(id, t);
                         if typed {
@@ -773,6 +793,9 @@ impl<'s> Checker<'s> {
                 let found = value.as_ref().map(|v| (v, self.expr(v)));
                 let declares_unit = declared.as_ref().is_some_and(|d| d.dim.is_some());
                 self.note_binding(name.span, value.as_ref(), declares_unit.then_some(ty.span));
+                if let Some(v) = value {
+                    self.note_uncertain_binding(self.ident(name), v);
+                }
                 let bound = self.binding_type(ty, declared, found);
                 let typed = matches!(bound, Ty::Value(_));
                 self.bind_name(name, bound);
@@ -780,6 +803,7 @@ impl<'s> Checker<'s> {
                     self.note_const_binding(self.ident(name), v);
                 }
             }
+            StmtKind::Accuracy { name, tolerance } => self.accuracy_stmt(name, tolerance),
             StmtKind::If {
                 branches,
                 else_block,
@@ -793,9 +817,12 @@ impl<'s> Checker<'s> {
                 body,
             } => self.def_stmt(name, params, ret.as_ref(), body),
             StmtKind::Return(value) => self.return_stmt(stmt.span, value.as_ref()),
+            StmtKind::Assert { kind, cond, .. } => self.assert_stmt(*kind, cond),
             StmtKind::Pass => {}
             StmtKind::Break => self.break_stmt(stmt.span),
             StmtKind::Continue => self.continue_stmt(stmt.span),
+            StmtKind::Equation(eq) => self.equation_stmt(eq),
+            StmtKind::Solve(solve) => self.solve_stmt(solve),
         }
     }
 
@@ -846,6 +873,14 @@ impl<'s> Checker<'s> {
                     )
                     .with_label("this is a function")
                     .with_secondary(ty.span, "expected because of this annotation"),
+                );
+                return Ty::value(declared_dim, tensor);
+            }
+            Ty::Ode(o) => {
+                self.error(
+                    Diagnostic::error(format!("expected a number, found {o}"), value.span)
+                        .with_label(format!("this is {o}"))
+                        .with_secondary(ty.span, "expected because of this annotation"),
                 );
                 return Ty::value(declared_dim, tensor);
             }
@@ -996,6 +1031,7 @@ impl<'s> Checker<'s> {
         };
         self.warn_if_shadowing(id);
         self.num.on_bind(self.ident(id));
+        self.note_uncertain_update(self.ident(id), value);
         // Silent lookup: typing `whole` below reports an undefined name once.
         let declared = self.env.get(self.ident(id)).unwrap_or(Ty::Unknown);
         let whole = Expr {
@@ -1364,7 +1400,16 @@ impl<'s> Checker<'s> {
                     }
                     return Ty::Unknown;
                 }
+                if let Some(t) = self.vector_call(callee, args, e.span) {
+                    return t;
+                }
+                if let Some(t) = self.ode_call(callee, args, e.span) {
+                    return t;
+                }
                 if let Some(t) = self.math_call(callee, args, e.span) {
+                    return t;
+                }
+                if let Some(t) = self.uncertain_call(callee, args, e.span) {
                     return t;
                 }
                 if let Some(t) = self.builtin_call(callee, args, e.span) {
@@ -1377,12 +1422,14 @@ impl<'s> Checker<'s> {
                 self.call(callee_ty, callee, args, e.span)
             }
             ExprKind::Index { base, items } => self.index_expr(base, items),
-            ExprKind::Attribute { base, .. } => {
-                self.expr(base);
-                Ty::Unknown
-            }
+            ExprKind::Attribute { base, name } => self.attribute_expr(base, name),
             ExprKind::IfElse { then, cond, else_ } => self.if_else(then, cond, else_),
             ExprKind::As { value, unit, .. } => self.show(e, value, unit),
+            ExprKind::PlusMinus {
+                value,
+                sigma,
+                op_span,
+            } => self.plus_minus(value, sigma, *op_span),
             ExprKind::Binary {
                 op,
                 op_span,
@@ -1776,6 +1823,7 @@ impl<'s> Checker<'s> {
             BinaryOp::Add | BinaryOp::Sub => self.additive(op, op_span, (le, lv), (re, rv)),
             BinaryOp::Mul | BinaryOp::Div => self.multiplicative(op, op_span, (le, lv), (re, rv)),
             _ if op.is_comparison() => {
+                self.warn_uncertain_comparison(op, op_span, le, re);
                 if !lv.is_scalar() || !rv.is_scalar() {
                     let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
                     self.error(
@@ -1934,6 +1982,7 @@ impl<'s> Checker<'s> {
                 )
             };
             self.dim_mismatch(message, op, op_span, (le, &lv), (re, &rv));
+            self.plus_dash_hint(op, op_span);
             return Ty::Unknown;
         }
         // Elementwise results carry no tags (see `rules::elementwise`).

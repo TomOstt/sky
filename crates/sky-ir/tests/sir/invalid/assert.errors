@@ -1,0 +1,5 @@
+@bad: `assert` takes a condition and 1 value(s) for its names, found 1 operand(s) (op0) @ 0..0
+@bad: `assert` needs a Bool or unknown condition, found num[L; ()] (op1) @ 0..0
+@bad: `assert[requires]` needs the name of the function it belongs to (op2) @ 0..0
+@bad: `assert[assert]` takes no name of the function it belongs to (op3) @ 0..0
+@bad: `assert` needs the text of its condition (op4) @ 0..0

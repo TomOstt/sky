@@ -1,0 +1,12 @@
+// A contract is checked outside a kernel: `assert` in a `fused` body is invalid.
+sir edition 2026
+fn @f(%a: num[L; (3)]) -> (num[L; (3)]) {
+  %r = fused %a : num[L; (3)] {
+    ^1(%x: num[L; ()]):
+      %z = const.float 0 : num[L; ()] @ 1..2
+      %c = cmp.ge %x, %z : bool @ 1..2
+      assert[assert] "x >= 0 m" names("x") %c, %x @ 1..2
+      yield %x @ 1..2
+  } @ 1..2
+  return %r
+}

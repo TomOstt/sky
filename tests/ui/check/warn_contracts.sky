@@ -1,0 +1,20 @@
+def fall_time(h: m) -> s:
+    requires h >= 0 m
+    return sqrt(2 * h / g_n)
+
+def speed(d: m, t: s) -> m/s:
+    requires t > 0 s and d >= 0 m
+    return d / t
+
+assert 1 m > 2 m
+assert 2 m > 1 m
+print(fall_time(-5 m))
+print(fall_time(5 m))
+print(speed(10 m, 0 s))
+print(speed(10 m, 2 s))
+print(speed(10 m, 2 s + 0 s))
+
+def never(x: m):
+    requires 3 > 4
+    ensures 1 == 2
+    pass

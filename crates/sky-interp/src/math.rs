@@ -35,8 +35,8 @@ use crate::erf::erf;
 use crate::{RuntimeError, Value};
 
 /// `f(args)` for already evaluated arguments. `whole` is the call's span
-/// and `spans` the arguments' (same length as `args`; an IR op with one
-/// span passes it for all).
+/// and `spans` the arguments' (same length as `args`; an IR op that
+/// recorded none passes its own span for each).
 pub fn apply(f: MathFn, args: &[Value], whole: Span, spans: &[Span]) -> R<Value> {
     if args.len() != f.arity() {
         return Err(arity_mismatch(f.name(), f.arity(), args.len(), whole));

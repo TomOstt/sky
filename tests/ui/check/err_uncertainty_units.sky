@@ -1,0 +1,4 @@
+# The uncertainty has the dimension of the value.
+m = 5.31 kg ± 20 s
+d = 3 m
+e = d ± 0.1 s

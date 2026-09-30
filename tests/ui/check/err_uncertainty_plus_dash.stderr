@@ -1,0 +1,9 @@
+tests/ui/check/err_uncertainty_plus_dash.sky:2:10: error: cannot add dimensionless and mass
+  |
+2 | m = 5.31 +- 0.02 kg
+  |          ^ mismatched dimensions
+  |     ---- dimensionless
+  |           --------- mass
+  = note: both operands of `+` must have the same dimension
+  = help: convert one side, or fix the unit
+  = help: `+-` is `+` followed by `-`, not an uncertainty; write `±` or `+/-`

@@ -1,5 +1,6 @@
 //! Structural tests for each pass, on IR built with `FunctionBuilder`.
 
+use sky_diag::Span;
 use sky_ir::{
     CmpOp, Function, FunctionBuilder, Module, NumberType, OpKind, Repr, SolveMethod, Type, ValueId,
 };
@@ -946,4 +947,129 @@ fn a_solve_the_lowering_already_chose_is_left_alone() {
     let mut m = module_of(b.finish());
     assert!(cholesky(&mut m).is_empty());
     assert_eq!(entry_mnemonics(&m.functions[0]), ["solve", "return"]);
+}
+
+// ------------------------------------------------------- operand spans
+
+/// The operation that defines `v`.
+fn op_of(f: &Function, v: ValueId) -> &sky_ir::OpData {
+    match f.value(v).def {
+        sky_ir::ValueDef::OpResult { op, .. } => f.op(op),
+        other => panic!("{v} is not an op result: {other:?}"),
+    }
+}
+
+#[test]
+fn a_folded_operation_reads_nothing_so_it_has_no_operand_spans() {
+    let mut bd = main_builder();
+    let x = rat(&mut bd, 1, 2);
+    let y = rat(&mut bd, 1, 3);
+    let (_, r) = bd.op_with_spans(
+        OpKind::Add,
+        vec![x, y],
+        vec![Span::new(1, 2), Span::new(5, 6)],
+        vec![num()],
+        Span::new(1, 6),
+    );
+    let r = r[0];
+    print(&mut bd, r);
+    let mut m = finish_main(bd);
+    let _ = fold(&mut m);
+    verify(&m).unwrap();
+    let _ = sky_ir::effects::infer_effects(&mut m);
+    sky_ir::verify(&m).unwrap_or_else(|e| panic!("{e:#?}"));
+    let f = &m.functions[0];
+    let folded = op_of(f, r);
+    assert!(matches!(
+        folded.kind,
+        OpKind::ConstRational(_) | OpKind::ConstFloat { .. }
+    ));
+    assert!(folded.operand_spans.is_empty());
+    assert_eq!(folded.span, Span::new(1, 6), "the span is kept");
+}
+
+#[test]
+fn a_folded_if_leaves_the_operations_it_inlines_with_their_spans() {
+    let mut bd = FunctionBuilder::new("f", vec![num()], vec![num()], sp());
+    let p = bd.params()[0];
+    let c = bd.op1(OpKind::ConstBool(true), vec![], Type::Bool, sp());
+    let (iff, res) = bd.op(OpKind::If, vec![c], vec![num()], sp());
+    let outer = bd.insertion_block();
+    for arm in 0..2 {
+        let r = bd.add_region(iff);
+        let blk = bd.add_block(r, vec![]);
+        bd.set_insertion_block(blk);
+        let v = if arm == 0 {
+            let (_, v) = bd.op_with_spans(
+                OpKind::Div,
+                vec![p, p],
+                vec![Span::new(7, 8), Span::new(11, 12)],
+                vec![num()],
+                Span::new(7, 12),
+            );
+            v[0]
+        } else {
+            p
+        };
+        bd.op(OpKind::Yield, vec![v], vec![], sp());
+    }
+    bd.set_insertion_block(outer);
+    bd.op(OpKind::Return, res.clone(), vec![], sp());
+    let mut m = module_of(bd.finish());
+    let _ = fold(&mut m);
+    let _ = sky_ir::effects::infer_effects(&mut m);
+    sky_ir::verify(&m).unwrap_or_else(|e| panic!("{e:#?}"));
+    let f = &m.functions[0];
+    let div = f
+        .ops
+        .iter()
+        .find(|o| o.kind == OpKind::Div && o.parent == f.entry())
+        .expect("the division is inlined");
+    assert_eq!(div.operand_spans, [Span::new(7, 8), Span::new(11, 12)]);
+    // The `if` itself has no operand left, and so no spans.
+    assert!(f.op(iff).operands.is_empty() && f.op(iff).operand_spans.is_empty());
+}
+
+#[test]
+fn a_cholesky_solve_reads_a_where_the_inverse_did_and_b_where_the_product_did() {
+    let mut s = solve_program(matrix(PD().closure(), 3), vector(3), vector(3), false);
+    {
+        let f = &mut s.m.functions[0];
+        let inv = match f.value(s.inv).def {
+            sky_ir::ValueDef::OpResult { op, .. } => op,
+            _ => unreachable!(),
+        };
+        let mm = match f.value(s.mm).def {
+            sky_ir::ValueDef::OpResult { op, .. } => op,
+            _ => unreachable!(),
+        };
+        f.ops[inv.index()].span = Span::new(3, 6);
+        f.ops[inv.index()].operand_spans = vec![Span::new(3, 4)];
+        f.ops[mm.index()].span = Span::new(3, 12);
+        f.ops[mm.index()].operand_spans = vec![Span::new(3, 6), Span::new(9, 12)];
+    }
+    let _ = cholesky(&mut s.m);
+    let _ = sky_ir::effects::infer_effects(&mut s.m);
+    sky_ir::verify(&s.m).unwrap_or_else(|e| panic!("{e:#?}"));
+    let f = &s.m.functions[0];
+    let solve = op_of(f, s.mm);
+    assert_eq!(solve.kind.mnemonic(), "solve");
+    assert_eq!(solve.operand_spans, [Span::new(3, 4), Span::new(9, 12)]);
+    assert_eq!(solve.span, Span::new(3, 12));
+
+    // An operation that does not know its operands' spans makes the solve
+    // not know them either.
+    let mut s = solve_program(matrix(PD().closure(), 3), vector(3), vector(3), false);
+    {
+        let f = &mut s.m.functions[0];
+        let mm = match f.value(s.mm).def {
+            sky_ir::ValueDef::OpResult { op, .. } => op,
+            _ => unreachable!(),
+        };
+        f.ops[mm.index()].operand_spans = vec![Span::new(3, 6), Span::new(9, 12)];
+    }
+    let _ = cholesky(&mut s.m);
+    let _ = sky_ir::effects::infer_effects(&mut s.m);
+    sky_ir::verify(&s.m).unwrap_or_else(|e| panic!("{e:#?}"));
+    assert!(op_of(&s.m.functions[0], s.mm).operand_spans.is_empty());
 }

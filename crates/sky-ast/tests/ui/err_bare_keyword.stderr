@@ -1,5 +1,5 @@
-crates/sky-ast/tests/ui/err_bare_keyword.sky:1:1: error: `solve` is reserved for a future version
+crates/sky-ast/tests/ui/err_bare_keyword.sky:1:1: error: `solve` is a keyword, so it cannot be a name
   |
 1 | solve = 1
   | ^^^^^
-  = help: reserved words cannot be used as names; pick another name
+  = help: pick another name

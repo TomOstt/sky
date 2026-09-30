@@ -1,0 +1,16 @@
+# What the checker knows about an equation and its solution.
+GM = 1.327e20 m^3/s^2
+equation orbit(t: s):
+    r: Vector[2] m
+    v: Vector[2] m/s
+    r' = v
+    v' = -GM * r / norm(r)^3
+
+sol = solve orbit from 0 s to 1 yr with r = [1 AU, 0 m], v = [0 m/s, 29.8 km/s]:
+    conserve energy = 0.5 * norm(v)^2 - GM / norm(r)
+final_r = sol.r
+final_v = sol.v
+final_t = sol.t
+energy = sol.energy
+speed = norm(final_v)
+work = dot(final_v, final_v)

@@ -13,9 +13,15 @@
 //! and `x` is one of the leading ones, so the trailing names are constants
 //! of the derivative.
 //!
-//! A function `sky_ad` cannot differentiate (an operation it has no rule
-//! for, an `Unknown` value the derivative flows through) is a
-//! [`LowerError`] on the call, before anything runs.
+//! With respect to an array parameter (`grad(U)(p)` or `derivative(U, p)(p)`
+//! for a potential `U` of a position vector `p`) the derivative function
+//! returns the gradient, an array of `p`'s shape, and the call is the same:
+//! `call d<U>/d<p>`, keeping the second result. `grad(f)` of scalar
+//! parameters gathers one derivative per parameter in a `Vector`.
+//!
+//! A function `sky_ad` cannot differentiate (an `Unknown` value the
+//! derivative flows through, a gradient through a loop over an array of
+//! unknown size) is a [`LowerError`] on the call, before anything runs.
 
 use sky_ast::{Expr, ExprKind};
 use sky_diag::Span;
@@ -150,7 +156,9 @@ pub(crate) fn ad_error(e: &sky_ad::AdError, span: Span) -> LowerError {
         sky_ad::AdError::UnknownType { .. } => {
             "give the parameters and results the derivative flows through a unit annotation"
         }
-        sky_ad::AdError::NonScalar { .. } => "derivatives of arrays come with array AD",
+        sky_ad::AdError::Unsupported { .. } => {
+            "`derivative` differentiates the function's SIR, which needs a rule for every operation the derivative flows through (a gradient through a loop needs the size of its array)"
+        }
         _ => "`derivative` differentiates the function's SIR, which needs a rule for every operation the derivative flows through",
     };
     LowerError::new(e.to_string(), span).with_note(note)

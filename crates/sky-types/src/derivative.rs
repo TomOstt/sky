@@ -17,6 +17,19 @@
 //! of `f`; it is not looked up as a variable, so it is not typed and its
 //! entry in `Checked::expr_types` is `Unknown`.
 //!
+//! # What the derivative is, by the shapes of `x` and `f`
+//!
+//! | `x` | `f` | `derivative(f, x)` | unit |
+//! |---|---|---|---|
+//! | scalar | scalar | a scalar: the slope | `dim(f)/dim(x)` |
+//! | scalar | `Vector`/`Matrix` | an array of `f`'s shape: the velocity of a position vector | `dim(f)/dim(x)` |
+//! | `Vector`/`Matrix` | scalar | an array of `x`'s shape: the **gradient** ∂f/∂x, the force of a potential of a position | `dim(f)/dim(x)` |
+//! | `Vector`/`Matrix` | array | not available: that is a Jacobian | |
+//!
+//! `grad(f)` is the same for a function of *one array parameter*, and for
+//! scalar parameters it is the vector of the derivatives with respect to
+//! every one of them.
+//!
 //! What is rejected, each with a message that says how to fix it:
 //!
 //! * a wrong number of arguments, or a first argument that is not a `def`
@@ -25,8 +38,8 @@
 //! * a parameter without a unit annotation (its dimension is unknown, so
 //!   the derivative's unit cannot be computed; this applies to every
 //!   parameter, since the derivative flows through all of them);
-//! * `x` or the result of `f` not being a scalar number, or the result's
-//!   unit being unknown;
+//! * an array `x` and an array-valued `f` (a Jacobian), or a result that is
+//!   not a number or whose unit is unknown;
 //! * a bare `derivative(f, x)` that is not called at once.
 //!
 //! An argument or a function whose type is already unknown (an earlier
@@ -329,8 +342,8 @@ impl Checker<'_> {
                     self.derivative_unannotated(&sig, i, wrt, x_arg);
                     ok = false;
                 }
-                Some(v) if i == wrt && !v.is_scalar() => {
-                    self.derivative_wrt_array(&sig, wrt, x_arg);
+                Some(v) if i == wrt && v.ty.shape().rank() > 2 => {
+                    self.derivative_wrt_tensor(&sig, wrt, x_arg);
                     ok = false;
                 }
                 Some(_) => {}
@@ -339,22 +352,35 @@ impl Checker<'_> {
         if !ok {
             return Ty::Unknown;
         }
-        let Some(x_dim) = sig.params[wrt].ty.as_ref().map(|v| v.dim) else {
+        let Some(x_ty) = sig.params[wrt].ty.clone() else {
             return Ty::Unknown;
         };
-        let dim = match &sig.ret {
-            Ty::Value(v) if v.is_scalar() => match v.dim.checked_div(x_dim) {
-                Ok(d) => d,
-                Err(_) => {
-                    self.error(Diagnostic::error(
-                        "the dimension of the derivative is too large",
-                        span,
-                    ));
-                    return Ty::Unknown;
-                }
-            },
+        // The derivative has the shape of whichever of `x` and the result
+        // is the array (the gradient of a scalar has the shape of `x`, the
+        // rate of change of an array with a scalar has the array's), and
+        // the unit of the result over the unit of `x`.
+        let shape = match &sig.ret {
+            Ty::Value(v) if x_ty.is_scalar() => v.ty.shape().clone(),
+            Ty::Value(v) if v.is_scalar() => x_ty.ty.shape().clone(),
+            Ty::Value(_) => {
+                self.derivative_jacobian(&sig, &sig.params[wrt].name, f_arg);
+                return Ty::Unknown;
+            }
             other => {
                 self.derivative_bad_result(&sig, other, f_arg);
+                return Ty::Unknown;
+            }
+        };
+        let Ty::Value(ret) = &sig.ret else {
+            return Ty::Unknown;
+        };
+        let dim = match ret.dim.checked_div(x_ty.dim) {
+            Ok(d) => d,
+            Err(_) => {
+                self.error(Diagnostic::error(
+                    "the dimension of the derivative is too large",
+                    span,
+                ));
                 return Ty::Unknown;
             }
         };
@@ -366,7 +392,7 @@ impl Checker<'_> {
             ),
             def_span: sig.def_span,
             params: sig.params.clone(),
-            ret: Ty::scalar(dim),
+            ret: Ty::value(dim, TensorType::untagged(shape)),
             generic: sig.generic.clone(),
             derivative: Some(Arc::new(DerivativeOf {
                 func: sig.clone(),
@@ -377,10 +403,16 @@ impl Checker<'_> {
     }
 
     /// The type of the function `grad(args...)`: the gradient of a scalar
-    /// function of scalar parameters that all have one dimension, a
-    /// [`Ty::Func`] with the function's parameters whose result is a
-    /// `Vector[n]` of `dim(result) / dim(parameter)`, one entry per
-    /// parameter in order. Otherwise [`Ty::Unknown`] after reporting.
+    /// function, a [`Ty::Func`] with the function's parameters. Either
+    ///
+    /// * every parameter is a scalar and they all have one dimension: the
+    ///   result is a `Vector[n]` of `dim(result) / dim(parameter)`, one entry
+    ///   per parameter in order; or
+    /// * there is one parameter, and it is a `Vector` or `Matrix`: the
+    ///   result has its shape and the unit `dim(result) / dim(parameter)`
+    ///   (the force of a potential of a position).
+    ///
+    /// Otherwise [`Ty::Unknown`] after reporting.
     fn gradient_function(&mut self, args: &[Expr], span: Span) -> Ty {
         let [f_arg] = args else {
             self.gradient_arity(args, span);
@@ -403,12 +435,22 @@ impl Checker<'_> {
                     self.gradient_unannotated(&sig, i, f_arg);
                     return Ty::Unknown;
                 }
-                Some(v) if !v.is_scalar() => {
-                    self.gradient_array_param(&sig, i, v, f_arg);
-                    return Ty::Unknown;
-                }
                 Some(_) => {}
             }
+        }
+        let arrays: Vec<usize> = sig
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.ty.as_ref().is_some_and(|v| !v.is_scalar()))
+            .map(|(i, _)| i)
+            .collect();
+        if let Some(&first) = arrays.first() {
+            if sig.params.len() > 1 {
+                self.gradient_array_among_others(&sig, first, f_arg);
+                return Ty::Unknown;
+            }
+            return self.gradient_of_array(&sig, f_arg, span);
         }
         let Some(x_dim) = sig.params[0].ty.as_ref().map(|v| v.dim) else {
             return Ty::Unknown;
@@ -420,6 +462,10 @@ impl Checker<'_> {
                     .iter()
                     .any(|p| p.ty.as_ref().is_some_and(|t| t.dim != x_dim)),
             ),
+            Ty::Value(_) => {
+                self.gradient_jacobian(&sig, f_arg);
+                return Ty::Unknown;
+            }
             other => {
                 self.derivative_bad_result(&sig, other, f_arg);
                 return Ty::Unknown;
@@ -447,6 +493,49 @@ impl Checker<'_> {
                 func: sig.clone(),
                 wrt: 0,
                 gradient: true,
+            })),
+        }))
+    }
+
+    /// `grad(f)` for a `def` with one array parameter `p`: the gradient
+    /// with respect to it, an array of its shape. It is the derivative with
+    /// respect to `p` (see [`Checker::derivative_function_as`]).
+    fn gradient_of_array(&mut self, sig: &Arc<FuncSig>, f_arg: &Expr, span: Span) -> Ty {
+        let Some(x_ty) = sig.params[0].ty.clone() else {
+            return Ty::Unknown;
+        };
+        if x_ty.ty.shape().rank() > 2 {
+            self.derivative_wrt_tensor(sig, 0, f_arg);
+            return Ty::Unknown;
+        }
+        let ret = match &sig.ret {
+            Ty::Value(v) if v.is_scalar() => v.dim,
+            Ty::Value(_) => {
+                self.derivative_jacobian(sig, &sig.params[0].name, f_arg);
+                return Ty::Unknown;
+            }
+            other => {
+                self.derivative_bad_result(sig, other, f_arg);
+                return Ty::Unknown;
+            }
+        };
+        let Ok(dim) = ret.checked_div(x_ty.dim) else {
+            self.error(Diagnostic::error(
+                "the dimension of the gradient is too large",
+                span,
+            ));
+            return Ty::Unknown;
+        };
+        Ty::Func(Arc::new(FuncSig {
+            name: format!("grad({})", quote(sig.name())),
+            def_span: sig.def_span,
+            params: sig.params.clone(),
+            ret: Ty::value(dim, TensorType::untagged(x_ty.ty.shape().clone())),
+            generic: sig.generic.clone(),
+            derivative: Some(Arc::new(DerivativeOf {
+                func: sig.clone(),
+                wrt: 0,
+                gradient: false,
             })),
         }))
     }
@@ -508,28 +597,50 @@ impl Checker<'_> {
         );
     }
 
-    /// Parameter `i` of `sig` is an array.
+    /// `grad` of a function with an array parameter and others.
     #[cold]
-    fn gradient_array_param(&mut self, sig: &FuncSig, i: usize, v: &ValueTy, f_arg: &Expr) {
+    fn gradient_array_among_others(&mut self, sig: &FuncSig, i: usize, f_arg: &Expr) {
         let (fname, pname) = (quote(sig.name()), quote(&sig.params[i].name));
+        let v = sig.params[i].ty.clone();
         let mut d = Diagnostic::error(
             format!(
-                "cannot take the gradient of `{fname}`: its parameter `{pname}` is not a scalar"
+                "cannot take the gradient of `{fname}`: its array parameter `{pname}` is not its only parameter"
             ),
             f_arg.span,
         )
         .with_label("the gradient is with respect to every parameter");
-        if let Some(ann) = sig.params[i].annotation {
+        if let (Some(ann), Some(v)) = (sig.params[i].annotation, &v) {
             d = d.with_secondary(ann, self.this_is(v));
         }
         self.error(
             d.with_note(
-                "differentiation does not go through arrays yet, so a gradient is with respect to scalar parameters",
+                "`grad` is the gradient with respect to one array parameter, or the vector of the derivatives with respect to scalar parameters; an array among other parameters has no single unit-consistent vector to gather them in",
             )
             .with_help(format!(
-                "take the components as scalar parameters, for example `def {fname}(x: m, y: m, z: m)`"
+                "name the array parameter: `derivative({fname}, {pname})(...)`"
             )),
         );
+    }
+
+    /// `grad` of an array-valued function.
+    #[cold]
+    fn gradient_jacobian(&mut self, sig: &FuncSig, f_arg: &Expr) {
+        let fname = quote(sig.name());
+        let mut d = Diagnostic::error(
+            format!("cannot take the gradient of `{fname}`: its result is not a scalar"),
+            f_arg.span,
+        )
+        .with_label("this function's result")
+        .with_secondary(sig.def_span, format!("`{fname}` is defined here"));
+        if let Ty::Value(v) = &sig.ret {
+            d = d.with_note(format!(
+                "the result is {}; the derivative of an array-valued function with respect to several variables is a Jacobian, which Sky does not have yet",
+                self.shown(v)
+            ));
+        }
+        self.error(d.with_help(
+            "take the gradient of a scalar function, for example one component of the result, or use `derivative(f, t)` for the rate of change of an array with one scalar",
+        ));
     }
 
     /// The parameters of `sig` do not all have one dimension, so the
@@ -677,6 +788,15 @@ impl Checker<'_> {
         }
     }
 
+    /// `Vector[3] [L]`: the type with its shape variables resolved.
+    fn shown(&self, v: &ValueTy) -> String {
+        ValueTy {
+            dim: v.dim,
+            ty: self.env.shapes.apply_type(&v.ty),
+        }
+        .to_string()
+    }
+
     #[cold]
     fn derivative_arity(&mut self, args: &[Expr], span: Span) {
         let n = args.len();
@@ -782,12 +902,13 @@ impl Checker<'_> {
         );
     }
 
+    /// The parameter differentiated against has more than two axes.
     #[cold]
-    fn derivative_wrt_array(&mut self, sig: &FuncSig, wrt: usize, at: &Expr) {
+    fn derivative_wrt_tensor(&mut self, sig: &FuncSig, wrt: usize, at: &Expr) {
         let p = &sig.params[wrt];
         let mut d = Diagnostic::error(
             format!(
-                "cannot differentiate `{}` with respect to `{}`: it is not a scalar",
+                "cannot differentiate `{}` with respect to `{}`: it has more than two axes",
                 quote(sig.name()),
                 quote(&p.name)
             ),
@@ -800,11 +921,35 @@ impl Checker<'_> {
             d = d.with_secondary(ann, "declared here");
         }
         self.error(
-            d.with_note(
-                "the derivative with respect to an array is a gradient, which comes with arrays at run time",
-            )
-            .with_help("differentiate with respect to a scalar parameter"),
+            d.with_note("a derivative is with respect to a scalar, a vector or a matrix")
+                .with_help("differentiate with respect to a vector or matrix parameter"),
         );
+    }
+
+    /// An array-valued function, differentiated with respect to an array.
+    #[cold]
+    fn derivative_jacobian(&mut self, sig: &FuncSig, pname: &str, f_arg: &Expr) {
+        let fname = quote(sig.name());
+        let mut d = Diagnostic::error(
+            format!(
+                "cannot differentiate `{fname}` with respect to `{}`: the derivative of an array with respect to an array is a Jacobian",
+                quote(pname)
+            ),
+            f_arg.span,
+        )
+        .with_label("this function's result")
+        .with_secondary(sig.def_span, format!("`{fname}` is defined here"));
+        if let Ty::Value(v) = &sig.ret {
+            d = d.with_note(format!(
+                "the result is {}, so the derivative would have an entry for every result and every entry of `{}`, and Sky does not have Jacobians yet",
+                self.shown(v),
+                quote(pname)
+            ));
+        }
+        self.error(d.with_help(format!(
+            "differentiate a scalar result (a component, a norm, an energy) with respect to `{}`, or an array result with respect to a scalar",
+            quote(pname)
+        )));
     }
 
     #[cold]
@@ -812,12 +957,8 @@ impl Checker<'_> {
         let fname = quote(sig.name());
         let (msg, note) = match ret {
             Ty::Value(v) => (
-                format!("cannot differentiate `{fname}`: its result is {}, not a number", {
-                    let mut shown = v.clone();
-                    shown.ty = self.env.shapes.apply_type(&v.ty);
-                    shown.to_string()
-                }),
-                "the derivative of an array-valued function is a Jacobian, which comes with arrays at run time",
+                format!("cannot differentiate `{fname}`: its result is {}", self.shown(v)),
+                "the derivative of an array-valued function with respect to an array is a Jacobian, which Sky does not have yet",
             ),
             Ty::Bool => (
                 format!("cannot differentiate `{fname}`: it returns a Bool, not a number"),

@@ -1,0 +1,8 @@
+d: Scalar [M]
+g: Scalar [L·T⁻²]
+m: Scalar [M]
+n: Scalar [L·M·T⁻²]
+period: Scalar [T]
+r: Scalar [1]
+s: Scalar [M]
+w: Scalar [L·M·T⁻²]

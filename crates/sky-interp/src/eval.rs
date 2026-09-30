@@ -11,8 +11,8 @@ use std::sync::Arc;
 use sky_ast::ast::span_text;
 
 use sky_ast::{
-    AssignTarget, BinaryOp, Block, BoolOp, Expr, ExprKind, IndexItem, Literal, Module, Stmt,
-    StmtKind, UnaryOp,
+    AssertKind, AssignTarget, BinaryOp, Block, BoolOp, Expr, ExprKind, IndexItem, Literal, Module,
+    Stmt, StmtKind, UnaryOp,
 };
 use sky_diag::Span;
 use sky_syntax::lexer::unescape_str;
@@ -23,6 +23,7 @@ use crate::arith::{
     ArithOp, StackMeter, MAX_CALL_DEPTH, R,
 };
 use crate::array::{self, Ix};
+use crate::contract;
 use crate::derivative::DerivativeHook;
 use crate::literal::{number_literal, unit_literal_si};
 use crate::show::show_value;
@@ -31,6 +32,8 @@ use crate::{RuntimeEnv, RuntimeError, Value};
 
 #[path = "for_loop.rs"]
 mod for_loop;
+#[path = "ode.rs"]
+mod ode;
 
 /// How a statement finished: normally (with the value of an expression
 /// statement, for the REPL), or by leaving its block early.
@@ -122,6 +125,9 @@ fn run<'a, W: Write>(
 struct Frame {
     /// The call's local variables: the parameters and what the body binds.
     vars: BTreeMap<String, Value>,
+    /// The call expression, for the "called here" label of a failed
+    /// `requires`.
+    call: Span,
     /// The function being run, for its captured functions.
     func: Arc<Function>,
 }
@@ -298,9 +304,34 @@ impl<'a> Interp<'a> {
                 };
                 Ok(Flow::Return(v))
             }
+            // A postcondition runs when its function returns (see
+            // `call_user`), not where it is written.
+            StmtKind::Assert {
+                kind: AssertKind::Ensures,
+                ..
+            } => Ok(Flow::Normal(None)),
+            StmtKind::Assert {
+                kind,
+                cond,
+                message,
+            } => {
+                self.contract(*kind, cond, *message)?;
+                Ok(Flow::Normal(None))
+            }
             StmtKind::Pass => Ok(Flow::Normal(None)),
+            // A budget is a claim about the program, checked by `sky check`;
+            // running it changes nothing.
+            StmtKind::Accuracy { .. } => Ok(Flow::Normal(None)),
             StmtKind::Break => Ok(Flow::Break),
             StmtKind::Continue => Ok(Flow::Continue),
+            StmtKind::Equation(eq) => {
+                self.define_equation(eq);
+                Ok(Flow::Normal(None))
+            }
+            StmtKind::Solve(solve) => {
+                self.solve_stmt(s.span, solve)?;
+                Ok(Flow::Normal(None))
+            }
             StmtKind::Assign { target, value } => match target {
                 AssignTarget::Name(id) => {
                     let v = self.eval(value)?;
@@ -396,6 +427,9 @@ impl<'a> Interp<'a> {
             } => match op {
                 UnaryOp::Neg | UnaryOp::Pos => {
                     let v = self.eval(operand)?;
+                    if let Value::Uncertain(u) = &v {
+                        return crate::uncertain::sign(*op == UnaryOp::Neg, u, e.span);
+                    }
                     sign(*op == UnaryOp::Neg, v, operand.span)
                 }
                 UnaryOp::Not => Ok(Value::Bool(!self.expect_bool("not", operand)?)),
@@ -459,13 +493,7 @@ impl<'a> Interp<'a> {
             ExprKind::Call { callee, args } => self.call(e, callee, args),
             ExprKind::Array(elems) => self.array_literal(e, elems),
             ExprKind::Index { base, items } => self.index(e, base, items),
-            ExprKind::Attribute { base: _, name } => Err(RuntimeError::new(
-                format!(
-                    "attribute `{}` is not supported by the interpreter yet",
-                    self.text(name.span)
-                ),
-                e.span,
-            )),
+            ExprKind::Attribute { base, name } => self.attribute(e, base, name),
             ExprKind::Paren(inner) => self.eval(inner),
             ExprKind::IfElse { then, cond, else_ } => {
                 if self.expect_bool("if", cond)? {
@@ -477,6 +505,11 @@ impl<'a> Interp<'a> {
             ExprKind::As { value, unit, .. } => {
                 let v = self.eval(value)?;
                 show_value(self.src, unit, &v, e.span)
+            }
+            ExprKind::PlusMinus { value, sigma, .. } => {
+                let v = self.eval(value)?;
+                let s = self.eval(sigma)?;
+                crate::uncertain::plus_minus(&v, &s, e.span, value.span, sigma.span)
             }
         }
     }
@@ -509,7 +542,10 @@ impl<'a> Interp<'a> {
                     "print" => return self.print(args),
                     "inv" => return self.inv(call, args),
                     "transpose" => return self.transpose(call, args),
+                    "nominal" | "uncertainty" => return self.uncertain_part(name, call, args),
                     "zeros" | "identity" | "len" => return self.array_builtin(name, call, args),
+                    "norm" | "dot" => return self.vector_builtin(name, call, args),
+                    "explain" => return self.explain_builtin(call, args),
                     _ => {
                         if let Some(f) = MathFn::from_name(name) {
                             return self.math(f, call, args);
@@ -664,16 +700,68 @@ impl<'a> Interp<'a> {
             let v = self.eval(a)?;
             vars.insert(name.clone(), v);
         }
+        // A postcondition sees the arguments as passed, and `result`. The
+        // contract lines are the head of the body, so a function without
+        // any costs one look at its first statement.
+        let has_ensures = contract_head(&func.body).any(|s| is_contract(s, AssertKind::Ensures));
+        let entry = has_ensures.then(|| vars.clone());
         self.frames.push(Frame {
             vars,
             func: func.clone(),
+            call: call.span,
         });
         let flow = self.block(&func.body);
         self.frames.pop();
-        match flow? {
-            Flow::Return(v) => Ok(v),
-            Flow::Normal(_) | Flow::Break | Flow::Continue => Ok(Value::None),
+        let value = match flow? {
+            Flow::Return(v) => v,
+            Flow::Normal(_) | Flow::Break | Flow::Continue => Value::None,
+        };
+        if let Some(mut vars) = entry {
+            vars.insert("result".to_string(), value.clone());
+            self.frames.push(Frame {
+                vars,
+                func: func.clone(),
+                call: call.span,
+            });
+            let checked = contract_head(&func.body).try_for_each(|s| match &s.kind {
+                StmtKind::Assert {
+                    kind: AssertKind::Ensures,
+                    cond,
+                    message,
+                } => self.contract(AssertKind::Ensures, cond, *message),
+                _ => Ok(()),
+            });
+            self.frames.pop();
+            checked?;
         }
+        Ok(value)
+    }
+
+    /// Checks the contract `kind cond, "message"`: the condition must be
+    /// true, or the run stops with the failure of [`crate::contract`],
+    /// which names the values the condition read. A failed `requires` also
+    /// points at the call.
+    fn contract(&mut self, kind: AssertKind, cond: &Expr, message: Option<Span>) -> R<()> {
+        let v = self.eval(cond)?;
+        if contract::expect_condition(kind, &v, cond.span)? {
+            return Ok(());
+        }
+        let shown: Vec<(&str, String)> = contract::condition_names(cond, self.src)
+            .into_iter()
+            .filter_map(|name| match self.lookup(name) {
+                Some(Value::Func(_)) | None => None,
+                Some(v) => Some((name, contract::show(v))),
+            })
+            .collect();
+        let text = contract::condition_text(self.src, cond.span);
+        let message = message.map(|m| contract::message_text(self.src, m));
+        let frame = self.frames.last();
+        let func = frame.map(|f| f.func.name.as_str());
+        let mut err = contract::failure(kind, func, &text, message.as_deref(), &shown, cond.span);
+        if let (AssertKind::Requires, Some(f)) = (kind, frame) {
+            err = err.with_secondary(f.call, "called here");
+        }
+        Err(err)
     }
 
     /// `print(a, b, ...)`: the values separated by single spaces, then a
@@ -707,7 +795,20 @@ impl<'a> Interp<'a> {
             .map(|a| self.eval(a))
             .collect::<R<Vec<Value>>>()?;
         let spans: Vec<Span> = args.iter().map(|a| a.span).collect();
+        if vals.iter().any(Value::is_uncertain) {
+            return crate::uncertain_math::apply(f, &vals, call.span, &spans);
+        }
         crate::math::apply(f, &vals, call.span, &spans)
+    }
+
+    /// `nominal(x)` and `uncertainty(x)`: the value and the standard
+    /// uncertainty of a number (zero for an exact one).
+    fn uncertain_part(&mut self, name: &str, call: &Expr, args: &[Expr]) -> R<Value> {
+        let [arg] = args else {
+            return Err(arity_mismatch(name, 1, args.len(), call.span));
+        };
+        let v = self.eval(arg)?;
+        crate::uncertain::part(name, &v, call.span, arg.span)
     }
 
     /// `inv(x)`: the function spelling of `x⁻¹`.
@@ -736,6 +837,9 @@ impl<'a> Interp<'a> {
 
     /// `1/x` with the inverse dimension.
     fn reciprocal(&self, what: &str, v: Value, whole: Span, operand: Span) -> R<Value> {
+        if let Value::Uncertain(u) = &v {
+            return crate::uncertain::reciprocal(u, whole, operand);
+        }
         reciprocal(what, &v, whole, operand)
     }
 
@@ -752,6 +856,12 @@ impl<'a> Interp<'a> {
         rexpr: &Expr,
     ) -> R<Value> {
         let rspan = rexpr.span;
+        // An uncertain operand: the exact rules for the nominal values, plus
+        // the propagation (see `crate::uncertain`).
+        if l.is_uncertain() || r.is_uncertain() {
+            let const_exp = || sky_types::const_exponent(self.src, rexpr);
+            return crate::uncertain::binary(op, &l, &r, const_exp, whole, lspan, rspan);
+        }
         match op {
             BinaryOp::Add => arith(ArithOp::Add, &l, &r, whole, lspan, rspan),
             BinaryOp::Sub => arith(ArithOp::Sub, &l, &r, whole, lspan, rspan),
@@ -792,6 +902,18 @@ impl<'a> Interp<'a> {
     ) -> R<Value> {
         order(op.symbol(), holds, l, r, whole, lspan, rspan).map(Value::Bool)
     }
+}
+
+/// The `requires` and `ensures` lines a function body starts with.
+fn contract_head(body: &Block) -> impl Iterator<Item = &Stmt> {
+    body.stmts
+        .iter()
+        .take_while(|s| is_contract(s, AssertKind::Requires) || is_contract(s, AssertKind::Ensures))
+}
+
+/// Whether `s` is a `requires` or `ensures` line (of kind `kind`).
+fn is_contract(s: &Stmt, kind: AssertKind) -> bool {
+    matches!(&s.kind, StmtKind::Assert { kind: k, .. } if *k == kind)
 }
 
 fn write_through(span: Span) -> RuntimeError {

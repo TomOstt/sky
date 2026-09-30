@@ -1,0 +1,45 @@
+tests/ir/contracts.sky:2:14: note: [CONTRACT-002] this `requires` always holds, so its check is removed: `h >= 0 m`
+  |
+2 |     requires h >= 0 m
+  |              ^^^^^^^^
+  = note: applied by the `contracts` pass
+  = note: because in every call of `fall_time` in this program, `h` is between 5 and 20
+  = note: because the left side of the `>=` is between 5 and 20 and the right side is 0, so it cannot be false
+
+tests/ir/contracts.sky:3:13: note: [CONTRACT-003] this `ensures` always holds, so its check is removed: `result > 0 s`
+  |
+3 |     ensures result > 0 s
+  |             ^^^^^^^^^^^^
+  = note: applied by the `contracts` pass
+  = note: because in every call of `fall_time` in this program, `h` is between 5 and 20
+  = note: because the left side of the `>` is between 1.0098099885512761 and 2.0196199771025523 and the right side is 0, so it cannot be false
+
+tests/ir/contracts.sky:7:14: note: [CONTRACT-002] this `requires` always holds, so its check is removed: `b != 0 m and a > 0 m`
+  |
+7 |     requires b != 0 m and a > 0 m, "b divides a"
+  |              ^^^^^^^^^^^^^^^^^^^^
+  = note: applied by the `contracts` pass
+  = note: because in every call of `ratio` in this program, `a` is 3
+  = note: because in every call of `ratio` in this program, `b` is 2
+  = note: because the condition is true for every value the analysis allows, so it cannot be false
+
+tests/ir/contracts.sky:16:8: note: [FOLD-CMP-001] `2 m > 1 m` is rewritten to `true`
+   |
+16 | assert 2 m > 1 m
+   |        ^^^^^^^^^
+   = note: applied by the `fold` pass
+   = note: because every operand is a constant
+   = note: because the comparison is computed by the reference interpreter's own rule
+
+tests/ir/contracts.sky:16:8: note: [CONTRACT-001] this `assert` always holds, so its check is removed: `2 m > 1 m`
+   |
+16 | assert 2 m > 1 m
+   |        ^^^^^^^^^
+   = note: applied by the `contracts` pass
+   = note: because the condition is true for every value the analysis allows, so it cannot be false
+
+tests/ir/contracts.sky:18:1: note: printed value of `t` is accurate to within 5.9e-17 relative
+   |
+18 | print(t, k, open_ended(k + 1 m))
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: a proven bound on the rounding error against the exact real result (roundoff analysis)

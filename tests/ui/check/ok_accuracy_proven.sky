@@ -1,0 +1,6 @@
+# A product of two constants rounds once: about 1e-16, within the budget.
+a = 1.1
+b = 2.3
+p = a * b
+accuracy p within 1e-15
+print(p)

@@ -13,10 +13,11 @@ use std::io::Write;
 
 use sky_diag::Span;
 use sky_interp::arith::{
-    arith, arity_mismatch, equal, expect_bool, order, pow, reciprocal, recursion_too_deep, sign,
-    ArithOp, StackMeter, MAX_CALL_DEPTH,
+    arith, arity_mismatch, equal, expect_bool, expect_number, order, pow, reciprocal,
+    recursion_too_deep, sign, ArithOp, StackMeter, MAX_CALL_DEPTH,
 };
 use sky_interp::array::{self, Ix};
+use sky_interp::contract;
 use sky_interp::Value;
 use sky_ir::{
     BlockData, BlockId, CmpOp, Function, Module, NumberType, OpData, OpId, OpKind, RegionId,
@@ -43,13 +44,18 @@ enum Exit {
 struct Act<'m> {
     func: &'m Function,
     vals: Vec<Option<Value>>,
+    /// Where this activation was called from, for the "called here" label
+    /// of a failed `requires` (as the tree-walker's frame has it); `None`
+    /// for a run's entry call.
+    call: Option<Span>,
 }
 
 impl<'m> Act<'m> {
-    fn new(func: &'m Function) -> Self {
+    fn new(func: &'m Function, call: Option<Span>) -> Self {
         Act {
             func,
             vals: vec![None; func.values.len()],
+            call,
         }
     }
 
@@ -213,7 +219,7 @@ pub(crate) fn call(
     args: Vec<Value>,
     out: &mut dyn Write,
 ) -> R<Vec<Value>> {
-    call_metered(module, name, args, out, StackMeter::new())
+    call_metered(module, name, args, out, StackMeter::new(), None)
 }
 
 /// [`call`] measuring the stack from `stack`, a meter another interpreter
@@ -224,6 +230,7 @@ pub(crate) fn call_metered(
     args: Vec<Value>,
     out: &mut dyn Write,
     stack: StackMeter,
+    call: Option<Span>,
 ) -> R<Vec<Value>> {
     let mut m = Machine {
         module,
@@ -233,7 +240,7 @@ pub(crate) fn call_metered(
         #[cfg(test)]
         fuel: u64::MAX,
     };
-    m.entry(name, args, Span::point(0))
+    m.entry(name, args, Span::point(0), call)
 }
 
 /// [`call`] with a bounded number of ops, for fuzzing.
@@ -252,7 +259,7 @@ pub(crate) fn call_with_fuel(
         stack: StackMeter::new(),
         fuel,
     };
-    m.entry(name, args, Span::point(0))
+    m.entry(name, args, Span::point(0), None)
 }
 
 impl<'m> Machine<'m, '_> {
@@ -273,9 +280,15 @@ impl<'m> Machine<'m, '_> {
 
     /// The entry call of a run. Like `sky run`'s top level, it is not a
     /// nested call and does not count against [`MAX_CALL_DEPTH`].
-    fn entry(&mut self, name: &str, args: Vec<Value>, span: Span) -> R<Vec<Value>> {
+    fn entry(
+        &mut self,
+        name: &str,
+        args: Vec<Value>,
+        span: Span,
+        call: Option<Span>,
+    ) -> R<Vec<Value>> {
         let func = self.resolve(name, args.len(), span)?;
-        self.activate(func, args)
+        self.activate(func, args, call)
     }
 
     /// A call made by a `call` op.
@@ -285,14 +298,14 @@ impl<'m> Machine<'m, '_> {
             return Err(recursion_too_deep(name, span).into());
         }
         self.depth += 1;
-        let result = self.activate(func, args);
+        let result = self.activate(func, args, Some(span));
         self.depth -= 1;
         result
     }
 
     /// Runs `func`'s body in a new activation.
-    fn activate(&mut self, func: &Function, args: Vec<Value>) -> R<Vec<Value>> {
-        let mut act = Act::new(func);
+    fn activate(&mut self, func: &Function, args: Vec<Value>, call: Option<Span>) -> R<Vec<Value>> {
+        let mut act = Act::new(func, call);
         let entry = act.entry_of(func.body, func.span)?;
         match self.block(&mut act, entry, args, func.span)? {
             Exit::Return(values) if values.len() == func.results.len() => Ok(values),
@@ -488,7 +501,7 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
         OpKind::Div => arith_op(act, op, ArithOp::Div),
         OpKind::Neg => {
             let [a] = fixed(op)?;
-            let v = sign(true, act.get(a, s)?.clone(), s)?;
+            let v = sign(true, act.get(a, s)?.clone(), op.operand_span(0))?;
             act.define(op, vec![v])
         }
         OpKind::Math(f) => {
@@ -505,7 +518,8 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
                 ));
             }
             let refs: Vec<&Value> = vals.iter().collect();
-            let v = crate::math::eval(*f, &refs, s)?;
+            let spans: Vec<Span> = (0..refs.len()).map(|i| op.operand_span(i)).collect();
+            let v = crate::math::eval(*f, &refs, s, &spans)?;
             act.define(op, vec![v])
         }
         // The same function `sky run` calls for `v as unit`, so both print
@@ -518,14 +532,24 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
         OpKind::PowConst { exponent } => {
             let [a] = fixed(op)?;
             let e = Value::scalar(exponent.numer() as f64 / exponent.denom() as f64);
-            let v = pow(act.get(a, s)?, &e, || Some(*exponent), s, s, s)?;
+            // The exponent is an attribute: it has no operand, no span, and
+            // no error of its own.
+            let v = pow(
+                act.get(a, s)?,
+                &e,
+                || Some(*exponent),
+                s,
+                op.operand_span(0),
+                s,
+            )?;
             act.define(op, vec![v])
         }
         OpKind::Pow => {
             let [a, e] = fixed(op)?;
             // A computed exponent gives a base with a unit no constant to
             // take the result's dimension from, as in `sky run`.
-            let v = pow(act.get(a, s)?, act.get(e, s)?, || None::<Rational>, s, s, s)?;
+            let (l, r) = (op.operand_span(0), op.operand_span(1));
+            let v = pow(act.get(a, s)?, act.get(e, s)?, || None::<Rational>, s, l, r)?;
             act.define(op, vec![v])
         }
         // The IR does not remember whether the source said `x⁻¹` or
@@ -533,12 +557,13 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
         // non-number always uses the `⁻¹` spelling.
         OpKind::Inverse => {
             let [a] = fixed(op)?;
-            let v = reciprocal("⁻¹", act.get(a, s)?, s, s)?;
+            let v = reciprocal("⁻¹", act.get(a, s)?, s, op.operand_span(0))?;
             act.define(op, vec![v])
         }
         OpKind::MatMul => {
             let [a, b] = fixed(op)?;
-            let v = array::matmul(act.get(a, s)?, act.get(b, s)?, s, s, s)?;
+            let (l, r) = (op.operand_span(0), op.operand_span(1));
+            let v = array::matmul(act.get(a, s)?, act.get(b, s)?, s, l, r)?;
             act.define(op, vec![v])
         }
         OpKind::Transpose => {
@@ -552,7 +577,8 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             method: SolveMethod::Cholesky,
         } => {
             let [a, b] = fixed(op)?;
-            let v = array::cholesky_solve(act.get(a, s)?, act.get(b, s)?, s, s, s)?;
+            let (l, r) = (op.operand_span(0), op.operand_span(1));
+            let v = array::cholesky_solve(act.get(a, s)?, act.get(b, s)?, s, l, r)?;
             act.define(op, vec![v])
         }
         OpKind::ArrayLiteral { cols } => array_literal(act, op, *cols),
@@ -561,21 +587,22 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
                 return Err(IrRuntimeError::malformed("`index` has no operands", s));
             };
             let mut items = Vec::with_capacity(positions.len());
-            for &p in positions {
+            for (k, &p) in positions.iter().enumerate() {
+                let at = op.operand_span(k + 1);
                 items.push(Ix::At {
-                    i: array::to_index(act.get(p, s)?, s)?,
-                    span: s,
+                    i: array::to_index(act.get(p, s)?, at)?,
+                    span: at,
                 });
             }
-            let v = array::index(act.get(base, s)?, &items, s, s)?;
+            let v = array::index(act.get(base, s)?, &items, s, op.operand_span(0))?;
             act.define(op, vec![v])
         }
         OpKind::Slice { axes } => slice(act, op, axes),
         OpKind::Zeros | OpKind::Identity => {
             let mut sizes = Vec::with_capacity(2);
             let name = op.kind.mnemonic();
-            for &v in &op.operands {
-                sizes.push(array::size_arg(name, act.get(v, s)?, s)?);
+            for (i, &v) in op.operands.iter().enumerate() {
+                sizes.push(array::size_arg(name, act.get(v, s)?, op.operand_span(i))?);
             }
             let v = match (&op.kind, sizes.as_slice()) {
                 (OpKind::Zeros, [_] | [_, _]) => array::zeros(&sizes, s)?,
@@ -594,26 +621,27 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
         }
         OpKind::Len => {
             let [a] = fixed(op)?;
-            let v = array::len(act.get(a, s)?, s)?;
+            let v = array::len(act.get(a, s)?, op.operand_span(0))?;
             act.define(op, vec![v])
         }
 
         OpKind::Cmp(c) => {
             let [a, b] = fixed(op)?;
             let (l, r) = (act.get(a, s)?, act.get(b, s)?);
+            let (ls, rs) = (op.operand_span(0), op.operand_span(1));
             let holds = match c {
-                CmpOp::Eq => equal(l, r, s, s, s)?,
-                CmpOp::Ne => !equal(l, r, s, s, s)?,
-                CmpOp::Lt => order("<", |x, y| x < y, l, r, s, s, s)?,
-                CmpOp::Le => order("<=", |x, y| x <= y, l, r, s, s, s)?,
-                CmpOp::Gt => order(">", |x, y| x > y, l, r, s, s, s)?,
-                CmpOp::Ge => order(">=", |x, y| x >= y, l, r, s, s, s)?,
+                CmpOp::Eq => equal(l, r, s, ls, rs)?,
+                CmpOp::Ne => !equal(l, r, s, ls, rs)?,
+                CmpOp::Lt => order("<", |x, y| x < y, l, r, s, ls, rs)?,
+                CmpOp::Le => order("<=", |x, y| x <= y, l, r, s, ls, rs)?,
+                CmpOp::Gt => order(">", |x, y| x > y, l, r, s, ls, rs)?,
+                CmpOp::Ge => order(">=", |x, y| x >= y, l, r, s, ls, rs)?,
             };
             act.define(op, vec![Value::Bool(holds)])
         }
         OpKind::Not => {
             let [a] = fixed(op)?;
-            let b = expect_bool("not", act.get(a, s)?, s)?;
+            let b = expect_bool("not", act.get(a, s)?, op.operand_span(0))?;
             act.define(op, vec![Value::Bool(!b)])
         }
         OpKind::LiteralError { error } => Err(match error {
@@ -626,6 +654,16 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             let [a] = fixed(op)?;
             let b = expect_bool(context.keyword(), act.get(a, s)?, s)?;
             act.define(op, vec![Value::Bool(b)])
+        }
+        OpKind::Assert { .. } => assert_op(act, op),
+
+        // `+x` of a value the checker could not type: a number or an array
+        // passes as it is, anything else fails as in `sky run`.
+        OpKind::ExpectNumber { context } => {
+            let [a] = fixed(op)?;
+            let v = act.get(a, s)?.clone();
+            expect_number(context.keyword(), &v, s)?;
+            act.define(op, vec![v])
         }
 
         // Handled by `Machine::op` and `Machine::block`, which never send
@@ -642,6 +680,39 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             s,
         )),
     }
+}
+
+/// `assert` (see `OpKind::Assert`): a false condition stops the run with
+/// the failure `sky_interp::contract` builds, which is the tree-walker's,
+/// word for word. Kept out of [`pure_op`]'s frame.
+#[inline(never)]
+fn assert_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
+    let s = op.span;
+    let OpKind::Assert {
+        kind,
+        text,
+        message,
+        func,
+        names,
+    } = &op.kind
+    else {
+        return Err(IrRuntimeError::malformed("expected an `assert`", s));
+    };
+    let Some((cond, values)) = op.operands.split_first() else {
+        return Err(IrRuntimeError::malformed("`assert` needs a condition", s));
+    };
+    if contract::expect_condition(*kind, act.get(*cond, s)?, s)? {
+        return Ok(());
+    }
+    let mut shown: Vec<(&str, String)> = Vec::with_capacity(names.len());
+    for (name, v) in names.iter().zip(values) {
+        shown.push((name.as_str(), contract::show(act.get(*v, s)?)));
+    }
+    let mut err = contract::failure(*kind, func.as_deref(), text, message.as_deref(), &shown, s);
+    if let (sky_ir::AssertKind::Requires, Some(call)) = (kind, act.call) {
+        err = err.with_secondary(call, "called here");
+    }
+    Err(err.into())
 }
 
 /// `fused` (see `OpKind::Fused`): runs the scalar body once per element.
@@ -772,7 +843,7 @@ fn body_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
         let [a] = fixed(op)?;
         let v = match act.get(a, op.span)?.clone() {
             Value::Number { value, dim } => Value::number(0.0 - value, dim),
-            other => sign(true, other, op.span)?,
+            other => sign(true, other, op.operand_span(0))?,
         };
         return act.define(op, vec![v]);
     }
@@ -782,7 +853,8 @@ fn body_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
 fn arith_op(act: &mut Act<'_>, op: &OpData, kind: ArithOp) -> R<()> {
     let [a, b] = fixed(op)?;
     let s = op.span;
-    let v = arith(kind, act.get(a, s)?, act.get(b, s)?, s, s, s)?;
+    let (l, r) = (op.operand_span(0), op.operand_span(1));
+    let v = arith(kind, act.get(a, s)?, act.get(b, s)?, s, l, r)?;
     act.define(op, vec![v])
 }
 
@@ -794,7 +866,8 @@ fn array_literal(act: &mut Act<'_>, op: &OpData, cols: Option<u64>) -> R<()> {
     let entries: Vec<(Value, Span)> = act
         .values(&op.operands, s)?
         .into_iter()
-        .map(|v| (v, s))
+        .enumerate()
+        .map(|(i, v)| (v, op.operand_span(i)))
         .collect();
     let width = match cols {
         None => entries.len(),
@@ -821,29 +894,34 @@ fn slice(act: &mut Act<'_>, op: &OpData, axes: &[SliceAxis]) -> R<()> {
         return Err(IrRuntimeError::malformed("`slice` has no operands", s));
     };
     let mut rest = rest.iter();
-    let mut bound = |act: &Act<'_>| -> R<usize> {
+    // The next bound's operand, and the span it was read at (operand 0 is
+    // the base).
+    let mut taken = 0;
+    let mut bound = |act: &Act<'_>| -> R<(usize, Span)> {
         let Some(&v) = rest.next() else {
             return Err(IrRuntimeError::malformed(
                 "`slice` has fewer operands than its items need",
                 s,
             ));
         };
-        Ok(array::to_index(act.get(v, s)?, s)?)
+        taken += 1;
+        let at = op.operand_span(taken);
+        Ok((array::to_index(act.get(v, s)?, at)?, at))
     };
     let mut items = Vec::with_capacity(axes.len());
-    for axis in axes {
+    for (k, axis) in axes.iter().enumerate() {
         items.push(match *axis {
-            SliceAxis::At => Ix::At {
-                i: bound(act)?,
-                span: s,
-            },
+            SliceAxis::At => {
+                let (i, at) = bound(act)?;
+                Ix::At { i, span: at }
+            }
             SliceAxis::Range { start, stop } => {
-                let start = if start { Some(bound(act)?) } else { None };
-                let stop = if stop { Some(bound(act)?) } else { None };
+                let start = if start { Some(bound(act)?.0) } else { None };
+                let stop = if stop { Some(bound(act)?.0) } else { None };
                 Ix::Slice {
                     start,
                     stop,
-                    span: s,
+                    span: op.axis_span(k),
                 }
             }
         });
@@ -854,6 +932,6 @@ fn slice(act: &mut Act<'_>, op: &OpData, axes: &[SliceAxis]) -> R<()> {
             s,
         ));
     }
-    let v = array::index(act.get(base, s)?, &items, s, s)?;
+    let v = array::index(act.get(base, s)?, &items, s, op.operand_span(0))?;
     act.define(op, vec![v])
 }

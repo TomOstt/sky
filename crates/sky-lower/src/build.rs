@@ -41,6 +41,11 @@ impl Builder {
         b
     }
 
+    /// The function's name.
+    pub(crate) fn name(&self) -> &str {
+        &self.f.name
+    }
+
     /// The insertion block.
     pub(crate) fn at(&self) -> BlockId {
         self.at
@@ -136,6 +141,26 @@ impl Builder {
         results[0]
     }
 
+    /// [`Self::op1`] that also records the operands' source spans.
+    pub(crate) fn op1_spans(
+        &mut self,
+        kind: OpKind,
+        operands: Vec<ValueId>,
+        operand_spans: Vec<Span>,
+        ty: Type,
+        span: Span,
+    ) -> ValueId {
+        let (op, results) = self.op(kind, operands, vec![ty], span);
+        self.set_operand_spans(op, operand_spans);
+        results[0]
+    }
+
+    /// Records the source spans of `op`'s operands at their use
+    /// (`OpData::operand_spans`).
+    pub(crate) fn set_operand_spans(&mut self, op: OpId, spans: Vec<Span>) {
+        self.f.ops[op.index()].operand_spans = spans;
+    }
+
     /// Inserts a constant-like operation with one result and no operands
     /// right before `before`, in `before`'s block (for a value that
     /// operation needs but that can only be built after lowering its
@@ -197,6 +222,7 @@ impl Builder {
             results: Vec::new(),
             regions: Vec::new(),
             span,
+            operand_spans: Vec::new(),
             parent,
         });
         op

@@ -141,15 +141,10 @@ fn run_source(path: &str, src: &str, edition: Edition, engine: Engine) -> ExitCo
         closed: false,
     };
     let result = match sir {
-        Some(ir) => sky_ir_interp::run(&ir, &mut out).map_err(|e| {
-            // Once SIR has stopped, the run is over: what is left is how the
-            // failure reads (see `explain_failure`).
-            if out.closed {
-                e.to_diagnostic()
-            } else {
-                explain_failure(&e, module, src, &front.cholesky_solves)
-            }
-        }),
+        // An operation's operands carry the spans of the source they were
+        // read from, so SIR's error is worded and labelled exactly as the
+        // tree-walker's, with nothing to replay.
+        Some(ir) => sky_ir_interp::run(&ir, &mut out).map_err(|e| e.to_diagnostic()),
         None => {
             tree_walk(module, src, &front.cholesky_solves, &mut out).map_err(|e| e.to_diagnostic())
         }
@@ -174,39 +169,6 @@ fn tree_walk(
     // is only lowered if it asks for one.
     let mut derivatives = SirDerivatives::new(module, src);
     run_module_with_derivatives(module, src, &mut env, out, solves, &mut derivatives).map(|_| ())
-}
-
-/// The diagnostic for a runtime error SIR stopped at, worded and pointed
-/// exactly as the tree-walker's.
-///
-/// A SIR operation carries one span, and an operand is a value that was
-/// bound elsewhere (`i` in `v[i]` is the value of an earlier assignment), so
-/// SIR knows an error's message and the operation that failed, not the
-/// operands' spans at the point of use that the tree-walker's labels point at
-/// (`this is zero` under the divisor, `valid indices are 0 to 2` under the
-/// index). The message is the same function's in both engines
-/// (`sky_interp::arith`), so the failure is replayed on the tree-walker with
-/// its output discarded (the run is deterministic and SIR has already
-/// written the output that precedes the error), and the diagnostic it
-/// produces is the one shown.
-///
-/// If the replay does not fail with the same message the engines disagree
-/// (or a resource limit, which each meters on its own stack, tripped in one
-/// only): SIR's own diagnostic is shown, so a disagreement is never hidden
-/// behind the oracle's answer.
-///
-/// The replay costs as much time as the run did, and only on a run that
-/// fails.
-fn explain_failure(
-    e: &sky_ir_interp::IrRuntimeError,
-    module: &sky_ast::Module,
-    src: &str,
-    solves: &HashSet<Span>,
-) -> Diagnostic {
-    match tree_walk(module, src, solves, &mut io::sink()) {
-        Err(replayed) if replayed.message == e.message => replayed.to_diagnostic(),
-        _ => e.to_diagnostic(),
-    }
 }
 
 /// Prints a failure's diagnostic to stderr, after the warnings (with a blank

@@ -36,6 +36,7 @@
 //! is free to rewrite whenever it can prove the tag.
 
 use sky_ast::{Expr, ExprKind, IndexItem, Stmt, StmtKind};
+use sky_diag::Span;
 use sky_ir::{OpKind, SliceAxis, Type, ValueId};
 use sky_types::{ShapeDim, Tag, Ty};
 use sky_units::Dimension;
@@ -135,14 +136,16 @@ impl Lower<'_> {
             ));
         }
         let mut operands = Vec::with_capacity(rows.len() * width);
+        let mut spans = Vec::with_capacity(rows.len() * width);
         for row in rows {
             for x in row {
                 operands.push(self.expr(x)?);
+                spans.push(x.span);
             }
         }
         let ty = self.literal_type(e)?;
         let cols = matrix.then_some(width as u64);
-        Ok(self.op1(OpKind::ArrayLiteral { cols }, operands, ty, e.span))
+        Ok(self.op1s(OpKind::ArrayLiteral { cols }, operands, spans, ty, e.span))
     }
 
     /// `base[items]`: `index` when every item is a position, `slice` when
@@ -151,21 +154,30 @@ impl Lower<'_> {
     #[inline(never)]
     pub(crate) fn index_expr(&mut self, e: &Expr, base: &Expr, items: &[IndexItem]) -> R<ValueId> {
         let mut operands = vec![self.expr(base)?];
+        let mut spans = vec![base.span];
         let mut axes = Vec::with_capacity(items.len());
+        // The whole of each item (`1:3`), which a slice's errors point at.
+        let mut item_spans = Vec::with_capacity(items.len());
         for item in items {
             match item {
                 IndexItem::Expr(x) => {
                     operands.push(self.expr(x)?);
+                    spans.push(x.span);
                     axes.push(SliceAxis::At);
+                    item_spans.push(x.span);
                 }
-                IndexItem::Slice { start, stop, .. } => {
+                IndexItem::Slice {
+                    start, stop, span, ..
+                } => {
                     for bound in [start, stop].into_iter().flatten() {
                         operands.push(self.expr(bound)?);
+                        spans.push(bound.span);
                     }
                     axes.push(SliceAxis::Range {
                         start: start.is_some(),
                         stop: stop.is_some(),
                     });
+                    item_spans.push(*span);
                 }
             }
         }
@@ -173,9 +185,11 @@ impl Lower<'_> {
         let kind = if axes.iter().all(|a| matches!(a, SliceAxis::At)) {
             OpKind::Index
         } else {
+            // `slice` also records the span of each axis's item.
+            spans.extend(item_spans);
             OpKind::Slice { axes }
         };
-        Ok(self.op1(kind, operands, ty, e.span))
+        Ok(self.op1s(kind, operands, spans, ty, e.span))
     }
 
     /// The builtins `zeros`, `identity` and `len`, or `None` if `name` is
@@ -201,8 +215,9 @@ impl Lower<'_> {
         for a in args {
             vals.push(self.expr(a)?);
         }
+        let spans: Vec<_> = args.iter().map(|a| a.span).collect();
         if name == "len" {
-            return Ok(Some(self.len_of(e, vals[0])));
+            return Ok(Some(self.len_of(e, vals[0], spans[0])));
         }
         let kind = if name == "zeros" {
             OpKind::Zeros
@@ -210,20 +225,20 @@ impl Lower<'_> {
             OpKind::Identity
         };
         let ty = self.ty_of(e)?;
-        Ok(Some(self.op1(kind, vals, ty, e.span)))
+        Ok(Some(self.op1s(kind, vals, spans, ty, e.span)))
     }
 
     /// `len(x)` of the lowered `x`: a constant when the first axis's length
     /// is known from `x`'s type (`x` itself is still evaluated, for its
     /// failures and effects), else a `len` operation.
-    fn len_of(&mut self, e: &Expr, x: ValueId) -> ValueId {
+    fn len_of(&mut self, e: &Expr, x: ValueId, xspan: Span) -> ValueId {
         let ty = Type::scalar(Dimension::DIMENSIONLESS);
         if let Type::Number(n) = self.st.b.ty(x) {
             if let Some(ShapeDim::Known(len)) = n.shape.dims().first() {
                 return self.const_float(*len as f64, ty, e.span);
             }
         }
-        self.op1(OpKind::Len, vec![x], ty, e.span)
+        self.op1s(OpKind::Len, vec![x], vec![xspan], ty, e.span)
     }
 
     /// `A⁻¹ @ b` at a site the checker recorded in
@@ -245,15 +260,29 @@ impl Lower<'_> {
             let kind = OpKind::Solve {
                 method: sky_ir::SolveMethod::Cholesky,
             };
-            return Ok(Some(self.op1(kind, vec![a, b], ty, e.span)));
+            let spans = vec![a_expr.span, rhs.span];
+            return Ok(Some(self.op1s(kind, vec![a, b], spans, ty, e.span)));
         }
         // The value's type does not say PositiveDefinite although the
         // checker's does: only if the pre-pass missed the declaration (see
         // the module docs). Keep the general form, which is the same up to
         // rounding, rather than emit a solve the verifier would reject.
         let inv_ty = self.ty_of(lhs)?;
-        let inv = self.op1(OpKind::Inverse, vec![a], inv_ty, lhs.span);
-        Ok(Some(self.op1(OpKind::MatMul, vec![inv, b], ty, e.span)))
+        let inv = self.op1s(
+            OpKind::Inverse,
+            vec![a],
+            vec![a_expr.span],
+            inv_ty,
+            lhs.span,
+        );
+        let spans = vec![lhs.span, rhs.span];
+        Ok(Some(self.op1s(
+            OpKind::MatMul,
+            vec![inv, b],
+            spans,
+            ty,
+            e.span,
+        )))
     }
 
     /// `A` if `e` is `A⁻¹` or `inv(A)` (the builtin, not a user's own

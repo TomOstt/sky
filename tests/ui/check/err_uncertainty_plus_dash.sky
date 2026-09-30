@@ -1,0 +1,2 @@
+# `+-` is not an uncertainty.
+m = 5.31 +- 0.02 kg

@@ -12,7 +12,7 @@
 //! format ([`print`] and [`parse`], round-trip exact), and the pass manager
 //! with explanations ([`pass`]), effect inference ([`effects`]), and the
 //! exactness analysis ([`exact`]: what every scalar is over the reals, and
-//! which of its operations provably cannot fail). Lowering
+//! which of its operations provably cannot fail). The roundoff analysis ([`roundoff`]) bounds how far each scalar is from the exact real result, for error budgets. Lowering
 //! from the checked AST and the reference interpreter build on these.
 //!
 //! # Levels
@@ -33,6 +33,7 @@ pub mod op;
 pub mod parse;
 pub mod pass;
 pub mod print;
+pub mod roundoff;
 pub mod verify;
 
 pub use builder::FunctionBuilder;
@@ -42,7 +43,8 @@ pub use ir::{
     RegionData, RegionId, Repr, Type, ValueData, ValueDef, ValueId,
 };
 pub use op::{
-    BoolContext, CmpOp, LiteralError, MathFn, OpKind, OpProperties, SliceAxis, SolveMethod,
+    AssertKind, BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind, OpProperties,
+    SliceAxis, SolveMethod,
 };
 pub use parse::{parse, ParseError};
 pub use pass::{

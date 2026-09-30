@@ -1,0 +1,13 @@
+# The declaration itself is checked: what it is about, and the tolerance.
+v = [1.0, 2.0]
+flag = true
+t = 3 s
+accuracy nothing within 1e-6
+accuracy v within 1e-6
+accuracy flag within 1e-6
+accuracy t within 1e-6 s
+accuracy t within 2 m
+accuracy t within 0
+accuracy t within v
+accuracy t within 1e-3 s
+accuracy t within 1e-3

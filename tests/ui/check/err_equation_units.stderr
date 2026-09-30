@@ -1,0 +1,91 @@
+tests/ui/check/err_equation_units.sky:7:10: error: `v'` is a quantity of dimension L·T⁻², but the right side is a velocity
+  |
+7 |     v' = v
+  |          ^ this is velocity (L·T⁻¹)
+3 | equation orbit(t: s):
+  |                - `t` is time
+5 |     v: Vector[2] m/s
+  |        ------------- `v` is velocity (L·T⁻¹)
+  = note: `v'` is the rate of change of `v`: velocity (L·T⁻¹) per time is L·T⁻²
+
+tests/ui/check/err_equation_units.sky:9:10: error: no equation for `y'`
+  |
+9 | equation partial(t: s):
+  |          ^^^^^^^ `y` is declared but never differentiated
+  = help: add a line `y' = ...` (its right side has the dimension of `y` per `t`)
+
+tests/ui/check/err_equation_units.sky:13:5: error: `z'` is the derivative of `z`, which is not declared
+   |
+13 |     z' = 1
+   |     ^^ no state variable of this name
+   = help: declare it first, with a type: `z: m`
+
+tests/ui/check/err_equation_units.sky:15:24: error: the start of the time span must be a time (the dimension of `t`), found a plain number
+   |
+15 | sol = solve orbit from 0 to 1 yr with r = [1 AU, 0 m], v = [0 m, 29.8 km/s]:
+   |                        ^ this is dimensionless
+   = note: `t` is the independent variable of `orbit`, and it is time
+
+tests/ui/check/err_equation_units.sky:15:66: error: array elements must have the same dimension: expected length, found velocity
+   |
+15 | sol = solve orbit from 0 to 1 yr with r = [1 AU, 0 m], v = [0 m, 29.8 km/s]:
+   |                                                                  ^^^^^^^^^ this is velocity
+   |                                                             --- this is length
+
+tests/ui/check/err_equation_units.sky:16:15: error: the tolerance must be a plain number, found a length
+   |
+16 |     tolerance 1 m
+   |               ^^^ this is length
+   = help: a tolerance is relative: write `1e-9`, not a quantity
+
+tests/ui/check/err_equation_units.sky:18:9: error: no initial value for `v` in the `solve` of `orbit`
+   |
+18 | early = solve orbit from 0 s to 1 yr with r = 3 m
+   |         ^^^^^ initial values are missing
+   = help: give every state variable a starting value: `with ..., v = <Vector[2] of velocity (L·T⁻¹)>`
+
+tests/ui/check/err_equation_units.sky:18:47: error: declared as a vector, but the value is a scalar
+   |
+18 | early = solve orbit from 0 s to 1 yr with r = 3 m
+   |                                               ^^^ this is Scalar [L]
+ 4 |     r: Vector[2] m
+   |        ----------- `r` is declared here
+   = note: declared: [2] has 1 axis, value: [] has 0 axes
+   = note: axes are numbered from 0 and have no names yet; only shapes of the same rank can be compared axis by axis
+
+tests/ui/check/err_equation_units.sky:19:17: error: cannot find equation `nope` in this scope
+   |
+19 | missing = solve nope from 0 s to 1 s
+   |                 ^^^^ not defined
+   = help: the equations defined so far are `orbit` and `partial`
+
+tests/ui/check/err_equation_units.sky:21:25: error: a conserved quantity must be a single number, found vector
+   |
+21 |     conserve position = r
+   |                         ^ this is Vector[2] [L]
+   = help: reduce it to a number, e.g. with `norm(...)` or `dot(a, b)`
+
+tests/ui/check/err_equation_units.sky:22:14: error: `r` is already an attribute of the solution
+   |
+22 |     conserve r = 0.5 * norm(v)^2
+   |              ^ the name of a conserved quantity must be new
+   = help: the solution already has `t`, `r` and `v`
+
+tests/ui/check/err_equation_units.sky:23:47: error: the initial value of `r` must be a length, found a velocity
+   |
+23 | wrong = solve orbit from 0 s to 1 yr with r = [1 m/s, 2 m/s], v = [0 m/s, 1 m/s]:
+   |                                               ^^^^^^^^^^^^^^ this is velocity (L·T⁻¹)
+ 4 |     r: Vector[2] m
+   |        ----------- `r` is declared as length
+
+tests/ui/check/err_equation_units.sky:24:47: error: the allowed drift must be a plain number, found a length
+   |
+24 |     conserve kinetic = 0.5 * norm(v)^2 within 1 m
+   |                                               ^^^ this is length
+   = help: `within` is a relative drift: write `1e-6`
+
+tests/ui/check/err_equation_units.sky:25:11: error: the solution of `orbit` has no `q`
+   |
+25 | print(sol.q)
+   |           ^ no such attribute
+   = help: it has `t`, `r`, `v` and `energy`

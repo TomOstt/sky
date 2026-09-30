@@ -1,0 +1,4 @@
+crates/sky-ast/tests/ui/err_plus_minus_missing_operand.sky:2:8: error: expected an expression, found end of line
+  |
+2 | x = 5 ±
+  |        ^

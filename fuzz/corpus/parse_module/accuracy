@@ -1,0 +1,5 @@
+x = 1e8
+y = sqrt(x^2 + 1) - x
+accuracy y within 1e-12
+accuracy x within 2 mm
+accuracy within = 3

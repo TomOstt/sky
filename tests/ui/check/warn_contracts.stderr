@@ -1,0 +1,35 @@
+tests/ui/check/warn_contracts.sky:9:8: warning: this `assert` always fails: `1 m > 2 m` is false
+  |
+9 | assert 1 m > 2 m
+  |        ^^^^^^^^^ always false
+  = note: the condition uses only numbers written in the source, so `assert` fails whenever it runs
+
+tests/ui/check/warn_contracts.sky:11:7: warning: this call breaks the precondition of `fall_time`
+   |
+11 | print(fall_time(-5 m))
+   |       ^^^^^^^^^^^^^^^ the `requires` is false for these arguments
+ 2 |     requires h >= 0 m
+   |              -------- `h >= 0 m` is false here
+   = note: with h = -5 m
+   = note: the call fails at run time if it runs
+
+tests/ui/check/warn_contracts.sky:13:7: warning: this call breaks the precondition of `speed`
+   |
+13 | print(speed(10 m, 0 s))
+   |       ^^^^^^^^^^^^^^^^ the `requires` is false for these arguments
+ 6 |     requires t > 0 s and d >= 0 m
+   |              -------------------- `t > 0 s and d >= 0 m` is false here
+   = note: with d = 10 m, t = 0 s
+   = note: the call fails at run time if it runs
+
+tests/ui/check/warn_contracts.sky:18:14: warning: this `requires` can never hold: `3 > 4` is false
+   |
+18 |     requires 3 > 4
+   |              ^^^^^ always false
+   = note: the condition uses only numbers written in the source, so `requires` fails whenever it runs
+
+tests/ui/check/warn_contracts.sky:19:13: warning: this `ensures` can never hold: `1 == 2` is false
+   |
+19 |     ensures 1 == 2
+   |             ^^^^^^ always false
+   = note: the condition uses only numbers written in the source, so `ensures` fails whenever it runs

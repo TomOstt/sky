@@ -26,3 +26,4 @@ tests/ui/lexer/ok_plus_then_minus.sky:4:10: error: cannot add dimensionless and 
   |           --------- mass
   = note: both operands of `+` must have the same dimension
   = help: convert one side, or fix the unit
+  = help: `+-` is `+` followed by `-`, not an uncertainty; write `±` or `+/-`

@@ -40,8 +40,14 @@
 //!   of `é`, `ﬁ`, fullwidth `ｘ`, mathematical `𝑥`, MICRO SIGN `µ`). The
 //!   source is never normalized, and keywords match the raw text only;
 //!   the NFKC form appears only in the error's help;
-//! - the glyph `±`: uncertainty is not part of Sky v0.1. The ASCII sequence
-//!   `+-` is simply `Plus` then `Minus`, so `a+-b` is `a + (-b)` as in Python.
+//!
+//! # Uncertainty
+//!
+//! `±` (U+00B1) and its ASCII spelling `+/-` are one token, `PlusMinus` (spec
+//! "Uncertainty"). `+/-` is free because `/` cannot begin an expression, so
+//! `a +/- b` was never a valid `a + (/ ...)`. The two-character ASCII
+//! sequence `+-` stays `Plus` then `Minus`, so `a+-b` is `a + (-b)` as in
+//! Python; it is *not* an uncertainty.
 
 use std::collections::HashSet;
 
@@ -332,7 +338,7 @@ fn unexpected_char_help(c: char) -> Option<&'static str> {
             "its NFKC form is not a valid identifier (`ŀ` is `l·`, and `·` reads as multiplication)"
         }
         '÷' => "for division, use `/`",
-        '±' => "uncertainty (±) is not supported in v0.1",
+        '∓' => "there is no `∓`; the uncertainty operator is `±` (ASCII `+/-`)",
         '⁻' => "the inverse operator is the glyph `⁻¹` (or the function `inv`)",
         '⊤' | '⊺' => {
             "the transpose operator is the glyph `ᵀ` (U+1D40, MODIFIER LETTER CAPITAL T), or the function `transpose`"
@@ -412,6 +418,23 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Whether a `'` at `start` (already consumed) follows a name or another
+    /// prime with no space between: `r'` and `r''`.
+    fn prime_allowed(&self, start: usize) -> bool {
+        self.src[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c == '\'' || is_ident_continue(c))
+            && self
+                .tokens
+                .last()
+                .is_some_and(|t| matches!(t.kind, TokenKind::Ident | TokenKind::Prime))
+            && self
+                .tokens
+                .last()
+                .is_some_and(|t| t.span.end as usize == start)
+    }
+
     fn offset(&self) -> u32 {
         self.pos as u32
     }
@@ -482,6 +505,9 @@ impl<'a> Lexer<'a> {
                 ')' | ']' => self.close_bracket(c, start)?,
                 ',' => TokenKind::Comma,
                 ':' => TokenKind::Colon,
+                // `r'` is the derivative of `r` (see `equation`). Only right
+                // after a name or another prime, so `'text'` keeps its help.
+                '\'' if self.prime_allowed(start) => TokenKind::Prime,
                 '.' => TokenKind::Dot,
                 '*' if self.eat('=') => TokenKind::StarAssign,
                 '*' => TokenKind::Star,
@@ -499,10 +525,15 @@ impl<'a> Lexer<'a> {
                 '>' if self.eat('=') => TokenKind::Ge,
                 '>' => TokenKind::Gt,
                 '+' if self.eat('=') => TokenKind::PlusAssign,
+                '+' if self.src[self.pos..].starts_with("/-") => {
+                    self.pos += 2;
+                    TokenKind::PlusMinus
+                }
                 '+' => TokenKind::Plus,
                 '-' if self.eat('>') => TokenKind::Arrow,
                 '-' if self.eat('=') => TokenKind::MinusAssign,
                 '-' => TokenKind::Minus,
+                '±' => TokenKind::PlusMinus,
                 '≤' => TokenKind::Le,
                 '≥' => TokenKind::Ge,
                 '≠' => TokenKind::Ne,

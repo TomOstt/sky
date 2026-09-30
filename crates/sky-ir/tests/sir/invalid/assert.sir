@@ -1,0 +1,14 @@
+// Contracts that break the rules of `assert`: one operand too few for its
+// names, a condition that is a number, a `requires` with no function, an
+// `assert` that names one, an empty condition text.
+sir edition 2026
+
+fn @bad(%x: num[L; ()], %b: bool) -> (nothing) effects(fail) {
+  assert[assert] "b" names("x") %b
+  assert[assert] "x" %x
+  assert[requires] "b" %b
+  assert[assert] "b" fn "bad" %b
+  assert[assert] "" %b
+  %n = const.nothing : nothing
+  return %n
+}

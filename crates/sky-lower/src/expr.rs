@@ -8,7 +8,9 @@
 use sky_ast::{BinaryOp, BoolOp, Expr, ExprKind, Ident, Literal, UnaryOp};
 use sky_diag::Span;
 use sky_interp::{number_literal, unit_literal_si};
-use sky_ir::{BlockId, BoolContext, CmpOp, LiteralError, OpId, OpKind, Type, ValueId};
+use sky_ir::{
+    BlockId, BoolContext, CmpOp, LiteralError, NumberContext, OpId, OpKind, Type, ValueId,
+};
 use sky_syntax::lexer::unescape_str;
 use sky_types::{const_exponent, FuncSig, Ty};
 use sky_units::lookup_constant;
@@ -49,7 +51,7 @@ impl Lower<'_> {
             ExprKind::Inverse { operand, .. } => {
                 let a = self.expr(operand)?;
                 let ty = self.ty_of(e)?;
-                Ok(self.op1(OpKind::Inverse, vec![a], ty, e.span))
+                Ok(self.op1s(OpKind::Inverse, vec![a], vec![operand.span], ty, e.span))
             }
             ExprKind::Transpose { operand, .. } => {
                 let a = self.expr(operand)?;
@@ -68,7 +70,7 @@ impl Lower<'_> {
                 } else {
                     self.ty_of(e)?
                 };
-                self.binary_with(*op, a, rhs, ty, e.span)
+                self.binary_with(*op, (a, lhs.span), rhs, ty, e.span)
             }
             ExprKind::BoolOp { op, operands, .. } => self.bool_op(e.span, *op, operands),
             ExprKind::Call { callee, args } => self.call(e, callee, args),
@@ -80,6 +82,15 @@ impl Lower<'_> {
                 let unit = self.text(unit.span()).to_string();
                 Ok(self.op1(OpKind::Show { unit }, vec![a], Type::Str, e.span))
             }
+            // Uncertainty is a run-time property of a number that the SIR
+            // types (numbers with a dimension) cannot carry, so a program
+            // that uses `±` is not lowered: `--engine=auto` runs it on the
+            // tree-walker and `--engine=sir` says so (spec "Uncertainty").
+            ExprKind::PlusMinus { .. } => Err(LowerError::new(
+                "uncertainty (`±`) is not supported by SIR yet",
+                e.span,
+            )
+            .with_note(UNCERTAINTY)),
             ExprKind::Index { base, items } => self.index_expr(e, base, items),
             ExprKind::Array(elems) => self.array_literal(e, elems),
             ExprKind::Attribute { name, .. } => Err(LowerError::new(
@@ -160,10 +171,15 @@ impl Lower<'_> {
             UnaryOp::Neg => {
                 let a = self.expr(operand)?;
                 let ty = self.ty_of(e)?;
-                Ok(self.op1(OpKind::Neg, vec![a], ty, e.span))
+                Ok(self.op1s(OpKind::Neg, vec![a], vec![operand.span], ty, e.span))
             }
-            // `+x` is `x`.
-            UnaryOp::Pos => self.expr(operand),
+            // `+x` is `x`, unless the checker could not type `x`: then `sky
+            // run` checks at run time that it is a number or an array, and
+            // an `expect.number` does the same.
+            UnaryOp::Pos => {
+                let a = self.expr(operand)?;
+                Ok(self.expect_number(NumberContext::Pos, operand, a))
+            }
             UnaryOp::Not => {
                 let a = self.expr(operand)?;
                 let a = self.bool_operand(BoolContext::Not, operand, a);
@@ -183,14 +199,20 @@ impl Lower<'_> {
     pub(crate) fn binary_with(
         &mut self,
         op: BinaryOp,
-        a: ValueId,
+        (a, lspan): (ValueId, Span),
         rhs: &Expr,
         ty: Type,
         span: Span,
     ) -> R<ValueId> {
         if op == BinaryOp::Pow {
             if let Some(exponent) = const_exponent(self.src, rhs) {
-                return Ok(self.op1(OpKind::PowConst { exponent }, vec![a], ty, span));
+                return Ok(self.op1s(
+                    OpKind::PowConst { exponent },
+                    vec![a],
+                    vec![lspan],
+                    ty,
+                    span,
+                ));
             }
         }
         let b = self.expr(rhs)?;
@@ -206,7 +228,7 @@ impl Lower<'_> {
                 None => return self.err("internal error: unknown binary operator", span),
             },
         };
-        Ok(self.op1(kind, vec![a, b], ty, span))
+        Ok(self.op1s(kind, vec![a, b], vec![lspan, rhs.span], ty, span))
     }
 
     /// `a and b and c` is a running value `t`, updated one operand at a time:
@@ -281,6 +303,22 @@ impl Lower<'_> {
             OpKind::ExpectBool { context },
             vec![v],
             Type::Bool,
+            operand.span,
+        )
+    }
+
+    /// `v`, the value of `operand`, as a number or an array where the source
+    /// needs one (the operand of a unary `+`, the argument of `inv`): `v`
+    /// itself when the checker typed it, else an `expect.number` at the
+    /// operand's span, so the SIR interpreter fails as `sky run` does.
+    fn expect_number(&mut self, context: NumberContext, operand: &Expr, v: ValueId) -> ValueId {
+        if !matches!(self.st.b.ty(v), Type::Unknown) {
+            return v;
+        }
+        self.op1(
+            OpKind::ExpectNumber { context },
+            vec![v],
+            Type::Unknown,
             operand.span,
         )
     }
@@ -362,8 +400,9 @@ impl Lower<'_> {
                     }
                     ("inv", [arg]) => {
                         let a = self.expr(arg)?;
+                        let a = self.expect_number(NumberContext::Inv, arg, a);
                         let ty = self.ty_of(e)?;
-                        return Ok(self.op1(OpKind::Inverse, vec![a], ty, e.span));
+                        return Ok(self.op1s(OpKind::Inverse, vec![a], vec![arg.span], ty, e.span));
                     }
                     ("transpose", [arg]) => {
                         let a = self.expr(arg)?;
@@ -375,6 +414,24 @@ impl Lower<'_> {
                             return Ok(v);
                         }
                     }
+                    (name @ ("nominal" | "uncertainty"), _) => {
+                        return Err(LowerError::new(
+                            format!("`{name}` is not supported by SIR yet"),
+                            e.span,
+                        )
+                        .with_note(UNCERTAINTY));
+                    }
+                    // Vector builtins that run on the tree-walker only.
+                    (name @ ("norm" | "dot"), _) => {
+                        return Err(LowerError::new(
+                            format!("`{name}` is not supported by SIR yet"),
+                            e.span,
+                        )
+                        .with_note("in a function SIR must run (one you differentiate, say), write `sqrt(v @ v)` for `norm(v)` and `a @ b` for `dot(a, b)`"));
+                    }
+                    ("explain", _) => {
+                        return self.err("`explain` is not supported by SIR yet", e.span);
+                    }
                     (name, _) => {
                         if let Some(f) = sky_ir::MathFn::from_name(name) {
                             let mut vals = Vec::with_capacity(args.len());
@@ -382,7 +439,8 @@ impl Lower<'_> {
                                 vals.push(self.expr(a)?);
                             }
                             let ty = self.ty_of(e)?;
-                            return Ok(self.op1(OpKind::Math(f), vals, ty, e.span));
+                            let spans = args.iter().map(|a| a.span).collect();
+                            return Ok(self.op1s(OpKind::Math(f), vals, spans, ty, e.span));
                         }
                     }
                 },
@@ -470,6 +528,10 @@ impl Lower<'_> {
         )
     }
 }
+
+/// Why a program with `±` does not lower.
+pub(crate) const UNCERTAINTY: &str =
+    "values with an uncertainty run on the tree-walking interpreter (`--engine=ast`, or `--engine=auto`, which falls back to it)";
 
 /// Why an index or attribute write, or an attribute read, is rejected.
 pub(crate) const ARRAYS: &str =

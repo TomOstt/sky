@@ -1,0 +1,36 @@
+// The three contracts of spec "Contracts": `assert`, and the `requires` and
+// `ensures` of a function, with the text of the condition, the author's
+// message, and the names whose values a failure shows. The last function's
+// condition is a value the checker could not type.
+sir edition 2026
+
+fn @fall_time(%h: num[L; ()]) -> (num[T; ()]) effects(fail) {
+  %z = const.float 0 : num[L; ()]
+  %ok = cmp.ge %h, %z : bool @ 39..47
+  assert[requires] "h >= 0 m" fn "fall_time" names("h") %ok, %h @ 39..47
+  %two = const.float 2 : num[1; ()]
+  %d = mul %two, %h : num[L; ()]
+  %g = const.float 9.80665 : num[L·T⁻²; ()]
+  %q = div %d, %g : num[T²; ()]
+  %result = math.sqrt %q : num[T; ()]
+  %zt = const.float 0 : num[T; ()]
+  %pos = cmp.gt %result, %zt : bool
+  assert[ensures] "result > 0 s" fn "fall_time" msg "the fall takes time" names("result", "h") %pos, %result, %h @ 60..72
+  return %result
+}
+
+fn @main_like(%E: num[L²·M·T⁻²; ()]) -> (nothing) effects(fail) {
+  %zero = const.float 0 : num[L²·M·T⁻²; ()]
+  %c = cmp.gt %E, %zero : bool
+  assert[assert] "E > 0 J" msg "a \"quoted\"\nmessage" names("E") %c, %E @ 0..7
+  %t = const.bool true : bool
+  assert[assert] "true" %t
+  %n = const.nothing : nothing
+  return %n
+}
+
+fn @dynamic(%c: unknown, %v: unknown) -> (nothing) effects(fail) {
+  assert[assert] "c" names("v") %c, %v @ 3..4
+  %n = const.nothing : nothing
+  return %n
+}

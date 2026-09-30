@@ -25,13 +25,13 @@ use sky_diag::{display_capped, Diagnostic, Label};
 use sky_syntax::{Kw, Span, Token, TokenKind};
 
 use crate::ast::{
-    span_text, AssignTarget, BinaryOp, Block, BoolOp, CompoundOp, DimExpr, Expr, ExprKind, Ident,
-    IndexItem, Literal, Module, Param, ShapeAnn, ShapeKind, Stmt, StmtKind, TypeExpr, UnaryOp,
-    UnitExpr, TAG_NAMES,
+    span_text, AssertKind, AssignTarget, BinaryOp, Block, BoolOp, CompoundOp, DimExpr, Expr,
+    ExprKind, Ident, IndexItem, Literal, Module, Param, ShapeAnn, ShapeKind, Stmt, StmtKind,
+    TypeExpr, UnaryOp, UnitExpr, TAG_NAMES,
 };
 use crate::precedence::{
     bool_binding_power, infix_binding_power, is_postfix_start, prefix_binding_power, AS_BP,
-    CONDITIONAL_BP, CONDITIONAL_COND_BP, NOT_BP, POSTFIX_BP,
+    CONDITIONAL_BP, CONDITIONAL_COND_BP, NOT_BP, PLUS_MINUS_BP, POSTFIX_BP,
 };
 
 /// Maximum nesting depth. Each level counts once: a `(`...`)` group, a prefix
@@ -138,6 +138,7 @@ pub fn parse_expr(tokens: &[Token], src: &str) -> (Option<Expr>, Vec<ParseError>
 pub fn parse_module(tokens: &[Token], src: &str) -> (Module, Vec<ParseError>) {
     let mut p = Parser::new(tokens, src);
     let stmts = p.parse_stmts(false);
+    p.check_contract_placement(&stmts, false);
     let end = u32::try_from(src.len()).unwrap_or(u32::MAX);
     let module = Module {
         stmts,
@@ -146,7 +147,14 @@ pub fn parse_module(tokens: &[Token], src: &str) -> (Module, Vec<ParseError>) {
     (module, p.errors)
 }
 
+#[path = "parse_ode.rs"]
+mod ode;
+pub(crate) use ode::{equation_sexpr, solve_sexpr};
+
 struct Parser<'t, 's> {
+    /// True while parsing the header or options of a `solve`, where `to`,
+    /// `with` and `within` end an expression (see `parse_ode.rs`).
+    solve_words: bool,
     /// Tokens up to (not including) the first `Eof`.
     tokens: &'t [Token],
     src: &'s str,
@@ -170,6 +178,7 @@ impl<'t, 's> Parser<'t, 's> {
                 .unwrap_or(Span::point(0)),
         };
         Parser {
+            solve_words: false,
             tokens: tokens.get(..end).unwrap_or(tokens),
             src,
             pos: 0,
@@ -313,6 +322,9 @@ impl<'t, 's> Parser<'t, 's> {
     /// `Dedent`), so the caller just carries on.
     fn parse_item(&mut self) -> Option<Stmt> {
         let tok = self.current();
+        if self.at_solve() {
+            return self.parse_solve();
+        }
         let TokenKind::Keyword(kw) = tok.kind else {
             return self.parse_simple_item();
         };
@@ -321,9 +333,9 @@ impl<'t, 's> Parser<'t, 's> {
             Kw::While => self.parse_while(),
             Kw::For => self.parse_for(),
             Kw::Def => self.parse_def(),
-            Kw::Import | Kw::Equation | Kw::Solve | Kw::Field | Kw::Else | Kw::Elif => {
-                self.reject_statement(tok, kw)
-            }
+            Kw::Equation => self.parse_equation(),
+            Kw::Solve => self.reject_bare_solve(),
+            Kw::Import | Kw::Field | Kw::Else | Kw::Elif => self.reject_statement(tok, kw),
             _ => self.parse_simple_item(),
         }
     }
@@ -391,7 +403,7 @@ impl<'t, 's> Parser<'t, 's> {
         let err = match kw {
             Kw::Import => ParseError::new("`import` is not supported yet", tok.span)
                 .with_help("there is no module loader yet; keep the code in one file for now"),
-            Kw::Equation | Kw::Solve | Kw::Field => ParseError::new(
+            Kw::Field => ParseError::new(
                 format!("`{word}` is reserved for a future version"),
                 tok.span,
             )
@@ -664,6 +676,51 @@ impl<'t, 's> Parser<'t, 's> {
     /// `None` means an error was recorded and the position is at a line
     /// boundary; see [`Self::parse_item`].
     fn parse_body(&mut self, header: Span, what: &str) -> Option<Block> {
+        let block = self.parse_body_inner(header, what)?;
+        self.check_contract_placement(&block.stmts, what == "`def`");
+        Some(block)
+    }
+
+    /// `requires` and `ensures` state a function's contract, so they are
+    /// allowed only as the first statements of a `def` body (spec
+    /// "Contracts"). `stmts` are the statements of one block; `in_def` says
+    /// it is a `def` body. Nested blocks were checked when they were parsed.
+    fn check_contract_placement(&mut self, stmts: &[Stmt], in_def: bool) {
+        let mut head = in_def;
+        for s in stmts {
+            match &s.kind {
+                StmtKind::Assert {
+                    kind: kind @ (AssertKind::Requires | AssertKind::Ensures),
+                    ..
+                } if !head => {
+                    let word = kind.keyword();
+                    let err = if in_def {
+                        ParseError::new(
+                            format!("`{word}` must come before the other statements of the function body"),
+                            s.span,
+                        )
+                        .with_help("write the contract lines first, right after the `def` line")
+                    } else {
+                        ParseError::new(
+                            format!("`{word}` is only allowed at the start of a function body"),
+                            s.span,
+                        )
+                        .with_help(
+                            "state a function's contract with `requires` and `ensures` right after its `def` line; use `assert` to check a condition here",
+                        )
+                    };
+                    self.errors.push(err);
+                }
+                StmtKind::Assert {
+                    kind: AssertKind::Requires | AssertKind::Ensures,
+                    ..
+                } => {}
+                _ => head = false,
+            }
+        }
+    }
+
+    fn parse_body_inner(&mut self, header: Span, what: &str) -> Option<Block> {
         let colon = self.current();
         if colon.kind != TokenKind::Colon {
             return self.fail_expected_colon(colon, header, what);
@@ -737,8 +794,14 @@ impl<'t, 's> Parser<'t, 's> {
     // ----- statements (simple) -----
 
     fn parse_stmt(&mut self) -> Option<Stmt> {
+        if self.at_accuracy() {
+            return self.parse_accuracy();
+        }
         let first = match self.peek() {
             TokenKind::Keyword(Kw::Return) => return self.parse_return(),
+            TokenKind::Keyword(kw @ (Kw::Assert | Kw::Requires | Kw::Ensures)) => {
+                return self.parse_contract(kw)
+            }
             TokenKind::Keyword(kw @ (Kw::Pass | Kw::Break | Kw::Continue)) => {
                 return self.parse_bare_keyword(kw)
             }
@@ -806,6 +869,51 @@ impl<'t, 's> Parser<'t, 's> {
         Some(stmt)
     }
 
+    /// Whether the statement starts with `accuracy` followed by a name: the
+    /// contextual statement `accuracy x within 1e-12`. Two names side by
+    /// side are never a valid expression, so nothing else is taken.
+    fn at_accuracy(&self) -> bool {
+        let is_word = |t: Option<Token>, word: &str| {
+            t.is_some_and(|t| {
+                t.kind == TokenKind::Ident && span_text(self.src, t.span) == Some(word)
+            })
+        };
+        is_word(self.nth(0), "accuracy") && self.nth(1).is_some_and(|t| t.kind == TokenKind::Ident)
+    }
+
+    /// `accuracy x within tolerance`, with `accuracy` current.
+    fn parse_accuracy(&mut self) -> Option<Stmt> {
+        let kw = self.bump();
+        let name_tok = self.bump();
+        let name = Ident {
+            span: name_tok.span,
+        };
+        let within = self.current();
+        if within.kind != TokenKind::Ident || span_text(self.src, within.span) != Some("within") {
+            self.errors.push(
+                ParseError::new(
+                    format!(
+                        "expected `within` after `accuracy {}`, found {}",
+                        self.text(name.span),
+                        self.describe(within)
+                    ),
+                    within.span,
+                )
+                .with_secondary(kw.span, "this declares an accuracy budget")
+                .with_help("write `accuracy x within 1e-12` (a relative error) or `accuracy x within 2 mm` (an absolute one)"),
+            );
+            return None;
+        }
+        self.bump();
+        let tolerance = self.expr_bp(0)?;
+        let stmt = Stmt {
+            span: kw.span.join(tolerance.span),
+            kind: StmtKind::Accuracy { name, tolerance },
+        };
+        self.expect_stmt_end(&stmt, None)?;
+        Some(stmt)
+    }
+
     /// `return` or `return value`, with `return` current.
     fn parse_return(&mut self) -> Option<Stmt> {
         let kw = self.bump();
@@ -817,6 +925,66 @@ impl<'t, 's> Parser<'t, 's> {
         let stmt = Stmt {
             span: kw.span.join(end),
             kind: StmtKind::Return(value),
+        };
+        self.expect_stmt_end(&stmt, None)?;
+        Some(stmt)
+    }
+
+    /// `assert cond`, `requires cond` or `ensures cond`, each with an
+    /// optional `, "message"`, with the keyword current.
+    fn parse_contract(&mut self, kw: Kw) -> Option<Stmt> {
+        let kind = match kw {
+            Kw::Requires => AssertKind::Requires,
+            Kw::Ensures => AssertKind::Ensures,
+            _ => AssertKind::Assert,
+        };
+        let tok = self.bump();
+        let cond = self.expr_bp(0)?;
+        let mut message = None;
+        match self.peek() {
+            TokenKind::Comma => {
+                self.bump();
+                let m = self.current();
+                if m.kind != TokenKind::Str {
+                    let found = self.describe(m);
+                    self.errors.push(
+                        ParseError::new(
+                            format!("expected a string message after `,`, found {found}"),
+                            m.span,
+                        )
+                        .with_secondary(tok.span, format!("`{}` starts here", kind.keyword()))
+                        .with_help(format!(
+                            "write `{} condition, \"what went wrong\"`",
+                            kind.keyword()
+                        )),
+                    );
+                    return None;
+                }
+                self.bump();
+                message = Some(m.span);
+            }
+            TokenKind::Assign => {
+                let eq = self.current();
+                self.errors.push(
+                    ParseError::new(
+                        format!("`{}` takes a condition, not an assignment", kind.keyword()),
+                        eq.span,
+                    )
+                    .with_secondary(cond.span, "this is the condition")
+                    .with_help("compare with `==` (or `<=`, `>=`, ...)"),
+                );
+                return None;
+            }
+            _ => {}
+        }
+        let end = message.unwrap_or(cond.span);
+        let stmt = Stmt {
+            span: tok.span.join(end),
+            kind: StmtKind::Assert {
+                kind,
+                cond,
+                message,
+            },
         };
         self.expect_stmt_end(&stmt, None)?;
         Some(stmt)
@@ -933,6 +1101,7 @@ impl<'t, 's> Parser<'t, 's> {
                     StmtKind::Binding { ty, value, .. } => {
                         value.as_ref().map_or(ty.span, |v| v.span)
                     }
+                    StmtKind::Assert { cond, message, .. } => message.unwrap_or(cond.span),
                     // Simple statements only; block statements never get here.
                     _ => stmt.span,
                 };
@@ -990,15 +1159,22 @@ impl<'t, 's> Parser<'t, 's> {
         }
     }
 
+    /// `lhs op rhs` with `op` already consumed and counted. `op` is `None`
+    /// for `±`, which builds an `ExprKind::PlusMinus` instead of a binary
+    /// node. It shares this path (rather than having its own `Step`) so the
+    /// recursive frame of `expr_bp_inner` does not grow.
     fn parse_infix_rhs(
         &mut self,
         lhs: Expr,
-        op: BinaryOp,
+        op: Option<BinaryOp>,
         op_span: Span,
         r_bp: u8,
     ) -> Option<Expr> {
         let rhs = self.expr_bp(r_bp)?;
-        Some(binary(op, op_span, lhs, rhs))
+        Some(match op {
+            Some(op) => binary(op, op_span, lhs, rhs),
+            None => crate::plus_minus::plus_minus(lhs, rhs, op_span),
+        })
     }
 
     /// `lhs op x op y ...` for one `and`/`or`, with the first `op` consumed.
@@ -1179,6 +1355,18 @@ impl<'t, 's> Parser<'t, 's> {
                 r_bp,
             });
         }
+        if tok.kind == TokenKind::PlusMinus {
+            if PLUS_MINUS_BP.0 < min_bp {
+                return Some(Step::Done);
+            }
+            self.bump();
+            self.enter(tok.span)?;
+            return Some(Step::Infix {
+                op: None,
+                op_span: tok.span,
+                r_bp: PLUS_MINUS_BP.1,
+            });
+        }
         let Some((op, l_bp, r_bp)) = infix_binding_power(tok.kind) else {
             return Some(Step::Done);
         };
@@ -1205,7 +1393,7 @@ impl<'t, 's> Parser<'t, 's> {
         }
         self.enter(tok.span)?;
         Some(Step::Infix {
-            op,
+            op: Some(op),
             op_span: tok.span,
             r_bp,
         })
@@ -1252,7 +1440,7 @@ impl<'t, 's> Parser<'t, 's> {
                 } else {
                     Literal::Float(tok.span)
                 };
-                if self.peek() == TokenKind::Ident {
+                if self.peek() == TokenKind::Ident && !self.stops_unit() {
                     return self.parse_unit_literal(value);
                 }
                 Some(literal(value))
@@ -1738,7 +1926,12 @@ impl<'t, 's> Parser<'t, 's> {
                     );
                 }
                 Kw::And | Kw::Or | Kw::Not | Kw::True | Kw::False => {}
-                Kw::Equation | Kw::Solve | Kw::Field => {
+                Kw::Equation | Kw::Solve => {
+                    err = err.with_help(
+                        "`equation` and `solve` start statements: `sol = solve orbit from 0 s to 1 yr with ...`",
+                    );
+                }
+                Kw::Field => {
                     err = err.with_help("this word is reserved for a future version");
                 }
                 Kw::In => err = err.with_help(
@@ -1968,7 +2161,7 @@ impl<'t, 's> Parser<'t, 's> {
         }
         // `5 kg m`: compound units need `*`, never juxtaposition.
         let tok = self.current();
-        if tok.kind == TokenKind::Ident {
+        if tok.kind == TokenKind::Ident && !self.stops_unit() {
             let unit_text = self.text(unit.span());
             let name = self.text(tok.span);
             let mut err = ParseError::new(
@@ -2618,8 +2811,9 @@ enum Step {
         op_span: Span,
         r_bp: u8,
     },
+    /// A binary operator, or `±` (`op: None`).
     Infix {
-        op: BinaryOp,
+        op: Option<BinaryOp>,
         op_span: Span,
         r_bp: u8,
     },
@@ -2834,6 +3028,7 @@ fn symbol(kind: TokenKind) -> &'static str {
         TokenKind::Assign => "=",
         TokenKind::Plus => "+",
         TokenKind::Minus => "-",
+        TokenKind::PlusMinus => "±",
         TokenKind::Star => "*",
         TokenKind::Slash => "/",
         TokenKind::Caret => "^",
@@ -2856,6 +3051,7 @@ fn symbol(kind: TokenKind) -> &'static str {
         TokenKind::AtAssign => "@=",
         TokenKind::Dot => ".",
         TokenKind::Arrow => "->",
+        TokenKind::Prime => "'",
         TokenKind::Keyword(kw) => kw.as_str(),
         TokenKind::Int => "integer",
         TokenKind::Float => "float",

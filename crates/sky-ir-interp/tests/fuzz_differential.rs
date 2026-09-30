@@ -165,6 +165,15 @@ fn generated_programs_agree_in_both_engines() {
         stats.failed
     );
     assert!(stats.limit >= 1, "no program hit the recursion limit");
+    // Contracts that fail are part of the comparison: the messages (with the
+    // values of the names) and the spans agree.
+    for kind in ["assertion failed", "precondition of", "postcondition of"] {
+        assert!(
+            stats.errors.keys().any(|e| e.starts_with(kind)),
+            "no program failed with `{kind}...`: {:?}",
+            stats.errors.keys().collect::<Vec<_>>()
+        );
+    }
     assert!(
         stats.printed > 100_000,
         "only {} bytes printed",
@@ -229,6 +238,10 @@ fn generated_programs_agree_in_both_engines() {
         "\"hi\"",
         "while true:",
         "def f",
+        "assert ",
+        "requires ",
+        "ensures ",
+        "result",
     ] {
         assert!(
             stats.sources.contains(needle),
@@ -327,12 +340,26 @@ fn signature(msg: &str) -> Option<String> {
     if msg.starts_with("generator bug") {
         return None;
     }
-    let n = if msg.starts_with("the error differs") {
-        3
-    } else {
-        1
-    };
-    Some(msg.lines().take(n).collect::<Vec<_>>().join("\n"))
+    if msg.starts_with("the error differs") {
+        // The messages of the two diagnostics, without the position in their
+        // headers (`program.sky:3:7: error: division by zero`), which moves
+        // as a program shrinks.
+        let mut sig = vec!["the error differs".to_string()];
+        let mut lines = msg.lines();
+        while let Some(l) = lines.next() {
+            if l == "--- sky run ---" || l == "--- SIR ---" {
+                let header = lines.next().unwrap_or("");
+                sig.push(
+                    header
+                        .split_once(": error: ")
+                        .map_or(header, |(_, m)| m)
+                        .to_string(),
+                );
+            }
+        }
+        return Some(sig.join("\n"));
+    }
+    Some(msg.lines().next().unwrap_or("").to_string())
 }
 
 /// Whether every `while` in `lines` still ends: generated loops count with
@@ -549,16 +576,16 @@ fn lowering_binds_a_call_to_the_definition_seen_at_check_time() {
 }
 
 /// Found by the longer campaign after the fixes above (seed 275714): unary `+`
-/// is lowered as its operand, so for a value the checker cannot type the
-/// tree-walker's "`+` needs a number, found a Bool" is missing in SIR, which
-/// says "cannot add a Bool and a Bool" (or nothing, if the value is only
-/// returned). A `pos` operation, or a check like `expect.bool` for numbers,
-/// would fix it.
+/// was lowered as its operand, so for a value the checker cannot type the
+/// tree-walker's "`+` needs a number, found a Bool" was missing in SIR, which
+/// said "cannot add a Bool and a Bool" (or nothing, if the value is only
+/// returned). Fixed: an operand of unknown type gets an `expect.number`, like
+/// the `expect.bool` of a condition; `inv(x)` of one too, for its wording.
 #[test]
-#[ignore = "bug: unary + of a value of unknown type that is not a number is not checked in SIR"]
-fn unary_plus_of_an_unknown_non_number_is_not_checked_in_sir() {
+fn unary_plus_of_an_unknown_non_number_is_checked_in_sir() {
     assert_agree("def f(a):\n    return +a + a\nprint(f(true))\n");
     assert_agree("def f(a):\n    return +a\nprint(f(true))\n");
+    assert_agree("def f(a):\n    return inv(a)\nprint(f(true))\n");
 }
 
 /// What `sky run` does with `src`: its output and the error that stopped it.

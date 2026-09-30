@@ -1,16 +1,14 @@
 # What `derivative(f, x)` accepts: a `def`, and the name of one of its
-# scalar, annotated parameters; and it is called where it is written.
+# annotated parameters; and it is called where it is written. An array with
+# respect to an array is a Jacobian, which is not available.
 def position(t: s) -> m:
     return 5 m/s^2 * t^2
 
 def loose(t, k: m) -> m:
     return k
 
-def norm(v: Vector[3] m) -> m:
-    return v[0]
-
-def path(t: s) -> Vector[3] m:
-    return [t * 1 m/s, 1 m, 2 m]
+def shift(p: Vector[3] m) -> Vector[3] m:
+    return p + [1 m, 0 m, 0 m]
 
 a = derivative(position, y)(1 s)
 b = derivative(position, 0)(1 s)
@@ -19,7 +17,6 @@ d = derivative(loose, t)(1 s)
 e = derivative(sqrt, x)(4)
 f = derivative(position)(1 s)
 g = derivative(3 m, t)(1 s)
-h = derivative(norm, v)(1 m)
-i = derivative(path, t)(1 s)
+h = derivative(shift, p)([1 m, 2 m, 3 m])
 j = derivative(derivative(position, t), t)(1 s)
 k = derivative(position, t)

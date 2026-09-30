@@ -10,3 +10,8 @@ def position(t: s) -> m:
 
 F: Vector[2] N = -grad(U)(1 m, 2 m)
 v: m/s = (∂position/∂t)(2 s)
+
+def V(p: Vector[3] m) -> J:
+    return 0.5 * k * (p @ p)
+
+gv: Vector[3] N = -grad(V)([1 m, 2 m, 3 m])

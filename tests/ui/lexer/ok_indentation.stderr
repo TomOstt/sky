@@ -1,5 +1,5 @@
-tests/ui/lexer/ok_indentation.sky:15:1: error: `equation` is reserved for a future version
+tests/ui/lexer/ok_indentation.sky:15:1: error: `field` is reserved for a future version
    |
-15 | equation spring:
-   | ^^^^^^^^
+15 | field spring:
+   | ^^^^^
    = help: reserved words cannot be used as names; pick another name

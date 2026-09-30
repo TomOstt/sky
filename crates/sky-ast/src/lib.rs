@@ -15,14 +15,15 @@
 pub mod ast;
 pub mod parser;
 mod partial;
+mod plus_minus;
 pub mod precedence;
 mod sexpr;
 pub mod unit_text;
 
 pub use ast::{
-    AssignTarget, BinaryOp, Block, BoolOp, CompoundOp, DimExpr, Expr, ExprKind, Ident, IndexItem,
-    Literal, Module, Param, ShapeAnn, ShapeKind, Stmt, StmtKind, TypeExpr, UnaryOp, UnitExpr,
-    TAG_NAMES,
+    AssertKind, AssignTarget, BinaryOp, Block, BoolOp, CompoundOp, DimExpr, Equation, EquationItem,
+    Expr, ExprKind, Ident, IndexItem, Initial, Literal, Module, Param, ShapeAnn, ShapeKind, Solve,
+    SolveOption, Stmt, StmtKind, TypeExpr, UnaryOp, UnitExpr, TAG_NAMES,
 };
 pub use parser::{
     parse_expr, parse_module, ParseError, MAX_DEPTH, MAX_QUOTED_BYTES, MAX_QUOTED_CHARS,

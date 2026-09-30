@@ -1,0 +1,19 @@
+tests/ui/check/ok_accuracy_absolute.sky:3:5: note: [FOLD-FLOAT-001] `100000000 m + 0.001 m` is rewritten to `100000000.001 m`
+  |
+3 | d = 1e8 m + 1 mm
+  |     ^^^^^^^^^^^^
+  = note: applied by the `fold` pass
+  = note: because every operand is a constant
+  = note: because the result is the reference interpreter's own, bit for bit, and it cannot fail at run time
+
+tests/ui/check/ok_accuracy_absolute.sky:4:1: note: `d` is accurate to 2.0e-9 absolute (SI units), within the budget 10 nm
+  |
+4 | accuracy d within 10 nm
+  | ^^^^^^^^^^^^^^^^^^^^^^^
+  = note: proven by the roundoff analysis: every operation's rounding error, propagated through the program, against the exact real result
+
+tests/ui/check/ok_accuracy_absolute.sky:5:1: note: printed value of `d` is accurate to within 2.0e-17 relative
+  |
+5 | print(d)
+  | ^^^^^^^^
+  = note: a proven bound on the rounding error against the exact real result (roundoff analysis)

@@ -15,19 +15,71 @@
 //! * [`solve`] returns a [`Solution`] with the final state, samples at the
 //!   requested output times, statistics, the method actually used, and an
 //!   **explanation**: why that method was chosen, in words a scientist can
-//!   check ("the system is second order and energy is to be conserved, so a
-//!   symplectic velocity-Verlet integrator ...").
+//!   check ("the system is second order and energy is monitored: symplectic
+//!   integrators keep energy error bounded over long times instead of
+//!   letting it drift ...").
 //! * Every value stays finite; a non-finite state, a failing right-hand
-//!   side, or exceeding [`Options::max_steps`] is a [`SolveError`], never
-//!   NaN or infinity (Sky's rule for numbers).
+//!   side, a step that shrinks to nothing, or exceeding
+//!   [`Options::max_steps`] is a [`SolveError`] carrying the time, never NaN
+//!   or infinity (Sky's rule for numbers).
 //!
-//! v0 ships one method, fixed-step classical RK4, so the language side can
-//! be built and tested end to end; the adaptive, symplectic and stiff
-//! methods and automatic selection fill in behind this same API.
+//! # The methods
+//!
+//! | [`Method`] | kind | use |
+//! |---|---|---|
+//! | `Rk4 { step }` | fixed step, order 4 | simple, predictable |
+//! | `DormandPrince` | adaptive 5(4), FSAL, dense output | smooth, non-stiff problems |
+//! | `VelocityVerlet { step }` | symplectic, order 2 | long orbits at loose tolerance |
+//! | `Yoshida4 { step }` | symplectic, order 4 | long orbits at tight tolerance |
+//! | `Rodas3` | adaptive L-stable Rosenbrock 3(2), finite-difference Jacobian | stiff problems |
+//! | `Auto` | chooses among the above and explains why | the language's default |
+//!
+//! References and the reasoning behind each choice are in the module docs
+//! (`dopri`, `fixed`, `rosenbrock`, `auto`).
+//!
+//! # Choosing automatically
+//!
+//! [`Method::Auto`] applies these rules in order:
+//!
+//! 1. A second-order system with a monitored conserved quantity gets a
+//!    symplectic method, with a fixed step derived from the tolerance by a
+//!    step-doubling probe.
+//! 2. Otherwise Dormand-Prince 5(4) starts; if its step turns out to be
+//!    limited by stability rather than accuracy (Hairer's stiffness test),
+//!    the solve continues from the current state with Rodas3.
+//!
+//! Every choice and observation is a sentence in [`Solution::explanation`],
+//! followed by the drift of each conserved quantity. Choices are
+//! deterministic: the same inputs give bit-identical outputs.
+
+//! # Reproducible on every machine
+//!
+//! The step-size controllers and the Yoshida coefficients need `pow` and
+//! `cbrt`, which the platform's math library (glibc, Apple's libm, ...)
+//! may round differently in the last bit; over hundreds of steps that
+//! changes the printed trajectory in its last digits from one OS to the
+//! next. They are computed with the `libm` crate (a port of musl's), the
+//! same bits everywhere, and everything else a method does is IEEE
+//! arithmetic and `sqrt`, which are exact. So a solve gives the same bits
+//! on every machine, given right-hand sides that do.
 
 #![forbid(unsafe_code)]
+// Integrators index several parallel state and stage vectors with one loop
+// variable (`y[i] + h * k1[i]`); iterator chains over four slices at once
+// read worse than the formulas in the papers they implement.
+#![allow(clippy::needless_range_loop)]
+
+mod auto;
+mod dopri;
+mod fixed;
+mod linalg;
+mod rosenbrock;
+mod run;
 
 use std::fmt;
+
+use fixed::{drive, verify_second_order, Rk4, SymKind, Symplectic};
+use run::Run;
 
 /// A first-order system `dy/dt = f(t, y)`.
 pub trait System {
@@ -62,8 +114,46 @@ pub enum Method {
     /// Choose from the system's structure, the conserved quantities asked
     /// for, and stiffness; the choice is explained in [`Solution::explanation`].
     Auto,
-    /// Classical fourth-order Runge-Kutta with a fixed step.
+    /// Classical fourth-order Runge-Kutta with a fixed step (shortened
+    /// slightly so a whole number of steps lands on each output time and on
+    /// `t1`).
     Rk4 { step: f64 },
+    /// Dormand-Prince 5(4) (Dormand & Prince 1980): adaptive steps from
+    /// [`Options::rtol`] and [`Options::atol`] with the step-size control of
+    /// Hairer, Nørsett & Wanner (*Solving ODEs I*, II.4), FSAL, and a dense
+    /// output so [`Options::outputs`] never force a step. For smooth,
+    /// non-stiff problems.
+    DormandPrince,
+    /// Velocity Verlet (Verlet 1967; kick-drift-kick leapfrog): symplectic,
+    /// second order, one acceleration per step, fixed `step`. Needs
+    /// [`Structure::SecondOrder`]. Energy error stays bounded (`O(step^2)`)
+    /// for very long times instead of drifting.
+    VelocityVerlet { step: f64 },
+    /// Yoshida's fourth-order symplectic composition of Verlet steps
+    /// (Yoshida 1990, *Phys. Lett. A* 150), three accelerations per step,
+    /// fixed `step`. Needs [`Structure::SecondOrder`]. Pays off over Verlet
+    /// at tight tolerances.
+    Yoshida4 { step: f64 },
+    /// Rodas3 (Sandu et al. 1997): an L-stable, stiffly accurate Rosenbrock
+    /// method of order 3 with an embedded order 2 error estimate, adaptive
+    /// steps from the tolerances, a finite-difference Jacobian and dense LU.
+    /// For stiff problems, where the step of an explicit method is set by
+    /// stability instead of accuracy.
+    Rodas3,
+}
+
+impl Method {
+    /// A human name for messages ("Dormand-Prince 5(4)").
+    pub fn name(&self) -> &'static str {
+        match self {
+            Method::Auto => "automatic selection",
+            Method::Rk4 { .. } => "classical Runge-Kutta 4",
+            Method::DormandPrince => "Dormand-Prince 5(4)",
+            Method::VelocityVerlet { .. } => "velocity Verlet (symplectic, order 2)",
+            Method::Yoshida4 { .. } => "Yoshida's symplectic composition (order 4)",
+            Method::Rodas3 => "Rodas3 (stiff, L-stable Rosenbrock, order 3)",
+        }
+    }
 }
 
 /// A function of time and state, such as a conserved energy.
@@ -76,7 +166,8 @@ pub struct Conserved {
     pub name: String,
     pub value: StateFn,
     /// The largest allowed relative drift `|Q(t) - Q(t0)| / |Q(t0)|`, or
-    /// `None` to only report it.
+    /// `None` to only report it. (If `Q(t0)` is exactly zero the drift is
+    /// absolute, there being no scale to divide by.)
     pub max_drift: Option<f64>,
 }
 
@@ -92,17 +183,26 @@ impl fmt::Debug for Conserved {
 /// How to solve.
 #[derive(Debug)]
 pub struct Options {
-    /// Relative tolerance per step for adaptive methods.
+    /// Relative tolerance per step for adaptive methods (`Auto` uses it for
+    /// the symplectic step too). Zero is allowed if `atol` is positive;
+    /// otherwise at least `1e-14`, about 50 machine epsilons: tighter cannot
+    /// be met in double precision.
     pub rtol: f64,
-    /// Absolute tolerance per step for adaptive methods.
+    /// Absolute tolerance per step for adaptive methods: the error allowed
+    /// in a component whose value is near zero.
     pub atol: f64,
     pub method: Method,
     pub conserved: Vec<Conserved>,
     /// Times (between `t0` and `t1`, increasing) at which to record the
     /// state in [`Solution::samples`].
     pub outputs: Vec<f64>,
-    /// The most steps before [`SolveError::TooManySteps`].
+    /// The most steps (accepted or rejected) before
+    /// [`SolveError::TooManySteps`].
     pub max_steps: usize,
+    /// The first step of an adaptive method, or `None` to estimate it.
+    pub first_step: Option<f64>,
+    /// The largest step of an adaptive method, or `None` for the interval.
+    pub max_step: Option<f64>,
 }
 
 impl Default for Options {
@@ -114,6 +214,8 @@ impl Default for Options {
             conserved: Vec::new(),
             outputs: Vec::new(),
             max_steps: 10_000_000,
+            first_step: None,
+            max_step: None,
         }
     }
 }
@@ -121,8 +223,11 @@ impl Default for Options {
 /// Counters for a solve.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Stats {
+    /// Accepted steps, in total over every method a solve used.
     pub steps: usize,
     pub rejected: usize,
+    /// Every call of the right-hand side, including finite-difference
+    /// Jacobians and the step-size probe of `Auto`.
     pub rhs_evals: usize,
 }
 
@@ -135,12 +240,15 @@ pub struct Solution {
     /// `(time, state)` at each requested output time, in order.
     pub samples: Vec<(f64, Vec<f64>)>,
     pub stats: Stats,
-    /// The method used (never `Auto`).
+    /// The method used (never `Auto`): fully specified, so for a symplectic
+    /// choice the step is the one derived from the tolerance, and for an
+    /// automatic switch to the stiff method it is the method that finished.
     pub method: Method,
     /// Why this method, and what was observed (step counts, the drift of
     /// each conserved quantity), one sentence per entry.
     pub explanation: Vec<String>,
-    /// The relative drift of each conserved quantity, in the order asked.
+    /// The largest relative drift of each conserved quantity over the
+    /// solve, in the order asked.
     pub drift: Vec<f64>,
 }
 
@@ -165,6 +273,12 @@ pub enum SolveError {
     BadInput(String),
     /// The requested method is not available (yet).
     Unsupported(String),
+    /// An adaptive method needed a step so small that it no longer changes
+    /// the time (or is denormal-small) at time `t`: `step` is the step it
+    /// had shrunk to. Usually a singularity or blow-up of the solution at
+    /// `t`, a right-hand side that is not smooth there, or a tolerance
+    /// tighter than double precision can meet.
+    StepUnderflow { t: f64, step: f64 },
 }
 
 impl fmt::Display for SolveError {
@@ -180,11 +294,55 @@ impl fmt::Display for SolveError {
                 "{name} drifted by {drift:e} (relative), more than the allowed {max:e}, by t = {t} s"
             ),
             SolveError::BadInput(m) | SolveError::Unsupported(m) => f.write_str(m),
+            SolveError::StepUnderflow { t, step } => write!(
+                f,
+                "step size underflow at t = {t} s: the step shrank to {step:e} s, too small to advance the time; the solution probably has a singularity or blows up here, the right-hand side is not smooth there, or the tolerance is tighter than double precision can meet"
+            ),
         }
     }
 }
 
 impl std::error::Error for SolveError {}
+
+/// Checks the tolerances of an adaptive method.
+pub(crate) fn check_tolerances(opts: &Options) -> Result<(), SolveError> {
+    let (rtol, atol) = (opts.rtol, opts.atol);
+    if !(rtol.is_finite() && atol.is_finite() && rtol >= 0.0 && atol >= 0.0) {
+        return Err(SolveError::BadInput(format!(
+            "the tolerances rtol = {rtol} and atol = {atol} must be finite and not negative"
+        )));
+    }
+    if rtol == 0.0 && atol == 0.0 {
+        return Err(SolveError::BadInput(
+            "rtol and atol are both zero: an adaptive method needs a positive tolerance".into(),
+        ));
+    }
+    if rtol > 0.0 && rtol < 1e-14 {
+        return Err(SolveError::BadInput(format!(
+            "rtol = {rtol:e} is below 1e-14, about 50 machine epsilons: it cannot be met in double precision"
+        )));
+    }
+    for (name, v) in [("first_step", opts.first_step), ("max_step", opts.max_step)] {
+        if let Some(v) = v {
+            if !(v.is_finite() && v > 0.0) {
+                return Err(SolveError::BadInput(format!(
+                    "{name} = {v} must be positive and finite"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_step(step: f64) -> Result<(), SolveError> {
+    if step.is_finite() && step > 0.0 {
+        Ok(())
+    } else {
+        Err(SolveError::BadInput(format!(
+            "the step {step} is not positive"
+        )))
+    }
+}
 
 /// Solves `dy/dt = f(t, y)`, `y(t0) = y0`, up to `t1`.
 pub fn solve(
@@ -206,119 +364,127 @@ pub fn solve(
             "the time span {t0} to {t1} is not an increasing finite interval"
         )));
     }
-    match opts.method {
-        Method::Rk4 { step } => rk4(sys, t0, t1, y0, step, opts),
-        Method::Auto => {
-            // v0: automatic selection is not built yet. A fixed RK4 step
-            // of 1/1000 of the span keeps the language side testable.
-            let step = if t1 > t0 { (t1 - t0) / 1000.0 } else { 1.0 };
-            let mut s = rk4(sys, t0, t1, y0, step, opts)?;
-            s.explanation.insert(
-                0,
-                "automatic method selection is not available yet, so classical RK4 with 1000 fixed steps was used".to_string(),
-            );
-            Ok(s)
-        }
+    if y0.iter().any(|v| !v.is_finite()) {
+        return Err(SolveError::BadInput(
+            "the initial state contains NaN or infinity".to_string(),
+        ));
     }
+    let mut prev = t0;
+    for &o in &opts.outputs {
+        if !(o.is_finite() && o >= prev && o <= t1) {
+            return Err(SolveError::BadInput(format!(
+                "the output time {o} is not finite, in increasing order, and between {t0} and {t1}"
+            )));
+        }
+        prev = o;
+    }
+    let second_order = match sys.structure() {
+        Structure::General => None,
+        Structure::SecondOrder { n: half } => {
+            if 2 * half != n {
+                return Err(SolveError::BadInput(format!(
+                    "the system declares a second-order structure with {half} coordinates, so its state should have {} values, not {n}",
+                    2 * half
+                )));
+            }
+            Some(half)
+        }
+    };
+    let mut run = Run::new(sys, opts, t0, t1, y0)?;
+
+    let (method, t, y, explanation) = match opts.method {
+        Method::Auto => {
+            let c = auto::auto(&mut run, second_order, y0)?;
+            (c.method, c.t, c.y, c.explanation)
+        }
+        Method::Rk4 { step } => {
+            check_step(step)?;
+            let y = drive(&mut run, &mut Rk4::new(y0), step)?;
+            let e = format!(
+                "classical RK4 with a fixed step of {step} s took {} steps",
+                run.stats.steps
+            );
+            (opts.method, t1, y, vec![e])
+        }
+        Method::DormandPrince => {
+            check_tolerances(opts)?;
+            let y = match dopri::dopri5(&mut run, t0, y0.to_vec(), None, false)? {
+                dopri::Outcome::Done { y, .. } => y,
+                dopri::Outcome::Stiff(_) => unreachable!("stiffness detection is off"),
+            };
+            let e = format!(
+                "Dormand-Prince 5(4) with adaptive steps for rtol = {} and atol = {} took {} steps ({} rejected)",
+                run::num(opts.rtol),
+                run::num(opts.atol),
+                run.stats.steps,
+                run.stats.rejected
+            );
+            (opts.method, t1, y, vec![e])
+        }
+        Method::Rodas3 => {
+            check_tolerances(opts)?;
+            let (_, y) = rosenbrock::rodas3(&mut run, t0, y0.to_vec(), None)?;
+            let e = format!(
+                "Rodas3 (L-stable Rosenbrock, finite-difference Jacobian) with adaptive steps for rtol = {} and atol = {} took {} steps ({} rejected)",
+                run::num(opts.rtol),
+                run::num(opts.atol),
+                run.stats.steps,
+                run.stats.rejected
+            );
+            (opts.method, t1, y, vec![e])
+        }
+        Method::VelocityVerlet { step } | Method::Yoshida4 { step } => {
+            check_step(step)?;
+            let kind = if matches!(opts.method, Method::Yoshida4 { .. }) {
+                SymKind::Yoshida4
+            } else {
+                SymKind::Verlet
+            };
+            let Some(half) = second_order else {
+                return Err(SolveError::Unsupported(format!(
+                    "{} needs a second-order system (q'' = a(t, q)), but this system does not declare that structure",
+                    opts.method.name()
+                )));
+            };
+            verify_second_order(&mut run, half, y0)?;
+            let y = drive(&mut run, &mut Symplectic::new(kind, half, y0), step)?;
+            let e = format!(
+                "{} with a fixed step of {step} s took {} steps",
+                opts.method.name(),
+                run.stats.steps
+            );
+            (opts.method, t1, y, vec![e])
+        }
+    };
+    Ok(finish(run, method, t, y, explanation))
 }
 
-fn rk4(
-    sys: &mut dyn System,
-    t0: f64,
-    t1: f64,
-    y0: &[f64],
-    step: f64,
-    opts: &Options,
-) -> Result<Solution, SolveError> {
-    if !(step.is_finite() && step > 0.0) {
-        return Err(SolveError::BadInput(format!(
-            "the step {step} is not positive"
-        )));
+/// Assembles the solution and appends the drift report.
+fn finish(
+    run: Run<'_>,
+    method: Method,
+    t: f64,
+    y: Vec<f64>,
+    mut explanation: Vec<String>,
+) -> Solution {
+    for (c, d) in run.opts.conserved.iter().zip(&run.drift) {
+        explanation.push(match c.max_drift {
+            Some(max) => format!(
+                "{} drifted by at most {d:.1e} (relative), within the allowed {max:.1e}",
+                c.name
+            ),
+            None => format!("{} drifted by at most {d:.1e} (relative)", c.name),
+        });
     }
-    let n = y0.len();
-    let mut stats = Stats::default();
-    let eval = |sys: &mut dyn System, t: f64, y: &[f64], out: &mut [f64], stats: &mut Stats| {
-        stats.rhs_evals += 1;
-        sys.rhs(t, y, out)
-            .map_err(|message| SolveError::Rhs { t, message })
-    };
-    let initial: Vec<f64> = opts.conserved.iter().map(|c| (c.value)(t0, y0)).collect();
-    let mut drift = vec![0.0_f64; opts.conserved.len()];
-    let (mut t, mut y) = (t0, y0.to_vec());
-    let mut samples = Vec::new();
-    let mut next_out = opts.outputs.iter().copied().peekable();
-    let (mut k1, mut k2, mut k3, mut k4, mut tmp) = (
-        vec![0.0; n],
-        vec![0.0; n],
-        vec![0.0; n],
-        vec![0.0; n],
-        vec![0.0; n],
-    );
-    while t < t1 {
-        if stats.steps >= opts.max_steps {
-            return Err(SolveError::TooManySteps {
-                t,
-                steps: stats.steps,
-            });
-        }
-        // Land exactly on the next output time or on t1.
-        let target = next_out.peek().copied().filter(|&o| o < t1).unwrap_or(t1);
-        let h = step.min(target - t);
-        eval(sys, t, &y, &mut k1, &mut stats)?;
-        for i in 0..n {
-            tmp[i] = y[i] + 0.5 * h * k1[i];
-        }
-        eval(sys, t + 0.5 * h, &tmp, &mut k2, &mut stats)?;
-        for i in 0..n {
-            tmp[i] = y[i] + 0.5 * h * k2[i];
-        }
-        eval(sys, t + 0.5 * h, &tmp, &mut k3, &mut stats)?;
-        for i in 0..n {
-            tmp[i] = y[i] + h * k3[i];
-        }
-        eval(sys, t + h, &tmp, &mut k4, &mut stats)?;
-        for i in 0..n {
-            y[i] += h / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);
-        }
-        t = if h == target - t { target } else { t + h };
-        stats.steps += 1;
-        if y.iter().any(|v| !v.is_finite()) {
-            return Err(SolveError::NotFinite { t });
-        }
-        for (i, c) in opts.conserved.iter().enumerate() {
-            let q0 = initial[i];
-            let d = ((c.value)(t, &y) - q0).abs() / q0.abs().max(f64::MIN_POSITIVE);
-            drift[i] = drift[i].max(d);
-            if let Some(max) = c.max_drift.filter(|&m| d > m) {
-                return Err(SolveError::Drift {
-                    name: c.name.clone(),
-                    drift: d,
-                    max,
-                    t,
-                });
-            }
-        }
-        while next_out.peek().is_some_and(|&o| o <= t) {
-            next_out.next();
-            samples.push((t, y.clone()));
-        }
-    }
-    let mut explanation = vec![format!(
-        "classical RK4 with a fixed step of {step} s took {} steps",
-        stats.steps
-    )];
-    for (c, d) in opts.conserved.iter().zip(&drift) {
-        explanation.push(format!("{} drifted by at most {d:.1e} (relative)", c.name));
-    }
-    Ok(Solution {
+    Solution {
         t,
         y,
-        samples,
-        stats,
-        method: Method::Rk4 { step },
+        samples: run.samples,
+        stats: run.stats,
+        method,
         explanation,
-        drift,
-    })
+        drift: run.drift,
+    }
 }
 
 #[cfg(test)]
@@ -362,5 +528,17 @@ mod tests {
             solve(&mut Decay, 1.0, 0.0, &[1.0], &opts),
             Err(SolveError::BadInput(_))
         ));
+    }
+
+    #[test]
+    fn number_formatting_for_explanations() {
+        use run::num;
+        assert_eq!(num(0.0), "0");
+        assert_eq!(num(1.0), "1");
+        assert_eq!(num(0.5), "0.5");
+        assert_eq!(num(12.3456), "12.3");
+        assert_eq!(num(1234.5), "1234");
+        assert_eq!(num(1e-9), "1.00e-9");
+        assert_eq!(num(2.5e7), "2.50e7");
     }
 }

@@ -13,7 +13,7 @@
 //!             ["effects" "(" effect ("," effect)* ")"] [span] "{" op* block* "}"
 //! param    := "%" NAME ":" type
 //! block    := "^" LABEL ["(" param ("," param)* ")"] ":" op*
-//! op       := [values "="] MNEMONIC attr [operands] [":" type ("," type)*] region* [span]
+//! op       := [values "="] MNEMONIC attr [operands] [":" type ("," type)*] region* [span [ranges]]
 //! attr     := "" | FLOAT | RATIONAL | "true" | "false" | STRING       (constants)
 //!           | "[" RATIONAL "]"                                        (pow.const)
 //!           | "[" "cholesky" "]"                                      (solve)
@@ -24,6 +24,8 @@
 //! region   := "{" block* "}"          (the function body's first block is implicit)
 //! operands := value ("," value)*      values := value ("," value)*     value := "%" NAME
 //! span     := "@" START ".." END      (byte offsets; omitted means 0..0)
+//! ranges   := "(" START ".." END ("," START ".." END)* ")"
+//!                                      (the source span of each operand at its use; omitted means unknown)
 //! type     := "num" "[" dim ";" shape [";" tags] [";" repr] "]"
 //!           | "bool" | "str" | "nothing" | "unknown"
 //! dim      := "1" | factor ("·" factor)*      factor := SYMBOL [exponent]   (as `Dimension` prints)
@@ -58,7 +60,10 @@ use crate::builder::FunctionBuilder;
 use crate::ir::{
     Edition, Effect, EffectSet, Module, NumberType, OpId, RegionId, Repr, Type, ValueId,
 };
-use crate::op::{BoolContext, CmpOp, LiteralError, MathFn, OpKind, SliceAxis, SolveMethod};
+use crate::op::{
+    AssertKind, BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind, SliceAxis,
+    SolveMethod,
+};
 use crate::verify::MAX_REGION_DEPTH;
 
 /// A syntax error and where it is (byte offsets into the text).
@@ -383,6 +388,26 @@ impl<'a> Parser<'a> {
         } else {
             Ok(Span { start: 0, end: 0 })
         }
+    }
+
+    /// An optional `(start..end, ...)`, the spans of an operation's
+    /// operands; absent means unknown (empty).
+    fn opt_operand_spans(&mut self) -> Res<Vec<Span>> {
+        self.skip_inline();
+        let mut spans = Vec::new();
+        if !self.eat('(') {
+            return Ok(spans);
+        }
+        loop {
+            self.skip_inline();
+            spans.push(self.span()?);
+            self.skip_inline();
+            if !self.eat(',') {
+                break;
+            }
+        }
+        self.expect(')')?;
+        Ok(spans)
     }
 
     // ----- module and functions -----
@@ -803,6 +828,19 @@ impl<'a> Parser<'a> {
                 self.expect(']')?;
                 OpKind::ExpectBool { context }
             }
+            "expect.number" => {
+                self.expect('[')?;
+                self.skip_inline();
+                let at = self.pos;
+                let word = self.word();
+                let Some(context) = NumberContext::ALL.into_iter().find(|c| c.text() == word)
+                else {
+                    return self.err_at(at, self.pos.max(at + 1), "expected `pos` or `inv`");
+                };
+                self.expect(']')?;
+                OpKind::ExpectNumber { context }
+            }
+            "assert" => self.assert_attrs()?,
             "if" => OpKind::If,
             "while" => OpKind::While,
             "yield" => OpKind::Yield,
@@ -874,12 +912,67 @@ impl<'a> Parser<'a> {
         fs.b.set_insertion_block(here);
         let span = self.opt_span()?;
         fs.b.set_op_span(op, span);
+        let operand_spans = self.opt_operand_spans()?;
+        fs.b.set_operand_spans(op, operand_spans);
 
         self.skip_inline();
         match self.peek() {
             None | Some('\n' | '}') => Ok(()),
             Some(_) => self.err("expected the end of the line"),
         }
+    }
+
+    /// The attributes of `assert`: `[kind] "text" fn "f" msg "m" names("a",
+    /// "b")`, the last three optional and in that order.
+    fn assert_attrs(&mut self) -> Res<OpKind> {
+        self.expect('[')?;
+        self.skip_inline();
+        let at = self.pos;
+        let kind = match self.word() {
+            "assert" => AssertKind::Assert,
+            "requires" => AssertKind::Requires,
+            "ensures" => AssertKind::Ensures,
+            _ => {
+                return self.err_at(
+                    at,
+                    self.pos.max(at + 1),
+                    "expected `assert`, `requires` or `ensures`",
+                )
+            }
+        };
+        self.expect(']')?;
+        let text = self.string()?;
+        let (mut func, mut message, mut names) = (None, None, Vec::new());
+        loop {
+            self.skip_inline();
+            let before = self.pos;
+            match self.word() {
+                "fn" if func.is_none() => func = Some(self.string()?),
+                "msg" if message.is_none() => message = Some(self.string()?),
+                "names" if names.is_empty() => {
+                    self.expect('(')?;
+                    loop {
+                        names.push(self.string()?);
+                        self.skip_inline();
+                        if !self.eat(',') {
+                            break;
+                        }
+                    }
+                    self.expect(')')?;
+                }
+                _ => {
+                    self.pos = before;
+                    break;
+                }
+            }
+        }
+        Ok(OpKind::Assert {
+            kind,
+            text,
+            message,
+            func,
+            names,
+        })
     }
 
     /// One item of a `slice`'s `[...]`: `at`, `:`, `lo:`, `:hi` or `lo:hi`.

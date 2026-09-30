@@ -14,7 +14,9 @@ See `spec/v0.1.md` for the v0.1 scope.
 - **Matrix properties are proven, then used.** Sky checks that a `PositiveDefinite` matrix literal really is positive definite. `K⁻¹ @ f` then runs as a Cholesky solve, so the inverse is never formed.
 - **Loops and functions stay checked.** A `while` loop over a falling projectile keeps its time, height and speed in their units through every step.
 
-The expected output is in [`examples/showcase.out`](examples/showcase.out). A test runs every example on both engines and compares the output byte for byte.
+[`examples/orbit.sky`](examples/orbit.sky) shows the numerics built so far. It is a year of Earth's orbit, with the force written as `-grad(U)(r)` of a potential. The script states its tolerance and that energy is conserved. Sky picks a symplectic integrator and explains the choice, and energy drifts by about 4e-12. The same file checks a contract (`requires`, `assert`) and carries a measurement's uncertainty (`1.000 ± 0.005 m`) through a formula.
+
+The expected output of each example is next to it (`showcase.out`, `orbit.out`). A test runs every example on both engines and compares the output byte for byte.
 
 ## Status
 
@@ -38,9 +40,28 @@ print(v as km/h, u as mm)        # 90 km/h [100 mm, 200 mm]: `as` shows a value 
 print(v as kg)                   # error: cannot show a velocity in kg
 ```
 
+Differential equations read like the blackboard: `x'` is the derivative, dimensions are checked (`v'` must be an acceleration), and the solver picks its method from what the script declares, and explains it.
+
+```sky
+GM = 1.327e20 m^3/s^2
+equation orbit(t: s):
+    r: Vector[2] m
+    v: Vector[2] m/s
+    r' = v
+    v' = -GM * r / norm(r)^3
+
+sol = solve orbit from 0 s to 1 yr with r = [1 AU, 0 m], v = [0 m/s, 29.8 km/s]:
+    tolerance 1e-9
+    conserve energy = 0.5 * norm(v)^2 - GM / norm(r) within 1e-6
+print(sol.r, sol.v)              # the final state, in SI: about where the year began
+print(explain(sol))              # which method ran, and why
+```
+
+`sky check --explain` says what the checker found in each `solve` (a second-order system, so a symplectic integrator applies; what is to be conserved) without running it. Equations run on the tree-walking interpreter (SIR cannot lower them yet, so `--engine=auto` falls back). See "Differential equations" in `spec/v0.1.md`.
+
 ```
 sky check file.sky            # diagnostics on stderr; exit 1 on any error
-sky check --explain file.sky  # also show the edition, the checker's rewrites (A⁻¹ @ b → Cholesky solve) and what the optimization passes did
+sky check --explain file.sky  # also show the edition, the checker's rewrites (A⁻¹ @ b → Cholesky solve), what it found in each `solve`, and what the optimization passes did
 sky check --emit-ir file.sky  # print the program's IR (SIR text) on stdout; --emit-ir=lower, =after:fold|egraph|dce|cholesky, =final
 sky run file.sky              # check, then run; only a clean file runs. print() writes to stdout
 sky repl                      # expressions echo their value; blocks (def, if, while, for) continue on `...` lines until an empty line
@@ -67,6 +88,19 @@ sky> area(3 m, 4 m)
 12 m^2
 sky> derivative(area, w)(3 m, 4 m)
 4 m
+```
+
+The derivative of a function of a vector is its gradient, with the unit of the result over the unit of the vector: the gradient of a potential of a position is a force, and `-grad(U)(p)` points down the potential.
+
+```
+M = 5.972e24 kg
+mass = 1000 kg
+
+def U(p: Vector[3] m) -> J:
+    return -G * M * mass / sqrt(p @ p)      # G is the constant of gravitation
+
+p = [7000 km, 0 km, 0 km]
+print(-grad(U)(p))                          # [-8134.473387755101 N, 0 N, 0 N]: toward the origin
 ```
 
 A line that ends in `:`, or leaves a `(` or `[` open, continues on a `...` line; a block ends at an empty line. A failing input changes nothing, however many lines it has. `:help` and `:quit` (or Ctrl-D) are the only commands.
@@ -142,7 +176,7 @@ cargo run --release -p sky-bench -- --quick                   # tiny sizes, a sm
 
 Always use `--release`: debug timings mean nothing. Each engine runs `--reps` times, interleaved, and the table shows the median with the range as a percentage of it; the JSON keeps every sample (integer nanoseconds, schema version 1) so runs can be compared over time. On a busy machine the median drifts upward; the minimum is the steadier number. Set `SKY_BENCH_REV` to record a commit in the JSON.
 
-The workloads are `scalar_loop` (10^6 iterations of arithmetic with units), `recursion` (`fib(25)`), `math_calls` (`for` over `range` with math functions), `array_chain` (elementwise vector chains), `matmul` (`@` on small matrices), `cholesky` (`K⁻¹ @ f` on a PositiveDefinite literal) and `derivative` (`derivative(f, t)(x)` in a loop). To add one, put a `.sky` file in `benches/programs/` whose first line is `# bench: N=<full> quick=<small>` and which sets its size with a line `N = <full>`, then list it in `crates/sky-bench/src/bench.rs` (a test fails if a file is not listed).
+The workloads are `scalar_loop` (10^6 iterations of arithmetic with units), `recursion` (`fib(25)`), `math_calls` (`for` over `range` with math functions), `array_chain` (elementwise vector chains), `matmul` (`@` on small matrices), `cholesky` (`K⁻¹ @ f` on a PositiveDefinite literal), `derivative` (`derivative(f, t)(x)` in a loop) and `gradient` (`grad(U)(p)` of a spring-network potential of a position vector, by reverse mode, in a loop). To add one, put a `.sky` file in `benches/programs/` whose first line is `# bench: N=<full> quick=<small>` and which sets its size with a line `N = <full>`, then list it in `crates/sky-bench/src/bench.rs` (a test fails if a file is not listed).
 
 The `bench` workflow (`.github/workflows/bench.yml`) runs the suite in release mode weekly and on manual dispatch, never on pull requests, and uploads the JSON as an artifact.
 

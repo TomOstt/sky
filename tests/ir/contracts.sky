@@ -1,0 +1,18 @@
+def fall_time(h: m) -> s:
+    requires h >= 0 m
+    ensures result > 0 s
+    return sqrt(2 * h / g_n)
+
+def ratio(a: m, b: m) -> m:
+    requires b != 0 m and a > 0 m, "b divides a"
+    return a * a / b
+
+def open_ended(x: m) -> m:
+    requires x > 1 m
+    return x
+
+t = fall_time(20 m) + fall_time(5 m)
+assert t > 0 s, "time passes"
+assert 2 m > 1 m
+k = ratio(3 m, 2 m)
+print(t, k, open_ended(k + 1 m))

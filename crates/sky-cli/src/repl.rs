@@ -35,7 +35,8 @@
 //! # Derivatives
 //!
 //! `derivative(f, x)(args)` runs on SIR (`sky_derive::SirDerivatives`),
-//! which lowers a whole program, and one input is only a fragment. So the
+//! which lowers the `def`s of a whole program, and one input is only a
+//! fragment. So the
 //! REPL gives the hook the whole session as a program: the history followed
 //! by the current input, parsed as one module. Its spans agree with the
 //! ones in the running input (above), so the `def` the interpreter hands
@@ -43,8 +44,8 @@
 //! the first derivative an input asks for, and dropped when the input ends,
 //! so a session that never differentiates pays nothing; an input that does
 //! pays one parse, one check and one lowering of the session so far, as
-//! `sky run` pays for a file. As in `sky run`, what the derivative needs
-//! must lower to SIR, and if it does not the derivative is a runtime error
+//! `sky run` pays for a file. As in `sky run`, the `def`s must lower to
+//! SIR, and if it does not the derivative is a runtime error
 //! that says why. Only accepted inputs are in the history, so a rolled-back
 //! input never reaches SIR. A `def` that is redefined later in the session
 //! is lowered as the program says, in order, so a derivative asked for

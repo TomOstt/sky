@@ -1,0 +1,18 @@
+tests/ui/check/err_uncertainty_units.sky:2:13: error: cannot use a time as the uncertainty of a mass
+  |
+2 | m = 5.31 kg ± 20 s
+  |             ^ mismatched dimensions
+  |     ------- mass
+  |               ---- time
+  = note: the uncertainty of a value has the dimension of the value
+  = help: give both sides the same unit: `5.31 ± 0.02 kg`, or `5.31 kg ± 20 g`
+
+tests/ui/check/err_uncertainty_units.sky:4:7: error: cannot use a time as the uncertainty of a length
+  |
+4 | e = d ± 0.1 s
+  |       ^ mismatched dimensions
+  |     - length
+  |         ----- time
+  = note: the uncertainty of a value has the dimension of the value
+  = note: `d` is a length because `d = 3 m` (line 3)
+  = help: give both sides the same unit: `5.31 ± 0.02 kg`, or `5.31 kg ± 20 g`

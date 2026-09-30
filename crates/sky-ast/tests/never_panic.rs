@@ -40,6 +40,7 @@ const KINDS: &[TokenKind] = {
         Assign,
         Plus,
         Minus,
+        PlusMinus,
         Star,
         Slash,
         Caret,
@@ -78,6 +79,9 @@ const KINDS: &[TokenKind] = {
         Keyword(Kw::Equation),
         Keyword(Kw::Solve),
         Keyword(Kw::Field),
+        Keyword(Kw::Assert),
+        Keyword(Kw::Requires),
+        Keyword(Kw::Ensures),
     ]
 };
 
@@ -162,6 +166,7 @@ fn canonical_text(kind: TokenKind) -> &'static str {
         Assign => "=",
         Plus => "+",
         Minus => "-",
+        PlusMinus => "±",
         Star => "*",
         Slash => "/",
         Caret => "^",
@@ -178,6 +183,7 @@ fn canonical_text(kind: TokenKind) -> &'static str {
         Ge => ">=",
         Dot => ".",
         Arrow => "->",
+        Prime => "'",
         PlusAssign => "+=",
         MinusAssign => "-=",
         StarAssign => "*=",

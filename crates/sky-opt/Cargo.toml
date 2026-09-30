@@ -17,6 +17,7 @@ sky-units = { path = "../sky-units" }
 
 [dev-dependencies]
 proptest = { version = "1", default-features = false, features = ["std"] }
+sky-ad = { path = "../sky-ad" }
 sky-ast = { path = "../sky-ast" }
 sky-ir-interp = { path = "../sky-ir-interp" }
 sky-lower = { path = "../sky-lower" }

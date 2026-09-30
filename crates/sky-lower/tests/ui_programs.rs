@@ -40,6 +40,26 @@ const REJECTED: &[(&str, &str)] = &[
         "ok_for_arrays.sky",
         "iteration over arrays lowers once SIR has array values",
     ),
+    // SIR has no uncertain value: such programs run on the tree-walker.
+    ("ok_uncertainty.sky", "uncertainty (`±`) is not supported"),
+    (
+        "ok_uncertainty_types.sky",
+        "uncertainty (`±`) is not supported",
+    ),
+    (
+        "ok_uncertainty_comparison_warning.sky",
+        "uncertainty (`±`) is not supported",
+    ),
+    // Run on the tree-walker only (see the spec, "Differential equations").
+    (
+        "ok_equation.sky",
+        "differential equations are not supported by SIR yet",
+    ),
+    (
+        "ok_equation_types.sky",
+        "differential equations are not supported by SIR yet",
+    ),
+    ("ok_vector_builtins.sky", "is not supported by SIR yet"),
 ];
 
 #[test]
@@ -84,4 +104,46 @@ fn runnable_programs_have_no_inputs() {
         let m = lower_ok(&std::fs::read_to_string(path).expect("reads"));
         assert!(main_fn(&m).params.is_empty(), "{name}");
     }
+}
+
+/// `lower_defs` (what `sky run` differentiates) builds exactly the functions
+/// full lowering builds, and verifies, for every program in the suites; the
+/// programs whose top level SIR cannot express still lower their `def`s.
+#[test]
+fn defs_only_lowering_builds_the_same_functions() {
+    let mut compared = 0;
+    for path in ok_programs() {
+        let src = std::fs::read_to_string(&path).expect("reads");
+        let lexed = sky_syntax::lex(&src).expect("lexes");
+        let (ast, errors) = sky_ast::parse_module(&lexed.tokens, &src);
+        assert!(errors.is_empty(), "{}", path.display());
+        let checked = sky_types::check_module(&ast, &src);
+        let defs = sky_ast::with_deep_stack(|| sky_lower::lower_defs(&ast, &src, &checked));
+        let whole = sky_ast::with_deep_stack(|| sky_lower::lower_with_defs(&ast, &src, &checked));
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let (defs, def_names) = match (defs, &whole) {
+            (Ok(d), _) => d,
+            // A `def` that cannot lower fails both ways.
+            (Err(e), Err(_)) if name == "ok_returns.sky" => {
+                assert!(e.message.contains("top level of the file"), "{}", e.message);
+                continue;
+            }
+            (Err(e), _) => panic!("{}: {}", path.display(), e.message),
+        };
+        if let Err(errs) = sky_ir::verify(&defs) {
+            panic!("{}: {}", path.display(), errs[0].message);
+        }
+        let Ok((whole, whole_names)) = &whole else {
+            continue;
+        };
+        // Full lowering also builds the derivative functions `<main>` asks
+        // for; `sky-derive` builds those itself. The `def`s must match.
+        assert_eq!(&def_names, whole_names, "{}", path.display());
+        for f in def_names.values() {
+            let text = |m: &sky_ir::Module| m.function(f).map(sky_ir::print_function);
+            assert_eq!(text(&defs), text(whole), "{}: `{f}`", path.display());
+        }
+        compared += 1;
+    }
+    assert!(compared >= 30, "compared {compared}");
 }

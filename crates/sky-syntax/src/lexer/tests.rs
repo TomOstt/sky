@@ -522,6 +522,21 @@ fn every_operator_ascii_forms() {
 }
 
 #[test]
+fn prime_marks_a_derivative_only_right_after_a_name() {
+    assert_eq!(line("r' = v\n"), [Ident, Prime, Assign, Ident]);
+    assert_eq!(line("r'' = v\n"), [Ident, Prime, Prime, Assign, Ident]);
+    assert_eq!(
+        line("x = f'(1)\n")[2..],
+        [Ident, Prime, LParen, Int, RParen]
+    );
+    // Not after a space, an operator, or at the start: still an error.
+    assert_err("r ' = v\n", LexErrorKind::UnexpectedChar, "'");
+    assert_err("x = 'text'\n", LexErrorKind::UnexpectedChar, "'");
+    assert_err("x = (1)'\n", LexErrorKind::UnexpectedChar, "'");
+    assert_err("x = 2'\n", LexErrorKind::UnexpectedChar, "'");
+}
+
+#[test]
 fn every_operator_glyph_forms() {
     assert_eq!(
         texts("⁻¹ ∂ ∇ ≤ ≥ ≠\n"),
@@ -593,10 +608,9 @@ fn glyph_comparisons_map_to_ascii_kinds() {
     assert_eq!(line("a ≠ b"), line("a != b"));
 }
 
-/// Sky v0.1 has no uncertainty: `+-` is `a + (-b)` as in Python, and the
-/// glyph `±` is rejected with help rather than lexed as an operator.
+/// `+-` is `a + (-b)` as in Python, and not an uncertainty.
 #[test]
-fn plus_minus_is_plus_then_minus_and_glyph_is_rejected() {
+fn plus_dash_is_plus_then_minus() {
     assert_eq!(
         texts("a+-b\n")[..4],
         [(Ident, "a"), (Plus, "+"), (Minus, "-"), (Ident, "b")]
@@ -611,14 +625,41 @@ fn plus_minus_is_plus_then_minus_and_glyph_is_rejected() {
         line("f(x)+->y\n"),
         [Ident, LParen, Ident, RParen, Plus, Arrow, Ident]
     );
+}
 
-    let e = assert_err("m = 5.31 ± 0.02 kg\n", LexErrorKind::UnexpectedChar, "±");
-    assert_eq!(e.diagnostic.message, "unexpected character '±' (U+00B1)");
+/// `±` and `+/-` are the same token (spec "Uncertainty").
+#[test]
+fn plus_minus_glyph_and_ascii_spelling() {
+    assert_eq!(
+        texts("m = 5.31 ± 0.02 kg\n")[..6],
+        [
+            (Ident, "m"),
+            (Assign, "="),
+            (Float, "5.31"),
+            (PlusMinus, "±"),
+            (Float, "0.02"),
+            (Ident, "kg"),
+        ]
+    );
+    assert_eq!(line("5.31 +/- 0.02 kg\n"), line("5.31 ± 0.02 kg\n"));
+    assert_eq!(texts("a+/-b\n")[1], (PlusMinus, "+/-"));
+    assert_eq!(line("a±b\n"), [Ident, PlusMinus, Ident]);
+    // The ASCII spelling is greedy, but only for exactly `+/-`.
+    assert_eq!(line("a +/-= b\n"), [Ident, PlusMinus, Assign, Ident]);
+    assert_eq!(line("a += b\n"), [Ident, PlusAssign, Ident]);
+    assert_eq!(line("a + / - b\n"), [Ident, Plus, Slash, Minus, Ident]);
+    // `±` is a single token of two bytes.
+    assert_eq!(lexed("±\n").tokens[0].span.range(), 0..2);
+}
+
+/// `∓` is not an operator, and the help says what is.
+#[test]
+fn minus_plus_glyph_is_rejected_with_help() {
+    let e = assert_err("a ∓ b\n", LexErrorKind::UnexpectedChar, "∓");
     assert_eq!(
         e.diagnostic.help,
-        ["uncertainty (±) is not supported in v0.1"]
+        ["there is no `∓`; the uncertainty operator is `±` (ASCII `+/-`)"]
     );
-    assert_err("a±b\n", LexErrorKind::UnexpectedChar, "±");
 }
 
 #[test]
@@ -783,7 +824,7 @@ fn unicode_lookalike_operators_get_help() {
 
 #[test]
 fn keywords() {
-    let src = "def return if elif else while for in as import pass break continue equation solve field and or not true false\n";
+    let src = "def return if elif else while for in as import pass break continue equation solve field assert requires ensures and or not true false\n";
     let expected: Vec<_> = [
         Kw::Def,
         Kw::Return,
@@ -801,6 +842,9 @@ fn keywords() {
         Kw::Equation,
         Kw::Solve,
         Kw::Field,
+        Kw::Assert,
+        Kw::Requires,
+        Kw::Ensures,
         Kw::And,
         Kw::Or,
         Kw::Not,

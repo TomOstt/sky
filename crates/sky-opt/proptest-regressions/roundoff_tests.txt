@@ -1,0 +1,32 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 690fa01aff6f5d7b0b918ac7f9b5b64409f13d739c7e27bcdbef134149e6bb7b # shrinks to e = Bin(0, Y, X), x = 1e-8, y = -38.9890838314605, wx = 0.0, wy = 0.25
+cc fe01e603c3d7ecd3afd3212f37a72db93ef0ad590b35b88c2d85266fa2b51969 # shrinks to e = Bin(3, Neg(X), Bin(0, Y, Math1(20, Y))), x = 0.1, y = -28.55357388167317
+cc 1ab3fcce37af5b24975498110cbdcdd7e76a230c570b0d221dfab36181db294e # shrinks to e = Math1(23, Neg(Float(0.999999999999))), x = 0.1, y = 0.0
+cc 8221f6f8c81e7e19b05e0e9e52aec065323c0ca1a1b9e2468d8bfeeaa8a9d4f0 # shrinks to e = Math1(23, Neg(X)), x = 0.999999999999, y = 0.0, wx = 0.0, wy = 0.0
+cc f59ad55e09089fa07882067841562920ce47e51bc8da37252c520445d3c7a63c # shrinks to e = Math1(4, Bin(0, X, Bin(1, Y, X))), x = 1000000000000000.0, y = 18.88138417926981
+cc db26b5c6972633fc5d7462627fab3a8a752f03491c7ce19ba2dae8e82842f433 # shrinks to e = Math1(17, Math1(16, Float(-36.99576664349697))), x = 0.1, y = 0.0
+cc f10cba0599fe939176cb767dc8819bb2f3e76952ba907cc497fd822b00a324f6 # shrinks to e = Bin(0, Pow(6, Pow(8, Float(1e-5))), X), x = 0.1, y = 0.0, wx = 0.0, wy = 0.0
+cc 6ac74ca0b9612059c3647142ba9cf1398b9c824b9ce0ad97589f417521322df3 # shrinks to e = Math2(1, Math1(3, Pow(6, Float(100000000.0))), X), x = 0.1, y = 0.0
+cc d468d989dd5253d4effe9c64afb7c358305002f0f1fc8fb4cfe03a95da3b08df # shrinks to e = Math2(1, Math1(18, Neg(Bin(2, Y, Y))), X), x = 0.1, y = 24.492748608454416, wx = 0.0, wy = 0.0
+cc 16aa59d9fa9e36426b5481301831f9f78a5c37085fde9e237928cb05d8f0ed0e # shrinks to e = Math2(0, X, Math1(0, Bin(0, Float(0.1), X))), x = 1000000000000000.0, y = 0.0
+cc 0202f5496b17c461b933691e57ed941a24a799f4092c9e44bfcc6a4043740d53 # shrinks to e = Math1(0, Bin(3, Bin(1, Float(63.31484583700373), Rat(-1, 1)), Float(55.069871481963865))), x = 0.1, y = 0.0, wx = 0.0, wy = 0.0
+cc 50ce057594d0dc01006b38a95b771a4eac60ddfc2518f3a4564e242be1eeef8a # shrinks to e = Math1(9, Float(7.0)), x = 0.1, y = 0.0, wx = 0.0, wy = 0.0
+cc 95de5ccb63b64482e550aed84b17af8a41cbf14c9b8df5a55e1dded923d0e048 # shrinks to e = Math1(4, Float(10.0)), x = 0.1, y = 0.0
+cc 92007135d835849b312c6cab75640bb4149288122ac7c98bffae19f01beffcbc # shrinks to e = Math1(4, Inv(X)), x = 0.999999999999, y = 0.0, wx = 0.0, wy = 0.0
+cc 77be486412e4e4e81ad04b685dbfc844c2c1d6f8ca830d8b5b33c431e41a885d # shrinks to e = Bin(0, X, Pow(0, Bin(1, Bin(0, Float(100000000000000.0), Float(0.4667483730745414)), Float(100000000000000.0)))), x = 0.1, y = 0.0, wx = 0.0, wy = 0.0
+cc bbdf1668eb2c244107592f6abf1f08c8ec26aa35e7fea5c4a16c0689ea0bb77e # shrinks to e = Math1(0, Pow(0, Bin(1, Bin(0, Float(100000000000000.0), Float(0.10385678070277686)), Float(100000000000000.0)))), x = 0.1, y = 0.0
+cc 2e2fa2aa827f56e5af554f1ca2dcf6ef589ed173a1a04f1b0bd51048d34e5cc1 # shrinks to e = Math2(0, Inv(Bin(1, Bin(0, Float(1000000000000000.0), Float(0.9006355448725128)), Float(1000000000000000.0))), X), x = 0.1, y = 0.0
+cc ca8068c9cfa954660218d95a30a2f3ebe79c20a66d4787959a107c0ac6ec97ee # shrinks to e = Bin(0, Bin(3, Float(0.1), Neg(Bin(1, Bin(0, Float(1000000000000000.0), Float(0.6404216031959074)), Float(1000000000000000.0)))), X), x = 0.1, y = 0.0, wx = 0.0, wy = 0.0
+cc b0ecb78f0b09bb2a61ccc931fd4ea71a339d3c968b28e5580a3acd6bb357f491 # shrinks to e = Bin(0, Math1(3, Bin(1, Bin(0, Float(100000000000000.0), Float(0.10795889222808146)), Float(100000000000000.0))), X), x = 0.1, y = 0.0
+cc 5b81b802b51f2c7186b5eb2cd9980ffe6235d383fa31af11c5b6f7e8cfc9cc0d # shrinks to e = Math1(3, Bin(1, Bin(0, Float(100000000000000.0), Float(0.5446189565157273)), Float(100000000000000.0))), x = 0.1, y = 0.0, wx = 0.0, wy = 0.0
+cc 525d7415f9d12a7eb61ed59b1bbdb4e1cf1a52bcea2a4db98d9b775b140a7e66 # shrinks to e = Bin(2, Inv(Bin(1, Bin(0, Float(100000000000000.0), Float(0.07487987548132162)), Float(100000000000000.0))), Bin(1, X, Bin(1, Bin(0, Float(4500000000000000.0), Float(0.7582889541458018)), Float(4500000000000000.0)))), x = 100000000.0, y = 0.0
+cc 448f1fc4aa7f04e2065b1cac9d79db55f05dcc354613a36cf07984958dae6c9a # shrinks to e = Math2(0, X, Pow(0, Neg(Bin(1, Bin(0, Float(100000000000000.0), Float(0.05)), Float(100000000000000.0))))), x = 0.1, y = 0.0, wx = 0.0, wy = 0.0
+cc dd9e153cf949387ace16ac2cde85fcf9058e6f2e251e4e7edce61b3739876102 # shrinks to e = Math1(1, Bin(1, X, Bin(1, Bin(0, Float(4500000000000000.0), Float(0.19851629718172886)), Float(4500000000000000.0)))), x = 0.1, y = 0.0, wx = 0.0, wy = 0.0
+cc 837413287069c2e9d742364fb6e84b57259e731824b260ac2c72a30bbcf0a2d6 # shrinks to e = Bin(0, Math1(1, Bin(1, Bin(1, Bin(0, Float(1000000000000000.0), Float(0.1848204879896788)), Float(1000000000000000.0)), Rat(1, 7))), X), x = 0.1, y = 0.0
+cc 8f45d0b6f1849b414cf971c19c46b19cea58291dfafbbc135fdab5fd244ecd5e # shrinks to e = PowV(Neg(Y), Math1(13, Float(44.731873997185026))), x = 0.1, y = -42.08940424565182, wx = 0.0, wy = 0.0
+cc 326107646d7ffbd9b11fdf9326e82bdae861349d4a5c5c1a8d03a95eca7f2c98 # shrinks to e = PowV(Neg(Float(-91.88235527138804)), Bin(2, X, X)), x = 7.0, y = 0.0

@@ -135,6 +135,38 @@ impl BoolContext {
     }
 }
 
+/// The source construct a number was demanded by, for
+/// [`OpKind::ExpectNumber`]: the wording of the run-time error ("`+` needs a
+/// number, found a Bool") names it, exactly as `sky run` does.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum NumberContext {
+    /// The operand of a unary `+`.
+    Pos,
+    /// The argument of `inv(...)` (the `x⁻¹` spelling is worded by
+    /// `inverse` itself).
+    Inv,
+}
+
+impl NumberContext {
+    pub const ALL: [NumberContext; 2] = [NumberContext::Pos, NumberContext::Inv];
+
+    /// The text the error message uses.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            NumberContext::Pos => "+",
+            NumberContext::Inv => "inv",
+        }
+    }
+
+    /// The text format's attribute.
+    pub fn text(self) -> &'static str {
+        match self {
+            NumberContext::Pos => "pos",
+            NumberContext::Inv => "inv",
+        }
+    }
+}
+
 /// Why a literal has no value, for [`OpKind::LiteralError`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum LiteralError {
@@ -156,6 +188,10 @@ impl LiteralError {
         }
     }
 }
+
+/// Which contract an [`OpKind::Assert`] checks: `assert`, or the `requires`
+/// and `ensures` of a function (the AST's own enum).
+pub use sky_ast::AssertKind;
 
 /// The math functions (`sqrt`, `exp`, `sin`, ...): the one list, with each
 /// function's arity, dimension rule and failure behaviour, lives in
@@ -392,6 +428,21 @@ pub enum OpKind {
     ExpectBool {
         context: BoolContext,
     },
+    /// `expect.number[ctx] a`: one operand, one result: the operand's type,
+    /// or `unknown` (as lowering leaves it, when a pass learns the operand's
+    /// type later). The run-time check of an operand the checker could not type
+    /// (`unknown`, from an unannotated parameter) where the source needs a
+    /// number or an array: the operand of a unary `+`, which lowers to
+    /// nothing else (`pos`), and the argument of `inv(...)` (`inv`), whose
+    /// wording differs from `x⁻¹`'s. It gives the operand back if it is a
+    /// number or an array and otherwise fails with "`+` needs a number,
+    /// found ..." (`ctx` says which; see [`NumberContext`]) at the
+    /// operation's span, which lowering sets to the operand's, as `sky run`
+    /// reports it. (A separate operation from `expect.bool`: it is not a
+    /// Bool, and its result stays `unknown`.) Effect `Fail`.
+    ExpectNumber {
+        context: NumberContext,
+    },
 
     // ----- structured control flow -----
     /// `if`: one Bool operand (the condition) and two regions, `then` and
@@ -434,6 +485,38 @@ pub enum OpKind {
     /// is always the body's last operation, and a `return` anywhere else
     /// (inside an `if` or `while` region) is malformed.
     Return,
+
+    // ----- contracts -----
+    /// `assert[kind] "text" ... %cond, %v0, ...`: a contract (spec
+    /// "Contracts"). No results. Operand 0 is the condition, a Bool (or
+    /// `Unknown`, which is checked at run time: anything but a Bool fails
+    /// with "`assert` needs a Bool condition, found ..."); the other
+    /// operands are the values of `names`, one each, in order, which only a
+    /// failure message uses.
+    ///
+    /// If the condition is true nothing happens. If it is false the run
+    /// stops with the message of `sky_interp::contract::failure_message`,
+    /// built from the attributes and the values: `kind` says which contract
+    /// (`assert`, `requires`, `ensures`); `text` is the condition as
+    /// written, white space collapsed; `message` is the author's string, if
+    /// any; `func` is the source name of the function a `requires` or
+    /// `ensures` belongs to (present exactly for those two); `names` are the
+    /// names the condition reads, whose values the message shows. The
+    /// operation's span is the condition's, which is where `sky run` points.
+    ///
+    /// A `requires` is the first thing a function does; an `ensures` runs
+    /// just before its `return`, on the arguments as they were passed (SIR
+    /// values are immutable, so lowering only has to name them) and the
+    /// returned value. Effect `Fail`: an assertion is behaviour, so no pass
+    /// moves it past output or removes it, except the `contracts` pass, when
+    /// it proves the condition true (`sky_opt::contracts`).
+    Assert {
+        kind: AssertKind,
+        text: String,
+        message: Option<String>,
+        func: Option<String>,
+        names: Vec<String>,
+    },
 
     // ----- effects -----
     /// `print(a, b, ...)`: writes the operands separated by spaces and a
@@ -498,6 +581,7 @@ impl OpKind {
             },
             OpKind::Not => "not",
             OpKind::ExpectBool { .. } => "expect.bool",
+            OpKind::ExpectNumber { .. } => "expect.number",
             OpKind::If => "if",
             OpKind::While => "while",
             OpKind::Yield => "yield",
@@ -505,6 +589,7 @@ impl OpKind {
             OpKind::Call { .. } => "call",
             OpKind::Return => "return",
             OpKind::Print => "print",
+            OpKind::Assert { .. } => "assert",
         }
     }
 
@@ -535,7 +620,9 @@ impl OpKind {
             // Converting to a tiny unit can overflow.
             OpKind::Show { .. } => (fail, false, false, false),
             // A value that is not a Bool fails.
-            OpKind::ExpectBool { .. } => (fail, false, false, false),
+            OpKind::ExpectBool { .. } | OpKind::ExpectNumber { .. } => (fail, false, false, false),
+            // A false condition fails.
+            OpKind::Assert { .. } => (fail, false, false, false),
             // A singular matrix or a zero scalar fails.
             OpKind::Inverse | OpKind::Solve { .. } => (fail, false, false, false),
             OpKind::MatMul => (fail, false, false, true),

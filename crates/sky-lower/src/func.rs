@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use sky_ast::{AssignTarget, Block, Expr, ExprKind, IndexItem, Param, Stmt, StmtKind};
+use sky_ast::{AssertKind, AssignTarget, Block, Expr, ExprKind, IndexItem, Param, Stmt, StmtKind};
 use sky_diag::Span;
 use sky_ir::{OpKind, Type};
 use sky_types::Ty;
@@ -17,7 +17,8 @@ use sky_units::lookup_constant;
 
 use crate::analysis::{count_returns, live_prefix, returns_value};
 use crate::build::Builder;
-use crate::ctx::{map_ty, DefInfo, FnInfo, FnState, Lower, Needed, R, RET, RETVAL};
+use crate::contract::has_ensures;
+use crate::ctx::{map_ty, DefInfo, FnInfo, FnState, Lower, Needed, Scope, R, RET, RETVAL};
 use sky_ast::Ident;
 
 impl Lower<'_> {
@@ -32,6 +33,67 @@ impl Lower<'_> {
         } else {
             format!("{base}#{n}")
         }
+    }
+
+    /// Lowers every `def` in `stmts`, looking inside the blocks of `if`,
+    /// `while` and `for` but not into a `def` (its nested `def`s are lowered
+    /// with its body): [`crate::lower_defs`]. Nothing else is lowered, but a
+    /// name a statement binds is bound in `<main>` to an `input` of the type
+    /// the checker gave that binding, so each `def` sees the module names
+    /// bound before it, with their types, exactly as when the whole file is
+    /// lowered, and takes the same trailing parameters for them.
+    pub(crate) fn defs_in(&mut self, stmts: &[Stmt]) -> R<()> {
+        for s in stmts {
+            match &s.kind {
+                StmtKind::Def {
+                    name, params, body, ..
+                } => self.lower_def(name, params, body, s.span)?,
+                StmtKind::Assign {
+                    target: AssignTarget::Name(name),
+                    ..
+                }
+                | StmtKind::Binding { name, .. } => self.bind_as_input(name),
+                StmtKind::If {
+                    branches,
+                    else_block,
+                } => {
+                    for (_, b) in branches {
+                        self.defs_in(&b.stmts)?;
+                    }
+                    if let Some(b) = else_block {
+                        self.defs_in(&b.stmts)?;
+                    }
+                }
+                StmtKind::While { body, .. } | StmtKind::For { body, .. } => {
+                    self.defs_in(&body.stmts)?
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Binds `name` in `<main>` to an `input` of its binding's type, for
+    /// [`Self::defs_in`]. A binding SIR has no type for (an equation, a
+    /// solution) is left unbound: a `def` that reads it cannot be lowered
+    /// anyway.
+    fn bind_as_input(&mut self, name: &Ident) {
+        let Some(t) = self.checked.binding_types.get(&name.span) else {
+            return;
+        };
+        let Some(ty) = map_ty(&self.checked.resolve_ty(t)) else {
+            return;
+        };
+        let text = self.text(name.span);
+        let v = self.op1(
+            OpKind::Input {
+                name: text.to_string(),
+            },
+            Vec::new(),
+            ty,
+            name.span,
+        );
+        self.bind(text, v);
     }
 
     /// Lowers `def name(params): body` to a function of the module. The
@@ -97,6 +159,7 @@ impl Lower<'_> {
             is_main: false,
             flags,
             ret_value: flags && has_value,
+            fn_name: Some(self.text(name.span).to_string()),
         };
         let parent = std::mem::replace(&mut self.st, state);
         self.stack.push(parent);
@@ -120,6 +183,8 @@ impl Lower<'_> {
             self.st.scope.entry(g.clone()).or_insert(v);
         }
         self.seed_constants(&body.stmts, span);
+        // What an `ensures` sees: the function as it starts.
+        let entry = has_ensures(live).then(|| self.st.scope.clone());
         if flags {
             let f = self.const_bool(false, span);
             self.st.scope.insert(RET.to_string(), f);
@@ -129,7 +194,7 @@ impl Lower<'_> {
             }
         }
 
-        self.lower_body(live, span)?;
+        self.lower_body(live, span, entry.map(|e| (e, has_value)))?;
         self.st.b.set_results(vec![ret_ty]);
         let Some(parent) = self.stack.pop() else {
             return self.err("internal error: lost the enclosing function", span);
@@ -163,7 +228,12 @@ impl Lower<'_> {
     }
 
     /// A function body: the statements, then `return`.
-    pub(crate) fn lower_body(&mut self, stmts: &[Stmt], span: Span) -> R<()> {
+    pub(crate) fn lower_body(
+        &mut self,
+        stmts: &[Stmt],
+        span: Span,
+        ensures: Option<(Scope, bool)>,
+    ) -> R<()> {
         let needed = Needed::new();
         let value = if self.st.flags {
             self.block(stmts, &needed)?;
@@ -186,6 +256,9 @@ impl Lower<'_> {
                 _ => self.op1(OpKind::ConstNothing, Vec::new(), Type::Nothing, span),
             }
         };
+        if let Some((entry, has_value)) = ensures {
+            self.lower_ensures(stmts, entry, has_value.then_some(value))?;
+        }
         self.st.b.op(OpKind::Return, vec![value], Vec::new(), span);
         Ok(())
     }
@@ -383,8 +456,32 @@ impl Lower<'_> {
                     self.scan_expr(v, defined, direct, callees);
                 }
             }
-            // A nested `def` is its own function.
-            StmtKind::Def { .. } | StmtKind::Pass | StmtKind::Break | StmtKind::Continue => {}
+            // `result` in an `ensures` is the returned value, not a name of
+            // the module.
+            StmtKind::Assert { kind, cond, .. } => {
+                if *kind == AssertKind::Ensures {
+                    let mut with_result = defined.clone();
+                    with_result.insert("result".to_string());
+                    self.scan_expr(cond, &with_result, direct, callees);
+                } else {
+                    self.scan_expr(cond, defined, direct, callees);
+                }
+            }
+            // Reads the name, like any use of it.
+            StmtKind::Accuracy { name, .. } => {
+                let n = self.text(name.span);
+                if !defined.contains(n) {
+                    direct.insert(n.to_string());
+                }
+            }
+            // A nested `def` is its own function. Equations do not lower
+            // (see `stmt`), so what they read does not matter.
+            StmtKind::Def { .. }
+            | StmtKind::Equation(_)
+            | StmtKind::Solve(_)
+            | StmtKind::Pass
+            | StmtKind::Break
+            | StmtKind::Continue => {}
         }
     }
 
@@ -462,6 +559,10 @@ impl Lower<'_> {
                 }
             }
             ExprKind::As { value, .. } => self.scan_expr(value, defined, direct, callees),
+            ExprKind::PlusMinus { value, sigma, .. } => {
+                self.scan_expr(value, defined, direct, callees);
+                self.scan_expr(sigma, defined, direct, callees);
+            }
             ExprKind::Array(elements) => {
                 for el in elements {
                     self.scan_expr(el, defined, direct, callees);

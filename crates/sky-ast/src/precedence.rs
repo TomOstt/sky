@@ -10,7 +10,7 @@
 //! | 2     | `and`                          | left (one flat `BoolOp` node per run) |
 //! | 3     | prefix `not`                   | prefix; not allowed as an operand of a tighter operator (`-not x`) |
 //! | 4     | `== != < <= > >=`              | none: `a < b < c` is an error |
-//! | 5     | `+ -`                          | left  |
+//! | 5     | `+ - ±`                        | left (`±` is `ExprKind::PlusMinus`, see [`PLUS_MINUS_BP`]) |
 //! | 6     | `* / @`                        | left  |
 //! | 7     | prefix `- + ∂ ∇`               | prefix |
 //! | 8     | `^`                            | right; its right operand may be prefix (`2^-1`) |
@@ -48,6 +48,13 @@ pub const BOOL: &[(TokenKind, BoolOp, u8, u8)] = &[
     (TokenKind::Keyword(Kw::Or), BoolOp::Or, 2, 3),
     (TokenKind::Keyword(Kw::And), BoolOp::And, 4, 5),
 ];
+
+/// Binding power of `±` (`+/-`): the same level as `+` and `-`, left
+/// associative, as in Julia's Measurements.jl. So `a + b ± c` is
+/// `(a + b) ± c`, `a ± b + c` is `(a ± b) + c`, and `a ± b ± c` adds a second,
+/// independent uncertainty to `a ± b`. It is not in [`INFIX`]: it builds an
+/// `ExprKind::PlusMinus`, not a `BinaryOp`.
+pub const PLUS_MINUS_BP: (u8, u8) = (20, 21);
 
 /// Binding power of prefix `not`: looser than comparisons (10), tighter
 /// than `and` (4). An operand position that requires more (e.g. after `-`
@@ -132,6 +139,10 @@ mod tests {
         assert!(bool_r(and) <= NOT_BP && NOT_BP < lbp(TokenKind::Lt));
         assert!(lbp(TokenKind::Lt) < lbp(TokenKind::Plus));
         assert!(lbp(TokenKind::Plus) < lbp(TokenKind::Star));
+        // `±` sits with `+` and `-`, and is left-associative like them.
+        assert_eq!(PLUS_MINUS_BP.0, lbp(TokenKind::Plus));
+        let (_, _, plus_r) = infix_binding_power(TokenKind::Plus).unwrap_or((BinaryOp::Add, 0, 0));
+        assert_eq!(PLUS_MINUS_BP.1, plus_r);
         assert!(lbp(TokenKind::Star) < prefix);
         assert!(prefix < lbp(TokenKind::Caret));
         assert!(lbp(TokenKind::Caret) < POSTFIX_BP);

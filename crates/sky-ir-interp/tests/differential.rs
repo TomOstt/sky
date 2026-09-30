@@ -1,7 +1,9 @@
 //! Differential test: a Sky program must behave identically through
 //! `sky run`'s tree-walking interpreter and through lowering to SIR plus
 //! the reference interpreter in this crate. "Identically" means the same
-//! stdout bytes and the same runtime error message (or both succeed).
+//! stdout bytes and the same runtime error, compared as the whole rendered
+//! diagnostic (message, primary span and label, secondary labels, notes,
+//! help), or both succeed.
 //!
 //! The SIR side runs `sky_lower::lower_source`, which also verifies the
 //! lowered module, so every program here is checked three ways: same
@@ -10,15 +12,23 @@
 use std::collections::HashSet;
 
 use sky_derive::SirDerivatives;
-use sky_diag::{Severity, Span};
+use sky_diag::{Diagnostic, Severity, SourceFile, Span};
 use sky_interp::{run_module_with_derivatives, RuntimeEnv};
 
-/// What running a program did: its stdout, and the message of the runtime
-/// error that stopped it, if any.
+/// What running a program did: its stdout, and the runtime error that
+/// stopped it, if any: its message, and the diagnostic as `sky run` prints
+/// it, rendered against the source (so a span, a label or a note that differs
+/// is a difference).
 #[derive(Clone, Debug, PartialEq)]
 struct Outcome {
     stdout: String,
     error: Option<String>,
+    diagnostic: Option<String>,
+}
+
+/// A runtime error's diagnostic, rendered as `sky run` prints it.
+fn rendered(d: &Diagnostic, src: &str) -> String {
+    d.render_to_string(&SourceFile::new("test.sky", src))
 }
 
 /// Lex, parse and check `src`, panicking with the diagnostics if it is not
@@ -58,7 +68,8 @@ fn run_tree_walker(src: &str) -> Outcome {
         );
         Outcome {
             stdout: String::from_utf8(out).expect("utf-8 output"),
-            error: result.err().map(|e| e.message.clone()),
+            error: result.as_ref().err().map(|e| e.message.clone()),
+            diagnostic: result.err().map(|e| rendered(&e.to_diagnostic(), src)),
         }
     })
 }
@@ -69,18 +80,19 @@ fn run_tree_walker(src: &str) -> Outcome {
 fn run_lowered(src: &str) -> Option<Outcome> {
     let ir =
         sky_lower::lower_source(src).unwrap_or_else(|e| panic!("lowering failed on:\n{src}\n{e}"));
-    Some(run_ir(&ir))
+    Some(run_ir(&ir, src))
 }
 
 /// Runs a lowered module through the reference interpreter into an
-/// [`Outcome`]. Used by [`run_lowered`] once lowering exists.
-fn run_ir(ir: &sky_ir::Module) -> Outcome {
+/// [`Outcome`].
+fn run_ir(ir: &sky_ir::Module, src: &str) -> Outcome {
     sky_ast::with_deep_stack(|| {
         let mut out = Vec::new();
         let result = sky_ir_interp::run(ir, &mut out);
         Outcome {
             stdout: String::from_utf8(out).expect("utf-8 output"),
-            error: result.err().map(|e| e.message.clone()),
+            error: result.as_ref().err().map(|e| e.message.clone()),
+            diagnostic: result.err().map(|e| rendered(&e.to_diagnostic(), src)),
         }
     })
 }
@@ -94,6 +106,7 @@ fn normalized(o: Outcome) -> Outcome {
         e.starts_with("recursion is too deep")
             || e == "the program nests too deeply for the interpreter"
     };
+    let limit = o.error.as_deref().is_some_and(is_limit);
     Outcome {
         error: o.error.map(|e| {
             if is_limit(&e) {
@@ -102,6 +115,7 @@ fn normalized(o: Outcome) -> Outcome {
                 e
             }
         }),
+        diagnostic: if limit { None } else { o.diagnostic },
         ..o
     }
 }
@@ -861,11 +875,13 @@ fn a_derivative_that_fails_fails_the_same_way() {
     assert_eq!(o.error.as_deref(), Some("division by zero"));
 }
 
-/// A run-time error's message and span, if the run failed.
-type Located = Option<(String, Span)>;
+/// A run-time error's message, span and rendered diagnostic, if the run
+/// failed.
+type Located = Option<(String, Span, String)>;
 
 /// The error of the tree-walker and of the SIR interpreter on `src`, with
-/// the span: they must be the same, including where they point.
+/// the span and the whole rendered diagnostic: they must be the same,
+/// including where they point and every label.
 fn located_errors(src: &str) -> (Located, Located) {
     let (module, solves) = parse_checked(src);
     let walker = sky_ast::with_deep_stack(|| {
@@ -874,13 +890,13 @@ fn located_errors(src: &str) -> (Located, Located) {
         let mut derivatives = SirDerivatives::new(&module, src);
         run_module_with_derivatives(&module, src, &mut env, &mut out, &solves, &mut derivatives)
             .err()
-            .map(|e| (e.message.clone(), e.span))
+            .map(|e| (e.message.clone(), e.span, rendered(&e.to_diagnostic(), src)))
     });
     let ir = sky_lower::lower_source(src).unwrap_or_else(|e| panic!("lowering failed: {e}"));
     let sir = sky_ast::with_deep_stack(|| {
         sky_ir_interp::run(&ir, &mut Vec::new())
             .err()
-            .map(|e| (e.message.clone(), e.span))
+            .map(|e| (e.message.clone(), e.span, rendered(&e.to_diagnostic(), src)))
     });
     (walker, sir)
 }
@@ -910,7 +926,7 @@ fn a_non_bool_operand_of_unknown_type_fails_alike_in_every_position() {
     ] {
         let src = format!("{def}{body}\n");
         let (walker, sir) = located_errors(&src);
-        let (msg, span) = walker.clone().expect("sky run fails");
+        let (msg, span, _) = walker.clone().expect("sky run fails");
         assert_eq!(
             msg,
             format!("`{kw}` needs a Bool operand, found a number"),
@@ -930,6 +946,225 @@ fn an_unknown_operand_that_is_a_bool_is_checked_and_passed_on() {
          if f(true):\n    print(1)\nk = 0\nwhile f(k < 2):\n    k += 1\nprint(k, 1 if f(false) else 2)\n",
     );
     assert_eq!(o.stdout, "false true true\n1\n2 2\n");
+}
+
+// ----- operand spans: the whole diagnostic, not only the message -----
+//
+// A SIR operation records the source span of each operand at its use, so
+// the interpreter's error has the tree-walker's labels, secondary labels and
+// notes. `assert_same` compares the whole rendered diagnostic; these say
+// which parts a program's error has, so the comparison cannot pass by both
+// engines dropping them.
+
+/// Runs `src` in both engines and returns the rendered diagnostic, which
+/// must be the same and must contain each of `parts`.
+fn labelled(src: &str, parts: &[&str]) -> String {
+    let o = assert_same(src);
+    let d = o
+        .diagnostic
+        .unwrap_or_else(|| panic!("no error on:\n{src}"));
+    for part in parts {
+        assert!(d.contains(part), "{part:?} is not in\n{d}\nfor:\n{src}");
+    }
+    d
+}
+
+#[test]
+fn a_division_by_zero_points_at_the_divisor() {
+    labelled(
+        "x = 4\nz = 2 - 2\nprint(x / z)\n",
+        &[
+            "this divides by zero",
+            "this is zero",
+            "= note: Sky reports",
+        ],
+    );
+    // The divisor is the operand's own span, also in `/=`, an array scale
+    // and a reciprocal.
+    labelled(
+        "x = 4\nz = 2 - 2\nx /= z\n",
+        &["this divides by zero", "this is zero"],
+    );
+    labelled(
+        "v = [1, 2]\nz = 0\nprint(v / z)\n",
+        &["this divides by zero", "this is zero"],
+    );
+    labelled("x = 0\nprint(x⁻¹)\n", &["this is zero"]);
+    labelled("x = 0\nprint(inv(x))\n", &["this is zero"]);
+    labelled("x = 0\nprint(x ^ (0 - 1))\n", &["this is zero"]);
+}
+
+#[test]
+fn an_index_error_points_at_the_index_and_the_array() {
+    labelled(
+        "v = [1, 2, 3]\ni = 5\nprint(v[i])\n",
+        &["valid indices are 0 to 2", "this is Vector[3]"],
+    );
+    labelled(
+        "A = [[1, 2], [3, 4]]\ni = 0\nj = 7\nprint(A[i, j])\n",
+        &["valid indices are 0 to 1", "this is Matrix[2,2]"],
+    );
+    labelled(
+        "v = [1, 2, 3]\ni = 0 - 1\nprint(v[i])\n",
+        &["cannot be negative"],
+    );
+    labelled(
+        "v = [1, 2, 3]\ni = 1 / 2\nprint(v[i])\n",
+        &["must be an integer"],
+    );
+    labelled(
+        "def f(a):\n    return a\nv = [1, 2, 3]\ni = f(1 m)\nprint(v[i])\n",
+        &["must be dimensionless", "this is length"],
+    );
+}
+
+#[test]
+fn a_slice_error_points_at_the_whole_item() {
+    let d = labelled(
+        "v = [1, 2, 3, 4]\nn = 9\nprint(v[0:n])\n",
+        &["slice 0..9 is out of bounds", "this is Vector[4]"],
+    );
+    // The underline is `0:n`, which is no operand.
+    assert!(d.contains("print(v[0:n])"), "{d}");
+    labelled(
+        "v = [1, 2, 3, 4]\nn = 2\nprint(v[n:n])\n",
+        &["this slice is empty"],
+    );
+    // Bounds that are missing are still part of the item.
+    labelled("v = [1, 2, 3, 4]\nn = 9\nprint(v[n:])\n", &["slice 9..4"]);
+    labelled(
+        "A = [[1, 2], [3, 4]]\nn = 9\nprint(A[1, n:])\n",
+        &["axis 1"],
+    );
+    labelled(
+        "A = [[1, 2], [3, 4]]\nn = 9\nprint(A[n:, 0])\n",
+        &["axis 0"],
+    );
+}
+
+#[test]
+fn a_dimension_mismatch_labels_both_operands() {
+    labelled(
+        "def f(a):\n    return a\na = f(1 m)\nb = f(2 s)\nprint(a + b)\n",
+        &["mismatched dimensions", "length", "time"],
+    );
+    labelled(
+        "def f(a):\n    return a\na = f(1 m)\nb = f(2 s)\nprint(a - b)\n",
+        &["cannot subtract time from length"],
+    );
+    labelled(
+        "def f(a):\n    return a\na = f(1 m)\nb = f(2 s)\na -= b\n",
+        &["mismatched dimensions"],
+    );
+    labelled(
+        "def f(a):\n    return a\na = f(1 m)\nb = f(2 s)\nprint(a < b)\n",
+        &["cannot compare length and time"],
+    );
+    labelled(
+        "def f(a):\n    return a\na = f(1 m)\nb = f(2 s)\nprint(a == b)\n",
+        &["cannot compare length and time"],
+    );
+    labelled(
+        "def f(a):\n    return a\na = f([1, 2])\nb = f([1, 2, 3])\nprint(a + b)\n",
+        &["mismatched shapes", "Vector[2]", "Vector[3]"],
+    );
+    labelled(
+        "def f(a):\n    return a\na = f([[1, 2]])\nb = f([[1, 2]])\nprint(a @ b)\n",
+        &["inner dimensions 2 and 1 differ", "Matrix[1,2]"],
+    );
+}
+
+#[test]
+fn math_and_linear_algebra_errors_keep_their_labels() {
+    labelled("x = 0 - 4\nprint(sqrt(x))\n", &["this is negative"]);
+    labelled("x = 0\nprint(log(x))\n", &["this is zero"]);
+    labelled("x = 2\nprint(asin(x))\n", &["this is outside [-1, 1]"]);
+    labelled(
+        "def f(a):\n    return a\nx = f(2 m)\nprint(exp(x))\n",
+        &["this is length"],
+    );
+    labelled(
+        "A = [[1, 2], [2, 4]]\nprint(A⁻¹)\n",
+        &["the matrix is singular", "this is Matrix[2,2]"],
+    );
+    labelled(
+        "def f(a):\n    return a\nx = f(2 m)\ne = f(3)\nprint(x ^ e)\n",
+        &["the exponent must be a constant number"],
+    );
+    labelled(
+        "x = 1e200\nprint(x * x)\n",
+        &["does not fit in a 64-bit float"],
+    );
+}
+
+/// A chain of array operations that `fuse` turns into one kernel keeps each
+/// operation's own operand spans (`sky-cli`'s engine tests run such chains
+/// through the whole pass pipeline).
+#[test]
+fn an_array_chain_fails_like_the_tree_walker() {
+    labelled(
+        "a = [1, 2, 3]\nb = [1, 2, 3]\nz = 0\nprint((a + b) / z * 2)\n",
+        &["this divides by zero", "this is zero"],
+    );
+    labelled("a = [1e200, 2]\nprint(a * 1e200)\n", &["does not fit"]);
+}
+
+/// A value the checker cannot type (an unannotated parameter's) fails at
+/// run time with the operand's span, in every position an operand is read.
+#[test]
+fn unknown_operands_fail_with_the_tree_walkers_diagnostic() {
+    let def = "def f(a):\n    return a\n";
+    for (body, message) in [
+        ("print(-f(true))", "`-` needs a number, found a Bool"),
+        ("print(+f(true))", "`+` needs a number, found a Bool"),
+        ("print(+f(\"hi\"))", "`+` needs a number, found a string"),
+        ("print(inv(f(true)))", "`inv` needs a number, found a Bool"),
+        ("print(f(true)⁻¹)", "`⁻¹` needs a number, found a Bool"),
+        ("print(f(true) + 1)", "cannot add a Bool and a number"),
+        ("print(f(true) * 2)", "cannot multiply a Bool and a number"),
+        (
+            "print(sqrt(f(true)))",
+            "`sqrt` needs a number, found a Bool",
+        ),
+        ("print(f(1)[0])", "cannot index a number"),
+        (
+            "print([1, 2][f(true)])",
+            "an index must be a number, found a Bool",
+        ),
+        (
+            "print([f(true), 1])",
+            "an array element must be a number, found a Bool",
+        ),
+    ] {
+        let src = format!("{def}{body}\n");
+        let o = assert_same(&src);
+        assert_eq!(o.error.as_deref(), Some(message), "{src}");
+    }
+    // A number or an array passes `+` and `inv` unchanged.
+    let o = assert_same(
+        "def f(a):\n    return +a\ndef g(a):\n    return inv(a)\nprint(f(2 m), f([1, 2]), g(4), g([[2, 0], [0, 4]]))\n",
+    );
+    assert_eq!(o.error, None);
+}
+
+/// Found by the fuzzer (seed 275714): `+x` used to lower to `x`, so for a
+/// parameter the checker cannot type, given a Bool, SIR did not stop at the
+/// `+` as `sky run` does.
+#[test]
+fn a_unary_plus_of_an_unknown_non_number_stops_at_the_plus() {
+    let d = labelled(
+        "def f(a):\n    return +a + a\nprint(f(true))\n",
+        &["`+` needs a number, found a Bool"],
+    );
+    assert!(d.contains("return +a + a"), "{d}");
+    labelled(
+        "def f(a):\n    return +a\nprint(f(true))\n",
+        &["`+` needs a number, found a Bool"],
+    );
+    // Only where it is evaluated: a `+` that is never reached does not fail.
+    let o =
+        assert_same("def f(a):\n    if false:\n        return +a\n    return 1\nprint(f(true))\n");
+    assert_eq!((o.stdout.as_str(), o.error), ("1\n", None));
 }
 
 // ----- grad(f)(args) and (∂f/∂x)(args) -----
@@ -1035,4 +1270,354 @@ fn partial_notation_is_the_derivative_in_both_engines() {
          print((∂fall/∂m0)(2 s, 3 kg), (∂fall/∂t)(2 s, 3 kg))\n"
     ));
     assert_eq!(o.stdout, "20 m/s\n20 m/s\n10 m/s^2\n200 m^2/s^2 600 W\n");
+}
+
+// ----- gradients of arrays: grad(f)(p) and derivative(f, p)(...) -----
+//
+// A function of a vector parameter has a gradient with the vector's shape
+// and the unit dim(f)/dim(p): the gradient of a potential of a position is a
+// force. `sky-ad` computes it (in reverse mode; forward mode, one pass per
+// entry, when the function loops). The tree-walker asks `sky-derive` for it
+// and lowering emits a call, so both must print the same bytes, and fail
+// the same way.
+
+#[test]
+fn the_force_of_a_gravitational_potential_points_to_the_origin() {
+    // U = -G M m / |p|; F = -∇U has magnitude G M m / r² and points at the
+    // centre. G is the predefined constant.
+    let o = assert_same(
+        "M = 5.972e24 kg\nmass = 1000 kg\n\
+         def U(p: Vector[3] m) -> J:\n    return -G * M * mass / sqrt(p @ p)\n\
+         p = [7000 km, 0 km, 0 km]\nF = -grad(U)(p)\nprint(F)\nprint(F[0])\n\
+         q = [0 m, 3 m, 4 m]\nprint(grad(U)(q))\n",
+    );
+    assert_eq!(o.error, None);
+    assert!(
+        o.stdout.starts_with("[-8134.4733877551"),
+        "the force at 7000 km, pointing along -x: {}",
+        o.stdout
+    );
+}
+
+#[test]
+fn the_gradient_of_a_spring_network_uses_a_matrix() {
+    // U = ½ (p - p0)ᵀ K (p - p0): ∇U = K (p - p0).
+    let o = assert_same(
+        "K = [[300, -100, 0], [-100, 200, -50], [0, -50, 100]] * 1 N/m\n\
+         p0 = [0.5 m, 0 m, 0.25 m]\n\
+         def U(p: Vector[3] m) -> J:\n    d = p - p0\n    return 0.5 * (d @ (K @ d))\n\
+         p = [0.6 m, 0.1 m, 0.2 m]\nprint(U(p))\nprint(grad(U)(p))\nprint(derivative(U, p)(p))\n",
+    );
+    assert_eq!(o.error, None);
+    assert_eq!(o.stdout.lines().count(), 3);
+    let lines: Vec<&str> = o.stdout.lines().collect();
+    assert_eq!(lines[1], lines[2], "grad(U) is derivative(U, p)");
+}
+
+#[test]
+fn a_gradient_through_if_index_slice_and_transpose() {
+    let o = assert_same(
+        "def f(p: Vector[4] m, A: Matrix[2, 2]) -> m:\n\
+         \x20   B = Aᵀ @ A\n\
+         \x20   s = p[1:3]\n\
+         \x20   if p[0] > 0 m:\n\
+         \x20       return s[0] * B[0, 1] + p[3] * B[1, 1]\n\
+         \x20   return s[1] * B[0, 0]\n\
+         A = [[1, 2], [3, 4]]\n\
+         print(derivative(f, p)([1 m, 2 m, 3 m, 4 m], A))\n\
+         print(derivative(f, p)([-1 m, 2 m, 3 m, 4 m], A))\n\
+         print(derivative(f, A)([1 m, 2 m, 3 m, 4 m], A))\n",
+    );
+    assert_eq!(o.error, None);
+    assert_eq!(o.stdout.lines().count(), 3);
+}
+
+#[test]
+fn a_gradient_through_a_loop_takes_a_pass_per_entry() {
+    // Reverse mode has no tape for the loop, so the gradient is forward
+    // mode, once per entry. It prints once per pass.
+    let o = assert_same(
+        "def f(p: Vector[3]) -> m:\n    print(\"called\")\n    acc = 0\n    i = 0\n\
+         \x20   while i < 3:\n        acc = acc + p[i] * p[i] * (i + 1)\n        i += 1\n\
+         \x20   return 1 m * acc\n\
+         print(grad(f)([0.5, 1, 2]))\n",
+    );
+    assert_eq!(o.stdout, "called\ncalled\ncalled\n[1 m, 4 m, 12 m]\n");
+}
+
+#[test]
+fn reverse_mode_runs_the_function_once() {
+    let o = assert_same(
+        "def f(p: Vector[3]) -> m:\n    print(\"called\")\n    return 1 m * (p @ p)\n\
+         print(grad(f)([0.5, 1, 2]))\n",
+    );
+    assert_eq!(o.stdout, "called\n[1 m, 2 m, 4 m]\n");
+}
+
+#[test]
+fn the_derivative_of_an_array_valued_function_of_a_scalar() {
+    // A position vector's derivative with respect to time is a velocity.
+    let o = assert_same(
+        "def r(t: s) -> Vector[2] m:\n    return [5 m/s^2 * t^2, 2 m/s * t]\n\
+         print(derivative(r, t)(2 s))\nprint((∂r/∂t)(1 s))\n",
+    );
+    assert_eq!(o.stdout, "[20 m/s, 2 m/s]\n[10 m/s, 2 m/s]\n");
+}
+
+#[test]
+fn helper_functions_of_arrays_are_differentiated_through() {
+    let o = assert_same(
+        "def norm(v: Vector[3] m) -> m:\n    return sqrt(v @ v)\n\
+         def U(p: Vector[3] m) -> J:\n    return 2 N/m * norm(p)^2\n\
+         print(grad(U)([1 m, 2 m, 2 m]))\n",
+    );
+    assert_eq!(o.stdout, "[4 N, 8 N, 8 N]\n");
+}
+
+#[test]
+fn a_gradient_that_fails_fails_alike_for_arrays() {
+    let o = assert_same(
+        "def root(p: Vector[2] m^2) -> m:\n    return sqrt(p[0]) + sqrt(p[1])\n\
+         print(1)\nprint(grad(root)([4 m^2, 0 m^2]))\n",
+    );
+    assert_eq!(o.stdout, "1\n");
+    assert_eq!(o.error.as_deref(), Some("division by zero"));
+}
+
+#[test]
+fn a_gradient_of_a_matrix_parameter() {
+    let o = assert_same(
+        "def f(A: Matrix[2, 2]) -> m:\n    B = inv(A)\n    return 1 m * (B[0, 0] + A[1, 0] * A[1, 1])\n\
+         print(grad(f)([[3, 1], [0.5, 2]]))\n",
+    );
+    assert_eq!(o.error, None);
+    assert!(o.stdout.starts_with("[["), "{}", o.stdout);
+}
+
+// ----- contracts: assert, requires, ensures -----
+//
+// The message names the values of the names in the condition, and the span
+// is the condition's; both engines build them from `sky_interp::contract`,
+// and these tests hold them to it: same stdout, same message, same span.
+
+/// Both engines fail on `src` with the same message at the same span; returns
+/// the message. Their output before the failure is the same too.
+fn same_failure(src: &str) -> String {
+    let (walker, sir) = located_errors(src);
+    assert_eq!(sir, walker, "the engines differ on:\n{src}");
+    let out = assert_same(src);
+    let (message, span, _) = walker.expect("the program fails");
+    assert_eq!(out.error.as_deref(), Some(message.as_str()));
+    assert!(
+        span.start < span.end && (span.end as usize) <= src.len(),
+        "{span:?}"
+    );
+    message
+}
+
+#[test]
+fn a_true_contract_changes_nothing() {
+    let o = assert_same(
+        "def fall_time(h: m) -> s:\n    requires h >= 0 m\n    ensures result > 0 s\n    return sqrt(2 * h / g_n)\n\
+         E = 3 J\nassert E > 0 J, \"energy\"\nprint(fall_time(20 m), E)\n",
+    );
+    assert_eq!(o.stdout, "2.0196199771025523 s 3 J\n");
+    assert_eq!(o.error, None);
+}
+
+#[test]
+fn a_false_assertion_fails_alike() {
+    let src = "print(1)\nE = -3.2 J\nassert E > 0 J\nprint(2)\n";
+    assert_eq!(
+        same_failure(src),
+        "assertion failed: `E > 0 J` (E = -3.2 J)"
+    );
+    let src = "E = -3.2 J\nassert E > 0 J, \"energy must be positive\"\n";
+    assert_eq!(
+        same_failure(src),
+        "assertion failed: energy must be positive (`E > 0 J`, E = -3.2 J)"
+    );
+    let src = "assert 1 > 2\n";
+    assert_eq!(same_failure(src), "assertion failed: `1 > 2`");
+}
+
+#[test]
+fn the_names_shown_are_those_of_the_condition_in_order() {
+    // Names not reached by short-circuiting are still shown; a called
+    // function's name is not a name; a constant is one.
+    let src = "def sq(x):\n    return x * x\na = 3\nb = 4 m\nassert sq(a) + a < 1 and b > 9 m and pi > 0\n";
+    assert_eq!(
+        same_failure(src),
+        "assertion failed: `sq(a) + a < 1 and b > 9 m and pi > 0` (a = 3, b = 4 m, pi = 3.141592653589793)"
+    );
+    let src =
+        "v = [1 m, 2 m]\ns = \"a\"\nflag = true\nassert v[0] > 5 m or s == \"b\" or not flag\n";
+    assert_eq!(
+        same_failure(src),
+        "assertion failed: `v[0] > 5 m or s == \"b\" or not flag` (v = [1 m, 2 m], s = \"a\", flag = true)"
+    );
+    // A condition over several lines is quoted on one.
+    let src = "a = 1\nassert (a >\n    2\n    and\n    true)\n";
+    assert_eq!(
+        same_failure(src),
+        "assertion failed: `(a > 2 and true)` (a = 1)"
+    );
+}
+
+#[test]
+fn a_failed_precondition_fails_alike_and_runs_before_the_body() {
+    let src = "def fall_time(h: m) -> s:\n    requires h >= 0 m\n    print(\"body\")\n    return sqrt(2 * h / g_n)\n\
+               print(fall_time(20 m))\nx = fall_time(-1 m)\nprint(9)\n";
+    assert_eq!(
+        same_failure(src),
+        "precondition of `fall_time` failed: `h >= 0 m` (h = -1 m)"
+    );
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "body\n2.0196199771025523 s\n");
+    // Two of them, and the message of the one that fails.
+    let src = "def f(x):\n    requires x > 0, \"positive\"\n    requires x < 10\n    return x\nf(3)\nf(20)\n";
+    assert_eq!(
+        same_failure(src),
+        "precondition of `f` failed: `x < 10` (x = 20)"
+    );
+    let src =
+        "def f(x):\n    requires x > 0, \"positive\"\n    requires x < 10\n    return x\nf(-2)\n";
+    assert_eq!(
+        same_failure(src),
+        "precondition of `f` failed: positive (`x > 0`, x = -2)"
+    );
+}
+
+#[test]
+fn a_failed_postcondition_fails_alike_and_sees_the_arguments_as_passed() {
+    let src = "def f(x):\n    requires x > 0\n    ensures result > x\n    x = x - 5\n    return x + 1\nf(3)\n";
+    assert_eq!(
+        same_failure(src),
+        "postcondition of `f` failed: `result > x` (result = -1, x = 3)"
+    );
+    // At every return, whichever it is.
+    let src = "def f(x):\n    ensures result >= 0\n    if x > 0:\n        return x\n    return x\nprint(f(1))\nprint(f(-1))\n";
+    assert_eq!(
+        same_failure(src),
+        "postcondition of `f` failed: `result >= 0` (result = -1)"
+    );
+    let src = "def f(x: m) -> m:\n    ensures result > 0 m\n    i = 0\n    while i < 10:\n        if i == x / 1 m:\n            return x\n        i += 1\n    return 0 m - x\nprint(f(3 m))\nprint(f(-2 m))\nprint(f(20 m))\nprint(f(-1 m))\n";
+    assert_eq!(
+        same_failure(src),
+        "postcondition of `f` failed: `result > 0 m` (result = -20 m)"
+    );
+}
+
+#[test]
+fn a_postcondition_after_a_break_in_a_loop_and_with_no_result() {
+    let src = "def f(n):\n    ensures result == 10\n    total = 0\n    for i in range(20):\n        if i == n:\n            break\n        total += 1\n    return total\nprint(f(10))\nprint(f(5))\n";
+    assert_eq!(
+        same_failure(src),
+        "postcondition of `f` failed: `result == 10` (result = 5)"
+    );
+    let src = "def f(x):\n    ensures x > 0\n    print(x)\nf(1)\nf(-1)\n";
+    assert_eq!(
+        same_failure(src),
+        "postcondition of `f` failed: `x > 0` (x = -1)"
+    );
+}
+
+#[test]
+fn contracts_read_module_names_and_result_is_an_ordinary_name_elsewhere() {
+    let src = "limit = 10\ndef f(x):\n    requires x < limit\n    ensures result < limit + 1\n    return x + 5\nprint(f(3))\nf(8)\n";
+    assert_eq!(
+        same_failure(src),
+        "postcondition of `f` failed: `result < limit + 1` (result = 13, limit = 10)"
+    );
+    let o = assert_same(
+        "result = 3\ndef f(x):\n    ensures result == x + 1\n    return x + 1\nassert result == 3\nprint(f(2), result)\n",
+    );
+    assert_eq!(o.stdout, "3 3\n");
+}
+
+#[test]
+fn recursion_and_nesting_check_every_level() {
+    let src = "def f(n):\n    requires n >= 0\n    if n == 0:\n        return 0\n    return f(n - 1)\nprint(f(3))\nf(-1)\n";
+    assert_eq!(
+        same_failure(src),
+        "precondition of `f` failed: `n >= 0` (n = -1)"
+    );
+    // A contract that calls a function with a contract.
+    let src = "def pos(x):\n    requires x != 0\n    return x > 0\ndef g(x):\n    requires pos(x)\n    return x\nprint(g(2))\nprint(g(-2))\n";
+    assert_eq!(
+        same_failure(src),
+        "precondition of `g` failed: `pos(x)` (x = -2)"
+    );
+    let src = "def pos(x):\n    requires x != 0\n    return x > 0\ndef g(x):\n    requires pos(x)\n    return x\ng(0)\n";
+    assert_eq!(
+        same_failure(src),
+        "precondition of `pos` failed: `x != 0` (x = 0)"
+    );
+}
+
+#[test]
+fn a_contract_on_a_value_the_checker_cannot_type_is_checked_at_run_time() {
+    let def = "def f(a):\n    return a\n";
+    let src = format!("{def}assert f(1)\n");
+    assert_eq!(
+        same_failure(&src),
+        "`assert` needs a Bool condition, found a number"
+    );
+    let src = format!("{def}def g(x):\n    requires f(x)\n    return x\ng(1)\n");
+    assert_eq!(
+        same_failure(&src),
+        "`requires` needs a Bool condition, found a number"
+    );
+    let src = format!("{def}def g(x):\n    ensures f(result)\n    return x\ng(true)\ng(4)\n");
+    assert_eq!(
+        same_failure(&src),
+        "`ensures` needs a Bool condition, found a number"
+    );
+    let o = assert_same(&format!(
+        "{def}assert f(true)\nassert f(2) == 2\nprint(1)\n"
+    ));
+    assert_eq!(o.stdout, "1\n");
+    let src = format!("{def}x = 5\nassert f(x > 9), \"unknown\"\n");
+    assert_eq!(
+        same_failure(&src),
+        "assertion failed: unknown (`f(x > 9)`, x = 5)"
+    );
+}
+
+#[test]
+fn asserts_in_blocks_after_an_early_return_and_in_loops() {
+    let src = "def f(x):\n    if x > 100:\n        return 1\n    assert x > -5, \"floor\"\n    for i in range(3):\n        assert i < x\n    return 2\nprint(f(200))\nprint(f(4))\nprint(f(2))\n";
+    assert_eq!(
+        same_failure(src),
+        "assertion failed: `i < x` (i = 2, x = 2)"
+    );
+    let src = "def f(x):\n    if x > 100:\n        return 1\n    assert x > -5, \"floor\"\n    return 2\nprint(f(200))\nprint(f(-9))\n";
+    assert_eq!(
+        same_failure(src),
+        "assertion failed: floor (`x > -5`, x = -9)"
+    );
+    let src = "k = 0\nwhile k < 10:\n    k += 1\n    if k == 4:\n        continue\n    assert k != 7\nprint(k)\n";
+    assert_eq!(same_failure(src), "assertion failed: `k != 7` (k = 7)");
+}
+
+#[test]
+fn an_assertion_is_output_ordered_and_stops_a_failing_function_before_its_effects() {
+    let src = "def f(x):\n    print(\"in\")\n    assert x > 0\n    print(\"out\")\n    return x\nprint(f(1))\nprint(f(0))\n";
+    assert_eq!(same_failure(src), "assertion failed: `x > 0` (x = 0)");
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "in\nout\n1\nin\n");
+}
+
+#[test]
+fn a_derivative_of_a_function_with_a_contract_keeps_the_contract() {
+    let o = assert_same(
+        "def f(x: m) -> m:\n    requires x > 0 m\n    ensures result > 0 m\n    return x * x / 1 m\n\
+         print(derivative(f, x)(3 m))\nprint(f(2 m))\n",
+    );
+    assert_eq!(o.stdout, "6\n4 m\n");
+    let src = "def f(x: m) -> m:\n    requires x > 0 m, \"x must be positive\"\n    return x * x / 1 m\nprint(derivative(f, x)(-1 m))\n";
+    assert_eq!(
+        same_failure(src),
+        "precondition of `f` failed: x must be positive (`x > 0 m`, x = -1 m)"
+    );
 }

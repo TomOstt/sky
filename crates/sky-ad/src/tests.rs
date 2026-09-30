@@ -998,29 +998,50 @@ fn bad_results_and_arrays() {
         Err(AdError::BadResult { .. })
     ));
 
-    // An array parameter.
+    // An array parameter is differentiated against as a gradient, which
+    // needs a scalar result.
     let vec3 = Type::Number(NumberType {
         shape: sky_types::Shape::vector(3u64),
         ..NumberType::scalar(Dimension::DIMENSIONLESS)
     });
-    let mut b = FunctionBuilder::new("arr", vec![vec3], vec![num()], sp());
+    let mut b = FunctionBuilder::new("arr", vec![vec3.clone()], vec![vec3.clone()], sp());
+    let p = b.params()[0];
+    b.op(OpKind::Return, vec![p], vec![], sp());
+    let m = module(vec![b.finish()]);
+    assert!(matches!(
+        derivative(&m, "arr", 0),
+        Err(AdError::BadResult { .. })
+    ));
+    // A parameter that is not a number at all.
+    let mut b = FunctionBuilder::new("flagged", vec![Type::Bool], vec![num()], sp());
     let c = b.op1(OpKind::ConstFloat { bits: 0 }, vec![], num(), sp());
     b.op(OpKind::Return, vec![c], vec![], sp());
     let m = module(vec![b.finish()]);
     assert!(matches!(
-        derivative(&m, "arr", 0),
-        Err(AdError::NonScalar { .. })
+        derivative(&m, "flagged", 0),
+        Err(AdError::NonNumberParam { .. })
     ));
 }
 
-#[test]
-fn array_operations_are_unsupported_where_the_derivative_flows() {
-    // f(x) = [x, 1][0]: the derivative would flow through `array.literal`
-    // and `index`, which have no rules yet, and says so.
-    let vec2 = Type::Number(NumberType {
-        shape: sky_types::Shape::vector(2u64),
+fn vec_ty(n: u64) -> Type {
+    Type::Number(NumberType {
+        shape: sky_types::Shape::vector(n),
         ..NumberType::scalar(Dimension::DIMENSIONLESS)
-    });
+    })
+}
+
+fn array(values: &[f64]) -> Value {
+    Value::array(
+        vec![values.len()],
+        values.to_vec(),
+        Dimension::DIMENSIONLESS,
+    )
+}
+
+#[test]
+fn array_operations_have_rules() {
+    // f(x) = [x, 1][0] = x: the derivative flows through `array.literal`
+    // and `index`.
     let mut b = FunctionBuilder::new("pick", vec![num()], vec![num()], sp());
     let x = b.params()[0];
     let one = b.op1(
@@ -1034,22 +1055,16 @@ fn array_operations_are_unsupported_where_the_derivative_flows() {
     let v = b.op1(
         OpKind::ArrayLiteral { cols: None },
         vec![x, one],
-        vec2,
+        vec_ty(2),
         sp(),
     );
     let zero = b.op1(OpKind::ConstFloat { bits: 0 }, vec![], num(), sp());
     let e = b.op1(OpKind::Index, vec![v, zero], num(), sp());
     b.op(OpKind::Return, vec![e], vec![], sp());
     let m = module(vec![b.finish()]);
-    let err = derivative(&m, "pick", 0).expect_err("no rule");
-    assert!(matches!(err, AdError::Unsupported { .. }), "{err}");
-    assert_eq!(
-        err.to_string(),
-        "cannot differentiate `array.literal` in `pick`: array differentiation is not supported yet"
-    );
+    check(&m, "pick", 0, &[3.0], 1.0);
 
-    // An array that does not depend on x is only data: its derivative is
-    // never asked for.
+    // An array that does not depend on x is only data.
     let mut b = FunctionBuilder::new("const_array", vec![num()], vec![num()], sp());
     let x = b.params()[0];
     let one = b.op1(
@@ -1060,14 +1075,10 @@ fn array_operations_are_unsupported_where_the_derivative_flows() {
         num(),
         sp(),
     );
-    let vec2 = Type::Number(NumberType {
-        shape: sky_types::Shape::vector(2u64),
-        ..NumberType::scalar(Dimension::DIMENSIONLESS)
-    });
     let v = b.op1(
         OpKind::ArrayLiteral { cols: None },
         vec![one, one],
-        vec2,
+        vec_ty(2),
         sp(),
     );
     let zero = b.op1(OpKind::ConstFloat { bits: 0 }, vec![], num(), sp());
@@ -1075,7 +1086,106 @@ fn array_operations_are_unsupported_where_the_derivative_flows() {
     let r = b.op1(OpKind::Mul, vec![x, e], num(), sp());
     b.op(OpKind::Return, vec![r], vec![], sp());
     let m = module(vec![b.finish()]);
-    assert!(derivative(&m, "const_array", 0).is_ok());
+    check(&m, "const_array", 0, &[3.0], 1.0);
+}
+
+/// `f(p) = p @ p` for a vector of `n` entries.
+fn dot_self(n: u64) -> Function {
+    let mut b = FunctionBuilder::new("norm2", vec![vec_ty(n)], vec![num()], sp());
+    let p = b.params()[0];
+    let r = b.op1(OpKind::MatMul, vec![p, p], num(), sp());
+    b.op(OpKind::Return, vec![r], vec![], sp());
+    b.finish()
+}
+
+#[test]
+fn the_gradient_of_a_dot_product_is_twice_the_vector() {
+    let mut m = module(vec![dot_self(3)]);
+    let name = differentiate_into(&mut m, "norm2", 0).expect("differentiates");
+    sky_ir::verify(&m).expect("well-typed");
+    assert_eq!(name, "dnorm2/d0");
+    let out = call(&m, &name, vec![array(&[1.0, -2.0, 3.0])], &mut Vec::new()).expect("runs");
+    assert_eq!(out[0], Value::scalar(14.0));
+    assert_eq!(out[1], array(&[2.0, -4.0, 6.0]));
+    // Reverse mode: no `#jvp` function, and no calls at all.
+    assert_eq!(m.functions.len(), 2);
+}
+
+#[test]
+fn a_gradient_needs_a_scalar_result_and_a_number() {
+    // A vector-valued function has a Jacobian, not a gradient.
+    let mut b = FunctionBuilder::new("id", vec![vec_ty(2)], vec![vec_ty(2)], sp());
+    let p = b.params()[0];
+    b.op(OpKind::Return, vec![p], vec![], sp());
+    let m = module(vec![b.finish()]);
+    let err = derivative(&m, "id", 0).expect_err("no gradient");
+    assert!(matches!(err, AdError::BadResult { .. }), "{err}");
+    assert_eq!(
+        err.to_string(),
+        "cannot differentiate `id`: a gradient needs a result that is a scalar number"
+    );
+}
+
+// ----- array typing -----
+
+#[test]
+fn the_tangent_of_an_array_has_its_shape_and_dimension_over_x() {
+    // r(t) = [x0 + t * v0, ...] with x0 a position and v0 a velocity: the
+    // derivative is v0 (m/s) as a vector.
+    let len = |shape| {
+        Type::Number(NumberType {
+            shape,
+            ..NumberType::scalar(Dimension::LENGTH)
+        })
+    };
+    let vel = Type::Number(NumberType {
+        shape: sky_types::Shape::vector(2u64),
+        ..NumberType::scalar(Dimension::VELOCITY)
+    });
+    let time = dimty(Dimension::TIME);
+    let mut b = FunctionBuilder::new(
+        "r",
+        vec![time, len(sky_types::Shape::vector(2u64)), vel.clone()],
+        vec![len(sky_types::Shape::vector(2u64))],
+        sp(),
+    );
+    let [t, x0, v0] = b.params()[..] else {
+        unreachable!()
+    };
+    let d = b.op1(
+        OpKind::Mul,
+        vec![v0, t],
+        len(sky_types::Shape::vector(2u64)),
+        sp(),
+    );
+    let r = b.op1(
+        OpKind::Add,
+        vec![x0, d],
+        len(sky_types::Shape::vector(2u64)),
+        sp(),
+    );
+    b.op(OpKind::Return, vec![r], vec![], sp());
+    let mut m = module(vec![b.finish()]);
+    let name = differentiate_into(&mut m, "r", 0).expect("differentiates");
+    sky_ir::verify(&m).expect("well-typed");
+    let f = m.function(&name).expect("built");
+    assert_eq!(
+        f.results[1],
+        Type::Number(NumberType {
+            shape: sky_types::Shape::vector(2u64),
+            ..NumberType::scalar(Dimension::VELOCITY)
+        })
+    );
+    let args = vec![
+        Value::number(2.0, Dimension::TIME),
+        Value::array(vec![2], vec![0.0, 1.0], Dimension::LENGTH),
+        Value::array(vec![2], vec![3.0, -4.0], Dimension::VELOCITY),
+    ];
+    let out = call(&m, &name, args, &mut Vec::new()).expect("runs");
+    assert_eq!(
+        out[1],
+        Value::array(vec![2], vec![3.0, -4.0], Dimension::VELOCITY)
+    );
 }
 
 // ----- properties -----

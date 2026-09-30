@@ -235,12 +235,12 @@ fn keywords_are_attribute_names_only_after_a_dot() {
             errors[0].message
         );
     }
-    // At the start of a statement a reserved word says so instead.
+    // At the start of a statement a keyword says so instead.
     let errors = common::module_errors("solve = 1");
     assert_eq!(errors.len(), 1, "{errors:#?}");
     assert_eq!(
         errors[0].message,
-        "`solve` is reserved for a future version"
+        "`solve` is a keyword, so it cannot be a name"
     );
     // Only a name or keyword may follow `.`.
     let errors = expr_errors("x.(y)");

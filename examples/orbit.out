@@ -1,0 +1,8 @@
+after one year, Earth is 250100 km from where it started
+the system is second order and energy is monitored: symplectic integrators keep energy error bounded over long times instead of letting it drift
+at tolerance 1.00e-9 a fourth-order composition (Yoshida) needs far fewer steps than second-order velocity Verlet, so Yoshida's symplectic composition (order 4) was chosen
+the step comes from rtol = 1.00e-9 and atol = 1.00e-12: a probe (adaptive step doubling, where one step compared with two half steps estimates the local error) ran over the whole interval in 260 steps and estimated the largest step the tolerance allows at each point; the smallest was 66903 s, and 0.8 times that, 53523 s, is held fixed for the whole run, because varying the step would forfeit the bounded-energy property
+a trial run at that step over the whole interval confirmed it: energy drifted by at most 4.14e-12 (relative), within the 1.00e-9 the tolerance asks
+took 590 fixed steps of at most 53523 s
+energy drifted by at most 4.1e-12 (relative)
+pendulum period: 2.006 ± 0.007 s

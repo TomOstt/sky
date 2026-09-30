@@ -66,8 +66,7 @@ pub(crate) fn rewrite_function(
     // values but never changes what an existing value is, so the table
     // stays valid for every segment.
     let facts = exact::analyze(func);
-    for b in 0..func.blocks.len() {
-        let block = BlockId(b as u32);
+    for block in reachable_blocks(func) {
         // A `fused` body is opaque: its `neg` means `0 - x` (see `OpKind::Fused`).
         let owner = func.block(block).parent.and_then(|r| func.region(r).parent);
         if owner.is_some_and(|o| func.op(o).kind == OpKind::Fused) {
@@ -88,10 +87,35 @@ pub(crate) fn rewrite_function(
     (rewrites, reports)
 }
 
+/// The blocks of `func` that its body reaches, in arena order. The arena also
+/// holds blocks no region owns any more: `fold` inlines the taken arm of an
+/// `if` by moving its operations into the parent block, and leaves the arm's
+/// block behind still listing them. Rewriting such a block would rewrite the
+/// live operations through a list nobody reads, and leave the values it made
+/// undefined.
+fn reachable_blocks(func: &Function) -> Vec<BlockId> {
+    let mut seen = vec![false; func.blocks.len()];
+    let mut stack = vec![func.body];
+    while let Some(r) = stack.pop() {
+        for &b in &func.region(r).blocks {
+            if std::mem::replace(&mut seen[b.index()], true) {
+                continue;
+            }
+            for &o in &func.block(b).ops {
+                stack.extend(func.op(o).regions.iter().copied());
+            }
+        }
+    }
+    (0..func.blocks.len())
+        .filter(|&i| seen[i])
+        .map(|i| BlockId(i as u32))
+        .collect()
+}
+
 fn use_counts(func: &Function) -> Vec<u32> {
     let mut uses = vec![0u32; func.values.len()];
-    for block in &func.blocks {
-        for op in &block.ops {
+    for block in reachable_blocks(func) {
+        for op in &func.block(block).ops {
             for v in &func.op(*op).operands {
                 if let Some(n) = uses.get_mut(v.index()) {
                     *n += 1;
@@ -220,6 +244,10 @@ struct Staged {
     operands: Vec<Src>,
     ty: NumberType,
     span: Span,
+    /// The source spans of the operands, when the extracted node is one of
+    /// the program's own (same operation on the same operand classes): where
+    /// the original read them. Empty when unknown (a node a rule made).
+    operand_spans: Vec<Span>,
     class: Id,
     /// The block position of the root this op is emitted before.
     place: usize,
@@ -284,6 +312,9 @@ fn rewrite_segment(
     let mut leaf_rec: HashMap<ValueId, Id> = HashMap::new();
     let mut internal: HashMap<ValueId, u32> = HashMap::new();
     let mut fallible_count = 0usize;
+    // Per node of `expr` made from an operation: the spans that operation
+    // recorded for its operands.
+    let mut operand_spans_of: HashMap<Id, Vec<Span>> = HashMap::new();
 
     for (_, id) in &exprs {
         let op = func.op(*id).clone();
@@ -389,6 +420,9 @@ fn rewrite_segment(
             node_facts,
             fallible,
         );
+        if !op.operand_spans.is_empty() && op.operand_spans.len() == op.operands.len() {
+            operand_spans_of.insert(r, op.operand_spans.clone());
+        }
         rec_of_value.insert(op.results[0], r);
     }
 
@@ -470,6 +504,20 @@ fn rewrite_segment(
         }
     }
 
+    // Likewise the operand spans of the program's own nodes, by canonical
+    // node (the first one added wins, as for the span).
+    let mut node_operand_spans: HashMap<SkyNode, Vec<Span>> = HashMap::new();
+    for (i, node) in expr.as_ref().iter().enumerate() {
+        if let Some(spans) = operand_spans_of.get(&Id::from(i)) {
+            let canon = node
+                .clone()
+                .map_children(|c| eg.find(eg_of[usize::from(c)]));
+            node_operand_spans
+                .entry(canon)
+                .or_insert_with(|| spans.clone());
+        }
+    }
+
     let mut staged: Vec<Staged> = Vec::new();
     let mut memo: HashMap<Id, Src> = HashMap::new();
     let mut root_srcs: Vec<(OpId, Src)> = Vec::new();
@@ -480,6 +528,7 @@ fn rewrite_segment(
             eg,
             &extractor,
             &node_spans,
+            &node_operand_spans,
             &leaf_values,
             &mut staged,
             &mut memo,
@@ -591,6 +640,12 @@ fn rewrite_segment(
             results: vec![value],
             regions: Vec::new(),
             span: s.span,
+            // An extracted node that is one of the program's own keeps where
+            // its operands were read; one a rule made has no such place
+            // (the e-class merges expressions that read their operands in
+            // different places): unknown, and a diagnostic points at the
+            // operation's own span.
+            operand_spans: s.operand_spans.clone(),
             parent: block,
         });
         func.values.push(ValueData {
@@ -673,6 +728,7 @@ fn resolve(
     eg: &Graph,
     extractor: &Extractor<'_, CostModel, SkyNode, SkyAnalysis>,
     node_spans: &HashMap<SkyNode, (u64, Span)>,
+    node_operand_spans: &HashMap<SkyNode, Vec<Span>>,
     leaf_values: &[ValueId],
     staged: &mut Vec<Staged>,
     memo: &mut HashMap<Id, Src>,
@@ -736,11 +792,17 @@ fn resolve(
             .iter()
             .map(|k| memo.get(&eg.find(*k)).copied())
             .collect::<Option<_>>()?;
+        let operand_spans = node_operand_spans
+            .get(&node)
+            .filter(|s| s.len() == operands.len())
+            .cloned()
+            .unwrap_or_default();
         staged.push(Staged {
             kind,
             operands,
             ty,
             span,
+            operand_spans,
             class: c,
             place,
         });

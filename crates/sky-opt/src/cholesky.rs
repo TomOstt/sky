@@ -109,8 +109,15 @@ fn rewrite_matmul(f: &mut Function, id: OpId) -> Option<Rewrite> {
 
     // Rewrite in place; the result value keeps its identity.
     let span = op.span.join(inv.span);
+    // `A` is read where the inverse read it and `b` where the product did
+    // (when both operations know their operands' spans; else neither does).
+    let operand_spans = match (&op.operand_spans[..], &inv.operand_spans[..]) {
+        (&[_, b_span], &[a_span]) => vec![a_span, b_span],
+        _ => Vec::new(),
+    };
     {
         let data = &mut f.ops[id.index()];
+        data.operand_spans = operand_spans;
         data.kind = OpKind::Solve {
             method: SolveMethod::Cholesky,
         };

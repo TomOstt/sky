@@ -1,0 +1,19 @@
+crates/sky-ast/tests/ui/err_solve_header.sky:1:19: error: expected `from`, found integer literal `0`
+  |
+1 | sol = solve orbit 0 s to 1 yr
+  |                   ^
+  |             ----- after this
+  = help: the time span starts with `from`: `solve orbit from 0 s to 1 yr`
+
+crates/sky-ast/tests/ui/err_solve_header.sky:2:43: error: expected `=` after `r`, found integer literal `1`
+  |
+2 | sol = solve orbit from 0 s to 1 yr with r 1
+  |                                           ^
+  |                                         - the state variable
+  = help: give each state variable its initial value: `with x = 1 m`
+
+crates/sky-ast/tests/ui/err_solve_header.sky:4:5: error: unknown `solve` option `tol`
+  |
+4 |     tol 1
+  |     ^^^
+  = help: the options are `tolerance 1e-9` and `conserve energy = <expression>`

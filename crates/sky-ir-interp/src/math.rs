@@ -8,10 +8,9 @@ use sky_ir::MathFn;
 
 type R<T> = Result<T, RuntimeError>;
 
-/// `f(args)`; `args` has `f.arity()` entries (the caller checks). SIR ops
-/// carry one span, so it stands for each argument's too.
-pub(crate) fn eval(f: MathFn, args: &[&Value], span: Span) -> R<Value> {
+/// `f(args)`; `args` has `f.arity()` entries (the caller checks), `span` is
+/// the call's and `spans` the arguments'.
+pub(crate) fn eval(f: MathFn, args: &[&Value], span: Span, spans: &[Span]) -> R<Value> {
     let owned: Vec<Value> = args.iter().map(|v| (*v).clone()).collect();
-    let spans = vec![span; owned.len()];
-    sky_interp::math::apply(f, &owned, span, &spans)
+    sky_interp::math::apply(f, &owned, span, spans)
 }

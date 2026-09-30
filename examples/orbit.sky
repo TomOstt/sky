@@ -1,0 +1,31 @@
+# Phase 3 in one script: an orbit declares its tolerance and the quantity
+# it conserves, and Sky picks the integrator and says why.
+# Run it with `sky run examples/orbit.sky`; the expected output is in
+# `orbit.out` next to it.
+
+GM = 1.327e20 m^3/s^2                  # the Sun's gravitational parameter
+
+# The potential energy per unit mass; the force is its gradient.
+def U(p: Vector[2] m) -> J/kg:
+    requires p @ p > 0 m^2, "the orbit must not pass through the Sun"
+    return -GM / sqrt(p @ p)
+
+equation orbit(t: s):
+    r: Vector[2] m
+    v: Vector[2] m/s
+    r' = v
+    v' = -grad(U)(r)                   # dimension-checked: an acceleration
+
+sol = solve orbit from 0 s to 1 yr with r = [1 AU, 0 m], v = [0 m/s, 29.78 km/s]:
+    tolerance 1e-9
+    conserve energy = 0.5 * norm(v)^2 + U(r)
+
+assert norm(sol.r) > 0.9 AU, "Earth stays near 1 AU"
+print("after one year, Earth is", round(norm(sol.r - [1 AU, 0 m]) / (1 km)), "km from where it started")
+print(explain(sol))
+
+# A measured quantity carries its uncertainty through the arithmetic.
+L = 1.000 ± 0.005 m
+g = 9.81 ± 0.05 m/s^2
+T = 2 * π * sqrt(L / g)
+print("pendulum period:", T)

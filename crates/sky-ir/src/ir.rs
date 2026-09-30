@@ -240,8 +240,49 @@ pub struct OpData {
     /// operations joins their spans, so diagnostics and `--explain` keep
     /// pointing at the user's code.
     pub span: Span,
+    /// The Sky source of each operand at this use: `operand_spans[i]` is the
+    /// expression that produced `operands[i]`, where the operation reads it
+    /// (`b` in `a / b`, `i` in `v[i]`), which is not the span of the value's
+    /// definition (`i` was bound elsewhere). A run-time error labels these
+    /// (`this is zero`, `valid indices are 0 to 2`), as the tree-walker does.
+    ///
+    /// **Empty means unknown**, and the diagnostic falls back to [`Self::span`];
+    /// otherwise it is one span per operand ([`Self::operand_span`]). `slice`
+    /// also has one span per axis after the operands' (the whole item,
+    /// `1:3`, which has no operand when it is `:`), see
+    /// [`OpData::expected_operand_spans`]. A pass that merges or rewrites
+    /// operations keeps the spans of the operands that survive, joins where
+    /// it merges, or leaves the field empty; the verifier checks the length.
+    pub operand_spans: Vec<Span>,
     /// The block the operation is in.
     pub parent: BlockId,
+}
+
+impl OpData {
+    /// The span of operand `i` at the use, or the operation's own span if it
+    /// is unknown.
+    pub fn operand_span(&self, i: usize) -> Span {
+        self.operand_spans.get(i).copied().unwrap_or(self.span)
+    }
+
+    /// How many spans a non-empty [`Self::operand_spans`] has: one per
+    /// operand, and for `slice` one more per axis.
+    pub fn expected_operand_spans(&self) -> usize {
+        self.operands.len()
+            + match &self.kind {
+                OpKind::Slice { axes } => axes.len(),
+                _ => 0,
+            }
+    }
+
+    /// The span of the whole item of axis `k` of a `slice` (`1:3`), or the
+    /// operation's own span if it is unknown.
+    pub fn axis_span(&self, k: usize) -> Span {
+        self.operand_spans
+            .get(self.operands.len() + k)
+            .copied()
+            .unwrap_or(self.span)
+    }
 }
 
 #[derive(Clone, PartialEq, Debug, Default)]

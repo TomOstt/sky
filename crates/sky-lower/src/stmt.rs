@@ -216,7 +216,7 @@ impl Lower<'_> {
                 op,
                 value,
                 ..
-            } => self.compound(s.span, id, *op, value),
+            } => self.compound(id, *op, value),
             StmtKind::CompoundAssign { .. } => Err(write_through(s.span)),
             StmtKind::If {
                 branches,
@@ -230,7 +230,24 @@ impl Lower<'_> {
                 name, params, body, ..
             } => self.lower_def(name, params, body, s.span),
             StmtKind::Return(value) => self.return_stmt(s.span, value.as_ref()),
+            StmtKind::Assert {
+                kind,
+                cond,
+                message,
+            } => self.assert_stmt(*kind, cond, *message),
+            StmtKind::Accuracy { name, tolerance } => {
+                self.accuracy(s, name, tolerance);
+                Ok(())
+            }
             StmtKind::Pass => Ok(()),
+            // Differential equations run on the tree-walker only: the
+            // solvers (`sky-ode`) call back into the evaluator for every
+            // right-hand side, and SIR has no such operation yet.
+            StmtKind::Equation(_) | StmtKind::Solve(_) => Err(LowerError::new(
+                "differential equations are not supported by SIR yet",
+                s.span,
+            )
+            .with_note("`equation` and `solve` run on the tree-walking interpreter (`--engine=ast`, or `--engine=auto`, which falls back to it)")),
             StmtKind::Break => {
                 let d = self.st.loops;
                 if d == 0 {
@@ -267,7 +284,7 @@ impl Lower<'_> {
     }
 
     /// `x op= value`: `x op value`, rebound to `x`.
-    fn compound(&mut self, span: Span, id: &Ident, op: CompoundOp, value: &Expr) -> R<()> {
+    fn compound(&mut self, id: &Ident, op: CompoundOp, value: &Expr) -> R<()> {
         let name = self.text(id.span);
         let cur = match self.st.scope.get(name) {
             Some(v) => *v,
@@ -294,7 +311,10 @@ impl Lower<'_> {
             Some(t @ (Ty::Value(_) | Ty::Bool)) => crate::ctx::map_ty(&t).unwrap_or(Type::Unknown),
             _ => self.st.b.ty(cur).clone(),
         };
-        let v = self.binary_with(op.binary(), cur, value, ty, span)?;
+        // The tree-walker's spans: `x op= v` is `x` and `v` joined, with
+        // `x` and `v` as the operands.
+        let whole = id.span.join(value.span);
+        let v = self.binary_with(op.binary(), (cur, id.span), value, ty, whole)?;
         self.bind(name, v);
         Ok(())
     }

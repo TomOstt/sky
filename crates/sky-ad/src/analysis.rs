@@ -98,6 +98,26 @@ fn block(f: &Function, b: BlockId, active: &mut [bool], changed: &mut bool) {
                     }
                 }
             }
+            OpKind::Fused => {
+                // The body's arguments are its operands' entries, and the
+                // result is active if the yielded value is.
+                let Some(&body) = op.regions.first().and_then(|r| f.region(*r).blocks.first())
+                else {
+                    continue;
+                };
+                for (arg, operand) in f.block(body).args.iter().zip(&op.operands) {
+                    if active[operand.index()] {
+                        set(f, active, *arg, changed);
+                    }
+                }
+                block(f, body, active, changed);
+                let yielded = terminator_operands(f, body);
+                if yielded.first().is_some_and(|v| active[v.index()]) {
+                    for r in &op.results {
+                        set(f, active, *r, changed);
+                    }
+                }
+            }
             OpKind::Yield | OpKind::Condition | OpKind::Return => {}
             _ => {
                 if op.operands.iter().any(|v| active[v.index()]) {

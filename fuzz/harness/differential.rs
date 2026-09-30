@@ -19,11 +19,17 @@
 //!    must end in the resource-limit error in both engines. Run-time
 //!    failures (division by zero, overflow, math domain errors) are
 //!    generated on purpose: how often depends on a per-program "risk".
+//!    Contracts are generated too (`assert` statements, and `requires` and
+//!    `ensures` lines on functions), mostly conditions that hold so the
+//!    program goes on, sometimes one that fails, whose message (the values of
+//!    its names) and span the engines must agree on.
 //!
 //! 2. [`check_source`] is the oracle. It lexes, parses and checks the source
 //!    (all must succeed: a rejection is a generator bug), lowers it, verifies
 //!    the SIR, runs the AST interpreter and the SIR interpreter, and requires
-//!    the same stdout and the same error message (or both succeed). Then it
+//!    the same stdout and the same error, compared as the whole rendered
+//!    diagnostic (message, spans, labels, secondary labels, notes; the SIR
+//!    operations carry the spans of their operands), or both succeed. Then it
 //!    prints the SIR, parses the text back, requires the result to equal
 //!    `canonicalize(m)`, verifies it, and runs it again for the same result.
 //!    The two resource-limit errors compare as one, exactly as in the
@@ -414,12 +420,15 @@ const GATE_SIR_TEXT_MATH: bool = false;
 /// Bool-returning functions in such places.
 const GATE_NON_BOOL_OPERAND: bool = false;
 
-/// `unary_plus_of_an_unknown_non_number_is_not_checked_in_sir`: `+x` is lowered
-/// as `x`, so where `x` is a value the checker cannot type (an unannotated
-/// parameter) and is not a number, `sky run` stops with "`+` needs a number,
-/// found a Bool" and SIR goes on (and fails later, or never). The generator
-/// writes no unary `+` inside a function with unannotated parameters.
-const GATE_UNARY_PLUS_UNKNOWN: bool = true;
+/// `a_unary_plus_of_an_unknown_non_number_stops_at_the_plus` (and
+/// `unary_plus_of_an_unknown_non_number_is_checked_in_sir`): fixed. `+x` was
+/// lowered as `x`, so where `x` is a value the checker cannot type (an
+/// unannotated parameter) and is not a number, `sky run` stopped with "`+`
+/// needs a number, found a Bool" and SIR went on (and failed later, or
+/// never); lowering now emits `expect.number` for such an operand. With the
+/// gate on, the generator writes no unary `+` inside a function with
+/// unannotated parameters.
+const GATE_UNARY_PLUS_UNKNOWN: bool = false;
 
 const MATH_FNS: &[&str] = &[
     "sqrt", "cbrt", "abs", "exp", "log", "log10", "log2", "sin", "cos", "tan", "asin", "acos",
@@ -1311,6 +1320,7 @@ impl Gen<'_> {
             }, // 11 probe
             // 12 an input declaration: the run ends there, so it is rare
             if self.ind == 0 && !self.in_fn { 1 } else { 0 },
+            2, // 13 an assertion
         ];
         match self.c.weighted(&w) {
             0 => {
@@ -1351,9 +1361,116 @@ impl Gen<'_> {
                 self.input_declaration();
                 Exit::Falls
             }
+            13 => {
+                self.assert_stmt();
+                Exit::Falls
+            }
             _ => {
                 self.poly_probe();
                 Exit::Falls
+            }
+        }
+    }
+
+    /// A condition for `assert`, `requires` or `ensures`. Mostly one that
+    /// holds whatever the values are (`v == v`), so the program goes on;
+    /// often a comparison of the constants the `contracts` pass can decide;
+    /// sometimes a random Bool expression, which may fail (or fail to
+    /// compute); rarely one that is false. A quarter of them go through the
+    /// identity function, so the checker cannot type the condition and the
+    /// engines must check it at run time.
+    fn contract_cond(&mut self, depth: u32) -> String {
+        let vars: Vec<(String, Ty)> = self.vars.iter().map(|v| (v.name.clone(), v.ty)).collect();
+        let cond = match self.c.weighted(&[40, 16, 14 + self.risk, 2]) {
+            0 if !vars.is_empty() => {
+                let (n, ty) = self.c.pick(&vars).clone();
+                match ty {
+                    Ty::Num(_) => {
+                        let form = *self.c.pick(&[
+                            "{0} == {0}",
+                            "{0} <= {0}",
+                            "{0} >= {0}",
+                            "not {0} != {0}",
+                        ]);
+                        form.replace("{0}", &n)
+                    }
+                    Ty::Bool | Ty::Str => format!("{n} == {n}"),
+                }
+            }
+            0 | 1 => {
+                let d = self.rand_dim();
+                let (a, b) = (self.positive_literal(d).s, self.positive_literal(d).s);
+                // The same literal twice is equal; two may or may not be ordered.
+                match self.c.below(4) {
+                    0 => format!("{a} == {a}"),
+                    1 => format!("{a} <= {a}"),
+                    2 => "true".to_string(),
+                    _ => format!("{a} != {b} or {a} == {b}"),
+                }
+            }
+            2 => self.boolean(depth).s,
+            _ => "1 > 2".to_string(),
+        };
+        match &self.unknown {
+            Some(u) if self.c.chance(25) => {
+                if self.c.chance(8) {
+                    // Not a Bool: the same run-time error in both engines.
+                    format!("{u}(1)")
+                } else {
+                    format!("{u}({cond})")
+                }
+            }
+            _ => cond,
+        }
+    }
+
+    /// `, "message"` for a contract, one time in three.
+    fn contract_message(&mut self) -> String {
+        if self.c.chance(33) {
+            let m = *self.c.pick(&[
+                "\"invariant\"",
+                "\"energy must be positive\"",
+                "\"a longer message, with: punctuation (and parentheses)\"",
+                "\"say \\\"hi\\\"\"",
+            ]);
+            format!(", {m}")
+        } else {
+            String::new()
+        }
+    }
+
+    /// `assert cond`, with a message sometimes.
+    fn assert_stmt(&mut self) {
+        let cond = self.contract_cond(2);
+        let message = self.contract_message();
+        self.line(&format!("assert {cond}{message}"));
+    }
+
+    /// The `requires` and `ensures` lines of the function being generated,
+    /// right after its `def` line: the parameters and the module's names are
+    /// in scope, and `result` (the returned value) in an `ensures`.
+    fn function_contracts(&mut self, ret: Option<Ty>) {
+        for _ in 0..1 + self.c.below(3) {
+            if self.c.chance(55) {
+                let cond = self.contract_cond(1);
+                let message = self.contract_message();
+                self.line(&format!("requires {cond}{message}"));
+            } else {
+                let had = self.vars.len();
+                if let Some(ty) = ret {
+                    self.vars.push(Var {
+                        name: "result".to_string(),
+                        ty,
+                        assign: false,
+                        update: false,
+                        module: false,
+                        retype: false,
+                    });
+                }
+                let cond = self.contract_cond(1);
+                let message = self.contract_message();
+                self.vars.truncate(had);
+                self.line(&format!("ensures {cond}{message}"));
             }
         }
     }
@@ -1864,6 +1981,11 @@ impl Gen<'_> {
         self.mult = 1;
         self.weight = 0;
         self.ind = 1;
+        // A contract cannot call the function it belongs to (`rec` is not
+        // set yet, and `cur` keeps the others from it).
+        if self.c.chance(15) {
+            self.function_contracts(ret);
+        }
         if recursive {
             self.rec = Some(Rec {
                 idx,
@@ -2079,38 +2201,96 @@ fn known_issue(msg: &str) -> Option<&'static str> {
         .map(|(id, _)| *id)
 }
 
+/// A run-time error: its message, and the diagnostic as `sky run` prints it
+/// (rendered against the program, so a span, a label or a note that differs
+/// is a difference).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Failure {
+    pub message: String,
+    pub rendered: String,
+}
+
+impl Failure {
+    fn new(d: &sky_diag::Diagnostic, message: &str, src: &str) -> Failure {
+        Failure {
+            message: message.to_string(),
+            rendered: d.render_to_string(&sky_diag::SourceFile::new("program.sky", src)),
+        }
+    }
+}
+
+/// A run's result for a report: `Ok`, or the rendered diagnostic.
+fn shown(r: &Result<(), Failure>) -> String {
+    match r {
+        Ok(()) => "ok".to_string(),
+        Err(f) => f.rendered.clone(),
+    }
+}
+
 /// The two resource-limit errors compare as one: which trips first depends
-/// on each interpreter's stack use per call, not on the program.
-fn normalized(r: &Result<(), String>) -> Result<(), String> {
-    r.clone().map_err(|e| {
-        if e.starts_with("recursion is too deep")
-            || e == "the program nests too deeply for the interpreter"
+/// on each interpreter's stack use per call, not on the program. Any other
+/// error compares as the whole rendered diagnostic.
+fn normalized(r: &Result<(), Failure>) -> Result<(), String> {
+    r.clone().map_err(|f| {
+        if f.message.starts_with("recursion is too deep")
+            || f.message == "the program nests too deeply for the interpreter"
         {
             "<resource limit>".to_string()
         } else {
-            e
+            f.rendered
         }
     })
 }
 
+/// Whether `msg` is the failure of a contract (spec "Contracts"): a false
+/// condition, or one that is not a Bool.
+fn is_contract_failure(msg: &str) -> bool {
+    msg.starts_with("assertion failed")
+        || msg.starts_with("precondition of ")
+        || msg.starts_with("postcondition of ")
+        || ["assert", "requires", "ensures"]
+            .iter()
+            .any(|k| msg.starts_with(&format!("`{k}` needs a Bool condition")))
+}
+
+/// Where the engines stop is part of the failure of a contract: both point
+/// at the condition. (The other errors' spans are the tests' business.)
+fn check_contract_span(ast: &sky_ast::Module, src: &str, m: &sky_ir::Module) -> Result<(), String> {
+    let mut env = sky_interp::RuntimeEnv::with_prelude();
+    let walker = sky_interp::run_module(ast, src, &mut env, &mut Vec::new())
+        .err()
+        .map(|e| (e.message.clone(), e.span));
+    let sir = sky_ir_interp::run(m, &mut Vec::new())
+        .err()
+        .map(|e| (e.message.clone(), e.span));
+    if walker != sir {
+        return Err(format!(
+            "a contract failure differs in message or span\nsky run: {walker:?}\nSIR:     {sir:?}\n--- SIR text ---\n{}",
+            sky_ir::print(m)
+        ));
+    }
+    Ok(())
+}
+
 /// What the AST interpreter (`sky run`) does.
-fn interpret(ast: &sky_ast::Module, src: &str) -> (String, Result<(), String>) {
+fn interpret(ast: &sky_ast::Module, src: &str) -> (String, Result<(), Failure>) {
     let mut env = sky_interp::RuntimeEnv::with_prelude();
     let mut out = Vec::new();
     let r = sky_interp::run_module(ast, src, &mut env, &mut out);
     (
         String::from_utf8_lossy(&out).into_owned(),
-        r.map(|_| ()).map_err(|e| e.message.clone()),
+        r.map(|_| ())
+            .map_err(|e| Failure::new(&e.to_diagnostic(), &e.message, src)),
     )
 }
 
 /// What the SIR reference interpreter does with `m`.
-fn run_sir(m: &sky_ir::Module) -> (String, Result<(), String>) {
+fn run_sir(m: &sky_ir::Module, src: &str) -> (String, Result<(), Failure>) {
     let mut out = Vec::new();
     let r = sky_ir_interp::run(m, &mut out);
     (
         String::from_utf8_lossy(&out).into_owned(),
-        r.map_err(|e| e.message.clone()),
+        r.map_err(|e| Failure::new(&e.to_diagnostic(), &e.message, src)),
     )
 }
 
@@ -2172,17 +2352,26 @@ fn check_inner(src: &str, strict: bool) -> Result<Outcome, String> {
     }
 
     let (want_out, want) = interpret(&ast, src);
-    let (got_out, got) = run_sir(&m);
+    let (got_out, got) = run_sir(&m, src);
+    if let Err(msg) = &want {
+        if is_contract_failure(&msg.message) {
+            check_contract_span(&ast, src, &m)?;
+        }
+    }
     let dump = |m: &sky_ir::Module| sky_ir::print(m);
     if got_out != want_out {
         return Err(format!(
-            "stdout differs\n--- sky run ---\n{want_out}(error: {want:?})\n--- SIR ---\n{got_out}(error: {got:?})\n--- SIR text ---\n{}",
+            "stdout differs\n--- sky run ---\n{want_out}(error: {})\n--- SIR ---\n{got_out}(error: {})\n--- SIR text ---\n{}",
+            shown(&want),
+            shown(&got),
             dump(&m)
         ));
     }
     if normalized(&got) != normalized(&want) {
         return Err(format!(
-            "the error differs\nsky run: {want:?}\nSIR:     {got:?}\nstdout (both):\n{want_out}\n--- SIR text ---\n{}",
+            "the error differs\n--- sky run ---\n{}--- SIR ---\n{}--- stdout (both) ---\n{want_out}\n--- SIR text ---\n{}",
+            shown(&want),
+            shown(&got),
             dump(&m)
         ));
     }
@@ -2191,7 +2380,7 @@ fn check_inner(src: &str, strict: bool) -> Result<Outcome, String> {
     let outcome = |known| Outcome {
         failed: want.is_err(),
         limit: normalized(&want) == Err("<resource limit>".to_string()),
-        error: want.clone().err(),
+        error: want.clone().err().map(|f| f.message),
         printed: want_out.len(),
         known,
     };
@@ -2221,10 +2410,12 @@ fn check_inner(src: &str, strict: bool) -> Result<Outcome, String> {
         let ms: Vec<&str> = errors.iter().map(|e| e.message.as_str()).collect();
         return Err(format!("the reparsed SIR does not verify: {ms:?}\n{text}"));
     }
-    let (back_out, back_r) = run_sir(&back);
+    let (back_out, back_r) = run_sir(&back, src);
     if back_out != got_out || normalized(&back_r) != normalized(&got) {
         return Err(format!(
-            "the reparsed SIR runs differently\nbefore: {got_out:?} {got:?}\nafter:  {back_out:?} {back_r:?}\n--- SIR text ---\n{text}"
+            "the reparsed SIR runs differently\nbefore: {got_out:?} {}\nafter:  {back_out:?} {}\n--- SIR text ---\n{text}",
+            shown(&got),
+            shown(&back_r)
         ));
     }
 

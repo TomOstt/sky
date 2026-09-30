@@ -61,6 +61,9 @@ pub(crate) struct FnState {
     pub(crate) flags: bool,
     /// Whether the function has a `<retval>` slot.
     pub(crate) ret_value: bool,
+    /// The function's name in the source (`None` for the file), which a
+    /// `requires` or `ensures` names in its failure message.
+    pub(crate) fn_name: Option<String>,
 }
 
 /// What a call needs to know about a lowered (or being lowered) function.
@@ -106,9 +109,12 @@ pub(crate) struct Lower<'a> {
     /// run differently from `sky run`'s tree walker, instead of lowering it
     /// faithfully as far as SIR can say.
     pub(crate) for_run: bool,
+    /// The `accuracy` declarations met so far (see `accuracy.rs`).
+    pub(crate) goals: Vec<sky_ir::roundoff::Goal>,
 }
 
-/// A checker type as a SIR type. `None` for a function value.
+/// A checker type as a SIR type. `None` for a function value (and for an
+/// equation or solution, which SIR does not have).
 pub(crate) fn map_ty(t: &Ty) -> Option<Type> {
     match t {
         Ty::Value(v) => Some(Type::Number(NumberType {
@@ -119,7 +125,7 @@ pub(crate) fn map_ty(t: &Ty) -> Option<Type> {
         })),
         Ty::Bool => Some(Type::Bool),
         Ty::Unknown => Some(Type::Unknown),
-        Ty::Func(_) => None,
+        Ty::Func(_) | Ty::Ode(_) => None,
     }
 }
 
@@ -181,6 +187,21 @@ impl<'a> Lower<'a> {
         span: Span,
     ) -> ValueId {
         self.st.b.op1(kind, operands, ty, span)
+    }
+
+    /// [`Self::op1`] with the source span of each operand at its use (the
+    /// spans of the expressions that produced `operands`, in order), which
+    /// the SIR interpreter's diagnostics point at, as `sky run`'s do (`slice`
+    /// adds the span of each axis's item; the verifier checks the count).
+    pub(crate) fn op1s(
+        &mut self,
+        kind: OpKind,
+        operands: Vec<ValueId>,
+        operand_spans: Vec<Span>,
+        ty: Type,
+        span: Span,
+    ) -> ValueId {
+        self.st.b.op1_spans(kind, operands, operand_spans, ty, span)
     }
 
     pub(crate) fn const_bool(&mut self, value: bool, span: Span) -> ValueId {

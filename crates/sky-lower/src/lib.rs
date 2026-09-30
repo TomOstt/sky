@@ -88,6 +88,15 @@
 //!   It fails with `sky run`'s message on `sky run`'s span, and it covers the
 //!   operand that is only yielded (the last of an `and`/`or`), which no `if`
 //!   tests. A typed Bool gets none.
+//! * The operand of a unary `+`, and the argument of `inv(...)`, that the
+//!   checker could not type get an `expect.number[pos|inv]` likewise (`+x`
+//!   is otherwise just `x`; `inv(x)` is worded with its own spelling).
+//! * An operation that reads operands records where, in the source
+//!   (`OpData::operand_spans`), with the spans the tree-walker uses for the
+//!   same operands: `b` of `a / b`, `x` of `-x`, `i` of `v[i]` (and the
+//!   whole `1:3` item of a slice), the entries of an array literal, the
+//!   arguments of a math function. The SIR interpreter labels its errors
+//!   with them, so they are the tree-walker's.
 //! * `for i in range(a, b, s)` is that `while` over a hidden carried index
 //!   (`<i1>`, `<i2>`, ...) that the body's first operations copy into `i`
 //!   and advance; see `for_loop.rs`. `for x in v` over an array is a
@@ -212,9 +221,11 @@
 
 #![forbid(unsafe_code)]
 
+mod accuracy;
 mod analysis;
 mod array;
 mod build;
+mod contract;
 mod ctx;
 mod derivative;
 mod expr;
@@ -305,7 +316,35 @@ pub fn lower_with_defs(
     src: &str,
     checked: &Checked,
 ) -> Result<(Module, HashMap<Span, String>), LowerError> {
-    lower_impl(module, src, checked, false)
+    lower_impl(module, src, checked, false, false).map(|(m, d, _)| (m, d))
+}
+
+/// [`lower_with_defs`] for the `def`s alone: `<main>` is empty, and the
+/// file's other top-level statements are not lowered. A function reads
+/// module names through its trailing parameters (see "Globals"), so it
+/// needs none of them to be lowered, only their types, which the checker
+/// gives. This is what `sky run` differentiates (`sky-derive`): the tree
+/// walker supplies the module's values, so a derivative works in a program
+/// whose top level SIR cannot express yet (`equation`, `solve`, `±`), as
+/// long as the functions it differentiates can be.
+pub fn lower_defs(
+    module: &Ast,
+    src: &str,
+    checked: &Checked,
+) -> Result<(Module, HashMap<Span, String>), LowerError> {
+    lower_impl(module, src, checked, false, true).map(|(m, d, _)| (m, d))
+}
+
+/// [`lower`], and the `accuracy` declarations of the program as goals for
+/// the roundoff analysis (`sky_ir::roundoff`). The goals refer to the
+/// module returned, as lowering produced it: run the analysis on it before
+/// any pass.
+pub fn lower_with_accuracy(
+    module: &Ast,
+    src: &str,
+    checked: &Checked,
+) -> Result<(Module, Vec<sky_ir::roundoff::Goal>), LowerError> {
+    lower_impl(module, src, checked, false, false).map(|(m, _, g)| (m, g))
 }
 
 /// [`lower`] for a module that is about to be executed in place of the tree
@@ -318,15 +357,20 @@ pub fn lower_with_defs(
 /// Tools that only look at the IR (`sky check --emit-ir`) keep using
 /// [`lower`], which lowers such a loop as far as `f64` arithmetic goes.
 pub fn lower_for_run(module: &Ast, src: &str, checked: &Checked) -> Result<Module, LowerError> {
-    lower_impl(module, src, checked, true).map(|(m, _)| m)
+    lower_impl(module, src, checked, true, false).map(|(m, _, _)| m)
 }
+
+/// Everything one lowering produces: the module, which SIR function each
+/// `def` became, and the `accuracy` goals.
+type Lowered = (Module, HashMap<Span, String>, Vec<sky_ir::roundoff::Goal>);
 
 fn lower_impl(
     module: &Ast,
     src: &str,
     checked: &Checked,
     for_run: bool,
-) -> Result<(Module, HashMap<Span, String>), LowerError> {
+    defs_only: bool,
+) -> Result<Lowered, LowerError> {
     let main = FnState {
         b: Builder::new(Module::MAIN.to_string(), module.span),
         scope: Default::default(),
@@ -336,6 +380,7 @@ fn lower_impl(
         is_main: true,
         flags: false,
         ret_value: false,
+        fn_name: None,
     };
     let mut lw = Lower {
         src,
@@ -350,12 +395,17 @@ fn lower_impl(
         stack: Vec::new(),
         derivatives: Vec::new(),
         for_run,
+        goals: Vec::new(),
     };
     lw.collect_defs(&module.stmts);
     lw.collect_module_names(&module.stmts);
     lw.collect_literal_bindings(&module.stmts);
     lw.seed_constants(&module.stmts, module.span);
-    lw.block(&module.stmts, &Needed::new())?;
+    if defs_only {
+        lw.defs_in(&module.stmts)?;
+    } else {
+        lw.block(&module.stmts, &Needed::new())?;
+    }
     lw.st
         .b
         .op(sky_ir::OpKind::Return, Vec::new(), Vec::new(), module.span);
@@ -364,6 +414,7 @@ fn lower_impl(
         mut out,
         derivatives,
         fns,
+        goals,
         ..
     } = lw;
     out.sort_by_key(|(start, _)| *start);
@@ -387,7 +438,7 @@ fn lower_impl(
         .into_iter()
         .map(|(def, info)| (def, info.name))
         .collect();
-    Ok((module, defs))
+    Ok((module, defs, goals))
 }
 
 /// Lexes, parses, checks and lowers `src`: the whole path from source text

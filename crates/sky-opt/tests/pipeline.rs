@@ -1,8 +1,9 @@
-//! The default pipeline (`fold`, `egraph`, `dce`, `fuse`, `cholesky`) must not
+//! The default pipeline (`fold`, `egraph`, `contracts`, `dce`, `fuse`, `cholesky`) must not
 //! change what a program does: lower it, run it in the reference
 //! interpreter, run the pipeline (verified after every pass), run it again,
-//! and the two runs must agree byte for byte on stdout and on the error (its
-//! message and where it happened).
+//! and the two runs must agree byte for byte on stdout and on the error (the
+//! whole rendered diagnostic: message, spans, labels and notes, so the passes
+//! must keep the operands' source spans sensible).
 //!
 //! Programs come from the repository's UI suites (every `ok_*.sky` that
 //! lowers; to make them observable, each top-level `name = ...` is printed at
@@ -24,17 +25,24 @@ struct Outcome {
     stdout: String,
     /// The message and byte range of the runtime error, if the run failed.
     error: Option<(String, u32, u32)>,
+    /// The error's whole diagnostic, rendered against the program.
+    diagnostic: Option<String>,
 }
 
-fn run(m: &Module) -> Outcome {
+fn run(m: &Module, src: &str) -> Outcome {
     sky_ast::with_deep_stack(|| {
         let mut out = Vec::new();
         let result = sky_ir_interp::run(m, &mut out);
         Outcome {
             stdout: String::from_utf8(out).expect("UTF-8 output"),
             error: result
+                .as_ref()
                 .err()
                 .map(|e| (e.message.clone(), e.span.start, e.span.end)),
+            diagnostic: result.err().map(|e| {
+                e.to_diagnostic()
+                    .render_to_string(&sky_diag::SourceFile::new("test.sky", src))
+            }),
         }
     })
 }
@@ -51,9 +59,9 @@ fn optimize(m: &mut Module) -> sky_ir::PipelineReport {
 /// runs agree. Returns the shared outcome and the report.
 fn same_before_and_after(src: &str) -> (Outcome, sky_ir::PipelineReport) {
     let mut m = sky_lower::lower_source(src).unwrap_or_else(|e| panic!("{src}\n{e}"));
-    let before = run(&m);
+    let before = run(&m, src);
     let report = optimize(&mut m);
-    let after = run(&m);
+    let after = run(&m, src);
     assert_eq!(
         after, before,
         "the pipeline changed the behaviour of:\n{src}"
@@ -271,6 +279,117 @@ fn a_fused_kernel_fails_with_the_error_of_the_first_failing_operation() {
     assert!(report.explanations.iter().any(|x| x.rule == "FUSE-001"));
 }
 
+// ----- operand spans: the labels of an error survive the passes -----
+
+/// Each program fails at run time with `label` on an operand's span, before
+/// and after the pipeline, as the same whole diagnostic. The passes fold,
+/// rewrite in the e-graph, fuse and solve; each must keep where an operand
+/// was read.
+#[test]
+fn an_error_keeps_its_operand_labels_through_every_pass() {
+    for (src, label) in [
+        // Plain scalar operations, and operands `fold` turns into constants.
+        ("x = 4\nz = 2 - 2\nprint(x / z)\n", "this is zero"),
+        ("print(1 / (2 - 2))\n", "this is zero"),
+        ("z = 0\nprint((1 + 2) * 3 / (z * 2))\n", "this is zero"),
+        // The e-graph rewrites these (`x * 1`, `x + 0`, `--x`) and extracts
+        // new operations, some of them the program's own.
+        (
+            "def f(a: m, b: m):\n    return (a * 1) / (b * 1)\nprint(f(1 m, 0 m))\n",
+            "this is zero",
+        ),
+        (
+            "def f(a):\n    return sqrt(--a * 1)\nprint(f(0 - 4))\n",
+            "this is negative",
+        ),
+        (
+            "def f(a: m^2, b: m^2):\n    return sqrt(a - b) * 1\nprint(f(1 m^2, 2 m^2))\n",
+            "this is negative",
+        ),
+        // A fused kernel: its body operations keep their own spans.
+        (
+            "a = [1, 2, 3]\nb = [1, 2, 3]\nz = 0\nprint((a + b) / z * 2)\n",
+            "this is zero",
+        ),
+        (
+            "a = [1e200, 2, 3]\nz = 0\nprint((a * 1e200) / z + a)\n",
+            "does not fit in a 64-bit float",
+        ),
+        // Indexing, slicing and linear algebra keep the operands' spans.
+        ("v = [1, 2, 3]\ni = 5\nprint(v[i])\n", "valid indices are 0 to 2"),
+        (
+            "v = [1, 2, 3, 4]\nn = 9\nprint(v[0:n])\n",
+            "this is Vector[4]",
+        ),
+        (
+            "A = [[1, 2], [2, 4]]\nprint(A⁻¹)\n",
+            "this is Matrix[2,2]",
+        ),
+        // `cholesky` joins the inverse and the product into a solve.
+        (
+            "K: PositiveDefinite Matrix[2, 2] = [[4, 1], [1, 3]]\nB = K⁻¹\nf = [1, 2]\nprint((B @ f)[0] > 0)\nS = [[1, 2], [2, 4]]\nprint(S⁻¹)\n",
+            "this is Matrix[2,2]",
+        ),
+    ] {
+        let (o, _) = same_before_and_after(src);
+        let d = o.diagnostic.unwrap_or_else(|| panic!("no error on:\n{src}"));
+        assert!(d.contains(label), "{label:?} is not in\n{d}\nfor:\n{src}");
+    }
+}
+
+// ----- bugs the pipeline fuzz (`fuzz_pipeline.rs`) found, reduced -----
+
+/// `fold` replaced an operation whose result the checker could not type (its
+/// operand is the result of an `if` whose taken arm gave a constant, and the
+/// other arm an unannotated parameter) by a constant of the same, unknown,
+/// type, which the verifier rejects: `sky run --engine=sir` stopped with an
+/// internal error. A constant is typed exactly, so such a result stays.
+#[test]
+fn a_result_the_checker_could_not_type_is_not_folded_to_a_constant() {
+    for (src, stdout) in [
+        (
+            "def f(p):\n    return (3 if true else p)^2\nprint(f(1))\n",
+            "9\n",
+        ),
+        (
+            "def f(p):\n    z = 2 * (3 if true else p)^2\n    return z\nprint(f(1))\n",
+            "18\n",
+        ),
+        (
+            "def f(p):\n    return (3 if true else p) + 1\nprint(f(1))\n",
+            "4\n",
+        ),
+    ] {
+        let (o, _) = same_before_and_after(src);
+        assert_eq!((o.stdout.as_str(), o.error), (stdout, None), "{src}");
+    }
+}
+
+/// `fold` inlines the taken arm of an `if` on a constant, leaving the arm's
+/// block in the arena, still listing the operations that moved. The e-graph
+/// pass rewrote every block of the arena, that one too: it made the new
+/// values for the operations through the list nobody reads, and redirected
+/// the live uses to them, undefined.
+#[test]
+fn the_egraph_leaves_alone_the_block_of_an_if_that_fold_inlined() {
+    let src = [
+        "val2 = 1_0.5 hm^3*t/day^3/K / (abs(k_B) + 0.5 cm^2*g/min^2/kK) * (k_B * 4 s^3*K/m^3) * ((m_e + 3 kg) * 6 mg^-2)",
+        "ω3 = 12 h + 1 s + 6 s / (abs(val2) + 0.5) - 1 m^4*kg^2/s^3/K^2 / (abs(k_B) + 3.14 m^2*kg/s^2/K) / (abs(m_e * 6 m^2/s^2/K) + 3.14 mm^2*kg/h^2/mK)",
+        "def f4(p5: Scalar, π: mg, p6: Scalar):",
+        "    x7 = -4.35e-320 cm*kg^2/cs^2 / (abs(-6 mN) + 1 nm*μg/cs^2)",
+        "    (abs(9) + 3.14)^-(1/2) >= 0",
+        "    x7 = m_e + x7 - (abs(5 Mg^3) + 5 cg^3)^(1/3)",
+        "    if k_B ≤ 100 μm^2*kg/cs^2/kK:",
+        "        x8 = (ω3 - ω3 >= 0 ns or (x7 if 3 mN >= 4e0 hm*μg/yr^2 else 5e-324 cg) ≥ (abs(0.3 kg^(3/2)) + 5 kg^(3/2))^(2/3)) or not (false or 3.14 km/h^2 >= 3 m/s^2)",
+        "f4(1, 2 mg, 3)",
+        "",
+    ]
+    .join("\n");
+    let src = src.as_str();
+    let (o, _) = same_before_and_after(src);
+    assert_eq!(o.error, None);
+}
+
 // ----- exactness: what the analysis lets the passes do -----
 
 const EXACT_SRC: &str = "def halve(x: m) -> m:\n    spare = x / 2\n    return x * 0.5\n\
@@ -381,18 +500,22 @@ fn operations_that_can_still_fail_are_kept_and_keep_failing() {
 // ----- the pipeline and its adapters -----
 
 #[test]
-fn the_default_pipeline_runs_the_five_passes_in_order() {
+fn the_default_pipeline_runs_the_six_passes_in_order() {
     let mut m = sky_lower::lower_source("x = 2 * 3\nprint(x)\n").unwrap();
     let report = default_pipeline().verify_each(true).run(&mut m).unwrap();
     let names: Vec<&str> = report.ran.iter().map(|(n, _)| *n).collect();
-    assert_eq!(names, ["fold", "egraph", "dce", "fuse", "cholesky"]);
+    assert_eq!(
+        names,
+        ["fold", "egraph", "contracts", "dce", "fuse", "cholesky"]
+    );
     assert_eq!(names, DEFAULT_PASSES);
     // fold changed the module (`2 * 3`), dce removed the operands.
     assert!(report.ran[0].1.is_yes());
     assert!(!report.ran[1].1.is_yes());
-    assert!(report.ran[2].1.is_yes());
-    assert!(!report.ran[3].1.is_yes());
+    assert!(!report.ran[2].1.is_yes());
+    assert!(report.ran[3].1.is_yes());
     assert!(!report.ran[4].1.is_yes());
+    assert!(!report.ran[5].1.is_yes());
     // A second run finds nothing left to do.
     let again = default_pipeline().verify_each(true).run(&mut m).unwrap();
     assert!(again.ran.iter().all(|(_, c)| !c.is_yes()), "{again:?}");

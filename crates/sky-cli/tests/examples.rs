@@ -1,5 +1,7 @@
-//! Every `examples/*.sky` runs cleanly on both engines and prints exactly its
-//! `.out` file, so the examples in the README cannot drift from the language.
+//! Every `examples/*.sky` runs cleanly and prints exactly its `.out` file on
+//! the tree-walker and under `--engine=auto`, and on SIR too unless SIR
+//! declines the program with its reason (equations and `±` run on the tree
+//! walker), so the examples in the README cannot drift from the language.
 
 use std::fs;
 use std::path::PathBuf;
@@ -20,7 +22,7 @@ fn examples_print_their_expected_output_on_both_engines() {
         seen += 1;
         let expected = fs::read_to_string(path.with_extension("out"))
             .unwrap_or_else(|e| panic!("{}: missing .out file: {e}", path.display()));
-        for engine in ["ast", "sir"] {
+        for engine in ["ast", "auto", "sir"] {
             let out = Command::new(env!("CARGO_BIN_EXE_sky"))
                 .arg("run")
                 .arg(format!("--engine={engine}"))
@@ -28,6 +30,11 @@ fn examples_print_their_expected_output_on_both_engines() {
                 .output()
                 .expect("run sky");
             let stderr = String::from_utf8_lossy(&out.stderr);
+            if engine == "sir" && stderr.contains(": error: cannot run on SIR: ") {
+                assert_eq!(out.status.code(), Some(1), "{stderr}");
+                assert!(out.stdout.is_empty(), "a declined program prints nothing");
+                continue;
+            }
             assert!(
                 out.status.success() && stderr.is_empty(),
                 "{} on {engine}: exit {:?}\n{stderr}",

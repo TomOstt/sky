@@ -48,6 +48,10 @@ pub enum TokenKind {
     Dot,
     /// `->`
     Arrow,
+    /// `'` directly after a name (`r'`, `r''`): the derivative mark of an
+    /// `equation`. Anywhere else `'` is still an unexpected character (Sky's
+    /// strings use `\"`).
+    Prime,
 
     // Operators.
     Plus,
@@ -67,6 +71,9 @@ pub enum TokenKind {
     Partial,
     /// The glyph `∇` (ASCII spelling is the stdlib function `grad`).
     Nabla,
+    /// `±` or `+/-`: `value ± uncertainty` (spec "Uncertainty"). The ASCII
+    /// `+-` is not this token: it is `Plus` then `Minus`.
+    PlusMinus,
     /// `==`
     Eq,
     /// `!=` or `≠`
@@ -115,6 +122,11 @@ pub enum Kw {
     Equation,
     Solve,
     Field,
+    /// `assert cond`, and the function contracts `requires` and `ensures`
+    /// (spec "Contracts").
+    Assert,
+    Requires,
+    Ensures,
     And,
     Or,
     Not,
@@ -141,6 +153,9 @@ impl Kw {
             "equation" => Kw::Equation,
             "solve" => Kw::Solve,
             "field" => Kw::Field,
+            "assert" => Kw::Assert,
+            "requires" => Kw::Requires,
+            "ensures" => Kw::Ensures,
             "and" => Kw::And,
             "or" => Kw::Or,
             "not" => Kw::Not,
@@ -168,6 +183,9 @@ impl Kw {
             Kw::Equation => "equation",
             Kw::Solve => "solve",
             Kw::Field => "field",
+            Kw::Assert => "assert",
+            Kw::Requires => "requires",
+            Kw::Ensures => "ensures",
             Kw::And => "and",
             Kw::Or => "or",
             Kw::Not => "not",

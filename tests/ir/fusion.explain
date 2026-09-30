@@ -33,7 +33,7 @@ tests/ir/fusion.sky:10:5: note: [PAR-003] this elementwise `sub` over 3 elements
    |
 10 | w = a - d
    |     ^^^^^
-   = note: because 3 elements is under the threshold of 2097152: splitting it across threads costs more than it saves
+   = note: because 3 elements is under the threshold of 262144: splitting it across threads costs more than it saves
 
 tests/ir/fusion.sky:11:5: note: [FUSE-001] `w * 2 + w` is rewritten to `fused(w, 2)`
    |

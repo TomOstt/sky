@@ -30,4 +30,4 @@ tests/ui/types/ok_cholesky_rewrite.sky:11:17: note: [PAR-003] this elementwise `
    |
 11 | w = inv(K⁻¹) @ (f + f)
    |                 ^^^^^
-   = note: because 3 elements is under the threshold of 2097152: splitting it across threads costs more than it saves
+   = note: because 3 elements is under the threshold of 262144: splitting it across threads costs more than it saves

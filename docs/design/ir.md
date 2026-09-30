@@ -361,9 +361,9 @@ Measured with `cargo run --release -p sky-bench -- par` (see the "Benchmarks" se
 
 | threshold | default | what it is |
 |---|---|---|
-| `fused_work` | 4096 element-operations | a 4-operation kernel is split from 1024 elements |
-| `array_elements` | 2097152 | a plain `add` of two arrays is memory-bound: it starts to win only when the arrays are big |
-| `call_cost` | 400 | estimated interpreted operations (a loop counts 100 iterations) a callee must cost |
+| `fused_work` | 4096 element-operations | a 4-operation kernel is split from 1024 elements; 4 threads first win at 1024 to 2048 elements, and are 3.1x faster from 10^4 |
+| `array_elements` | 262144 | a plain `add` of two arrays is memory-bound: 4 threads first win at about 131072 entries (about 2x), and reach about 2.5x on millions |
+| `call_cost` | 400 | estimated interpreted operations (a loop counts 100 iterations) a callee must cost; starting a group costs about 13 microseconds, which is about 85 operations at the interpreter's price per operation, so 400 keeps the overhead under a quarter of a call |
 | `chunk_min` | 512 | fewest elements in a chunk; at most 4 chunks per thread |
 
 `Config::eager` sets every threshold to its minimum; the determinism tests use it so that small programs exercise every parallel path.

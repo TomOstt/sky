@@ -150,7 +150,7 @@ impl Config {
         Config {
             threads,
             fused_work: 4096,
-            array_elements: 2_097_152,
+            array_elements: 262_144,
             call_cost: 400,
             chunk_min: 512,
         }

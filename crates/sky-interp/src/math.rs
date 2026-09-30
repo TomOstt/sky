@@ -101,14 +101,10 @@ pub fn apply_f64(f: MathFn, x: f64, y: f64, whole: Span, first: Span) -> R<f64> 
             .with_label(format!("`{name}` is undefined here"))
             .with_note("Sky numbers never become NaN or inf")
     };
-    let r = match f {
+    match f {
         MathFn::Sqrt if x < 0.0 => {
             return Err(domain("a negative number").with_secondary(first, "this is negative"))
         }
-        MathFn::Sqrt => x.sqrt(),
-        MathFn::Cbrt => x.cbrt(),
-        MathFn::Abs => x.abs(),
-        MathFn::Exp => x.exp(),
         MathFn::Log | MathFn::Log10 | MathFn::Log2 if x <= 0.0 => {
             let what = if x == 0.0 {
                 "zero"
@@ -117,23 +113,52 @@ pub fn apply_f64(f: MathFn, x: f64, y: f64, whole: Span, first: Span) -> R<f64> 
             };
             return Err(domain(what).with_secondary(first, format!("this is {what}")));
         }
+        MathFn::Asin | MathFn::Acos if x.abs() > 1.0 => {
+            return Err(
+                domain("a number outside [-1, 1]").with_secondary(first, "this is outside [-1, 1]")
+            )
+        }
+        MathFn::Atan2 if x == 0.0 && y == 0.0 => {
+            return Err(domain("the zero vector").with_note("the angle of (0, 0) is undefined"))
+        }
+        MathFn::Log1p if x <= -1.0 => {
+            let what = if x == -1.0 { "-1" } else { "a number below -1" };
+            return Err(domain(what).with_secondary(first, format!("this is {what}")));
+        }
+        MathFn::Acosh if x < 1.0 => {
+            return Err(domain("a number below 1").with_secondary(first, "this is below 1"))
+        }
+        MathFn::Atanh if x.abs() >= 1.0 => {
+            return Err(domain("a number outside (-1, 1)")
+                .with_secondary(first, "this is outside (-1, 1)")
+                .with_note("atanh(x) grows without bound as x approaches 1 or -1"))
+        }
+        _ => {}
+    }
+    let r = core_f64(f, x, y);
+    // `+ 0.0` turns `-0.0` into `0.0`.
+    Ok(finite(r, whole)? + 0.0)
+}
+
+/// The value of `f(x, y)` with no domain, finiteness or `-0` handling: what
+/// [`apply_f64`] computes after its checks pass. Native code checks the
+/// domain inline (the same conditions, in the same order) and calls this
+/// for the functions it does not compute inline.
+pub fn core_f64(f: MathFn, x: f64, y: f64) -> f64 {
+    match f {
+        MathFn::Sqrt => x.sqrt(),
+        MathFn::Cbrt => x.cbrt(),
+        MathFn::Abs => x.abs(),
+        MathFn::Exp => x.exp(),
         MathFn::Log => x.ln(),
         MathFn::Log10 => x.log10(),
         MathFn::Log2 => x.log2(),
         MathFn::Sin => x.sin(),
         MathFn::Cos => x.cos(),
         MathFn::Tan => x.tan(),
-        MathFn::Asin | MathFn::Acos if x.abs() > 1.0 => {
-            return Err(
-                domain("a number outside [-1, 1]").with_secondary(first, "this is outside [-1, 1]")
-            )
-        }
         MathFn::Asin => x.asin(),
         MathFn::Acos => x.acos(),
         MathFn::Atan => x.atan(),
-        MathFn::Atan2 if x == 0.0 && y == 0.0 => {
-            return Err(domain("the zero vector").with_note("the angle of (0, 0) is undefined"))
-        }
         MathFn::Atan2 => x.atan2(y),
         MathFn::Hypot => x.hypot(y),
         MathFn::Min => x.min(y),
@@ -142,31 +167,17 @@ pub fn apply_f64(f: MathFn, x: f64, y: f64, whole: Span, first: Span) -> R<f64> 
         MathFn::Ceil => x.ceil(),
         MathFn::Round => x.round(),
         MathFn::Expm1 => x.exp_m1(),
-        MathFn::Log1p if x <= -1.0 => {
-            let what = if x == -1.0 { "-1" } else { "a number below -1" };
-            return Err(domain(what).with_secondary(first, format!("this is {what}")));
-        }
         MathFn::Log1p => x.ln_1p(),
         MathFn::Sinh => x.sinh(),
         MathFn::Cosh => x.cosh(),
         MathFn::Tanh => x.tanh(),
         MathFn::Asinh => asinh(x),
-        MathFn::Acosh if x < 1.0 => {
-            return Err(domain("a number below 1").with_secondary(first, "this is below 1"))
-        }
         MathFn::Acosh => acosh(x),
-        MathFn::Atanh if x.abs() >= 1.0 => {
-            return Err(domain("a number outside (-1, 1)")
-                .with_secondary(first, "this is outside (-1, 1)")
-                .with_note("atanh(x) grows without bound as x approaches 1 or -1"))
-        }
         MathFn::Atanh => x.atanh(),
         MathFn::Erf => erf(x),
         MathFn::Sign if x == 0.0 => 0.0,
         MathFn::Sign => x.signum(),
-    };
-    // `+ 0.0` turns `-0.0` into `0.0`.
-    Ok(finite(r, whole)? + 0.0)
+    }
 }
 
 /// Above this the `+ 1` under the square root of `asinh`/`acosh` is below

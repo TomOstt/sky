@@ -907,6 +907,36 @@ fn run_the_force_of_a_gravitational_potential_points_to_the_origin() {
 }
 
 #[test]
+fn run_the_force_of_the_natural_potential_with_norm() {
+    // The potential written as it reads, `-G M m / norm(p)`, is
+    // differentiated on SIR: the force is the same as with `sqrt(p @ p)`.
+    let head =
+        "M = 5.972e24 kg\nmass = 1000 kg\ndef U(p: Vector[3] m) -> J:\n    return -G * M * mass / ";
+    let tail = "\nq = [3 km, 0 km, 4 km]\nprint(-grad(U)(q))\nprint(norm(-grad(U)(q)))\n";
+    let mut outputs = Vec::new();
+    for (name, body) in [("natural", "norm(p)"), ("sqrt", "sqrt(p @ p)")] {
+        for engine in ["ast", "sir"] {
+            let o = run_engine(name, &format!("{head}{body}{tail}"), Some(engine));
+            assert_eq!(err(&o), "", "{name} on {engine}");
+            outputs.push((name, engine, out(&o)));
+        }
+    }
+    for (name, engine, stdout) in &outputs {
+        // At 5 km along (3, 0, 4)/5: 15.9 GN, split 3:0:4 and pointing inward.
+        let lines: Vec<&str> = stdout.lines().collect();
+        assert_eq!(lines.len(), 2, "{name} on {engine}: {stdout}");
+        assert_eq!(
+            lines[0], "[-9566140704 N, 0 N, -12754854272 N]",
+            "{name} on {engine}"
+        );
+        assert!(lines[1].ends_with(" N"), "{name} on {engine}: {}", lines[1]);
+    }
+    // Both engines agree on the whole output, whichever spelling.
+    assert_eq!(outputs[0].2, outputs[1].2);
+    assert_eq!(outputs[0].2, outputs[2].2);
+}
+
+#[test]
 fn run_the_gradient_of_a_spring_network_potential_with_a_matrix() {
     // U = 1/2 d.(K d) with d = p - p0 and K symmetric: F = -K d.
     let program = "K = [[300, -100, 0], [-100, 200, -50], [0, -50, 100]] * 1 N/m\n\
@@ -1326,6 +1356,33 @@ const ENGINE_PROGRAMS: &[(&str, bool, &str)] = &[
         "eng-string-add",
         false,
         "print(\"before\")\ns = \"a\" + \"b\"\n",
+    ),
+    // `norm` and `dot` run on SIR through the tree-walker's own functions,
+    // errors and their labels included.
+    (
+        "eng-norm-dot",
+        true,
+        "v = [3 m, 4 m]\nf = [1 N, 2 N]\nprint(norm(v), norm(-2 s), dot(v, f), norm([1e200, 1e200]))\nprint(v / norm(v))\n",
+    ),
+    (
+        "eng-norm-overflow",
+        true,
+        "print(\"before\")\nprint(norm([1.7e308, 1.7e308]))\n",
+    ),
+    (
+        "eng-dot-labels",
+        true,
+        "def id(a):\n    return a\nprint(dot(id([1, 2, 3]), id([1, 2])))\n",
+    ),
+    (
+        "eng-norm-not-a-vector",
+        true,
+        "def id(a):\n    return a\nprint(norm(id(true)))\n",
+    ),
+    (
+        "eng-gradient-norm",
+        true,
+        "def U(p: Vector[3] m) -> J:\n    return -2 J*m / norm(p)\nprint(grad(U)([1 m, 2 m, 2 m]))\nprint(grad(U)([0 m, 0 m, 0 m]))\n",
     ),
     (
         "eng-input-in-func",

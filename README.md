@@ -97,7 +97,7 @@ M = 5.972e24 kg
 mass = 1000 kg
 
 def U(p: Vector[3] m) -> J:
-    return -G * M * mass / sqrt(p @ p)      # G is the constant of gravitation
+    return -G * M * mass / norm(p)          # G is the constant of gravitation
 
 p = [7000 km, 0 km, 0 km]
 print(-grad(U)(p))                          # [-8134.473387755101 N, 0 N, 0 N]: toward the origin

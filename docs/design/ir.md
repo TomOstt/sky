@@ -318,7 +318,6 @@ Each transfer rule is an inequality with a short derivation in its comment. The 
 
 Not a change of meaning: `sky run` still computes `f64`, one rounding per operation. Not interval arithmetic on the inputs: an input is an exact value (the range says which, not how uncertain). Not a proof of the whole program's correctness: a budget is proven for the *runs that produce a number* (overflow and domain errors are not analysed) and under the library assumption.
 
-<<<<<<< HEAD
 ## The cost model
 
 `sky_ir::cost` gives every function a **cost**: flops, bytes read, bytes written, allocations and bytes allocated, each an `Amount`: a lower and an upper bound (`lo <= actual <= hi`, for every run and every size from 1 up) as polynomials in the symbolic shape sizes (`sky_types::poly::Poly`: exact rational coefficients over monomials in named sizes, capped in terms and degree, every operation checked, `None` on overflow). It is a static analysis over L1, one rule per operation (`cost/ops.rs`, with the weights in the module documentation and the spec's "Performance contracts"), computed on the module after the default pipeline, since the contract is about the program that runs (fusion removes allocations, the Cholesky rewrite changes a solve's flops).
@@ -329,7 +328,7 @@ Not a change of meaning: `sky run` still computes `f64`, one rounding per operat
 - **Sites**: every costly operation, call and loop keeps its contribution (loops around it included), which is how `sky check` says which operation dominates a refuted contract and where the hot spots are.
 
 `sky check` (`sky-cli/src/cost.rs`) proves a `cost` line when `hi` is at most the bound for all sizes from 1 up (sound, not complete), refutes it with a witness point where `lo` exceeds the bound in exact arithmetic, and otherwise warns. The unit of cost is the model's, not a machine's: it counts what the reference implementation does. Making a machine-specific estimate (idea 87) means replacing the weights with a hardware description, not changing the analysis.
-=======
+
 ## Automatic parallelism
 
 The SIR interpreter runs some work on several threads without changing anything a program can observe: the same stdout bytes, the same error (message, spans, labels, notes) and the same exit status on 1 thread and on 64. The analysis is `sky_ir::parallel`; the machinery is in `sky-ir-interp` (`rayon`, one shared pool per thread count). The tree-walker stays sequential, so `--threads` matters for `--engine=sir` and `--engine=auto`.
@@ -380,7 +379,6 @@ note: [PAR-003] the call to `noisy` is not run concurrently with the calls after
 ```
 
 The notes depend on the thread count only through the number they print; what is parallel does not.
->>>>>>> 5ebdb8d (docs: automatic parallelism)
 
 ## Reference semantics and testing
 
@@ -416,11 +414,7 @@ It is parsed by a small hand-written parser that never panics, limits nesting to
 
 | Crate | Contents | Depends on |
 |---|---|---|
-<<<<<<< HEAD
-| `sky-ir` | data model, operation table, verifier, effect inference, exactness analysis, roundoff analysis, static cost model, text printer and parser, pass manager | sky-units, sky-types (types only), sky-ast (reads the unit text of `show`), sky-diag |
-=======
-| `sky-ir` | data model, operation table, verifier, effect inference, exactness analysis, parallelism analysis, text printer and parser, pass manager | sky-units, sky-types (types only), sky-ast (reads the unit text of `show`), sky-diag |
->>>>>>> 5ebdb8d (docs: automatic parallelism)
+| `sky-ir` | data model, operation table, verifier, effect inference, exactness analysis, parallelism analysis, roundoff analysis, static cost model, text printer and parser, pass manager | sky-units, sky-types (types only), sky-ast (reads the unit text of `show`), sky-diag |
 | `sky-lower` | checked AST to L1 | sky-ast, sky-types, sky-ir |
 | `sky-opt` | passes: fold, dce, fuse, cholesky, the exact algorithm rewrites (transposes, structure, powers), and the default pipeline (which includes `sky-egraph`'s pass); later autodiff | sky-ir, sky-egraph |
 | `sky-egraph` | identity-aware e-graph rewriting (`egg`) as a pass | sky-ir |

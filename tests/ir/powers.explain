@@ -3,46 +3,58 @@ tests/ir/powers.sky:5:5: note: cost of `powers`: 24 flops
 5 | def powers(x: Scalar):
   |     ^^^^^^
 
-tests/ir/powers.sky:6:10: note: [POW-CHAIN-001] `x^2` is rewritten to `x · x`
+tests/ir/powers.sky:6:10: note: [DCE-001] `x ^ 2` is removed
   |
 6 |     p2 = x ^ 2
   |          ^^^^^
-  = note: applied by the `powers` pass
-  = note: because the exponent 2 is a constant integer: x^2 = x · x
-  = note: because 1 multiplication, the fewest for 2: no shorter chain exists for an exponent up to 14
-  = note: because exact: these are the multiplications the interpreter's `powi` performs, in the same order, so every bit and the overflow error are the same
+  = note: applied by the `specialize` pass
+  = note: because `p2` is never used
+  = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
 
-tests/ir/powers.sky:7:10: note: [POW-CHAIN-001] `x^5` is rewritten to `x · x^4`
+tests/ir/powers.sky:7:10: note: [DCE-001] `x ^ 5` is removed
   |
 7 |     p5 = x ^ 5
   |          ^^^^^
-  = note: applied by the `powers` pass
-  = note: because the exponent 5 is a constant integer: x^2 = x · x, x^4 = x^2 · x^2, x^5 = x · x^4
-  = note: because 3 multiplications, the fewest for 5: no shorter chain exists for an exponent up to 14
-  = note: because exact: these are the multiplications the interpreter's `powi` performs, in the same order, so every bit and the overflow error are the same
+  = note: applied by the `specialize` pass
+  = note: because `p5` is never used
+  = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
 
-tests/ir/powers.sky:8:11: note: [POW-CHAIN-001] `x^14` is rewritten to `x^6 · x^8`
+tests/ir/powers.sky:8:11: note: [DCE-001] `x ^ 14` is removed
   |
 8 |     p14 = x ^ 14
   |           ^^^^^^
-  = note: applied by the `powers` pass
-  = note: because the exponent 14 is a constant integer: x^2 = x · x, x^4 = x^2 · x^2, x^6 = x^2 · x^4, x^8 = x^4 · x^4, x^14 = x^6 · x^8
-  = note: because 5 multiplications, the fewest for 14: no shorter chain exists for an exponent up to 14
-  = note: because exact: these are the multiplications the interpreter's `powi` performs, in the same order, so every bit and the overflow error are the same
+  = note: applied by the `specialize` pass
+  = note: because `p14` is never used
+  = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
+
+tests/ir/powers.sky:9:11: note: [DCE-001] `x ^ 15` is removed
+  |
+9 |     p15 = x ^ 15
+  |           ^^^^^^
+  = note: applied by the `specialize` pass
+  = note: because `p15` is never used
+  = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
+
+tests/ir/powers.sky:10:20: note: [DCE-001] `x ^ -3` is removed
+   |
+10 |     inverse_cube = x ^ -3
+   |                    ^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because `inverse_cube` is never used
+   = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
+
+tests/ir/powers.sky:11:12: note: [DCE-001] `x ^ 0.5` is removed
+   |
+11 |     root = x ^ 0.5
+   |            ^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because `root` is never used
+   = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
 
 tests/ir/powers.sky:14:5: note: cost of `volume`: 2 flops
    |
 14 | def volume(l: m):
    |     ^^^^^^
-
-tests/ir/powers.sky:15:12: note: [POW-CHAIN-001] `l^3` is rewritten to `l · l^2`
-   |
-15 |     return l ^ 3
-   |            ^^^^^
-   = note: applied by the `powers` pass
-   = note: because the exponent 3 is a constant integer: l^2 = l · l, l^3 = l · l^2
-   = note: because 2 multiplications, the fewest for 3: no shorter chain exists for an exponent up to 14
-   = note: because exact: these are the multiplications the interpreter's `powi` performs, in the same order, so every bit and the overflow error are the same
 
 tests/ir/powers.sky:17:1: note: printed value of `powers(2)` is accurate to within 4.1e-15 relative
    |
@@ -50,8 +62,28 @@ tests/ir/powers.sky:17:1: note: printed value of `powers(2)` is accurate to with
    | ^^^^^^^^^^^^^^^^
    = note: a proven bound on the rounding error against the exact real result (roundoff analysis)
 
+tests/ir/powers.sky:17:7: note: [SPEC-001] specialized `powers` for x = 2 at this call: 11 checks removed
+   |
+17 | print(powers(2))
+   |       ^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 11 run-time checks removed: operations that can fail in `powers` and cannot in `powers[x=2]`
+   = note: because the argument for `x` is the constant 2
+   = note: because in `powers[x=2]`: 11 operations folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged
+
 tests/ir/powers.sky:18:1: note: printed value of `volume(3 m)` is accurate to within 1.1e-15 relative
    |
 18 | print(volume(3 m))
    | ^^^^^^^^^^^^^^^^^^
    = note: a proven bound on the rounding error against the exact real result (roundoff analysis)
+
+tests/ir/powers.sky:18:7: note: [SPEC-001] specialized `volume` for l = 3 at this call: 1 check removed
+   |
+18 | print(volume(3 m))
+   |       ^^^^^^^^^^^
+   = note: applied by the `specialize` pass
+   = note: because 1 run-time check removed: operations that can fail in `volume` and cannot in `volume[l=3]`
+   = note: because the argument for `l` is the constant 3
+   = note: because in `volume[l=3]`: 1 operation folded to constants
+   = note: because the specialization is the same code with these values known: outputs, errors and their spans are unchanged

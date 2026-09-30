@@ -56,12 +56,12 @@
 //! 9. `transposes`: `transpose(A) @ B` becomes `matmul[ta](A, B)`: the
 //!    transpose is not materialized ([`crate::linalg`]). Exact;
 //! 10. `structure`: Gram products (`Aᵀ @ A`, one triangle mirrored), Diagonal
-//!    scaling and the transpose of a Symmetric matrix ([`crate::linalg`]).
-//!    Exact. It runs after `transposes`, which is what turns `Aᵀ @ A` into
-//!    a product of one value by its own transpose;
+//!     scaling and the transpose of a Symmetric matrix ([`crate::linalg`]).
+//!     Exact. It runs after `transposes`, which is what turns `Aᵀ @ A` into
+//!     a product of one value by its own transpose;
 //! 11. `algorithms`: records the algorithm class the policy chooses for
-//!     each `matmul` ([`crate::algorithm`]). The default policy chooses
-//!     nothing, so the pass changes nothing until a kernel registers one.
+//!      each `matmul` ([`crate::algorithm`]). The default policy chooses
+//!      nothing, so the pass changes nothing until a kernel registers one.
 //!
 //! The rewrites that change rounding (the order of an `@` chain, solves
 //! instead of inverses, `Q⁻¹` as `Qᵀ`) are **not** passes: the checker

@@ -3,7 +3,7 @@ tests/ir/exact.sky:5:5: note: cost of `halve`: 1 flop
 5 | def halve(x: m) -> m:
   |     ^^^^^
 
-tests/ir/exact.sky:6:13: note: [DCE-002] `x / 2` is removed
+tests/ir/exact.sky:6:13: note: [DCE-001] `x / 2` is removed
   |
 6 |     spare = x / 2
   |             ^^^^^

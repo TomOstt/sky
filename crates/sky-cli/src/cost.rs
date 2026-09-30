@@ -13,10 +13,14 @@
 //! * **unproven**: the model cannot decide (a loop it cannot bound, a
 //!   recursion, a value of unknown shape). A warning naming why.
 //!
-//! The cost is that of the module after the optimization pipeline
-//! (`sky_opt::default_pipeline`): the program the SIR engine, and a code
-//! generator, run. A program that cannot be lowered yet gets a warning that
-//! its contracts were not checked, never silence.
+//! The cost is that of the module after the optimization pipeline without
+//! `specialize` (`sky_opt::default_passes_without_specialize`). A contract
+//! states the cost of the function for every size and argument, so it is
+//! checked on the function itself: specialization makes clones for the
+//! facts of particular calls, and drops a generic function no call reaches
+//! any more, which would leave a contract unchecked. A program that cannot
+//! be lowered yet gets a warning that its contracts were not checked, never
+//! silence.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -170,14 +174,15 @@ fn src_name(src: &str, id: Ident) -> String {
     span_text(src, id.span).unwrap_or("?").to_string()
 }
 
-/// Lowers and optimizes, as `sky check --explain` shows the program.
+/// Lowers and optimizes, as `sky check --explain` shows the program, but
+/// without specialization (see the module documentation).
 fn lower(
     module: &Module,
     src: &str,
     checked: &Checked,
 ) -> Result<sky_ir::Module, (String, Span, Option<String>)> {
     let mut ir = sky_lower::lower(module, src, checked).map_err(|e| (e.message, e.span, e.note))?;
-    sky_opt::default_pipeline()
+    sky_opt::default_passes_without_specialize(sky_ir::PassManager::new())
         .verify_each(true)
         .run(&mut ir)
         .map_err(|e| (format!("internal error: {e}"), module.span, None))?;

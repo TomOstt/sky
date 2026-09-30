@@ -1,3 +1,13 @@
+tests/ir/specialize.sky:7:5: note: cost of `dot`: 2·N flops
+   |
+ 7 | def dot(a: Vector[N], b: Vector[N]) -> Scalar:
+   |     ^^^
+11 |         total += a[i] * b[i]
+   |         -------------------- hot spot: `total += a[i] * b[i]` costs N flops
+   |                  ---- hot spot: `a[i]` costs 8·N bytes of memory traffic
+   |                  ----------- hot spot: `a[i] * b[i]` costs N flops
+   = note: memory traffic: 16·N bytes read
+
 tests/ir/specialize.sky:10:5: note: [SPEC-003] this loop runs exactly 3 times in `dot[N=3]`, so it is unrolled
    |
 10 |     while i < len(a):
@@ -13,6 +23,16 @@ tests/ir/specialize.sky:12:9: note: [DCE-001] `i += 1` is removed
    = note: applied by the `specialize` pass
    = note: because `i` is never used
    = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
+
+tests/ir/specialize.sky:15:5: note: cost of `scale`: at most 3 flops
+   |
+15 | def scale(k: Scalar, x: Scalar) -> Scalar:
+   |     ^^^^^
+
+tests/ir/specialize.sky:20:5: note: cost of `twice`: 1 flop
+   |
+20 | def twice(x: Scalar) -> Scalar:
+   |     ^^^^^
 
 tests/ir/specialize.sky:25:7: note: [SPEC-001] specialized `dot` for N = 3 at this call: 2 checks removed
    |

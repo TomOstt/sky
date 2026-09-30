@@ -1,3 +1,14 @@
+tests/ir/specialize_limits.sky:5:5: note: cost of `k`: 2 flops
+  |
+5 | def k(x: Scalar) -> Scalar:
+  |     ^
+
+tests/ir/specialize_limits.sky:8:5: note: cost of `fact`: unbounded (recursive call to `fact` at line 11; an operation at line 11 on a value of unknown shape)
+  |
+8 | def fact(n: Scalar) -> Scalar:
+  |     ^^^^
+  = note: the static cost model has no bound for it
+
 tests/ir/specialize_limits.sky:11:16: note: [SPEC-001] specialized `fact` for n = 4 at this call: 0 checks removed
    |
 11 |     return n * fact(n - 1)

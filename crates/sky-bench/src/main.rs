@@ -3,16 +3,21 @@
 //! ```text
 //! cargo run --release -p sky-bench -- [--filter X] [--json out.json]
 //!                                     [--reps N] [--warmup N] [--quick] [--list]
+//! cargo run --release -p sky-bench -- compare [--filter X] [--reps N] ...
 //! ```
 //!
 //! `sky-bench par [--threads 1,2,4,8] [--reps N] [--quick]` measures automatic
 //! parallelism instead (speedups over threads, and the break-even sizes the
 //! default thresholds come from): see `par.rs`.
+//! The first form times Sky's own engines; `compare` times Sky against C, Rust,
+//! Python and BLAS/LAPACK and writes `benches/compare/RESULTS.md` (see
+//! `compare/mod.rs`).
 //!
 //! See the "Benchmarks" section of the README. Not shipped: nothing depends
 //! on this crate, and it uses only `std` for timing.
 
 mod bench;
+mod compare;
 mod par;
 mod report;
 mod stats;
@@ -31,7 +36,8 @@ const USAGE: &str = "usage: sky-bench [--filter <substring>] [--json <file>] [--
                      --list     print the workload names and exit\n\n\
                      sky-bench par [--threads 1,2,4,8] [--reps <n>] [--quick]\n\
                      \x20          measure automatic parallelism (speedups, break-even sizes)\n\n\
-                     Run it with `cargo run --release -p sky-bench`: debug timings mean nothing.";
+                     Run it with `cargo run --release -p sky-bench`: debug timings mean nothing.\n\n\
+                     `sky-bench compare --help` for the cross-language comparison.";
 
 struct Args {
     filter: Option<String>,
@@ -94,6 +100,9 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         };
+    }
+    if args.first().map(String::as_str) == Some("compare") {
+        return compare::main(&args[1..]);
     }
     let args = match parse_args(&args) {
         Ok(a) => a,

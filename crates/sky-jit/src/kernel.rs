@@ -667,7 +667,7 @@ fn compile_function(
     opts: Options,
     fma: bool,
     module: &mut JITModule,
-) -> Result<cranelift_module::FuncId, String> {
+) -> Result<(cranelift_module::FuncId, usize), String> {
     let mut ctx = module.make_context();
     ctx.func.signature.params = vec![AbiParam::new(types::I64); 3];
     ctx.func.signature.returns = vec![AbiParam::new(types::I64)];
@@ -911,8 +911,9 @@ fn compile_function(
             eprintln!("{}", code.vcode.as_deref().unwrap_or(""));
         }
     }
+    let code_len = ctx.compiled_code().map_or(0, |c| c.code_buffer().len());
     module.clear_context(&mut ctx);
-    Ok(id)
+    Ok((id, code_len))
 }
 
 fn block_args(values: &[Cv]) -> Vec<cranelift_codegen::ir::BlockArg> {
@@ -993,8 +994,8 @@ pub fn compile_kernel_with(
     let mut builder = JITBuilder::with_isa(isa, default_libcall_names());
     builder.symbol("sky_kernel_math", kernel_rt::math as *const u8);
     let mut module = JITModule::new(builder);
-    let id = match compile_function(&plan, options, fma, &mut module) {
-        Ok(id) => id,
+    let (id, code_len) = match compile_function(&plan, options, fma, &mut module) {
+        Ok(compiled) => compiled,
         Err(e) => {
             // SAFETY: nothing was called from this module.
             unsafe { module.free_memory() };
@@ -1007,6 +1008,8 @@ pub fn compile_kernel_with(
         return refuse(format!("code generation failed: {e}"));
     }
     let code = module.get_finalized_function(id);
+    // The instruction cache must see the code (see `crate::icache`).
+    crate::icache::flush(code, code_len);
     // SAFETY: `code` was compiled above as `extern "C"`-compatible
     // `(usize, *const *const f64, *mut f64) -> u64` (three pointer-sized
     // integer parameters and one integer result, in the host's default

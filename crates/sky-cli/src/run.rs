@@ -22,10 +22,11 @@
 //!   the oracle the differential tests compare SIR against, and the fallback
 //!   for the programs SIR cannot express yet.
 //!
-//! `--threads=N` (or `SKY_THREADS`) sets how many threads the SIR engine may
-//! use for work that cannot change the output (`sky_ir::parallel`: big
-//! elementwise kernels and independent pure calls); 1 means sequential, and
-//! the output is the same for every N. The tree-walker is always sequential,
+//! `--threads=N` (or `SKY_THREADS`) sets how many threads the SIR engine and
+//! native code may use for work that cannot change the output
+//! (`sky_ir::parallel`: big elementwise kernels and independent pure calls);
+//! 1 means sequential, and the output is the same for every N. The
+//! tree-walker is always sequential,
 //! except that every engine's array kernels (`sky_linalg`: big products,
 //! factorizations and solves) split their output across the same N threads,
 //! which changes no bit of any result.

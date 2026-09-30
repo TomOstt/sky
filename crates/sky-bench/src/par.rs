@@ -3,8 +3,10 @@
 //! `sky_ir::parallel::Config`.
 //!
 //! ```text
-//! cargo run --release -p sky-bench -- par [--threads 1,2,4,8] [--reps N] [--quick]
+//! cargo run --release -p sky-bench -- par [--threads 1,2,4,8] [--reps N] [--quick] [--native]
 //! ```
+//!
+//! `--native` measures native code instead (`native_par.rs`).
 //!
 //! Four tables: the speedup of a fused kernel and of a plain elementwise
 //! operation over threads and sizes; the size at which each starts to win
@@ -30,6 +32,8 @@ pub struct Options {
     pub threads: Vec<usize>,
     pub reps: usize,
     pub quick: bool,
+    /// Measure native code instead of the SIR interpreter (`--native`).
+    pub native: bool,
 }
 
 pub fn parse_args(args: &[String]) -> Result<Options, String> {
@@ -37,6 +41,7 @@ pub fn parse_args(args: &[String]) -> Result<Options, String> {
         threads: vec![1, 2, 4, 8],
         reps: 7,
         quick: false,
+        native: false,
     };
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -66,6 +71,7 @@ pub fn parse_args(args: &[String]) -> Result<Options, String> {
                     .ok_or_else(|| format!("`{v}` is not a repetition count"))?;
             }
             "--quick" => o.quick = true,
+            "--native" => o.native = true,
             other => return Err(format!("unknown argument `{other}`")),
         }
     }
@@ -348,6 +354,9 @@ fn call_cost(o: &Options) {
 }
 
 pub fn main(o: &Options) {
+    if o.native {
+        return crate::native_par::main(o);
+    }
     if cfg!(debug_assertions) {
         eprintln!("warning: a debug build; use `cargo run --release -p sky-bench -- par`\n");
     }

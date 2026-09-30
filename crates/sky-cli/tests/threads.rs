@@ -43,6 +43,25 @@ fn err(o: &Output) -> String {
     String::from_utf8(o.stderr.clone()).expect("utf-8")
 }
 
+/// A `sky tune` database whose thresholds make every kernel of two or more
+/// elements split (`fused_work` 0 stays 0 for native code, which scales it),
+/// so that small test programs take the parallel paths on every engine.
+fn eager_db(name: &str) -> String {
+    let dir = scratch(name);
+    let db = dir.join("tune.db");
+    let fp = sky_hw::current_fingerprint();
+    let row = |kernel: &str, params: &str, default: &str| {
+        format!(
+            "result fp={fp} kernel={kernel} size=all params={params} default={default} best_ns=1 default_ns=2 when=1790000000\n"
+        )
+    };
+    let mut text = String::from("sky-tune-db 1\n");
+    text += &row("par_fused_work", "work:0", "work:4096");
+    text += &row("par_array_elements", "elements:2", "elements:262144");
+    fs::write(&db, text).unwrap();
+    db.to_str().unwrap().to_string()
+}
+
 /// Two independent expensive calls, then a print, then a failure in a
 /// third: output before an error, and the error, must be the same on every
 /// thread count.
@@ -212,4 +231,177 @@ print(a + b + c)
         text.contains("`noisy[x:Scalar]` prints, and output order is behaviour"),
         "{text}"
     );
+}
+
+/// A vector literal of `n` entries, `special` at the indexes in `at`.
+fn vector(n: usize, base: &str, special: &str, at: &[usize]) -> String {
+    let entries: Vec<&str> = (0..n)
+        .map(|i| if at.contains(&i) { special } else { base })
+        .collect();
+    format!("[{}]", entries.join(", "))
+}
+
+/// A kernel big enough to be split on every thread count (with the default
+/// thresholds: 2000 elements of a body of three operations, in four chunks),
+/// that overflows in three different chunks, and whose other operations fail
+/// too: the error is the first operation's, at every `N`.
+fn big_kernel_program() -> String {
+    format!(
+        "x = {}\nk = 1e300\nz = 0\na = x * k\nb = a + x\nc = b / z\nprint(c[0])\n",
+        vector(2_000, "2", "3e10", &[100, 900, 1_999])
+    )
+}
+
+#[test]
+fn native_output_and_error_do_not_depend_on_the_thread_count() {
+    let src = big_kernel_program();
+    let baseline = sky(
+        "native-base",
+        &["run", "--engine=native", "--threads=1"],
+        &[],
+        &src,
+    );
+    assert!(
+        err(&baseline).contains("arithmetic overflow"),
+        "{}",
+        err(&baseline)
+    );
+    assert_eq!(baseline.status.code(), Some(1));
+    // The SIR interpreter, sequential, is the oracle.
+    let sir = sky(
+        "native-sir",
+        &["run", "--engine=sir", "--threads=1"],
+        &[],
+        &src,
+    );
+    assert_eq!(err(&baseline), err(&sir), "native differs from SIR");
+    for n in ["2", "4", "8", "64"] {
+        let flag = format!("--threads={n}");
+        let o = sky("native-n", &["run", "--engine=native", &flag], &[], &src);
+        assert_eq!(out(&o), out(&baseline), "stdout with {flag}");
+        assert_eq!(err(&o), err(&baseline), "stderr with {flag}");
+        assert_eq!(
+            o.status.code(),
+            baseline.status.code(),
+            "status with {flag}"
+        );
+    }
+    // With every threshold at its minimum the kernel is split in every chunk
+    // (`sky tune`'s database, in the child's environment only).
+    let db = eager_db("native-db");
+    for n in ["2", "4", "8"] {
+        let flag = format!("--threads={n}");
+        let o = sky(
+            "native-eager",
+            &["run", "--engine=native", &flag],
+            &[("SKY_TUNE_DB", &db)],
+            &src,
+        );
+        assert_eq!(out(&o), out(&baseline), "stdout with {flag}, eager");
+        assert_eq!(err(&o), err(&baseline), "stderr with {flag}, eager");
+        assert_eq!(o.status.code(), baseline.status.code(), "{flag}, eager");
+    }
+    // The environment variable is the default; the flag wins; `auto` is native.
+    for (args, env) in [
+        (vec!["run", "--engine=native"], vec![("SKY_THREADS", "3")]),
+        (vec!["run"], vec![("SKY_THREADS", "4")]),
+        (
+            vec!["run", "--engine=native", "--threads=2"],
+            vec![("SKY_THREADS", "nonsense")],
+        ),
+    ] {
+        let o = sky("native-env", &args, &env, &src);
+        assert_eq!(out(&o), out(&baseline), "{args:?} {env:?}");
+        assert_eq!(err(&o), err(&baseline), "{args:?} {env:?}");
+    }
+}
+
+#[test]
+fn native_successful_output_does_not_depend_on_the_thread_count() {
+    let entries: Vec<String> = (0..2_500)
+        .map(|i| format!("{}", (i % 89) as f64 * 0.37 - 11.0))
+        .collect();
+    let src = format!(
+        "x = [{}]\ny = x * 3 - x * 0.5\nz = (x + y) * 0.25 + (x - y) * 0.125\nprint(z[0], z[2499], z[1234])\n",
+        entries.join(", ")
+    );
+    let baseline = sky(
+        "native-ok-base",
+        &["run", "--engine=native", "--threads=1"],
+        &[],
+        &src,
+    );
+    assert_eq!(baseline.status.code(), Some(0), "{}", err(&baseline));
+    let db = eager_db("native-ok-db");
+    for n in ["2", "4", "8"] {
+        let flag = format!("--threads={n}");
+        for env in [vec![], vec![("SKY_TUNE_DB", db.as_str())]] {
+            let o = sky("native-ok", &["run", "--engine=native", &flag], &env, &src);
+            assert_eq!(out(&o), out(&baseline), "stdout with {flag} {env:?}");
+            assert_eq!(err(&o), err(&baseline), "stderr with {flag} {env:?}");
+        }
+    }
+    // And the tree-walker agrees.
+    let ast = sky("native-ok-ast", &["run", "--engine=ast"], &[], &src);
+    assert_eq!(out(&ast), out(&baseline));
+}
+
+#[test]
+fn explain_says_native_code_runs_a_kernel_on_the_threads_too() {
+    let entries: Vec<String> = (0..3000).map(|i| format!("{}", i % 7)).collect();
+    let src = format!(
+        "x = [{}]\ny = x * 3 - x * 2\nz = (x + y) * 0.25 + (x - y) * 0.125\nprint(z[0])\n",
+        entries.join(", ")
+    );
+    let o = sky(
+        "explain-native",
+        &["check", "--explain", "--threads=4"],
+        &[],
+        &src,
+    );
+    let text = err(&o);
+    assert!(
+        text.contains("this elementwise kernel over 3e3 elements runs on 4 threads"),
+        "{text}"
+    );
+    // Native code computes an element so fast that 3000 are not worth splitting.
+    assert!(
+        text.contains("native code runs it in one piece: a compiled kernel computes an element so fast that splitting pays only from"),
+        "{text}"
+    );
+    // With the threshold tuned down, native code splits it too.
+    let db = eager_db("explain-native-db");
+    let o = sky(
+        "explain-native-eager",
+        &["check", "--explain", "--threads=4"],
+        &[("SKY_TUNE_DB", &db)],
+        &src,
+    );
+    assert!(
+        err(&o).contains("native code runs it on 4 threads too, in the same chunks"),
+        "{}",
+        err(&o)
+    );
+    // Sequential: no such claim.
+    let o = sky(
+        "explain-native1",
+        &["check", "--explain", "--threads=1"],
+        &[],
+        &src,
+    );
+    assert!(!err(&o).contains("native code runs it"), "{}", err(&o));
+}
+
+#[test]
+fn explain_says_which_calls_native_code_starts() {
+    // Two small independent calls: the interpreter starts them, native code
+    // (which runs an operation 64 times faster) does not.
+    let o = sky(
+        "explain-calls",
+        &["check", "--explain", "--threads=4"],
+        &[],
+        PROGRAM,
+    );
+    let text = err(&o);
+    assert!(text.contains("native code runs them in place"), "{text}");
 }

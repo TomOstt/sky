@@ -196,7 +196,11 @@ impl Lower<'_> {
         let step_sign = match (step, constants) {
             (None, _) => Some(1),
             (Some(_), Some((_, _, s))) => Some(s.signum()),
-            (Some(_), None) => None,
+            // A constant step has a known direction even when a bound is
+            // computed (`range(0, len(v), 2)`): the read is `range(step)`.
+            (Some(a), None) => {
+                range_constants(self.src, std::slice::from_ref(a)).map(|(_, s, _)| s.signum())
+            }
         };
         let idx = format!("<i{}>", self.st.loops + 1);
         let range = Range {

@@ -125,6 +125,23 @@ pub fn verify(m: &Module) -> Result<(), Vec<VerifyError>> {
     sky_diag::with_deep_stack(|| verify_inner(m))
 }
 
+/// Checks one function `f` against the functions of `m` (its callees are
+/// looked up there): everything [`verify`] checks of a function except the
+/// declared effects, which need the whole call graph. `f` need not be in `m`
+/// (a pass checks a function it is about to add), but a call to `f` itself
+/// needs a function of that name in `m`.
+pub fn verify_function(m: &Module, f: &Function) -> Result<(), Vec<VerifyError>> {
+    sky_diag::with_deep_stack(|| {
+        let mut errors = Vec::new();
+        FnVerifier::new(m, f, &mut errors).run();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    })
+}
+
 fn verify_inner(m: &Module) -> Result<(), Vec<VerifyError>> {
     let mut errors = Vec::new();
     for (i, f) in m.functions.iter().enumerate() {

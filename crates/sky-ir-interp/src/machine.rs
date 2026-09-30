@@ -18,10 +18,11 @@ use sky_interp::arith::{
 };
 use sky_interp::array::{self, Ix};
 use sky_interp::contract;
+use sky_interp::solve;
 use sky_interp::Value;
 use sky_ir::{
     BlockData, BlockId, CmpOp, Function, Module, NumberType, OpData, OpId, OpKind, RegionId,
-    SliceAxis, SolveMethod, Type, ValueId,
+    SliceAxis, Type, ValueId,
 };
 use sky_units::{Dimension, Rational};
 
@@ -605,12 +606,49 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
         }
         // The Cholesky solve `sky run` performs where the checker rewrote
         // `A⁻¹ @ b`: the same function, so the same bits and errors.
-        OpKind::Solve {
-            method: SolveMethod::Cholesky,
-        } => {
+        OpKind::Solve { method } => {
             let [a, b] = fixed(op)?;
             let (l, r) = (op.operand_span(0), op.operand_span(1));
-            let v = array::cholesky_solve(act.get(a, s)?, act.get(b, s)?, s, l, r)?;
+            let v = solve::solve(*method, act.get(a, s)?, act.get(b, s)?, s, l, r)?;
+            act.define(op, vec![v])
+        }
+        // `x @ A⁻¹`, the transposed solve: the same functions as the
+        // tree-walker runs for a chain the checker planned.
+        OpKind::SolveRight { method } => {
+            let [x, a] = fixed(op)?;
+            let (l, r) = (op.operand_span(0), op.operand_span(1));
+            let v = solve::solve_right(*method, act.get(x, s)?, act.get(a, s)?, s, l, r)?;
+            act.define(op, vec![v])
+        }
+        OpKind::MatMulEx { ta, tb, algorithm } => {
+            let [a, b] = fixed(op)?;
+            let (l, r) = (op.operand_span(0), op.operand_span(1));
+            let v = solve::matmul_ex(
+                *ta,
+                *tb,
+                *algorithm,
+                act.get(a, s)?,
+                act.get(b, s)?,
+                s,
+                l,
+                r,
+            )?;
+            act.define(op, vec![v])
+        }
+        OpKind::DiagMul { side } => {
+            let [a, b] = fixed(op)?;
+            let (l, r) = (op.operand_span(0), op.operand_span(1));
+            let (d, x) = if *side == sky_ir::Side::Left {
+                (a, b)
+            } else {
+                (b, a)
+            };
+            let (dspan, xspan) = if *side == sky_ir::Side::Left {
+                (l, r)
+            } else {
+                (r, l)
+            };
+            let v = solve::diag_mul(*side, act.get(d, s)?, act.get(x, s)?, s, dspan, xspan)?;
             act.define(op, vec![v])
         }
         OpKind::ArrayLiteral { cols } => array_literal(act, op, *cols),

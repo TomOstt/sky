@@ -44,8 +44,8 @@ pub use ir::{
     RegionData, RegionId, Repr, Type, ValueData, ValueDef, ValueId,
 };
 pub use op::{
-    AssertKind, BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind, OpProperties,
-    SliceAxis, SolveMethod,
+    Algorithm, AssertKind, BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind,
+    OpProperties, Side, SliceAxis, SolveMethod,
 };
 pub use parse::{parse, ParseError};
 pub use pass::{

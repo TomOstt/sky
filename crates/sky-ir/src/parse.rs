@@ -61,8 +61,8 @@ use crate::ir::{
     Edition, Effect, EffectSet, Module, NumberType, OpId, RegionId, Repr, Type, ValueId,
 };
 use crate::op::{
-    AssertKind, BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind, SliceAxis,
-    SolveMethod,
+    Algorithm, AssertKind, BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind, Side,
+    SliceAxis, SolveMethod,
 };
 use crate::verify::MAX_REGION_DEPTH;
 
@@ -761,21 +761,36 @@ impl<'a> Parser<'a> {
                 OpKind::PowConst { exponent }
             }
             "inverse" => OpKind::Inverse,
-            "matmul" => OpKind::MatMul,
-            "transpose" => OpKind::Transpose,
-            "norm" => OpKind::Norm,
-            "dot" => OpKind::Dot,
-            "solve" => {
+            "matmul" => {
+                if self.peek() == Some('[') {
+                    self.matmul_attrs()?
+                } else {
+                    OpKind::MatMul
+                }
+            }
+            "diag.mul" => {
                 self.expect('[')?;
                 self.skip_inline();
                 let at = self.pos;
-                let method = match self.word() {
-                    "cholesky" => SolveMethod::Cholesky,
-                    _ => return self.err_at(at, self.pos.max(at + 1), "expected `cholesky`"),
+                let side = match self.word() {
+                    "left" => Side::Left,
+                    "right" => Side::Right,
+                    _ => {
+                        return self.err_at(at, self.pos.max(at + 1), "expected `left` or `right`")
+                    }
                 };
                 self.expect(']')?;
-                OpKind::Solve { method }
+                OpKind::DiagMul { side }
             }
+            "transpose" => OpKind::Transpose,
+            "norm" => OpKind::Norm,
+            "dot" => OpKind::Dot,
+            "solve" => OpKind::Solve {
+                method: self.solve_method()?,
+            },
+            "solve.right" => OpKind::SolveRight {
+                method: self.solve_method()?,
+            },
             "array.literal" => {
                 self.skip_inline();
                 let cols = if self.peek() == Some('[') {
@@ -975,6 +990,70 @@ impl<'a> Parser<'a> {
             func,
             names,
         })
+    }
+
+    /// `[cholesky]`, `[lu]` or `[diagonal]`: the method of a `solve`.
+    fn solve_method(&mut self) -> Res<SolveMethod> {
+        self.expect('[')?;
+        self.skip_inline();
+        let at = self.pos;
+        let word = self.word();
+        let Some(method) = SolveMethod::ALL.into_iter().find(|m| m.mnemonic() == word) else {
+            return self.err_at(
+                at,
+                self.pos.max(at + 1),
+                "expected `cholesky`, `lu` or `diagonal`",
+            );
+        };
+        self.expect(']')?;
+        Ok(method)
+    }
+
+    /// The `[ta,tb,alg=NAME]` of a `matmul` with attributes: any of the
+    /// three, in this order, at least one.
+    fn matmul_attrs(&mut self) -> Res<OpKind> {
+        self.expect('[')?;
+        let (mut ta, mut tb, mut algorithm) = (false, false, Algorithm::Auto);
+        loop {
+            self.skip_inline();
+            let at = self.pos;
+            match self.word() {
+                "ta" if !ta && !tb && algorithm == Algorithm::Auto => ta = true,
+                "tb" if !tb && algorithm == Algorithm::Auto => tb = true,
+                "alg" if algorithm == Algorithm::Auto => {
+                    self.expect('=')?;
+                    self.skip_inline();
+                    let at = self.pos;
+                    let name = self.word();
+                    match Algorithm::ALL
+                        .into_iter()
+                        .find(|a| *a != Algorithm::Auto && a.mnemonic() == name)
+                    {
+                        Some(a) => algorithm = a,
+                        None => {
+                            return self.err_at(
+                                at,
+                                self.pos.max(at + 1),
+                                "expected `dot`, `matvec`, `vecmat`, `gemm` or `syrk`",
+                            )
+                        }
+                    }
+                }
+                _ => {
+                    return self.err_at(
+                        at,
+                        self.pos.max(at + 1),
+                        "expected `ta`, `tb` or `alg=NAME`, each once and in this order",
+                    )
+                }
+            }
+            self.skip_inline();
+            if !self.eat(',') {
+                break;
+            }
+        }
+        self.expect(']')?;
+        Ok(OpKind::MatMulEx { ta, tb, algorithm })
     }
 
     /// One item of a `slice`'s `[...]`: `at`, `:`, `lo:`, `:hi` or `lo:hi`.

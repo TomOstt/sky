@@ -38,6 +38,7 @@
 #![forbid(unsafe_code)]
 
 mod accuracy;
+pub mod algo;
 mod array;
 mod builtins;
 mod cancellation;
@@ -65,6 +66,7 @@ pub mod tags;
 mod uncertain;
 mod vecfn;
 
+pub use algo::{Algorithm, Side, SolveMethod};
 pub use check::{
     check_module, check_module_with, const_exponent, Checked, Env, RewriteSite, Ty, ValueTy,
     MAX_STORED_REWRITES,

@@ -64,7 +64,7 @@ use crate::ir::{
     BlockId, EffectSet, Function, Module, NumberType, OpData, OpId, RegionId, Type, ValueDef,
     ValueId,
 };
-use crate::op::{AssertKind, CmpOp, OpKind, SolveMethod};
+use crate::op::{Algorithm, AssertKind, CmpOp, OpKind, Side, SolveMethod};
 use crate::print::effect_name;
 
 /// The deepest nesting of regions the verifier, printer and parser accept.
@@ -628,7 +628,10 @@ impl<'a> FnVerifier<'a> {
             | OpKind::Pow
             | OpKind::MatMul
             | OpKind::Dot
+            | OpKind::MatMulEx { .. }
+            | OpKind::DiagMul { .. }
             | OpKind::Solve { .. }
+            | OpKind::SolveRight { .. }
             | OpKind::Cmp(_) => (Some(2), Some(1)),
             OpKind::Neg
             | OpKind::PowConst { .. }
@@ -716,7 +719,12 @@ impl<'a> FnVerifier<'a> {
             OpKind::Transpose => self.check_transpose(o, op),
             OpKind::Norm => self.check_norm(o, op),
             OpKind::Dot => self.check_dot(o, op),
-            OpKind::Solve { method } => self.check_solve(o, op, *method),
+            OpKind::Solve { method } => self.check_solve(o, op, *method, false),
+            OpKind::SolveRight { method } => self.check_solve(o, op, *method, true),
+            OpKind::MatMulEx { ta, tb, algorithm } => {
+                self.check_matmul_ex(o, op, *ta, *tb, *algorithm)
+            }
+            OpKind::DiagMul { side } => self.check_diag_mul(o, op, *side),
             OpKind::ArrayLiteral { cols } => self.check_array_literal(o, op, *cols),
             OpKind::Index => self.check_index(o, op),
             OpKind::Slice { axes } => self.check_slice(o, op, axes),
@@ -1216,34 +1224,151 @@ impl<'a> FnVerifier<'a> {
         }
     }
 
-    fn check_solve(&mut self, o: OpId, op: &OpData, method: SolveMethod) {
-        let Some((a, b)) = self.two_nums(o, op) else {
+    /// `solve` (`A⁻¹ @ b`, operands `A`, `b`) and `solve.right` (`x @ A⁻¹`,
+    /// operands `x`, `A`).
+    fn check_solve(&mut self, o: OpId, op: &OpData, method: SolveMethod, right: bool) {
+        let Some((first, second)) = self.two_nums(o, op) else {
             return;
         };
-        let SolveMethod::Cholesky = method;
-        if !a.tags.closure().contains(Tag::PositiveDefinite) {
-            self.err_op(
-                o,
-                format!(
-                    "`solve[cholesky]` needs a PositiveDefinite matrix, but A has tags {}",
-                    a.tags
-                ),
-            );
+        let (a, b) = if right {
+            (second, first)
+        } else {
+            (first, second)
+        };
+        let name = op.kind.mnemonic();
+        let needs = match method {
+            SolveMethod::Cholesky => Some(Tag::PositiveDefinite),
+            SolveMethod::Diagonal => Some(Tag::Diagonal),
+            SolveMethod::Lu => None,
+        };
+        if let Some(tag) = needs {
+            if !a.tags.closure().contains(tag) {
+                self.err_op(
+                    o,
+                    format!(
+                        "`{name}[{}]` needs a {tag} matrix, but A has tags {}",
+                        method.mnemonic(),
+                        a.tags
+                    ),
+                );
+            }
         }
-        // `solve(A, b)` is `A⁻¹ @ b`: reuse both rules, on one unifier so a
-        // variable bound by the first is seen by the second.
+        // `solve(A, b)` is `A⁻¹ @ b` and `solve.right(x, A)` is `x @ A⁻¹`:
+        // reuse both rules, on one unifier so a variable bound by the first
+        // is seen by the second.
         let (ta, tb) = (
             TensorType::untagged(a.shape.clone()),
             TensorType::untagged(b.shape.clone()),
         );
         let shape = self.with_rules(o, |u| {
             let inv = rules::inverse(u, &ta)?;
-            rules::matmul(u, &inv, &tb)
+            if right {
+                rules::matmul(u, &tb, &inv)
+            } else {
+                rules::matmul(u, &inv, &tb)
+            }
         });
         let dim = a.dim.inverse().and_then(|inv| inv.checked_mul(b.dim));
         let dim = self.dim_result(o, dim);
         if let (Some(t), Some(d)) = (shape, dim) {
             self.expect_result(o, op, Some(d), Some(t.shape().clone()));
+        }
+    }
+
+    /// `matmul[ta,tb,alg=...]`: the product of the operands after the
+    /// flagged ones are transposed, of the algorithm class's shapes.
+    fn check_matmul_ex(&mut self, o: OpId, op: &OpData, ta: bool, tb: bool, alg: Algorithm) {
+        let Some((a, b)) = self.two_nums(o, op) else {
+            return;
+        };
+        if !ta && !tb && alg == Algorithm::Auto {
+            self.err_op(
+                o,
+                "`matmul` without attributes is written plain `matmul`, not `matmul[]`".to_string(),
+            );
+        }
+        let mut ok = true;
+        let mut eff = Vec::new();
+        for (n, flag, side) in [(a, ta, "left"), (b, tb, "right")] {
+            let t = TensorType::untagged(n.shape.clone());
+            if !flag {
+                eff.push(t);
+                continue;
+            }
+            match rules::transpose(&t) {
+                Ok(t) if n.shape.rank() == 2 => eff.push(t),
+                _ => {
+                    self.err_op(
+                        o,
+                        format!(
+                            "`matmul` transposes its {side} operand, which is {}: only a matrix has a transpose",
+                            n.shape
+                        ),
+                    );
+                    ok = false;
+                    eff.push(t);
+                }
+            }
+        }
+        let (ra, rb) = (eff[0].shape().rank(), eff[1].shape().rank());
+        let fits = match alg {
+            Algorithm::Auto => true,
+            Algorithm::Dot => (ra, rb) == (1, 1),
+            Algorithm::MatVec => (ra, rb) == (2, 1),
+            Algorithm::VecMat => (ra, rb) == (1, 2),
+            Algorithm::Gemm | Algorithm::Syrk => (ra, rb) == (2, 2),
+        };
+        if !fits {
+            self.err_op(
+                o,
+                format!(
+                    "the algorithm `{}` does not fit operands of rank {ra} and {rb}",
+                    alg.mnemonic()
+                ),
+            );
+        }
+        if alg == Algorithm::Syrk && (op.operands[0] != op.operands[1] || ta == tb) {
+            self.err_op(
+                o,
+                "the algorithm `syrk` needs one value multiplied by its own transpose (`Aᵀ @ A` or `A @ Aᵀ`)"
+                    .to_string(),
+            );
+        }
+        if !ok {
+            return;
+        }
+        let shape = self.with_rules(o, |u| rules::matmul(u, &eff[0], &eff[1]));
+        let dim = self.dim_result(o, a.dim.checked_mul(b.dim));
+        if let (Some(t), Some(d)) = (shape, dim) {
+            self.expect_result(o, op, Some(d), Some(t.shape().clone()));
+        }
+    }
+
+    /// `diag.mul[side]`: a matmul whose `side` operand is a Diagonal matrix.
+    fn check_diag_mul(&mut self, o: OpId, op: &OpData, side: Side) {
+        let Some((a, b)) = self.two_nums(o, op) else {
+            return;
+        };
+        let d = if side == Side::Left { a } else { b };
+        if !d.tags.closure().contains(Tag::Diagonal) {
+            self.err_op(
+                o,
+                format!(
+                    "`diag.mul[{}]` needs a Diagonal {} operand, but it has tags {}",
+                    side.text(),
+                    side.text(),
+                    d.tags
+                ),
+            );
+        }
+        let (ta, tb) = (
+            TensorType::untagged(a.shape.clone()),
+            TensorType::untagged(b.shape.clone()),
+        );
+        let shape = self.with_rules(o, |u| rules::matmul(u, &ta, &tb));
+        let dim = self.dim_result(o, a.dim.checked_mul(b.dim));
+        if let (Some(t), Some(dim)) = (shape, dim) {
+            self.expect_result(o, op, Some(dim), Some(t.shape().clone()));
         }
     }
 

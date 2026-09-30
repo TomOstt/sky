@@ -19,6 +19,10 @@ sky-project = { path = "../crates/sky-project" }
 # and lowering plus the SIR reference interpreter.
 sky-interp = { path = "../crates/sky-interp" }
 sky-ir-interp = { path = "../crates/sky-ir-interp" }
+# ... and native code (sky-jit), on the lowered SIR and on the SIR after the
+# default pipeline (sky-opt), whenever it compiles the program.
+sky-jit = { path = "../crates/sky-jit" }
+sky-opt = { path = "../crates/sky-opt" }
 sky-lower = { path = "../crates/sky-lower" }
 sky-types = { path = "../crates/sky-types" }
 

@@ -6,11 +6,38 @@
 //!
 //! A value's *representation* follows from its static type. A scalar number
 //! is an `f64` (its dimension is the type's: it is not stored), a Bool is an
-//! `i8`, and everything else (arrays, strings, `none`, and any value of type
-//! `unknown`) is an opaque handle to a value the runtime owns
-//! ([`crate::runtime`]). Scalar arithmetic, comparisons, `if`, `while` and
-//! calls between functions are inline machine code; anything else is a call
-//! into the runtime, which runs the same functions the SIR interpreter does.
+//! `i8`, a *small array* is `N` `f64`s (see below), and everything else
+//! (larger arrays, strings, `none`, and any value of type `unknown`) is an
+//! opaque handle to a value the runtime owns ([`crate::runtime`]). Scalar
+//! arithmetic, comparisons, `if`, `while` and calls between functions are
+//! inline machine code; anything else is a call into the runtime, which runs
+//! the same functions the SIR interpreter does.
+//!
+//! # Small arrays
+//!
+//! A vector or matrix whose shape is known at compile time and has at most
+//! [`small::MAX_SMALL`] entries is *scalar replaced*: it is `N` separate
+//! `f64` values, in row-major order, and there is no handle, no allocation
+//! and no runtime call. The dimension is the type's, as for scalars. The
+//! operations on them (`array.literal`, `add`, `sub`, `neg`, scaling, `index`,
+//! `dot`, `norm`, `matmul`, `transpose`, `fused`, `zeros`, `identity`, `len`)
+//! are inline code, in [`small`]; the arithmetic of every entry is the shared
+//! kernels' (same operations in the same order, no fused multiply-add), and
+//! a failure re-runs the operation on the whole operands in the runtime, so
+//! the diagnostic is the interpreter's.
+//!
+//! **ABI.** A small array is passed exactly as its `N` entries would be as
+//! `N` consecutive `f64` scalars: as `N` parameters of a function, `N`
+//! results of a function, `N` parameters of a block (`if` results, `while`
+//! loop-carried values), in row-major order. A function with a `Vector[3]`
+//! parameter therefore has three `f64` parameters in its native signature. A
+//! small array is *materialized* (boxed into a runtime handle) when it goes
+//! where only a handle can: a runtime-only operation (a solve, `show`, an
+//! operation on an operand of unknown type), `print`, an `assert` message, a
+//! slot of `unknown` type (a call argument, result or loop value). A handle
+//! flowing back into a slot typed as a small array is *unpacked* with a
+//! check that its shape and dimension are what the type says; if they are
+//! not, the run deoptimizes, as for a scalar.
 //!
 //! # Exactness
 //!
@@ -85,8 +112,8 @@ use std::sync::Arc;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
-    self, types, AbiParam, Block, BlockArg, FuncRef, InstBuilder, Signature, UserFuncName,
-    Value as Cv,
+    self, types, AbiParam, Block, BlockArg, FuncRef, InstBuilder, MemFlags, Signature,
+    StackSlotData, StackSlotKind, UserFuncName, Value as Cv,
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
@@ -101,6 +128,9 @@ use sky_ir::{
 use sky_units::Dimension;
 
 use crate::runtime::{self, Program, Rt, Site, Ty, FUNC_SITE};
+
+mod small;
+use small::{small_shape, Sh};
 
 /// A program native code cannot run (yet): what `sky run --engine=native`
 /// reports, and `--engine=auto` answers by falling back.
@@ -304,21 +334,27 @@ enum Rep {
     Bool,
     /// A handle to a runtime-owned value: an `i64`, never 0.
     Ref,
+    /// A small array of known shape: one `f64` per entry, row-major (see the
+    /// module docs).
+    Small(Sh),
 }
 
 fn rep_of(t: &Type) -> Rep {
     match t {
         Type::Number(n) if n.shape.rank() == 0 => Rep::F64,
+        Type::Number(_) => small_shape(t).map_or(Rep::Ref, Rep::Small),
         Type::Bool => Rep::Bool,
         _ => Rep::Ref,
     }
 }
 
-fn rep_ty(r: Rep) -> ir::Type {
+/// The native types a value of representation `r` is held (and passed) as.
+fn rep_tys(r: Rep) -> Vec<ir::Type> {
     match r {
-        Rep::F64 => types::F64,
-        Rep::Bool => types::I8,
-        Rep::Ref => types::I64,
+        Rep::F64 => vec![types::F64],
+        Rep::Bool => vec![types::I8],
+        Rep::Ref => vec![types::I64],
+        Rep::Small(sh) => vec![types::F64; sh.len()],
     }
 }
 
@@ -338,15 +374,25 @@ fn dim_of_type(t: &Type) -> Option<Dimension> {
     }
 }
 
+/// The dimension of a number type of any shape.
+fn number_dim(t: &Type) -> Option<Dimension> {
+    match t {
+        Type::Number(n) => Some(n.dim),
+        _ => None,
+    }
+}
+
 /// A value while it is being defined: what an operation computed, before it
 /// is held as the representation its result's type asks for.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Comp {
     F64(Cv, Dimension),
     Bool(Cv),
     /// A fresh handle (the definer owns it). If the result is typed as a
     /// scalar it is unpacked with a check (see the module docs).
     Ref(Cv),
+    /// The entries of a small array, row-major, and its dimension.
+    Small(Vec<Cv>, Sh, Dimension),
 }
 
 /// A defined value.
@@ -498,19 +544,45 @@ fn symbol_name(i: usize, name: &str) -> String {
     format!("sky_f{i}_{clean}")
 }
 
-/// `(depth: i32, stack limit: i64, call site: i32, params...) -> (status:
-/// i32, results...)`.
+/// Whether `f` returns its results through memory: a function with a small
+/// array result has more result values than the machine returns in registers
+/// (a 3 by 3 matrix is nine `f64`s; Cranelift refuses more than the ABI's
+/// return registers), so its caller passes the address of an area of 8 bytes
+/// per value as one more parameter, after the others, and the function stores
+/// its results there, in order, before it returns `status` 0. Everything
+/// else, including every function without a small array result, returns its
+/// results in registers, as always.
+fn results_in_memory(f: &Function) -> bool {
+    f.results.iter().any(|r| matches!(rep_of(r), Rep::Small(_)))
+        && f.results
+            .iter()
+            .map(|r| rep_tys(rep_of(r)).len())
+            .sum::<usize>()
+            > 1
+}
+
+/// `(depth: i32, stack limit: i64, call site: i32, params..., [result area:
+/// i64]) -> (status: i32, results...)`; the result area and the results in
+/// registers are as [`results_in_memory`] says.
 fn function_signature(f: &Function, call_conv: cranelift_codegen::isa::CallConv) -> Signature {
     let mut sig = Signature::new(call_conv);
     sig.params.push(AbiParam::new(types::I32));
     sig.params.push(AbiParam::new(types::I64));
     sig.params.push(AbiParam::new(types::I32));
     for p in &f.params {
-        sig.params.push(AbiParam::new(rep_ty(rep_of(p))));
+        sig.params
+            .extend(rep_tys(rep_of(p)).into_iter().map(AbiParam::new));
+    }
+    let in_memory = results_in_memory(f);
+    if in_memory {
+        sig.params.push(AbiParam::new(types::I64));
     }
     sig.returns.push(AbiParam::new(types::I32));
-    for r in &f.results {
-        sig.returns.push(AbiParam::new(rep_ty(rep_of(r))));
+    if !in_memory {
+        for r in &f.results {
+            sig.returns
+                .extend(rep_tys(rep_of(r)).into_iter().map(AbiParam::new));
+        }
     }
     sig
 }
@@ -527,6 +599,11 @@ struct FnTx<'a, 'm> {
     f: &'m Function,
     fidx: u32,
     vals: Vec<Option<Slot>>,
+    /// The entries of each value held as a small array (`Rep::Small`), by
+    /// value.
+    smalls: Vec<Option<Vec<Cv>>>,
+    /// The number each value is known to be (a constant's), by value.
+    consts: Vec<Option<f64>>,
     /// The handle values owned by each block being translated, innermost
     /// last.
     owned: Vec<Vec<ValueId>>,
@@ -565,6 +642,8 @@ impl<'a, 'm> FnTx<'a, 'm> {
             f,
             fidx,
             vals: vec![None; f.values.len()],
+            smalls: vec![None; f.values.len()],
+            consts: vec![None; f.values.len()],
             owned: Vec::new(),
             err,
             depth: params[0],
@@ -578,16 +657,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
         let limit = params[1];
         tx.owned.push(Vec::new());
         let entry_block = f.entry();
-        for (i, &p) in f.param_values().iter().enumerate() {
-            let rep = rep_of(f.ty(p));
-            tx.bind(
-                p,
-                Slot {
-                    v: params[3 + i],
-                    rep,
-                },
-            );
-        }
+        tx.bind_all(f.param_values(), &params[3..]);
         if tx.has_calls() {
             tx.stack_check(limit);
         }
@@ -599,9 +669,19 @@ impl<'a, 'm> FnTx<'a, 'm> {
             );
         }
         let mut outs = vec![tx.iconst(types::I32, 0)];
+        let mut values = Vec::new();
         for (i, &v) in term.operands.iter().enumerate() {
             let out = tx.transfer(term, v, &f.results[i], "a returned value")?;
-            outs.push(out);
+            values.extend(out);
+        }
+        if results_in_memory(f) {
+            let area = params[params.len() - 1];
+            for (i, v) in values.into_iter().enumerate() {
+                tx.b.ins()
+                    .store(MemFlags::trusted(), v, area, (8 * i) as i32);
+            }
+        } else {
+            outs.extend(values);
         }
         tx.release_owned();
         tx.b.ins().return_(&outs);
@@ -610,9 +690,11 @@ impl<'a, 'm> FnTx<'a, 'm> {
         tx.b.switch_to_block(tx.err);
         tx.b.set_cold_block(tx.err);
         let mut outs = vec![tx.iconst(types::I32, 1)];
-        for r in &f.results {
-            let z = tx.zero(rep_of(r));
-            outs.push(z);
+        if !results_in_memory(f) {
+            for r in &f.results {
+                let z = tx.zeros(rep_of(r));
+                outs.extend(z);
+            }
         }
         tx.b.ins().return_(&outs);
         tx.b.seal_all_blocks();
@@ -635,10 +717,15 @@ impl<'a, 'm> FnTx<'a, 'm> {
 
     fn zero(&mut self, rep: Rep) -> Cv {
         match rep {
-            Rep::F64 => self.b.ins().f64const(0.0),
+            Rep::F64 | Rep::Small(_) => self.b.ins().f64const(0.0),
             Rep::Bool => self.iconst(types::I8, 0),
             Rep::Ref => self.iconst(types::I64, 0),
         }
+    }
+
+    /// A zero of every native value `rep` is held as.
+    fn zeros(&mut self, rep: Rep) -> Vec<Cv> {
+        (0..rep_tys(rep).len()).map(|_| self.zero(rep)).collect()
     }
 
     fn rt(&mut self, rt: Rt) -> FuncRef {
@@ -804,6 +891,42 @@ impl<'a, 'm> FnTx<'a, 'm> {
         self.vals[v.index()] = Some(s);
     }
 
+    /// Binds `v` to the native values `cvs` a value of its type is held as
+    /// (one for a scalar, a Bool or a handle, `N` for a small array).
+    fn bind_flat(&mut self, v: ValueId, cvs: &[Cv]) {
+        match rep_of(self.f.ty(v)) {
+            Rep::Small(sh) => self.bind_small(v, sh, cvs.to_vec()),
+            rep => self.bind(v, Slot { v: cvs[0], rep }),
+        }
+    }
+
+    /// Binds each of `values` to its share of the flat list `cvs`.
+    fn bind_all(&mut self, values: &[ValueId], cvs: &[Cv]) {
+        let mut at = 0;
+        for &v in values {
+            let n = rep_tys(rep_of(self.f.ty(v))).len();
+            self.bind_flat(v, &cvs[at..at + n]);
+            at += n;
+        }
+    }
+
+    /// Holds `v` as the small array with entries `elems`.
+    fn bind_small(&mut self, v: ValueId, sh: Sh, elems: Vec<Cv>) {
+        self.vals[v.index()] = Some(Slot {
+            v: elems[0],
+            rep: Rep::Small(sh),
+        });
+        self.smalls[v.index()] = Some(elems);
+    }
+
+    /// The entries of the small array `v`.
+    fn small_elems(&self, v: ValueId, op: &OpData) -> Res<Vec<Cv>> {
+        match self.smalls.get(v.index()).cloned().flatten() {
+            Some(e) => Ok(e),
+            None => refuse(format!("{v} is not a small array"), Some(op.span)),
+        }
+    }
+
     fn slot(&self, v: ValueId, op: &OpData) -> Res<Slot> {
         self.vals.get(v.index()).copied().flatten().map_or_else(
             || refuse(format!("{v} is used before it is defined"), Some(op.span)),
@@ -891,7 +1014,35 @@ impl<'a, 'm> FnTx<'a, 'm> {
                     rep: Rep::Bool,
                 }
             }
-            (Comp::F64(..), Rep::Bool) | (Comp::Bool(_), Rep::F64) => {
+            (Comp::Small(elems, sh, d), Rep::Small(want)) => {
+                if sh != want || number_dim(ty) != Some(d) {
+                    return refuse(
+                        format!(
+                            "the result of `{}` is typed with a different shape or dimension than it computes",
+                            op.kind.mnemonic()
+                        ),
+                        Some(op.span),
+                    );
+                }
+                self.bind_small(r, sh, elems);
+                return Ok(());
+            }
+            (Comp::Small(elems, sh, d), Rep::Ref) => {
+                let h = self.box_small(&elems, sh, d);
+                Slot {
+                    v: h,
+                    rep: Rep::Ref,
+                }
+            }
+            (Comp::Ref(h), Rep::Small(sh)) => {
+                let d = number_dim(ty).unwrap_or(Dimension::DIMENSIONLESS);
+                let elems = self.unpack_small(h, sh, d, true);
+                self.bind_small(r, sh, elems);
+                return Ok(());
+            }
+            (Comp::F64(..), Rep::Bool | Rep::Small(_))
+            | (Comp::Bool(_), Rep::F64 | Rep::Small(_))
+            | (Comp::Small(..), Rep::F64 | Rep::Bool) => {
                 return refuse(
                     format!("the result of `{}` has the wrong type", op.kind.mnemonic()),
                     Some(op.span),
@@ -911,7 +1062,10 @@ impl<'a, 'm> FnTx<'a, 'm> {
     /// The value `v` (an operand of `op`) as a value of type `to` that its
     /// receiver owns: a handle is retained, a scalar boxed if `to` is a
     /// handle type. `what` names the place, for a refusal.
-    fn transfer(&mut self, op: &OpData, v: ValueId, to: &Type, what: &str) -> Res<Cv> {
+    ///
+    /// The result is the flat list of native values the receiver holds it
+    /// as: one, or `N` for a small array.
+    fn transfer(&mut self, op: &OpData, v: ValueId, to: &Type, what: &str) -> Res<Vec<Cv>> {
         let s = self.slot(v, op)?;
         let want = rep_of(to);
         match (s.rep, want) {
@@ -922,12 +1076,31 @@ impl<'a, 'm> FnTx<'a, 'm> {
                         Some(op.span),
                     );
                 }
-                Ok(s.v)
+                Ok(vec![s.v])
             }
-            (Rep::Bool, Rep::Bool) => Ok(s.v),
+            (Rep::Bool, Rep::Bool) => Ok(vec![s.v]),
             (Rep::Ref, Rep::Ref) => {
                 self.call(Rt::Retain, &[s.v]);
-                Ok(s.v)
+                Ok(vec![s.v])
+            }
+            (Rep::Small(a), Rep::Small(b)) => {
+                if a != b || number_dim(self.f.ty(v)) != number_dim(to) {
+                    return refuse(
+                        format!("{what} has a different shape or dimension than its destination"),
+                        Some(op.span),
+                    );
+                }
+                self.small_elems(v, op)
+            }
+            (Rep::Small(sh), Rep::Ref) => {
+                let d = number_dim(self.f.ty(v)).unwrap_or(Dimension::DIMENSIONLESS);
+                let elems = self.small_elems(v, op)?;
+                Ok(vec![self.box_small(&elems, sh, d)])
+            }
+            // A value of unknown type where a typed one is expected: check it.
+            (Rep::Ref, Rep::Small(sh)) => {
+                let d = number_dim(to).unwrap_or(Dimension::DIMENSIONLESS);
+                Ok(self.unpack_small(s.v, sh, d, false))
             }
             (Rep::F64, Rep::Ref) => {
                 let d = dim_of_type(self.f.ty(v)).unwrap_or(Dimension::DIMENSIONLESS);
@@ -935,13 +1108,13 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 let d = self.c32(d);
                 let h = self.call1(Rt::BoxNum, &[d, s.v]);
                 self.check_handle(h);
-                Ok(h)
+                Ok(vec![h])
             }
             (Rep::Bool, Rep::Ref) => {
                 let w = self.b.ins().uextend(types::I32, s.v);
                 let h = self.call1(Rt::BoxBool, &[w]);
                 self.check_handle(h);
-                Ok(h)
+                Ok(vec![h])
             }
             // A value of unknown type where a typed one is expected: check it.
             (Rep::Ref, Rep::F64) => {
@@ -950,13 +1123,13 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 let d = self.c32(d);
                 let x = self.call1(Rt::PeekNum, &[s.v, d]);
                 self.nan_fail(x);
-                Ok(x)
+                Ok(vec![x])
             }
             (Rep::Ref, Rep::Bool) => {
                 let x = self.call1(Rt::PeekBool, &[s.v]);
                 let bad = self.b.ins().icmp_imm(IntCC::SignedLessThan, x, 0);
                 self.fail_if(bad);
-                Ok(self.b.ins().icmp_imm(IntCC::NotEqual, x, 0))
+                Ok(vec![self.b.ins().icmp_imm(IntCC::NotEqual, x, 0)])
             }
             _ => refuse(
                 format!("{what} has a different type than its destination"),
@@ -1027,12 +1200,23 @@ impl<'a, 'm> FnTx<'a, 'm> {
             }
             Rep::Bool => Comp::Bool(self.iconst(types::I8, 0)),
             Rep::Ref => Comp::Ref(self.iconst(types::I64, 0)),
+            Rep::Small(sh) => {
+                let elems = self.zeros(Rep::Small(sh));
+                Comp::Small(
+                    elems,
+                    sh,
+                    number_dim(ty).unwrap_or(Dimension::DIMENSIONLESS),
+                )
+            }
         }
     }
 
     fn op(&mut self, id: OpId) -> Res<()> {
         let f = self.f;
         let op = f.op(id);
+        if self.small_op(id, op)? {
+            return Ok(());
+        }
         match &op.kind {
             OpKind::ConstFloat { bits } => {
                 let x = f64::from_bits(*bits);
@@ -1041,6 +1225,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 }
                 let d = self.const_dim(op)?;
                 let v = self.b.ins().f64const(x);
+                self.note_const(op, x);
                 self.define(op, 0, Comp::F64(v, d))
             }
             OpKind::ConstRational(q) => {
@@ -1050,6 +1235,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 }
                 let d = self.const_dim(op)?;
                 let v = self.b.ins().f64const(x);
+                self.note_const(op, x);
                 self.define(op, 0, Comp::F64(v, d))
             }
             OpKind::ConstBool(x) => {
@@ -1194,6 +1380,12 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 }
                 Rep::Ref => {
                     self.call(Rt::PushRef, &[s.v]);
+                }
+                Rep::Small(sh) => {
+                    let v = op.operands[i];
+                    let d = number_dim(self.f.ty(v)).unwrap_or(Dimension::DIMENSIONLESS);
+                    let elems = self.small_elems(v, op)?;
+                    self.push_small(&elems, sh, d);
                 }
             }
         }
@@ -1549,7 +1741,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 self.fail_if(bad);
                 Ok(self.b.ins().icmp_imm(IntCC::NotEqual, r, 0))
             }
-            Rep::F64 => refuse("a condition is a number", Some(op.span)),
+            Rep::F64 | Rep::Small(_) => refuse("a condition is a number", Some(op.span)),
         }
     }
 
@@ -1664,10 +1856,11 @@ impl<'a, 'm> FnTx<'a, 'm> {
         let [then_r, else_r] = op.regions[..] else {
             return refuse("an `if` needs two regions", Some(op.span));
         };
-        let reps: Vec<Rep> = op.results.iter().map(|r| rep_of(f.ty(*r))).collect();
         let merge = self.b.create_block();
-        for r in &reps {
-            self.b.append_block_param(merge, rep_ty(*r));
+        for r in &op.results {
+            for t in rep_tys(rep_of(f.ty(*r))) {
+                self.b.append_block_param(merge, t);
+            }
         }
         let (then_b, else_b) = (self.b.create_block(), self.b.create_block());
         self.b.ins().brif(cond, then_b, &[], else_b, &[]);
@@ -1681,16 +1874,14 @@ impl<'a, 'm> FnTx<'a, 'm> {
             }
             let mut outs = Vec::new();
             for (i, &v) in term.operands.iter().enumerate() {
-                outs.push(self.transfer(term, v, f.ty(op.results[i]), "a yielded value")?);
+                outs.extend(self.transfer(term, v, f.ty(op.results[i]), "a yielded value")?);
             }
             self.release_owned();
             self.b.ins().jump(merge, &args_of(&outs));
         }
         self.b.switch_to_block(merge);
         let params = self.b.block_params(merge).to_vec();
-        for (i, (&r, p)) in op.results.iter().zip(params).enumerate() {
-            self.bind(r, Slot { v: p, rep: reps[i] });
-        }
+        self.bind_all(&op.results, &params);
         Ok(())
     }
 
@@ -1715,11 +1906,13 @@ impl<'a, 'm> FnTx<'a, 'm> {
         }
         let header = self.b.create_block();
         for &a in bargs {
-            self.b.append_block_param(header, rep_ty(rep_of(f.ty(a))));
+            for t in rep_tys(rep_of(f.ty(a))) {
+                self.b.append_block_param(header, t);
+            }
         }
         let mut inits = Vec::new();
         for (i, &v) in op.operands.iter().enumerate() {
-            inits.push(self.transfer(op, v, f.ty(bargs[i]), "a loop-carried value")?);
+            inits.extend(self.transfer(op, v, f.ty(bargs[i]), "a loop-carried value")?);
         }
         self.b.ins().jump(header, &args_of(&inits));
 
@@ -1727,15 +1920,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
         self.b.switch_to_block(header);
         self.owned.push(Vec::new());
         let params = self.b.block_params(header).to_vec();
-        for (&a, p) in bargs.iter().zip(params) {
-            self.bind(
-                a,
-                Slot {
-                    v: p,
-                    rep: rep_of(f.ty(a)),
-                },
-            );
-        }
+        self.bind_all(bargs, &params);
         let term = self.block_body(before)?;
         if !matches!(term.kind, OpKind::Condition) || term.operands.is_empty() {
             return refuse(
@@ -1755,24 +1940,27 @@ impl<'a, 'm> FnTx<'a, 'm> {
         let (after_pre, exit_pre) = (self.b.create_block(), self.b.create_block());
         let (after_b, exit_b) = (self.b.create_block(), self.b.create_block());
         for &a in aargs {
-            self.b.append_block_param(after_b, rep_ty(rep_of(f.ty(a))));
+            for t in rep_tys(rep_of(f.ty(a))) {
+                self.b.append_block_param(after_b, t);
+            }
         }
-        let res_reps: Vec<Rep> = op.results.iter().map(|r| rep_of(f.ty(*r))).collect();
-        for r in &res_reps {
-            self.b.append_block_param(exit_b, rep_ty(*r));
+        for &r in &op.results {
+            for t in rep_tys(rep_of(f.ty(r))) {
+                self.b.append_block_param(exit_b, t);
+            }
         }
         self.b.ins().brif(cond, after_pre, &[], exit_pre, &[]);
         self.b.switch_to_block(after_pre);
         let mut outs = Vec::new();
         for (i, &v) in fwd.iter().enumerate() {
-            outs.push(self.transfer(term, v, f.ty(aargs[i]), "a forwarded value")?);
+            outs.extend(self.transfer(term, v, f.ty(aargs[i]), "a forwarded value")?);
         }
         self.emit_release_owned();
         self.b.ins().jump(after_b, &args_of(&outs));
         self.b.switch_to_block(exit_pre);
         let mut outs = Vec::new();
         for (i, &v) in fwd.iter().enumerate() {
-            outs.push(self.transfer(term, v, f.ty(op.results[i]), "a loop result")?);
+            outs.extend(self.transfer(term, v, f.ty(op.results[i]), "a loop result")?);
         }
         self.emit_release_owned();
         self.b.ins().jump(exit_b, &args_of(&outs));
@@ -1782,15 +1970,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
         self.b.switch_to_block(after_b);
         self.owned.push(Vec::new());
         let params = self.b.block_params(after_b).to_vec();
-        for (&a, p) in aargs.iter().zip(params) {
-            self.bind(
-                a,
-                Slot {
-                    v: p,
-                    rep: rep_of(f.ty(a)),
-                },
-            );
-        }
+        self.bind_all(aargs, &params);
         let term = self.block_body(after)?;
         if !matches!(term.kind, OpKind::Yield) || term.operands.len() != bargs.len() {
             return refuse(
@@ -1800,7 +1980,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
         }
         let mut outs = Vec::new();
         for (i, &v) in term.operands.iter().enumerate() {
-            outs.push(self.transfer(term, v, f.ty(bargs[i]), "a loop-carried value")?);
+            outs.extend(self.transfer(term, v, f.ty(bargs[i]), "a loop-carried value")?);
         }
         self.release_owned();
         self.b.ins().jump(header, &args_of(&outs));
@@ -1808,15 +1988,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
         // After the loop.
         self.b.switch_to_block(exit_b);
         let params = self.b.block_params(exit_b).to_vec();
-        for (i, (&r, p)) in op.results.iter().zip(params).enumerate() {
-            self.bind(
-                r,
-                Slot {
-                    v: p,
-                    rep: res_reps[i],
-                },
-            );
-        }
+        self.bind_all(&op.results, &params);
         Ok(())
     }
 
@@ -1849,7 +2021,7 @@ impl<'a, 'm> FnTx<'a, 'm> {
         let depth = self.b.ins().iadd_imm(self.depth, 1);
         let mut args = vec![depth, self.stack_limit, site_v];
         for (i, &v) in op.operands.iter().enumerate() {
-            args.push(self.transfer(
+            args.extend(self.transfer(
                 op,
                 v,
                 &g.params[i],
@@ -1866,16 +2038,49 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 r
             }
         };
+        // A callee that returns through memory gets the address of a stack
+        // area for its results (see `results_in_memory`).
+        let area = if results_in_memory(g) {
+            let n: usize = g.results.iter().map(|r| rep_tys(rep_of(r)).len()).sum();
+            let slot = self.b.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                8 * n as u32,
+                3,
+            ));
+            let addr = self.b.ins().stack_addr(types::I64, slot, 0);
+            args.push(addr);
+            Some(addr)
+        } else {
+            None
+        };
         let inst = self.b.ins().call(fref, &args);
-        let results = self.b.inst_results(inst).to_vec();
+        let mut results = self.b.inst_results(inst).to_vec();
         self.status_fail(results[0]);
+        if let Some(addr) = area {
+            let tys: Vec<ir::Type> = g.results.iter().flat_map(|r| rep_tys(rep_of(r))).collect();
+            for (i, t) in tys.into_iter().enumerate() {
+                let v = self
+                    .b
+                    .ins()
+                    .load(t, MemFlags::trusted(), addr, (8 * i) as i32);
+                results.push(v);
+            }
+        }
+        let mut at = 1;
         for (i, ty) in g.results.iter().enumerate() {
-            let v = results[1 + i];
-            let c = match rep_of(ty) {
+            let v = results[at];
+            let rep = rep_of(ty);
+            let c = match rep {
                 Rep::F64 => Comp::F64(v, dim_of_type(ty).unwrap_or(Dimension::DIMENSIONLESS)),
                 Rep::Bool => Comp::Bool(v),
                 Rep::Ref => Comp::Ref(v),
+                Rep::Small(sh) => Comp::Small(
+                    results[at..at + sh.len()].to_vec(),
+                    sh,
+                    number_dim(ty).unwrap_or(Dimension::DIMENSIONLESS),
+                ),
             };
+            at += rep_tys(rep).len();
             self.define(op, i, c)?;
         }
         Ok(())
@@ -1897,6 +2102,12 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 }
                 Rep::Ref => {
                     self.call(Rt::PrintRef, &[s.v]);
+                }
+                Rep::Small(sh) => {
+                    let v = op.operands[i];
+                    let d = number_dim(self.f.ty(v)).unwrap_or(Dimension::DIMENSIONLESS);
+                    let elems = self.small_elems(v, op)?;
+                    self.print_small(&elems, sh, d);
                 }
             }
         }
@@ -1925,7 +2136,9 @@ impl<'a, 'm> FnTx<'a, 'm> {
                 let holds = self.b.ins().icmp_imm(IntCC::Equal, r, 1);
                 self.b.ins().brif(holds, cont, &[], fail_b, &[]);
             }
-            Rep::F64 => return refuse("an `assert` condition is a number", Some(op.span)),
+            Rep::F64 | Rep::Small(_) => {
+                return refuse("an `assert` condition is a number", Some(op.span))
+            }
         }
         self.b.set_cold_block(fail_b);
         self.b.switch_to_block(fail_b);

@@ -782,7 +782,10 @@ impl<'m> Machine<'m, '_> {
                     let op = act.op(op_id, s)?;
                     match role {
                         Role::Deferred => Ok(()),
-                        Role::InPlace => self.op(act, op),
+                        Role::InPlace => {
+                            act.owner = Some(op_id);
+                            self.op(act, op)
+                        }
                         Role::Start => {
                             let OpKind::Call { callee } = &op.kind else {
                                 return Err(IrRuntimeError::malformed(
@@ -832,7 +835,10 @@ impl<'m> Machine<'m, '_> {
             let op = act.op(op_id, s)?;
             match role {
                 Role::InPlace => {}
-                Role::Deferred => self.op(act, op)?,
+                Role::Deferred => {
+                    act.owner = Some(op_id);
+                    self.op(act, op)?
+                }
                 Role::Start => match results.next().flatten() {
                     Some(Ok(values)) => act.define(op, values)?,
                     Some(Err(e)) => return Err(e),

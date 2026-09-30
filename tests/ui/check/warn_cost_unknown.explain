@@ -13,6 +13,14 @@ tests/ui/check/warn_cost_unknown.sky:3:5: warning: cannot prove that `until` mee
   = note: the cost has no upper bound: loop at line 4
   = note: the model bounds a counted loop (`for i in range(10)`, `range(len(v))`); a loop with another condition, a `break`, or a recursion has no bound
 
+tests/ui/check/warn_cost_unknown.sky:5:13: note: [PAR-001] this elementwise `mul` runs on 8 threads once it has at least 262144 elements
+  |
+5 |         v = v * 2
+  |             ^^^^^
+  = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+  = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+  = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
+
 tests/ui/check/warn_cost_unknown.sky:8:5: note: cost of `forever`: unbounded (recursive call to `forever` at line 10)
   |
 8 | def forever(v: Vector[N]) -> Vector[N]:
@@ -55,3 +63,11 @@ tests/ui/check/warn_cost_unknown.sky:17:5: note: `counted` costs N² flops, with
    |     ^^^^^^^^^^^^^^^^^
    = note: proven from the static cost model, for every size from 1 up
    = note: the cost is that of the optimized program (spec "Performance contracts")
+
+tests/ui/check/warn_cost_unknown.sky:19:13: note: [PAR-001] this elementwise `mul` runs on 8 threads once it has at least 262144 elements
+   |
+19 |         v = v * 2
+   |             ^^^^^
+   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+   = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it

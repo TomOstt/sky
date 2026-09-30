@@ -37,17 +37,41 @@ tests/ui/check/ok_cost_report.sky:6:12: note: [FUSE-001] `v + 2 * w` is rewritte
   = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[N]
   = note: because 2 of the operations can fail (`mul`, `add`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
 
+tests/ui/check/ok_cost_report.sky:6:12: note: [PAR-001] this elementwise kernel runs on 8 threads once it has at least 2048 elements
+  |
+6 |     return v + 2 * w
+  |            ^^^^^^^^^
+  = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+  = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+  = note: because 2 of its operations can fail (`mul`, `add`): if chunks fail, the failing operation that comes first in program order is reported, at its lowest failing element, which is the error a sequential run gives
+
 tests/ui/check/ok_cost_report.sky:8:5: note: cost of `relax`: N² flops, N allocations (N² floats in all)
   |
 8 | def relax(v: Vector[N]) -> Vector[N]:
   |     ^^^^^
   = note: memory traffic: 8·N² bytes read, 8·N² bytes written
 
+tests/ui/check/ok_cost_report.sky:10:13: note: [PAR-001] this elementwise `mul` runs on 8 threads once it has at least 262144 elements
+   |
+10 |         v = v * 2
+   |             ^^^^^
+   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+   = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
+
 tests/ui/check/ok_cost_report.sky:13:5: note: cost of `until`: unbounded (loop at line 14)
    |
 13 | def until(v: Vector[N]) -> Vector[N]:
    |     ^^^^^
    = note: the static cost model has no bound for it
+
+tests/ui/check/ok_cost_report.sky:15:13: note: [PAR-001] this elementwise `mul` runs on 8 threads once it has at least 262144 elements
+   |
+15 |         v = v * 2
+   |             ^^^^^
+   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+   = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
 
 tests/ui/check/ok_cost_report.sky:18:5: note: cost of `norm_ish`: 25 flops
    |

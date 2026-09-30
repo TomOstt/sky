@@ -1,3 +1,15 @@
+tests/ir/parallel.sky:5:5: note: cost of `work`: unbounded (loop at line 8)
+  |
+5 | def work(n):
+  |     ^^^^
+  = note: the static cost model has no bound for it
+
+tests/ir/parallel.sky:13:5: note: cost of `noisy`: unbounded (an operation at line 15 on a value of unknown shape)
+   |
+13 | def noisy(n):
+   |     ^^^^^
+   = note: the static cost model has no bound for it
+
 tests/ir/parallel.sky:19:5: note: [FUSE-001] `(a + b) * 2 - a` is rewritten to `fused(a, b, 2)`
    |
 19 | d = (a + b) * 2 - a

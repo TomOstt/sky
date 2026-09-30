@@ -65,6 +65,14 @@ tests/ui/check/ok_cost_proven.sky:10:12: note: [FUSE-001] `v + 2 * w` is rewritt
    = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[N]
    = note: because 2 of the operations can fail (`mul`, `add`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
 
+tests/ui/check/ok_cost_proven.sky:10:12: note: [PAR-001] this elementwise kernel runs on 8 threads once it has at least 2048 elements
+   |
+10 |     return v + 2 * w
+   |            ^^^^^^^^^
+   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+   = note: because 2 of its operations can fail (`mul`, `add`): if chunks fail, the failing operation that comes first in program order is reported, at its lowest failing element, which is the error a sequential run gives
+
 tests/ui/check/ok_cost_proven.sky:12:5: note: cost of `solve_spd`: N³/3 + 2·N² flops, 2 allocations (N² + N floats in all)
    |
 12 | def solve_spd(A: PositiveDefinite Matrix[N, N], b: Vector[N]) -> Vector[N]:
@@ -117,6 +125,14 @@ tests/ui/check/ok_cost_proven.sky:22:5: note: `relax` costs N² flops, within `N
    = note: proven from the static cost model, for every size from 1 up
    = note: the cost is that of the optimized program (spec "Performance contracts")
 
+tests/ui/check/ok_cost_proven.sky:24:13: note: [PAR-001] this elementwise `mul` runs on 8 threads once it has at least 262144 elements
+   |
+24 |         v = v * 2
+   |             ^^^^^
+   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+   = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
+
 tests/ui/check/ok_cost_proven.sky:27:5: note: cost of `pick`: at most 2·N flops, at most 1 allocation (N floats in all)
    |
 27 | def pick(v: Vector[N], w: Vector[N]) -> Vector[N]:
@@ -142,3 +158,11 @@ tests/ui/check/ok_cost_proven.sky:31:13: note: [FUSE-001] `v * 2 + w` is rewritt
    = note: because fused 2 elementwise operations into one kernel; saves 1 temporary array of shape Vector[N]
    = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[N]
    = note: because 2 of the operations can fail (`mul`, `add`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
+
+tests/ui/check/ok_cost_proven.sky:31:13: note: [PAR-001] this elementwise kernel runs on 8 threads once it has at least 2048 elements
+   |
+31 |         r = v * 2 + w
+   |             ^^^^^^^^^
+   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+   = note: because 2 of its operations can fail (`mul`, `add`): if chunks fail, the failing operation that comes first in program order is reported, at its lowest failing element, which is the error a sequential run gives

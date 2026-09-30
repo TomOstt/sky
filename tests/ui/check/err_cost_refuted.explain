@@ -38,6 +38,14 @@ tests/ui/check/err_cost_refuted.sky:8:12: note: [FUSE-001] `v + 2 * w` is rewrit
   = note: because every intermediate result is used exactly once, by the next operation, and every array operand is a Vector[N]
   = note: because 2 of the operations can fail (`mul`, `add`); the kernel reports the failure of the first of them in program order that fails at any element, which is the error the separate operations gave
 
+tests/ui/check/err_cost_refuted.sky:8:12: note: [PAR-001] this elementwise kernel runs on 8 threads once it has at least 2048 elements
+  |
+8 |     return v + 2 * w
+  |            ^^^^^^^^^
+  = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+  = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+  = note: because 2 of its operations can fail (`mul`, `add`): if chunks fail, the failing operation that comes first in program order is reported, at its lowest failing element, which is the error a sequential run gives
+
 tests/ui/check/err_cost_refuted.sky:10:5: note: cost of `lower_order`: 2·N³ + N² flops, 2 allocations of N² floats
    |
 10 | def lower_order(A: Matrix[N, N]) -> Matrix[N, N]:
@@ -58,6 +66,14 @@ tests/ui/check/err_cost_refuted.sky:11:5: error: `lower_order` costs 2·N³ + N�
    = note: proven false by the static cost model: a cost contract holds for every size from 1 up, lower-order terms included
    = help: the cost is exactly 2·N³ + N²: write `cost flops <= 2 * N^3 + N^2`
 
+tests/ui/check/err_cost_refuted.sky:12:12: note: [PAR-001] this elementwise `add` runs on 8 threads once it has at least 262144 elements
+   |
+12 |     return A @ A + A
+   |            ^^^^^^^^^
+   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+   = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
+
 tests/ui/check/err_cost_refuted.sky:14:5: note: cost of `loop`: N² flops, N allocations (N² floats in all)
    |
 14 | def loop(v: Vector[N]) -> Vector[N]:
@@ -75,6 +91,14 @@ tests/ui/check/err_cost_refuted.sky:15:5: error: `loop` costs N² flops, which i
    = note: proven false by the static cost model: a cost contract holds for every size from 1 up, lower-order terms included
    = help: the cost is exactly N²: write `cost flops <= N^2`
 
+tests/ui/check/err_cost_refuted.sky:17:13: note: [PAR-001] this elementwise `mul` runs on 8 threads once it has at least 262144 elements
+   |
+17 |         v = v * 2
+   |             ^^^^^
+   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+   = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it
+
 tests/ui/check/err_cost_refuted.sky:20:5: note: cost of `too_few`: N flops, 1 allocation of N floats
    |
 20 | def too_few(v: Vector[N]) -> Vector[N]:
@@ -87,3 +111,11 @@ tests/ui/check/err_cost_refuted.sky:21:5: error: `too_few` costs N flops, not 3�
    |     ^^^^^^^^^^^^^^^^^^^ the cost is less than this
    = note: for example with N = 1: it costs 1 flop, and the contract says 3
    = note: proven false by the static cost model: a cost contract holds for every size from 1 up, lower-order terms included
+
+tests/ui/check/err_cost_refuted.sky:22:12: note: [PAR-001] this elementwise `mul` runs on 8 threads once it has at least 262144 elements
+   |
+22 |     return v * 2
+   |            ^^^^^
+   = note: because its size is known only when the program runs; below the threshold splitting costs more than it saves
+   = note: because every element is independent, so the result is bit-identical to the sequential one whatever the split
+   = note: because its only failure is an overflow (or a zero divisor) of the whole operation, found after the elements are computed and reported the same way whichever thread found it

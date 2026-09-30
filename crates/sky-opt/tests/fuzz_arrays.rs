@@ -1,4 +1,4 @@
-//! Array programs under the three engines: the tree-walker, the lowered SIR,
+//! Array programs under the engines: the tree-walker, the lowered SIR,
 //! and the SIR after the default pipeline must print the same bytes and stop
 //! with the same error.
 //!
@@ -336,23 +336,36 @@ fn check(src: &str) -> Result<(), String> {
                 .map(|e| (e.message.clone(), render(&e.to_diagnostic()))),
         )
     };
-    let run_sir = |m: &sky_ir::Module| -> Run {
+    let run_with = |m: &sky_ir::Module, cfg: &sky_ir::parallel::Config| -> Run {
         let mut out = Vec::new();
-        let r = sky_ir_interp::run(m, &mut out);
+        let r = sky_ir_interp::run_with(m, &mut out, cfg);
         (
             String::from_utf8_lossy(&out).into_owned(),
             r.err()
                 .map(|e| (e.message.clone(), render(&e.to_diagnostic()))),
         )
     };
+    // The default configuration (`SKY_THREADS`), and the most parallel one
+    // (every threshold at its minimum, so independent calls and kernels of
+    // these small programs run on the pool): both must give the sequential
+    // run's output.
+    let run_sir = |m: &sky_ir::Module| run_with(m, &sky_ir::parallel::Config::from_env());
+    let run_eager = |m: &sky_ir::Module| run_with(m, &sky_ir::parallel::Config::eager(4));
     let lowered = run_sir(&ir);
+    let lowered_eager = run_eager(&ir);
     default_passes(PassManager::new().verify_each(true))
         .run(&mut ir)
         .map_err(|e| format!("a pass broke the IR: {e}"))?;
     let optimized = run_sir(&ir);
+    let optimized_eager = run_eager(&ir);
 
     let want = normalized(walker);
-    for (what, got) in [("lowered", lowered), ("optimized", optimized)] {
+    for (what, got) in [
+        ("lowered", lowered),
+        ("optimized", optimized),
+        ("lowered, eager parallel", lowered_eager),
+        ("optimized, eager parallel", optimized_eager),
+    ] {
         let got = normalized(got);
         if got != want {
             return Err(format!(

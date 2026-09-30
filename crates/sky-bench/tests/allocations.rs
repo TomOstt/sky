@@ -229,8 +229,15 @@ fn every_benchmark_program_allocations_are_reported() {
         .expect("benches/programs exists")
         .map(|e| e.expect("entry").path())
         .filter(|p| p.extension().is_some_and(|x| x == "sky"))
-        // `recursion`'s `N` is the depth of `fib`, not an iteration count.
-        .filter(|p| p.file_stem().is_some_and(|x| x != "recursion"))
+        // In these `N` is a depth or a matrix size, not an iteration count.
+        .filter(|p| {
+            p.file_stem().is_some_and(|x| {
+                !matches!(
+                    x.to_str(),
+                    Some("recursion" | "chain_order" | "chain_order_forced")
+                )
+            })
+        })
         .collect();
     names.sort();
     println!(

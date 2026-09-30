@@ -235,18 +235,37 @@ pub(crate) fn par_min_madds() -> usize {
     }
 }
 
-/// A sentence for `sky check --explain` about the tuned parameters of
-/// `kernel` (`gemm`, `cholesky` or `threads`) at problem size `n`, or
-/// `None` when nothing was tuned on this machine for it.
-pub fn explain(kernel: &str, n: usize) -> Option<String> {
-    let (what, class) = match kernel {
-        "gemm" => ("GEMM blocks", CLASSES[class_of(n)]),
-        "cholesky" => ("Cholesky blocks", CLASSES[class_of(n)]),
-        "threads" => ("the thread threshold", "all"),
-        _ => return None,
+/// Sentences for `sky check --explain` about what `sky tune` found for
+/// `kernel` (`gemm`, `cholesky` or `threads`): one per size class it tuned on
+/// this machine, or just the class of problem size `n`, e.g. `GEMM blocks for
+/// sizes up to 256: tuned on this machine (2026-09-30): mc 256, kc 128, nc
+/// 1024, 1.30x faster than the default mc 128, kc 256, nc 1024`. Empty when
+/// nothing was tuned.
+pub fn explain(kernel: &str, n: Option<usize>) -> Vec<String> {
+    let (what, classes): (&str, Vec<usize>) = match (kernel, n) {
+        ("gemm", None) => ("GEMM blocks", (0..CLASSES.len()).collect()),
+        ("cholesky", None) => ("Cholesky blocks", (0..CLASSES.len()).collect()),
+        ("gemm", Some(n)) => ("GEMM blocks", vec![class_of(n)]),
+        ("cholesky", Some(n)) => ("Cholesky blocks", vec![class_of(n)]),
+        ("threads", _) => {
+            return sky_tune::tuned_note("threads", "all")
+                .map(|note| format!("the threshold for using threads: {note}"))
+                .into_iter()
+                .collect()
+        }
+        _ => return Vec::new(),
     };
-    let note = sky_tune::tuned_note(kernel, class)?;
-    Some(format!("{what} {note}"))
+    classes
+        .into_iter()
+        .filter_map(|c| {
+            let note = sky_tune::tuned_note(kernel, CLASSES[c])?;
+            let size = match c {
+                0..=2 => format!("up to {}", &CLASSES[c][2..]),
+                _ => format!("over {}", &CLASSES[c][2..]),
+            };
+            Some(format!("{what} for sizes {size}: {note}"))
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------

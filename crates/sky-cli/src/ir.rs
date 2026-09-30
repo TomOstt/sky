@@ -221,6 +221,20 @@ fn internal(e: &PassError) -> String {
     format!("internal error: {e}")
 }
 
+/// Adds what `sky tune` found for these linear algebra kernels on this machine
+/// (`gemm`, `cholesky`) to the note of a decision that chooses them, e.g.
+/// "GEMM blocks for sizes up to 256: tuned on this machine (2026-09-30):
+/// mc 256, kc 128, nc 1024, 1.30x faster than the default ...". Says nothing
+/// where nothing was tuned.
+pub fn cite_tuning(mut d: Diagnostic, kernels: &[&str]) -> Diagnostic {
+    for kernel in kernels {
+        for line in sky_linalg::tuning::explain(kernel, None) {
+            d = d.with_note(line);
+        }
+    }
+    d
+}
+
 /// One explanation as a note. The Cholesky rewrite is worded like the
 /// checker's note for it (same headline, same sentence), so it reads the
 /// same whichever of the two reports it; everything else uses the generic
@@ -258,7 +272,7 @@ fn note(x: &sky_ir::Explanation) -> Diagnostic {
 /// What can run in parallel, and what cannot and why, as notes
 /// (`[PAR-001]`, `[PAR-002]`, `[PAR-003]`).
 fn parallel_notes(ir: &sky_ir::Module, threads: usize) -> Vec<Diagnostic> {
-    let cfg = sky_ir::parallel::Config::with_threads(threads);
+    let cfg = sky_ir::parallel::Config::tuned(threads);
     sky_ir::parallel::explain(ir, &cfg)
         .into_iter()
         .map(|n| {
@@ -393,12 +407,17 @@ fn explanation_notes(
                 return d;
             }
             let source = sky_ast::ast::span_text(src, x.span).filter(|t| !t.is_empty());
-            match source {
+            let d = match source {
                 Some(text) if x.after.is_empty() => note(&sky_ir::Explanation {
                     before: text.to_string(),
                     ..x.clone()
                 }),
                 _ => note(x),
+            };
+            match x.pass {
+                "algorithms" => cite_tuning(d, &["gemm"]),
+                "cholesky" => cite_tuning(d, &["cholesky", "gemm"]),
+                _ => d,
             }
         })
         .collect();

@@ -15,7 +15,10 @@ use sky_tune::{format_date, Config, Db, Registry, Store};
 /// Everything `sky tune` can tune. Crates with tunable kernels add
 /// themselves here, one line each, e.g. `sky_linalg::register(&mut r);`.
 pub fn registry() -> Registry {
-    Registry::with_demos()
+    let mut registry = Registry::with_demos();
+    sky_linalg::register(&mut registry);
+    sky_ir_interp::register(&mut registry);
+    registry
 }
 
 /// What `sky tune` was asked to do.
@@ -132,6 +135,13 @@ fn run(store: &Store, filter: Option<&str>, budget_ms: Option<u64>) -> ExitCode 
         };
         stored += 1;
         println!("\n{outcome}");
+        // Wide enough for the longest candidate (a product has three
+        // parameters), and at least the width the short ones always had.
+        let width = outcome
+            .measurements
+            .iter()
+            .map(|m| m.params.to_string().chars().count() + 2)
+            .fold(16, usize::max);
         for (i, m) in outcome.measurements.iter().enumerate() {
             let mark = match (i == outcome.winner, i == 0) {
                 (true, true) => "  <- chosen (default)",
@@ -139,7 +149,11 @@ fn run(store: &Store, filter: Option<&str>, budget_ms: Option<u64>) -> ExitCode 
                 (false, true) => "  (default)",
                 (false, false) => "",
             };
-            println!("    {:<16}{}{mark}", m.params.to_string(), outcome.rate(i));
+            println!(
+                "    {:<width$}{}{mark}",
+                m.params.to_string(),
+                outcome.rate(i)
+            );
         }
     }
     println!(

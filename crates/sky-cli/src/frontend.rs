@@ -126,8 +126,23 @@ pub fn analyze_ir(
                 }
                 if explain {
                     diagnostics.extend(checked.ode_notes.iter().cloned());
-                    diagnostics.extend(checked.rewrites.iter().map(|r| r.to_diagnostic(src)));
-                    diagnostics.extend(checked.chain_notes.iter().cloned());
+                    diagnostics.extend(checked.rewrites.iter().map(|r| {
+                        let d = r.to_diagnostic(src);
+                        // A solve runs on the blocked kernels `sky tune` tunes.
+                        if d.message.contains("Cholesky") {
+                            ir::cite_tuning(d, &["cholesky", "gemm"])
+                        } else if d.message.contains("solve[lu]") {
+                            ir::cite_tuning(d, &["gemm"])
+                        } else {
+                            d
+                        }
+                    }));
+                    diagnostics.extend(
+                        checked
+                            .chain_notes
+                            .iter()
+                            .map(|d| ir::cite_tuning(d.clone(), &["gemm"])),
+                    );
                     if checked.chain_notes_omitted > 0 {
                         let last = checked
                             .chain_notes

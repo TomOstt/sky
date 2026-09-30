@@ -1061,7 +1061,7 @@ fn kernel_notes(f: &Function, cfg: &Config, notes: &mut Vec<Note>) {
         let span = op.span;
         let t = cfg.threads;
         let small = |n: u64| n < threshold as u64;
-        let note = if !cfg.is_parallel() {
+        let mut note = if !cfg.is_parallel() {
             Note {
                 rule: NOT_PARALLEL_RULE,
                 span,
@@ -1107,8 +1107,27 @@ fn kernel_notes(f: &Function, cfg: &Config, notes: &mut Vec<Note>) {
                 ],
             }
         };
+        // Where the threshold came from tuning, say so.
+        if cfg.is_parallel() {
+            let cited = match &op.kind {
+                OpKind::Fused => tuned_citation(FUSED_WORK_KERNEL, cfg.fused_work, tuned().0),
+                _ => tuned_citation(ARRAY_ELEMENTS_KERNEL, cfg.array_elements, tuned().1),
+            };
+            note.because.extend(cited);
+        }
         notes.push(note);
     }
+}
+
+/// `sky tune`'s note for a threshold, when `value` is the tuned one (a
+/// [`Config`] made by [`Config::with_threads`] has the measured defaults and
+/// cites nothing).
+fn tuned_citation(kernel: &str, value: usize, tuned_value: usize) -> Option<String> {
+    if value != tuned_value {
+        return None;
+    }
+    let note = sky_tune::tuned_note(kernel, "all")?;
+    Some(format!("the threshold is {value}, {note}"))
 }
 
 /// How many operations the body of a `fused` has, without its `yield`.

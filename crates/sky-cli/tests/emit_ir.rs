@@ -29,9 +29,14 @@ fn sky(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_sky"))
         .arg("check")
         .args(args)
-        // The parallelism notes speak of the thread count; the goldens
-        // must not depend on the machine's cores.
+        // The parallelism notes speak of the thread count, and the kernel
+        // notes of what `sky tune` found; the goldens must not depend on the
+        // machine's cores or on its performance database.
         .env("SKY_THREADS", "8")
+        .env(
+            "SKY_TUNE_DB",
+            concat!(env!("CARGO_TARGET_TMPDIR"), "/no-tune.db"),
+        )
         .current_dir(root())
         .output()
         .expect("run sky")

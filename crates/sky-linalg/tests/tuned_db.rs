@@ -90,14 +90,22 @@ fn stored_values_are_used_clamped_and_never_change_results() {
     );
 
     // `--explain` cites what was tuned, for the sizes it was tuned for.
-    let note = sky_linalg::tuning::explain("gemm", 100).expect("tuned for 65..=256");
+    let notes = sky_linalg::tuning::explain("gemm", Some(100));
+    assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(
-        note.starts_with("GEMM blocks tuned on this machine"),
-        "{note}"
+        notes[0].starts_with("GEMM blocks for sizes up to 256: tuned on this machine ("),
+        "{notes:?}"
     );
-    assert!(note.contains("1.30x faster than the default"), "{note}");
-    assert!(sky_linalg::tuning::explain("gemm", 500).is_none());
-    assert!(sky_linalg::tuning::explain("cholesky", 100).is_some());
-    assert!(sky_linalg::tuning::explain("threads", 0).is_some());
-    assert!(sky_linalg::tuning::explain("nonsense", 100).is_none());
+    assert!(
+        notes[0].contains("1.30x faster than the default"),
+        "{notes:?}"
+    );
+    assert!(sky_linalg::tuning::explain("gemm", Some(500)).is_empty());
+    // With no size, every tuned class: the small one and the one after it.
+    let all = sky_linalg::tuning::explain("gemm", None);
+    assert_eq!(all.len(), 2, "{all:?}");
+    assert!(all[0].contains("up to 64") && all[1].contains("up to 256"));
+    assert_eq!(sky_linalg::tuning::explain("cholesky", Some(100)).len(), 1);
+    assert_eq!(sky_linalg::tuning::explain("threads", None).len(), 1);
+    assert!(sky_linalg::tuning::explain("nonsense", None).is_empty());
 }

@@ -9,9 +9,12 @@
 //! speed and never an output. The tests below run each candidate and compare
 //! the answers.
 //!
-//! Each is measured over a ladder of sizes, each size repeated so that all
-//! cost about the same to the interpreter, so a candidate wins by being
-//! right across the ladder rather than at the largest size.
+//! Each is measured over a ladder of sizes: a candidate threshold sends the
+//! rungs below it one way and the rest the other, so it wins by being right
+//! on both sides of it. The parallel ladders repeat each size so that every
+//! rung costs about the same sequentially (a rung of many small arrays is
+//! not drowned by one huge one); the native-kernel ladder runs each size
+//! once, cold, because compiling is exactly what it prices.
 //!
 //! | kernel | parameter | default | what it decides |
 //! |---|---|---|---|
@@ -116,9 +119,18 @@ fn fused_rungs(sizes: &[usize], budget: usize) -> Vec<Rung> {
 /// The elements from which the interpreter compiles a `fused`: each call is
 /// a fresh run, so it pays the compile (a run's first long `fused`).
 fn native_tunables() -> Vec<Tunable> {
-    let sizes = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192];
+    // The interpreter's scalar kernel is fast (a few ns per element and
+    // operation), so on a big machine the crossover can be far above the
+    // default: the ladder goes well past it. Each rung is a different array,
+    // so a threshold wins by being right on the rungs on both sides of it.
+    let sizes = [
+        64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536,
+    ];
     let rungs = fused_rungs(&sizes, 1);
-    let candidates = grid(&[("min_elements", &[512, 128, 256, 1024, 2048, 4096, 8192])]);
+    let candidates = grid(&[(
+        "min_elements",
+        &[512, 128, 256, 1024, 2048, 4096, 8192, 16384, 32768, 65536],
+    )]);
     let cfg = Config::sequential();
     let tunable = Tunable::new(
         sky_jit::tuning::KERNEL,

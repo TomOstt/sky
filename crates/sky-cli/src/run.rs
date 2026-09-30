@@ -229,7 +229,7 @@ fn run_source(
 /// The SIR interpreter's thread configuration for `--threads` (default: the
 /// environment's, else the machine's cores).
 fn par_config(threads: Option<usize>) -> sky_ir_interp::ParConfig {
-    sky_ir_interp::ParConfig::with_threads(
+    sky_ir_interp::ParConfig::tuned(
         threads.unwrap_or_else(sky_ir_interp::ParConfig::default_threads),
     )
 }

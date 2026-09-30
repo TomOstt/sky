@@ -5,6 +5,11 @@
 //! diagnostic (message, primary span and label, secondary labels, notes,
 //! help), or both succeed.
 //!
+//! The native side compiles the same SIR (as lowered, and after the default
+//! optimization pipeline) to machine code with `sky_jit` and must agree with
+//! the tree-walker in the same way; a program native code refuses to compile
+//! fails the test.
+//!
 //! The SIR side runs `sky_lower::lower_source`, which also verifies the
 //! lowered module, so every program here is checked three ways: same
 //! output, same errors, and valid SIR.
@@ -99,6 +104,37 @@ fn run_ir(ir: &sky_ir::Module, src: &str) -> Outcome {
     })
 }
 
+/// What the native engine does with `ir`. Every program of this file must
+/// compile: a refusal fails the test, naming the program.
+fn run_native(ir: &sky_ir::Module, src: &str) -> Outcome {
+    sky_ast::with_deep_stack(|| {
+        let compiled = sky_jit::compile(ir)
+            .unwrap_or_else(|e| panic!("native code refused a program:\n{src}\n{e}"));
+        let mut out = Vec::new();
+        // A value the checker could not type that is not what a declaration
+        // says stops native code, and SIR runs the program instead (what
+        // `sky run` does); nothing in this file's programs does that.
+        let (result, deopt) =
+            compiled.run_or_rerun(&mut out, |w| sky_ir_interp::run(ir, &mut { w }));
+        assert!(!deopt, "native code deoptimized on:\n{src}");
+        Outcome {
+            stdout: String::from_utf8(out).expect("utf-8 output"),
+            error: result.as_ref().err().map(|e| e.message.clone()),
+            diagnostic: result.err().map(|e| rendered(&e.to_diagnostic(), src)),
+        }
+    })
+}
+
+/// `ir` after the default optimization pipeline, as `sky run` runs it.
+fn optimized(ir: &sky_ir::Module) -> sky_ir::Module {
+    let mut ir = ir.clone();
+    sky_opt::default_pipeline()
+        .verify_each(true)
+        .run(&mut ir)
+        .expect("the pipeline runs");
+    ir
+}
+
 /// The two resource-limit errors. Which one trips first depends on how much
 /// Rust stack each interpreter spends per call (a debug tree-walker runs out
 /// of stack budget before 1000 calls; the leaner SIR interpreter reaches the
@@ -131,6 +167,14 @@ fn assert_same(src: &str) -> Outcome {
             normalized(actual),
             normalized(expected.clone()),
             "SIR interpreter differs from `sky run` on:\n{src}"
+        );
+    }
+    let ir = sky_lower::lower_source(src).expect("lowers");
+    for (which, m) in [("lowered", ir.clone()), ("optimized", optimized(&ir))] {
+        assert_eq!(
+            normalized(run_native(&m, src)),
+            normalized(expected.clone()),
+            "native code ({which} SIR) differs from `sky run` on:\n{src}"
         );
     }
     expected
@@ -903,6 +947,18 @@ fn located_errors(src: &str) -> (Located, Located) {
             .err()
             .map(|e| (e.message.clone(), e.span, rendered(&e.to_diagnostic(), src)))
     });
+    // Native code fails at the same place with the same diagnostic.
+    let native = sky_ast::with_deep_stack(|| {
+        let compiled = sky_jit::compile(&ir)
+            .unwrap_or_else(|e| panic!("native code refused a program:\n{src}\n{e}"));
+        let (result, deopt) =
+            compiled.run_or_rerun(&mut Vec::new(), |w| sky_ir_interp::run(&ir, &mut { w }));
+        assert!(!deopt, "native code deoptimized on:\n{src}");
+        result
+            .err()
+            .map(|e| (e.message.clone(), e.span, rendered(&e.to_diagnostic(), src)))
+    });
+    assert_eq!(native, sir, "native code differs from SIR on:\n{src}");
     (walker, sir)
 }
 

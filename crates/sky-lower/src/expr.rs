@@ -384,6 +384,13 @@ impl Lower<'_> {
                             return Ok(v);
                         }
                     }
+                    (name @ ("nominal" | "uncertainty"), _) => {
+                        return Err(LowerError::new(
+                            format!("`{name}` is not supported by SIR yet"),
+                            e.span,
+                        )
+                        .with_note(UNCERTAINTY));
+                    }
                     (name, _) => {
                         if let Some(f) = sky_ir::MathFn::from_name(name) {
                             let mut vals = Vec::with_capacity(args.len());

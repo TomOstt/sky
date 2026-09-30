@@ -59,7 +59,7 @@ impl Walk<'_> {
                 // Builtins (`print`, `inv`, `range`, the array and math functions) are
                 // recognised by name, so their callee is never typed.
                 let builtin = matches!(&callee.kind, ExprKind::Name(id)
-                    if matches!(&self.src[id.span.range()], "print" | "inv" | "transpose" | "zeros" | "identity" | "len" | "range" | "derivative" | "grad")
+                    if matches!(&self.src[id.span.range()], "print" | "inv" | "transpose" | "zeros" | "identity" | "len" | "range" | "derivative" | "grad" | "nominal" | "uncertainty")
                         || sky_units::MathFn::from_name(&self.src[id.span.range()]).is_some())
                     && !self.checked.expr_types.contains_key(&callee.span);
                 self.expr(callee, builtin);

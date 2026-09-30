@@ -1,0 +1,10 @@
+# Comparing uncertain values compares only the nominal values: a warning,
+# never an error.
+a = 9.81 ± 0.05 m/s^2
+b = 9.79 ± 0.03 m/s^2
+if a > b:
+    print("a is larger")
+print(a - b < 0.1 m/s^2)
+# Written with the uncertainty, the question is fine.
+agree = abs(nominal(a - b)) < 2 * uncertainty(a - b)
+exact = 1 m < 2 m

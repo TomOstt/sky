@@ -52,6 +52,7 @@ pub mod shape;
 mod shape_diag;
 pub mod tag_ops;
 pub mod tags;
+mod uncertain;
 
 pub use check::{
     check_module, check_module_with, const_exponent, Checked, Env, RewriteSite, Ty, ValueTy,

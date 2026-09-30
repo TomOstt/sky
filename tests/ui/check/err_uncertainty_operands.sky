@@ -1,0 +1,6 @@
+# `±` takes numbers: not a negative constant, an array, or a Bool.
+a = 5 ± -0.1
+b = [1, 2] ± 0.1
+f = true ± 1
+d = nominal(1, 2)
+e = uncertainty([1, 2])

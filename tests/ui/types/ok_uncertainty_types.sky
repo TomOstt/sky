@@ -1,0 +1,9 @@
+# Units and shapes are the types; an uncertainty does not change them.
+m = 5.31 ± 0.02 kg
+g = 9.81 +/- 0.05 m/s^2
+w = m * g
+period = 2 * 3.14159 * sqrt(1 m / g)
+n = nominal(w)
+s = uncertainty(m)
+r = uncertainty(w) / nominal(w)
+d = m - m

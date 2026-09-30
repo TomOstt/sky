@@ -414,6 +414,7 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         binding_types: HashMap::new(),
         funcs: HashMap::new(),
         num: NumState::default(),
+        unc: crate::uncertain::UncertainState::default(),
         shown_ok: None,
     };
     for stmt in &module.stmts {
@@ -473,6 +474,8 @@ pub(crate) struct Checker<'s> {
     pub(crate) funcs: HashMap<Span, Arc<FuncSig>>,
     /// What the numerical warnings remember (see [`crate::numerics`]).
     pub(crate) num: NumState,
+    /// What the uncertainty warning remembers (see [`crate::uncertain`]).
+    pub(crate) unc: crate::uncertain::UncertainState,
     /// The one `v as unit` the next `expr` call may type without an error:
     /// the argument of `print` or the expression statement being checked
     /// (see [`crate::display`]).
@@ -747,6 +750,7 @@ impl<'s> Checker<'s> {
                 match target {
                     AssignTarget::Name(id) => {
                         self.note_binding(id.span, Some(value), None);
+                        self.note_uncertain_binding(self.ident(id), value);
                         let typed = matches!(t, Ty::Value(_));
                         self.bind_name(id, t);
                         if typed {
@@ -773,6 +777,9 @@ impl<'s> Checker<'s> {
                 let found = value.as_ref().map(|v| (v, self.expr(v)));
                 let declares_unit = declared.as_ref().is_some_and(|d| d.dim.is_some());
                 self.note_binding(name.span, value.as_ref(), declares_unit.then_some(ty.span));
+                if let Some(v) = value {
+                    self.note_uncertain_binding(self.ident(name), v);
+                }
                 let bound = self.binding_type(ty, declared, found);
                 let typed = matches!(bound, Ty::Value(_));
                 self.bind_name(name, bound);
@@ -996,6 +1003,7 @@ impl<'s> Checker<'s> {
         };
         self.warn_if_shadowing(id);
         self.num.on_bind(self.ident(id));
+        self.note_uncertain_update(self.ident(id), value);
         // Silent lookup: typing `whole` below reports an undefined name once.
         let declared = self.env.get(self.ident(id)).unwrap_or(Ty::Unknown);
         let whole = Expr {
@@ -1367,6 +1375,9 @@ impl<'s> Checker<'s> {
                 if let Some(t) = self.math_call(callee, args, e.span) {
                     return t;
                 }
+                if let Some(t) = self.uncertain_call(callee, args, e.span) {
+                    return t;
+                }
                 if let Some(t) = self.builtin_call(callee, args, e.span) {
                     return t;
                 }
@@ -1383,7 +1394,11 @@ impl<'s> Checker<'s> {
             }
             ExprKind::IfElse { then, cond, else_ } => self.if_else(then, cond, else_),
             ExprKind::As { value, unit, .. } => self.show(e, value, unit),
-            ExprKind::PlusMinus { .. } => Ty::Unknown,
+            ExprKind::PlusMinus {
+                value,
+                sigma,
+                op_span,
+            } => self.plus_minus(value, sigma, *op_span),
             ExprKind::Binary {
                 op,
                 op_span,
@@ -1777,6 +1792,7 @@ impl<'s> Checker<'s> {
             BinaryOp::Add | BinaryOp::Sub => self.additive(op, op_span, (le, lv), (re, rv)),
             BinaryOp::Mul | BinaryOp::Div => self.multiplicative(op, op_span, (le, lv), (re, rv)),
             _ if op.is_comparison() => {
+                self.warn_uncertain_comparison(op, op_span, le, re);
                 if !lv.is_scalar() || !rv.is_scalar() {
                     let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
                     self.error(
@@ -1935,6 +1951,7 @@ impl<'s> Checker<'s> {
                 )
             };
             self.dim_mismatch(message, op, op_span, (le, &lv), (re, &rv));
+            self.plus_dash_hint(op, op_span);
             return Ty::Unknown;
         }
         // Elementwise results carry no tags (see `rules::elementwise`).

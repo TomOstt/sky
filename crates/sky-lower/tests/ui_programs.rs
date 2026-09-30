@@ -40,6 +40,16 @@ const REJECTED: &[(&str, &str)] = &[
         "ok_for_arrays.sky",
         "iteration over arrays lowers once SIR has array values",
     ),
+    // SIR has no uncertain value: such programs run on the tree-walker.
+    ("ok_uncertainty.sky", "uncertainty (`±`) is not supported"),
+    (
+        "ok_uncertainty_types.sky",
+        "uncertainty (`±`) is not supported",
+    ),
+    (
+        "ok_uncertainty_comparison_warning.sky",
+        "uncertainty (`±`) is not supported",
+    ),
 ];
 
 #[test]

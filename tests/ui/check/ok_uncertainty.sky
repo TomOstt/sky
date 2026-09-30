@@ -1,0 +1,10 @@
+# Uncertainty is a run-time property: units and shapes check as ever.
+m = 5.31 ± 0.02 kg
+g = 9.81 +/- 0.05 m/s^2
+t = 1.5 s ± 20 ms
+L = 1.000 ± 0.005 m
+w = m * g
+T = 2 * π * sqrt(L / g)
+dm = uncertainty(m)
+m0 = nominal(m)
+print(T as ms, w)

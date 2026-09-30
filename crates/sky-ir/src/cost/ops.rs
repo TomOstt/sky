@@ -275,6 +275,8 @@ impl Cx<'_> {
                 };
                 n.shape.dims().first().map(dim_poly)
             }
+            // A run-time check of a `range` bound gives its operand back.
+            OpKind::ExpectRange { .. } => go(0),
             OpKind::Add => go(0)?.checked_add(&go(1)?),
             OpKind::Sub => go(0)?.checked_sub(&go(1)?),
             OpKind::Mul => go(0)?.checked_mul(&go(1)?),

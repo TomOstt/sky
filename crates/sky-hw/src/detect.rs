@@ -61,6 +61,7 @@ pub(crate) fn detect() -> HardwareInfo {
         detect_linux(&mut info, cpuinfo.as_deref());
     }
 
+    info.model = info.model.take().and_then(|m| clean_model(&m));
     if info.page_bytes.is_none() {
         info.page_bytes = command("/usr/bin/getconf", &["PAGESIZE"])
             .or_else(|| command("/bin/getconf", &["PAGESIZE"]))
@@ -218,6 +219,21 @@ fn detect_linux(info: &mut HardwareInfo, cpuinfo: Option<&str>) {
     info.l3_bytes = l3;
 }
 
+/// A CPU model name reduced to printable ASCII (at most 96 characters), so
+/// that a hostile or corrupt source cannot put terminal escapes or bidi
+/// controls into what `sky hw` prints or into the fingerprint text.
+/// Whitespace runs collapse to one space. `None` if nothing is left.
+pub(crate) fn clean_model(text: &str) -> Option<String> {
+    let kept: String = text
+        .chars()
+        .map(|c| if c.is_ascii_whitespace() { ' ' } else { c })
+        .filter(|c| c.is_ascii_graphic() || *c == ' ')
+        .take(96)
+        .collect();
+    let collapsed = kept.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!collapsed.is_empty()).then_some(collapsed)
+}
+
 /// A device-tree `model` file is NUL-terminated text.
 fn clean_devicetree(text: String) -> String {
     text.trim_matches(|c: char| c == '\0' || c.is_whitespace())
@@ -250,4 +266,25 @@ fn command(program: &str, args: &[&str]) -> Option<String> {
     let text = String::from_utf8(out.stdout).ok()?;
     let text = text.trim();
     (!text.is_empty()).then(|| text.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_model;
+
+    #[test]
+    fn models_are_reduced_to_printable_ascii() {
+        assert_eq!(clean_model("Apple M2 Pro").as_deref(), Some("Apple M2 Pro"));
+        assert_eq!(
+            clean_model("Intel(R)  Xeon(R)\tCPU\n").as_deref(),
+            Some("Intel(R) Xeon(R) CPU")
+        );
+        assert_eq!(
+            clean_model("A\u{1b}[31mB\u{202e}C").as_deref(),
+            Some("A[31mBC")
+        );
+        assert_eq!(clean_model("\u{1b}\u{202e}"), None);
+        assert_eq!(clean_model(""), None);
+        assert_eq!(clean_model(&"x".repeat(500)).unwrap().len(), 96);
+    }
 }

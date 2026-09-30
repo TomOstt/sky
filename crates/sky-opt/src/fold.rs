@@ -304,7 +304,9 @@ fn fold_op(
     let before = expr_text(&op.kind, &consts);
     let (kind, rule, after, because) = match value {
         Value::Bool(b) => {
-            if !matches!(f.ty(result), Type::Bool | Type::Unknown) {
+            // A constant is typed exactly (the verifier says so): a result the
+            // checker could not type stays as it is.
+            if !matches!(f.ty(result), Type::Bool) {
                 return false;
             }
             let rule = if matches!(op.kind, OpKind::Not) {
@@ -319,7 +321,7 @@ fn fold_op(
             (OpKind::ConstBool(b), rule, b.to_string(), because)
         }
         Value::Number { value: x, dim } => {
-            if scalar_dim(f, result) != Some(dim) {
+            if !matches!(f.ty(result), Type::Number(_)) || scalar_dim(f, result) != Some(dim) {
                 return false;
             }
             let rationals: Option<Vec<Rational>> = consts

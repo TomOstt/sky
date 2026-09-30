@@ -336,6 +336,35 @@ fn an_error_keeps_its_operand_labels_through_every_pass() {
         assert!(d.contains(label), "{label:?} is not in\n{d}\nfor:\n{src}");
     }
 }
+
+// ----- bugs the pipeline fuzz (`fuzz_pipeline.rs`) found, reduced -----
+
+/// `fold` replaced an operation whose result the checker could not type (its
+/// operand is the result of an `if` whose taken arm gave a constant, and the
+/// other arm an unannotated parameter) by a constant of the same, unknown,
+/// type, which the verifier rejects: `sky run --engine=sir` stopped with an
+/// internal error. A constant is typed exactly, so such a result stays.
+#[test]
+fn a_result_the_checker_could_not_type_is_not_folded_to_a_constant() {
+    for (src, stdout) in [
+        (
+            "def f(p):\n    return (3 if true else p)^2\nprint(f(1))\n",
+            "9\n",
+        ),
+        (
+            "def f(p):\n    z = 2 * (3 if true else p)^2\n    return z\nprint(f(1))\n",
+            "18\n",
+        ),
+        (
+            "def f(p):\n    return (3 if true else p) + 1\nprint(f(1))\n",
+            "4\n",
+        ),
+    ] {
+        let (o, _) = same_before_and_after(src);
+        assert_eq!((o.stdout.as_str(), o.error), (stdout, None), "{src}");
+    }
+}
+
 // ----- exactness: what the analysis lets the passes do -----
 
 const EXACT_SRC: &str = "def halve(x: m) -> m:\n    spare = x / 2\n    return x * 0.5\n\

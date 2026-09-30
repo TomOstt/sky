@@ -1310,6 +1310,13 @@ mod fuzz {
                 let _ = call_with_fuel(&m, Module::MAIN, vec![], &mut out, 5_000);
                 let _ = call_with_fuel(&m, "g", vec![n(f64::from(arg))], &mut out, 5_000);
                 let _ = call_with_fuel(&m, "g", vec![], &mut out, 5_000);
+                // The parallelism analysis is total too: any module, however
+                // malformed, has a plan and notes.
+                for t in [2, 8] {
+                    let cfg = sky_ir::parallel::Config::eager(t);
+                    let _ = sky_ir::parallel::analyze(&m, &cfg);
+                    let _ = sky_ir::parallel::explain(&m, &cfg);
+                }
             });
         }
     }

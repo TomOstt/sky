@@ -21,3 +21,4 @@ sky-lower = { path = "../sky-lower" }
 sky-opt = { path = "../sky-opt" }
 sky-syntax = { path = "../sky-syntax" }
 sky-types = { path = "../sky-types" }
+sky-units = { path = "../sky-units" }

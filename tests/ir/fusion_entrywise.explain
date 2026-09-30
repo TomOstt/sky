@@ -13,6 +13,13 @@ tests/ir/fusion_entrywise.sky:8:5: note: [PAR-003] this elementwise kernel over 
   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
   = note: because 3 elements is under the threshold of 683: splitting it across threads costs more than it saves
 
+tests/ir/fusion_entrywise.sky:8:5: note: [MEM-001] `sqrt(x * x + y * y) * k + d` reuses `d`'s buffer: no allocation for this result
+  |
+8 | r = sqrt(x * x + y * y) * k + d
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: `d` is not used again after this on any path, and has the shape of the result
+  = note: applied by the `lifetimes` analysis of the SIR interpreter
+
 tests/ir/fusion_entrywise.sky:9:5: note: [FUSE-001] `atan2(y, x) / %23` is rewritten to `fused(y, x, %23)`
   |
 9 | q = atan2(y, x) / [2, 2, 2]
@@ -28,6 +35,13 @@ tests/ir/fusion_entrywise.sky:9:5: note: [PAR-003] this elementwise kernel over 
   |     ^^^^^^^^^^^^^^^^^^^^^^^
   = note: because 3 elements is under the threshold of 2048: splitting it across threads costs more than it saves
 
+tests/ir/fusion_entrywise.sky:9:5: note: [MEM-001] `atan2(y, x) / [2, 2, 2]` reuses `[2, 2, 2]`'s buffer: no allocation for this result
+  |
+9 | q = atan2(y, x) / [2, 2, 2]
+  |     ^^^^^^^^^^^^^^^^^^^^^^^
+  = note: `[2, 2, 2]` is not used again after this on any path, and has the shape of the result
+  = note: applied by the `lifetimes` analysis of the SIR interpreter
+
 tests/ir/fusion_entrywise.sky:11:5: note: [FUSE-001] `s * s / s + s` is rewritten to `fused(s)`
    |
 11 | z = s * s / s + s
@@ -42,3 +56,10 @@ tests/ir/fusion_entrywise.sky:11:5: note: [PAR-003] this elementwise kernel over
 11 | z = s * s / s + s
    |     ^^^^^^^^^^^^^
    = note: because 3 elements is under the threshold of 1366: splitting it across threads costs more than it saves
+
+tests/ir/fusion_entrywise.sky:11:5: note: [MEM-001] `s * s / s + s` reuses `s`'s buffer: no allocation for this result
+   |
+11 | z = s * s / s + s
+   |     ^^^^^^^^^^^^^
+   = note: `s` is not used again after this on any path, and has the shape of the result
+   = note: applied by the `lifetimes` analysis of the SIR interpreter

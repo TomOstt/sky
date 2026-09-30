@@ -386,6 +386,10 @@ pub fn all_ops() -> Module {
         sp(0, 0),
     );
     let not = b.op1(OpKind::Not, vec![checked], Type::Bool, sp(0, 0));
+    for context in sky_ir::NumberContext::ALL {
+        let same = b.op1(OpKind::ExpectNumber { context }, vec![x], len(), sp(3, 4));
+        b.set_name(same, format!("num_{}", context.text()));
+    }
 
     // if not: yield x else yield -x
     let (iff, res) = b.op(OpKind::If, vec![not], vec![len()], sp(50, 90));

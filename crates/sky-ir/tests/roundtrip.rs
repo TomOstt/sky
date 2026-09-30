@@ -52,6 +52,8 @@ fn all_ops_module_uses_every_mnemonic() {
         "cmp.ge",
         "not",
         "show",
+        "expect.bool",
+        "expect.number",
         "fused",
         "if",
         "while",

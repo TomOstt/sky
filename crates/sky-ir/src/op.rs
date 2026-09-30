@@ -135,6 +135,38 @@ impl BoolContext {
     }
 }
 
+/// The source construct a number was demanded by, for
+/// [`OpKind::ExpectNumber`]: the wording of the run-time error ("`+` needs a
+/// number, found a Bool") names it, exactly as `sky run` does.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum NumberContext {
+    /// The operand of a unary `+`.
+    Pos,
+    /// The argument of `inv(...)` (the `x⁻¹` spelling is worded by
+    /// `inverse` itself).
+    Inv,
+}
+
+impl NumberContext {
+    pub const ALL: [NumberContext; 2] = [NumberContext::Pos, NumberContext::Inv];
+
+    /// The text the error message uses.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            NumberContext::Pos => "+",
+            NumberContext::Inv => "inv",
+        }
+    }
+
+    /// The text format's attribute.
+    pub fn text(self) -> &'static str {
+        match self {
+            NumberContext::Pos => "pos",
+            NumberContext::Inv => "inv",
+        }
+    }
+}
+
 /// Why a literal has no value, for [`OpKind::LiteralError`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum LiteralError {
@@ -392,6 +424,21 @@ pub enum OpKind {
     ExpectBool {
         context: BoolContext,
     },
+    /// `expect.number[ctx] a`: one operand, one result: the operand's type,
+    /// or `unknown` (as lowering leaves it, when a pass learns the operand's
+    /// type later). The run-time check of an operand the checker could not type
+    /// (`unknown`, from an unannotated parameter) where the source needs a
+    /// number or an array: the operand of a unary `+`, which lowers to
+    /// nothing else (`pos`), and the argument of `inv(...)` (`inv`), whose
+    /// wording differs from `x⁻¹`'s. It gives the operand back if it is a
+    /// number or an array and otherwise fails with "`+` needs a number,
+    /// found ..." (`ctx` says which; see [`NumberContext`]) at the
+    /// operation's span, which lowering sets to the operand's, as `sky run`
+    /// reports it. (A separate operation from `expect.bool`: it is not a
+    /// Bool, and its result stays `unknown`.) Effect `Fail`.
+    ExpectNumber {
+        context: NumberContext,
+    },
 
     // ----- structured control flow -----
     /// `if`: one Bool operand (the condition) and two regions, `then` and
@@ -498,6 +545,7 @@ impl OpKind {
             },
             OpKind::Not => "not",
             OpKind::ExpectBool { .. } => "expect.bool",
+            OpKind::ExpectNumber { .. } => "expect.number",
             OpKind::If => "if",
             OpKind::While => "while",
             OpKind::Yield => "yield",
@@ -535,7 +583,7 @@ impl OpKind {
             // Converting to a tiny unit can overflow.
             OpKind::Show { .. } => (fail, false, false, false),
             // A value that is not a Bool fails.
-            OpKind::ExpectBool { .. } => (fail, false, false, false),
+            OpKind::ExpectBool { .. } | OpKind::ExpectNumber { .. } => (fail, false, false, false),
             // A singular matrix or a zero scalar fails.
             OpKind::Inverse | OpKind::Solve { .. } => (fail, false, false, false),
             OpKind::MatMul => (fail, false, false, true),

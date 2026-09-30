@@ -414,12 +414,15 @@ const GATE_SIR_TEXT_MATH: bool = false;
 /// Bool-returning functions in such places.
 const GATE_NON_BOOL_OPERAND: bool = false;
 
-/// `unary_plus_of_an_unknown_non_number_is_not_checked_in_sir`: `+x` is lowered
-/// as `x`, so where `x` is a value the checker cannot type (an unannotated
-/// parameter) and is not a number, `sky run` stops with "`+` needs a number,
-/// found a Bool" and SIR goes on (and fails later, or never). The generator
-/// writes no unary `+` inside a function with unannotated parameters.
-const GATE_UNARY_PLUS_UNKNOWN: bool = true;
+/// `a_unary_plus_of_an_unknown_non_number_stops_at_the_plus` (and
+/// `unary_plus_of_an_unknown_non_number_is_checked_in_sir`): fixed. `+x` was
+/// lowered as `x`, so where `x` is a value the checker cannot type (an
+/// unannotated parameter) and is not a number, `sky run` stopped with "`+`
+/// needs a number, found a Bool" and SIR went on (and failed later, or
+/// never); lowering now emits `expect.number` for such an operand. With the
+/// gate on, the generator writes no unary `+` inside a function with
+/// unannotated parameters.
+const GATE_UNARY_PLUS_UNKNOWN: bool = false;
 
 const MATH_FNS: &[&str] = &[
     "sqrt", "cbrt", "abs", "exp", "log", "log10", "log2", "sin", "cos", "tan", "asin", "acos",

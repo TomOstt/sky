@@ -8,7 +8,9 @@
 use sky_ast::{BinaryOp, BoolOp, Expr, ExprKind, Ident, Literal, UnaryOp};
 use sky_diag::Span;
 use sky_interp::{number_literal, unit_literal_si};
-use sky_ir::{BlockId, BoolContext, CmpOp, LiteralError, OpId, OpKind, Type, ValueId};
+use sky_ir::{
+    BlockId, BoolContext, CmpOp, LiteralError, NumberContext, OpId, OpKind, Type, ValueId,
+};
 use sky_syntax::lexer::unescape_str;
 use sky_types::{const_exponent, FuncSig, Ty};
 use sky_units::lookup_constant;
@@ -171,8 +173,13 @@ impl Lower<'_> {
                 let ty = self.ty_of(e)?;
                 Ok(self.op1(OpKind::Neg, vec![a], ty, e.span))
             }
-            // `+x` is `x`.
-            UnaryOp::Pos => self.expr(operand),
+            // `+x` is `x`, unless the checker could not type `x`: then `sky
+            // run` checks at run time that it is a number or an array, and
+            // an `expect.number` does the same.
+            UnaryOp::Pos => {
+                let a = self.expr(operand)?;
+                Ok(self.expect_number(NumberContext::Pos, operand, a))
+            }
             UnaryOp::Not => {
                 let a = self.expr(operand)?;
                 let a = self.bool_operand(BoolContext::Not, operand, a);
@@ -294,6 +301,22 @@ impl Lower<'_> {
         )
     }
 
+    /// `v`, the value of `operand`, as a number or an array where the source
+    /// needs one (the operand of a unary `+`, the argument of `inv`): `v`
+    /// itself when the checker typed it, else an `expect.number` at the
+    /// operand's span, so the SIR interpreter fails as `sky run` does.
+    fn expect_number(&mut self, context: NumberContext, operand: &Expr, v: ValueId) -> ValueId {
+        if !matches!(self.st.b.ty(v), Type::Unknown) {
+            return v;
+        }
+        self.op1(
+            OpKind::ExpectNumber { context },
+            vec![v],
+            Type::Unknown,
+            operand.span,
+        )
+    }
+
     /// A new region with one empty block, for an `if` arm; returns the block.
     pub(crate) fn new_arm(&mut self, op: OpId) -> BlockId {
         let r = self.st.b.new_region(op);
@@ -371,6 +394,7 @@ impl Lower<'_> {
                     }
                     ("inv", [arg]) => {
                         let a = self.expr(arg)?;
+                        let a = self.expect_number(NumberContext::Inv, arg, a);
                         let ty = self.ty_of(e)?;
                         return Ok(self.op1(OpKind::Inverse, vec![a], ty, e.span));
                     }

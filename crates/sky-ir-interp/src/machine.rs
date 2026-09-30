@@ -13,8 +13,8 @@ use std::io::Write;
 
 use sky_diag::Span;
 use sky_interp::arith::{
-    arith, arity_mismatch, equal, expect_bool, order, pow, reciprocal, recursion_too_deep, sign,
-    ArithOp, StackMeter, MAX_CALL_DEPTH,
+    arith, arity_mismatch, equal, expect_bool, expect_number, order, pow, reciprocal,
+    recursion_too_deep, sign, ArithOp, StackMeter, MAX_CALL_DEPTH,
 };
 use sky_interp::array::{self, Ix};
 use sky_interp::Value;
@@ -626,6 +626,15 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             let [a] = fixed(op)?;
             let b = expect_bool(context.keyword(), act.get(a, s)?, s)?;
             act.define(op, vec![Value::Bool(b)])
+        }
+
+        // `+x` of a value the checker could not type: a number or an array
+        // passes as it is, anything else fails as in `sky run`.
+        OpKind::ExpectNumber { context } => {
+            let [a] = fixed(op)?;
+            let v = act.get(a, s)?.clone();
+            expect_number(context.keyword(), &v, s)?;
+            act.define(op, vec![v])
         }
 
         // Handled by `Machine::op` and `Machine::block`, which never send

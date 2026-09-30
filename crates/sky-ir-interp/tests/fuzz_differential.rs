@@ -549,16 +549,16 @@ fn lowering_binds_a_call_to_the_definition_seen_at_check_time() {
 }
 
 /// Found by the longer campaign after the fixes above (seed 275714): unary `+`
-/// is lowered as its operand, so for a value the checker cannot type the
-/// tree-walker's "`+` needs a number, found a Bool" is missing in SIR, which
-/// says "cannot add a Bool and a Bool" (or nothing, if the value is only
-/// returned). A `pos` operation, or a check like `expect.bool` for numbers,
-/// would fix it.
+/// was lowered as its operand, so for a value the checker cannot type the
+/// tree-walker's "`+` needs a number, found a Bool" was missing in SIR, which
+/// said "cannot add a Bool and a Bool" (or nothing, if the value is only
+/// returned). Fixed: an operand of unknown type gets an `expect.number`, like
+/// the `expect.bool` of a condition; `inv(x)` of one too, for its wording.
 #[test]
-#[ignore = "bug: unary + of a value of unknown type that is not a number is not checked in SIR"]
-fn unary_plus_of_an_unknown_non_number_is_not_checked_in_sir() {
+fn unary_plus_of_an_unknown_non_number_is_checked_in_sir() {
     assert_agree("def f(a):\n    return +a + a\nprint(f(true))\n");
     assert_agree("def f(a):\n    return +a\nprint(f(true))\n");
+    assert_agree("def f(a):\n    return inv(a)\nprint(f(true))\n");
 }
 
 /// What `sky run` does with `src`: its output and the error that stopped it.

@@ -42,7 +42,8 @@ pub use ir::{
     RegionData, RegionId, Repr, Type, ValueData, ValueDef, ValueId,
 };
 pub use op::{
-    BoolContext, CmpOp, LiteralError, MathFn, OpKind, OpProperties, SliceAxis, SolveMethod,
+    BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind, OpProperties, SliceAxis,
+    SolveMethod,
 };
 pub use parse::{parse, ParseError};
 pub use pass::{

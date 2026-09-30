@@ -244,6 +244,9 @@ impl Printer<'_> {
             OpKind::ExpectBool { context } => {
                 let _ = write!(self.out, "[{}]", context.keyword());
             }
+            OpKind::ExpectNumber { context } => {
+                let _ = write!(self.out, "[{}]", context.text());
+            }
             OpKind::ArrayLiteral { cols: Some(c) } => {
                 let _ = write!(self.out, "[{c}]");
             }

@@ -161,6 +161,22 @@ pub fn expect_bool(kw: &str, v: &Value, span: Span) -> R<bool> {
     }
 }
 
+/// The error for `v`, the operand of `what` (`-`, `+`, `inv`, `⁻¹`), when it
+/// is neither a number nor an array.
+pub fn needs_a_number(what: &str, v: &Value, span: Span) -> RuntimeError {
+    RuntimeError::new(format!("`{what}` needs a number, found {}", v.kind()), span)
+}
+
+/// Checks that `v` is a number or an array, the operand of `what`
+/// ([`needs_a_number`] says how it fails). The SIR operation
+/// `expect.number`, for a value the checker could not type.
+pub fn expect_number(what: &str, v: &Value, span: Span) -> R<()> {
+    match v {
+        Value::Number { .. } | Value::Array { .. } => Ok(()),
+        other => Err(needs_a_number(what, other, span)),
+    }
+}
+
 /// `-v` or `+v`.
 pub fn sign(negate: bool, v: Value, operand: Span) -> R<Value> {
     match v {
@@ -170,12 +186,9 @@ pub fn sign(negate: bool, v: Value, operand: Span) -> R<Value> {
             Value::array(dims, data, dim)
         }),
         Value::Number { value, dim } => Ok(Value::number(if negate { -value } else { value }, dim)),
-        other => Err(RuntimeError::new(
-            format!(
-                "`{}` needs a number, found {}",
-                if negate { "-" } else { "+" },
-                other.kind()
-            ),
+        other => Err(needs_a_number(
+            if negate { "-" } else { "+" },
+            &other,
             operand,
         )),
     }
@@ -369,10 +382,7 @@ pub fn reciprocal(what: &str, v: &Value, whole: Span, operand: Span) -> R<Value>
         return crate::array::inverse(v, whole, operand);
     }
     let Value::Number { value, dim } = v else {
-        return Err(RuntimeError::new(
-            format!("`{what}` needs a number, found {}", v.kind()),
-            operand,
-        ));
+        return Err(needs_a_number(what, v, operand));
     };
     if *value == 0.0 {
         return Err(div_zero(whole, operand));

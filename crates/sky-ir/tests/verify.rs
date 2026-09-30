@@ -1606,3 +1606,23 @@ fn a_slice_also_has_a_span_per_axis_item() {
         "operand span(s), but 2 operand(s) and 1 axis item(s)",
     );
 }
+
+#[test]
+fn expect_number_checks_a_number_or_unknown_operand_and_gives_it_back() {
+    use sky_ir::NumberContext;
+    for context in NumberContext::ALL {
+        let kind = OpKind::ExpectNumber { context };
+        accepts(&unary(kind.clone(), Type::Unknown, Type::Unknown));
+        accepts(&unary(kind.clone(), len(), len()));
+        // A pass that learned the operand's type leaves the result unknown.
+        accepts(&unary(kind.clone(), len(), Type::Unknown));
+        rejects(
+            &unary(kind.clone(), Type::Bool, Type::Bool),
+            "`expect.number` needs a number or unknown operand",
+        );
+        rejects(
+            &unary(kind, len(), one()),
+            "the result of `expect.number` must be unknown or",
+        );
+    }
+}

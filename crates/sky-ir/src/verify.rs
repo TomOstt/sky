@@ -637,6 +637,7 @@ impl<'a> FnVerifier<'a> {
             | OpKind::Identity
             | OpKind::Len
             | OpKind::ExpectBool { .. }
+            | OpKind::ExpectNumber { .. }
             | OpKind::Not => (Some(1), Some(1)),
             OpKind::ArrayLiteral { .. } | OpKind::Index | OpKind::Slice { .. } | OpKind::Zeros => {
                 (None, Some(1))
@@ -737,6 +738,33 @@ impl<'a> FnVerifier<'a> {
                     );
                 }
                 self.expect_bool_result(o, op);
+            }
+            OpKind::ExpectNumber { context } => {
+                // Only an operand the checker could not type needs the
+                // check; a typed one that is not a number can never pass it.
+                let t = self.f.ty(op.operands[0]);
+                if !matches!(t, Type::Number(_) | Type::Unknown) {
+                    self.err_op(
+                        o,
+                        format!(
+                            "`expect.number` needs a number or unknown operand, found {t} (`{}`)",
+                            context.keyword()
+                        ),
+                    );
+                } else if !matches!(self.f.ty(op.results[0]), Type::Unknown)
+                    && self.f.ty(op.results[0]) != t
+                {
+                    // Unknown is always fine: a pass that learns the
+                    // operand's type (folding an `if` away) leaves the
+                    // result as it was.
+                    self.err_op(
+                        o,
+                        format!(
+                            "the result of `expect.number` must be unknown or {t} like its operand, found {}",
+                            self.f.ty(op.results[0])
+                        ),
+                    );
+                }
             }
             OpKind::If => self.check_if(o, op),
             OpKind::While => self.check_while(o, op),

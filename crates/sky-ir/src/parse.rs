@@ -60,7 +60,9 @@ use crate::builder::FunctionBuilder;
 use crate::ir::{
     Edition, Effect, EffectSet, Module, NumberType, OpId, RegionId, Repr, Type, ValueId,
 };
-use crate::op::{BoolContext, CmpOp, LiteralError, MathFn, OpKind, SliceAxis, SolveMethod};
+use crate::op::{
+    BoolContext, CmpOp, LiteralError, MathFn, NumberContext, OpKind, SliceAxis, SolveMethod,
+};
 use crate::verify::MAX_REGION_DEPTH;
 
 /// A syntax error and where it is (byte offsets into the text).
@@ -824,6 +826,18 @@ impl<'a> Parser<'a> {
                 };
                 self.expect(']')?;
                 OpKind::ExpectBool { context }
+            }
+            "expect.number" => {
+                self.expect('[')?;
+                self.skip_inline();
+                let at = self.pos;
+                let word = self.word();
+                let Some(context) = NumberContext::ALL.into_iter().find(|c| c.text() == word)
+                else {
+                    return self.err_at(at, self.pos.max(at + 1), "expected `pos` or `inv`");
+                };
+                self.expect(']')?;
+                OpKind::ExpectNumber { context }
             }
             "if" => OpKind::If,
             "while" => OpKind::While,

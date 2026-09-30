@@ -300,3 +300,126 @@ fn malformed_kernels_are_errors_not_panics() {
         assert!(e.message.starts_with("malformed IR"), "{}", e.message);
     }
 }
+
+/// Runs `body` on `%a` and `%b` and, if `after`, adds `%a` to the result, so
+/// `%a` is read again after the kernel (it does not die there) and `%b` does.
+fn kernel_module(after: bool) -> Module {
+    let (tail, result) = if after {
+        ("  %s = add %r, %a : num[1; (3)]\n", "%s")
+    } else {
+        ("", "%r")
+    };
+    module(&format!(
+        "fn @f(%a: num[1; (3)], %b: num[1; (3)]) -> (num[1; (3)]) effects(fail) {{
+  %r = fused %a, %b : num[1; (3)] {{
+    ^1(%x: num[1; ()], %y: num[1; ()]):
+      %t = mul %x, %y : num[1; ()]
+      %u = add %t, %x : num[1; ()]
+      yield %u
+  }}
+{tail}  return {result}
+}}
+"
+    ))
+}
+
+#[test]
+fn a_dying_operand_holds_the_result_and_the_others_are_read_in_place() {
+    let a = vector(&[1.0, 2.0, 3.0]);
+    let b = vector(&[4.0, 5.0, 6.0]);
+    // `%a` is read again by the `add`: the kernel writes into `%b`'s buffer.
+    let out = run(&kernel_module(true), vec![a.clone(), b.clone()]).unwrap();
+    assert_eq!(data(&out[0]), [6.0, 14.0, 24.0]);
+    // Nothing reads `%a` afterwards: the result takes its buffer.
+    let out = run(&kernel_module(false), vec![a, b]).unwrap();
+    assert_eq!(data(&out[0]), [5.0, 12.0, 21.0]);
+}
+
+#[test]
+fn the_same_array_twice_is_read_twice_and_not_overwritten() {
+    let m = module(
+        "fn @f(%a: num[1; (3)]) -> (num[1; (3)]) effects(fail) {
+  %r = fused %a, %a : num[1; (3)] {
+    ^1(%x: num[1; ()], %y: num[1; ()]):
+      %t = mul %x, %y : num[1; ()]
+      yield %t
+  }
+  return %r
+}
+",
+    );
+    let out = run(&m, vec![vector(&[1.0, 2.0, 3.0])]).unwrap();
+    assert_eq!(data(&out[0]), [1.0, 4.0, 9.0]);
+}
+
+#[test]
+fn the_kernel_and_the_ordinary_path_agree_bit_for_bit_and_in_the_error() {
+    // The second body has operations the scalar kernel does not handle
+    // (`abs`), so it runs the ordinary way; they cancel out (`w + (|w| - |w|)`
+    // is `w`), so both compute the first body's result. The two must give
+    // the same bits, whatever the values, and fail alike (a huge value
+    // overflows, a zero divides).
+    let kernel = module(
+        "fn @f(%a: num[1; (5)], %b: num[1; (5)]) -> (num[1; (5)]) effects(fail) {
+  %r = fused %a, %b : num[1; (5)] {
+    ^1(%x: num[1; ()], %y: num[1; ()]):
+      %t = mul %x, %y : num[1; ()] @ 1..2
+      %u = div %t, %y : num[1; ()] @ 3..4
+      %n = neg %u : num[1; ()] @ 5..6
+      %w = sub %n, %x : num[1; ()] @ 7..8
+      yield %w
+  }
+  return %r
+}
+",
+    );
+    let general = module(
+        "fn @f(%a: num[1; (5)], %b: num[1; (5)]) -> (num[1; (5)]) effects(fail) {
+  %r = fused %a, %b : num[1; (5)] {
+    ^1(%x: num[1; ()], %y: num[1; ()]):
+      %t = mul %x, %y : num[1; ()] @ 1..2
+      %u = div %t, %y : num[1; ()] @ 3..4
+      %n = neg %u : num[1; ()] @ 5..6
+      %w = sub %n, %x : num[1; ()] @ 7..8
+      %q = math.abs %w : num[1; ()] @ 9..10
+      %z = sub %q, %q : num[1; ()] @ 11..12
+      %v = add %w, %z : num[1; ()] @ 13..14
+      yield %v
+  }
+  return %r
+}
+",
+    );
+    let cases = [
+        (
+            vec![1.0, 2.0, 3.0, 4.0, 5.0],
+            vec![0.5, -2.0, 3.0, 1e-3, 7.0],
+        ),
+        (
+            vec![0.0, -0.0, 1.0, 2.0, 3.0],
+            vec![1.0, 1.0, 1.0, 1.0, 1.0],
+        ),
+        // Overflow at a later element, and a division by zero at another.
+        (
+            vec![1.0, 1.0, 1e308, 1.0, 1.0],
+            vec![1.0, 1.0, 1e10, 1.0, 1.0],
+        ),
+        (vec![1.0, 1.0, 1.0, 1.0, 1.0], vec![1.0, 1.0, 1.0, 0.0, 1.0]),
+        (
+            vec![1.0, 1.0, 1e308, 1.0, 1.0],
+            vec![1.0, 1.0, 1e10, 0.0, 1.0],
+        ),
+    ];
+    for (a, b) in cases {
+        let k = run(&kernel, vec![vector(&a), vector(&b)]);
+        let g = run(&general, vec![vector(&a), vector(&b)]);
+        match (k, g) {
+            (Ok(k), Ok(g)) => {
+                let bits = |v: &Value| data(v).iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+                assert_eq!(bits(&k[0]), bits(&g[0]), "{a:?} {b:?}");
+            }
+            (Err(k), Err(g)) => assert_eq!(k.message, g.message, "{a:?} {b:?}"),
+            (k, g) => panic!("{a:?} {b:?}: {k:?} vs {g:?}"),
+        }
+    }
+}

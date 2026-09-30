@@ -54,8 +54,8 @@
 
 #![forbid(unsafe_code)]
 
+mod kernel;
 mod machine;
-mod math;
 mod native;
 mod par;
 

@@ -98,6 +98,10 @@ impl Default for JitOptions {
     }
 }
 
+/// The length below which the interpreter does not hand a `fused` to native
+/// code, whatever the threshold: see [`Jit::eligible`].
+pub(crate) const SHORT_ARRAY: usize = 64;
+
 /// How many `fused` operations ran natively in this process, for tests.
 #[cfg(test)]
 pub(crate) static NATIVE_RUNS: std::sync::atomic::AtomicUsize =
@@ -147,14 +151,29 @@ impl Jit {
         }
     }
 
+    /// Whether a `fused` of `count` elements may go native at all: it is
+    /// enabled, and the array is not shorter than [`SHORT_ARRAY`] (or than the
+    /// threshold, if that is lower: `ALWAYS` means every `fused`).
+    ///
+    /// The floor is what keeps a loop over short arrays (a few bodies, some
+    /// dozens of elements) allocation-free. Such a loop would compile once the
+    /// interpreter has run [`JitOptions::min_elements`] of its elements, and
+    /// from then on every run would allocate its result and the kernel's
+    /// argument lists; the interpreter's scalar kernel (`crate::kernel`) writes
+    /// into the dying operand's buffer instead and costs about as much as
+    /// the call into compiled code does at this length.
+    pub(crate) fn eligible(&self, count: usize) -> bool {
+        self.options.enabled && count >= SHORT_ARRAY.min(self.options.min_elements)
+    }
+
     /// Runs `op` (a `fused` of `func`, operands `inputs`, `count` elements)
     /// natively if that is enabled, worth it (see the module docs), and the
     /// body compiles.
-    pub(crate) fn run(
+    pub(crate) fn run<V: std::borrow::Borrow<Value>>(
         &mut self,
         func: &Function,
         op: &OpData,
-        inputs: &[Value],
+        inputs: &[V],
         count: usize,
     ) -> Native {
         if !self.options.enabled {
@@ -163,7 +182,7 @@ impl Jit {
         let mut sigs = Vec::with_capacity(inputs.len());
         let mut args = Vec::with_capacity(inputs.len());
         for input in inputs {
-            match input {
+            match input.borrow() {
                 Value::Array { data, dim, .. } => {
                     sigs.push(InputSig {
                         dim: *dim,

@@ -301,6 +301,30 @@ fn native_output_and_error_do_not_depend_on_the_thread_count() {
         assert_eq!(err(&o), err(&baseline), "stderr with {flag}, eager");
         assert_eq!(o.status.code(), baseline.status.code(), "{flag}, eager");
     }
+    // `SKY_THREADS` alone: 1, 2, 4 and 8 give the same whole diagnostic.
+    for n in ["1", "2", "4", "8"] {
+        let o = sky(
+            "native-skythreads",
+            &["run", "--engine=native"],
+            &[("SKY_THREADS", n)],
+            &src,
+        );
+        assert_eq!(out(&o), out(&baseline), "stdout with SKY_THREADS={n}");
+        assert_eq!(err(&o), err(&baseline), "stderr with SKY_THREADS={n}");
+        assert_eq!(o.status.code(), baseline.status.code(), "SKY_THREADS={n}");
+        // With everything split, too.
+        let o = sky(
+            "native-skythreads-eager",
+            &["run", "--engine=native"],
+            &[("SKY_THREADS", n), ("SKY_TUNE_DB", &db)],
+            &src,
+        );
+        assert_eq!(
+            err(&o),
+            err(&baseline),
+            "stderr with SKY_THREADS={n}, eager"
+        );
+    }
     // The environment variable is the default; the flag wins; `auto` is native.
     for (args, env) in [
         (vec!["run", "--engine=native"], vec![("SKY_THREADS", "3")]),

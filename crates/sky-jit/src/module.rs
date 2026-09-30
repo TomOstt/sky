@@ -1965,16 +1965,14 @@ impl<'a, 'm, M: ClModule> FnTx<'a, 'm, M> {
         let nres: usize = g.results.iter().map(|r| rep_tys(rep_of(r)).len()).sum();
         let tref = self.jit.declare_func_in_func(thunk, self.b.func);
         let taddr = self.b.ins().func_addr(types::I64, tref);
-        let (gid, k) = match self.wins.last_mut() {
+        let gid = match self.wins.last_mut() {
             Some(w) => {
-                let k = w.spawned;
+                w.pending.push((w.spawned, id, ci));
                 w.spawned += 1;
-                w.pending.push((k, id, ci));
-                (w.gid, k)
+                w.gid
             }
             None => return refuse("a call is started outside a window", Some(op.span)),
         };
-        let _ = k;
         let nargs = self.c32(words.len() as i32);
         let nres = self.c32(nres as i32);
         let stack_limit = self.stack_limit;

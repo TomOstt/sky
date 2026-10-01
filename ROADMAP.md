@@ -64,10 +64,12 @@ These come cheaply once the IR exists:
 
 **Status: met** (2026-10-01; `benches/compare/RESULTS.md`, an M2 Pro, idle):
 - **Dense linear algebra.**
-  - Reproducible mode: matrix products are faster than straightforward C `-O3` loops (0.44× its time at n = 512) and within 2× of `faer`/`matrixmultiply`, whose FMAs Sky's default mode does not use.
-  - Relaxed numerics (`--numerics=relaxed`, opt-in): products reach Accelerate's speed (it uses the AMX unit) on the kernel benchmark. In whole programs they are at about 3× of it, set-up included.
-- **Fused elementwise kernels:** within 1.4× of hand-written C and Rust loops, per pass (`cargo bench -p sky-jit --bench kernels`).
-- **Whole programs, native code against C `-O3`:** Mandelbrot 1.5×, fib(30) 1.6×, RK4 1.7×, N-body 4.0×. Large elementwise programs are 5–30× off, from work outside the kernels; that is the next gap to close.
+  - Reproducible mode: matrix products are faster than straightforward C `-O3` loops (0.33× its time at n = 512, 0.53× at 256), and Cholesky-256 is 0.85×. They are within 2× of `faer`/`matrixmultiply`, whose FMAs Sky's default mode does not use.
+  - Relaxed numerics (`--numerics=relaxed`, opt-in): products reach Accelerate's speed (it uses the AMX unit) on the kernel benchmark.
+- **Fused elementwise code:**
+  - Kernels are within 1.4× of hand-written C and Rust loops (`cargo bench -p sky-jit --bench kernels`).
+  - Whole elementwise programs are 1.5–2.4× of C, now that a constant literal array is one `const.array` instead of one operation per entry.
+- **Whole programs, native code against C `-O3`:** fib(30) 1.4×, RK4 1.4×, Mandelbrot 1.6×, N-body 7.5×. N-body's 5-body state arrays exceed the 16-entry limit for unboxing small arrays in native code; that is the next gap to close.
 
 ### Phase 5: accelerators and scale
 - GPUs through MLIR [19, 21, 55].

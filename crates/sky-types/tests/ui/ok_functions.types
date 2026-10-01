@@ -1,9 +1,9 @@
-A3: Matrix[3,3] [1]
-A4: Matrix[4,4] [1]
+A3: Matrix[3,3] [dimensionless]
+A4: Matrix[4,4] [dimensionless]
 apply: function `apply`
-b3: Vector[3] [1]
-b4: Vector[4] [1]
+b3: Vector[3] [dimensionless]
+b4: Vector[4] [dimensionless]
 t: ?
 twice: function `twice`
-y3: Vector[3] [1]
-y4: Vector[4] [1]
+y3: Vector[3] [dimensionless]
+y4: Vector[4] [dimensionless]

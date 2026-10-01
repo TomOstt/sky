@@ -66,6 +66,38 @@ fn round_trips_within_rounding() {
 }
 
 #[test]
+fn a_group_and_one_over_a_unit_convert_like_their_chains() {
+    // `W/(m*K)` is `W/m/K`; `1/min` is `min^-1`; `kJ/(kg*K)` is 1000 SI.
+    for (grouped, chained) in [
+        ("W/(m*K)", "W/m/K"),
+        ("kJ/(kg*K)", "kJ/kg/K"),
+        ("1/min", "min^-1"),
+        ("1/(km*h)", "km^-1*h^-1"),
+        ("1/(km/h)^2", "h^2/km^2"),
+    ] {
+        let (gs, g) = unit(grouped);
+        let (cs, c) = unit(chained);
+        let (gv, gd) = apply_unit(&gs, &g, 3.0).unwrap();
+        let (cv, cd) = apply_unit(&cs, &c, 3.0).unwrap();
+        assert_eq!(gd, cd, "{grouped}");
+        assert!(
+            (gv - cv).abs() <= 1e-15 * cv.abs(),
+            "{grouped}: {gv} vs {cv}"
+        );
+        let (back, _) = express_in_unit(&gs, &g, gv).unwrap();
+        assert!((back - 3.0).abs() < 1e-12, "{grouped}: {back}");
+    }
+}
+
+#[test]
+fn the_lexer_and_the_checker_give_the_same_temperature_help() {
+    assert_eq!(
+        sky_syntax::lexer::TEMPERATURE_HELP,
+        sky_units::temperature_hint()
+    );
+}
+
+#[test]
 fn unknown_units_are_errors_in_both_directions() {
     let (src, u) = unit("parsecs");
     assert!(apply_unit(&src, &u, 1.0).is_err());

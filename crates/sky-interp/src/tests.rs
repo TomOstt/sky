@@ -106,7 +106,7 @@ fn dimensions_follow_the_operators() {
 #[test]
 fn inverse_and_inv() {
     assert_eq!(show("4⁻¹"), "0.25");
-    assert_eq!(show("(2 s)⁻¹"), "0.5 Hz");
+    assert_eq!(show("(2 s)⁻¹"), "0.5 s^-1");
     assert_eq!(show("inv(4 m)"), "0.25 m^-1");
     assert_eq!(show("inv(inv(8))"), "8");
     assert_eq!(err("inv(0)").message, "division by zero");
@@ -396,7 +396,7 @@ fn printing_format() {
     assert_eq!(show("1 N"), "1 N");
     assert_eq!(show("1 J / 1 s"), "1 W");
     assert_eq!(show("1 N / 1 m^2"), "1 Pa");
-    assert_eq!(show("1 / 1 s"), "1 Hz");
+    assert_eq!(show("1 / 1 s"), "1 s^-1");
     // Composed base units, valid Sky source.
     assert_eq!(show("9.81 m / 1 s^2"), "9.81 m/s^2");
     assert_eq!(show("1 kg * 1 m^2"), "1 kg*m^2");

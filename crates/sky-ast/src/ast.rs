@@ -146,10 +146,20 @@ impl UnaryOp {
 /// The unit part of a unit literal, e.g. `m/s^2` in `9.8 m/s^2`.
 ///
 /// `*` and `/` are left-associative; `^` binds tighter and applies to a
-/// single unit name. Compound units always use `*`, never juxtaposition.
+/// single unit name or a parenthesized group. Compound units always use
+/// `*`, never juxtaposition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnitExpr {
     Name(Ident),
+    /// The `1` of `1/m`: a dimensionless unit of scale 1. It only ever
+    /// appears as the leftmost factor of a unit that divides right after it.
+    One(Span),
+    /// A parenthesized unit, `(m*K)` in `W/(m*K)`. `span` includes the
+    /// parentheses. Groups do not nest.
+    Group {
+        inner: Box<UnitExpr>,
+        span: Span,
+    },
     Mul {
         lhs: Box<UnitExpr>,
         rhs: Box<UnitExpr>,
@@ -179,7 +189,9 @@ impl UnitExpr {
     pub fn span(&self) -> Span {
         match self {
             UnitExpr::Name(id) => id.span,
-            UnitExpr::Mul { span, .. }
+            UnitExpr::One(span)
+            | UnitExpr::Group { span, .. }
+            | UnitExpr::Mul { span, .. }
             | UnitExpr::Div { span, .. }
             | UnitExpr::Pow { span, .. } => *span,
         }

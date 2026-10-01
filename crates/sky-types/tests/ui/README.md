@@ -9,7 +9,7 @@ These follow the `tests/ui/` conventions (see `tests/ui/README.md` at the worksp
 For each file, the runner lexes it with `sky_syntax::lex`, parses it with `sky_ast::parse_module`, and, if both succeed without errors, checks it with `sky_types::check_module_with`.
 
 Extra siblings, both optional:
-- `NAME.types`: every name bound after the last statement, as `name: type` in name order. A type is the shape, then the tags if any, then the element dimension in brackets, e.g. `Matrix[3,3] {Symmetric} [1]` or `Scalar [L·T⁻¹]`.
+- `NAME.types`: every name bound after the last statement, as `name: type` in name order. A type is the shape, then the tags if any, then the element dimension in brackets, e.g. `Matrix[3,3] {Symmetric} [dimensionless]` or `Scalar [L·T⁻¹]`.
 - `NAME.explain`: the Cholesky rewrite decisions, rendered as notes. It is required whenever the file has a rewrite, so every rewrite is pinned; an empty `.explain` pins "no rewrite". (No case here has a rewrite now: the rewrite cases need a declared positive-definite matrix, so they live in `tests/ui/types/`, where the CLI harness pins them through `sky check --explain`.)
 
 ## Declarations

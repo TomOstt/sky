@@ -1311,7 +1311,7 @@ impl<'t, 's> Parser<'t, 's> {
     #[inline(never)]
     fn parse_as(&mut self, value: Expr, as_span: Span) -> Option<Expr> {
         let first = self.current();
-        if first.kind != TokenKind::Ident {
+        if !self.at_unit_start() {
             return self.fail_as_unit(first, as_span);
         }
         let unit = self.parse_unit(UnitCtx::Display)?;
@@ -1534,8 +1534,19 @@ impl<'t, 's> Parser<'t, 's> {
                 } else {
                     Literal::Float(tok.span)
                 };
-                if self.peek() == TokenKind::Ident && !self.stops_unit() {
+                if (self.peek() == TokenKind::Ident && !self.stops_unit()) || self.at_unit_one() {
                     return self.parse_unit_literal(value);
+                }
+                if self.peek() == TokenKind::Keyword(Kw::In) {
+                    // `1 in`: Sky has no membership test, so a number
+                    // before `in` can only be meant as inches.
+                    let kw = self.current();
+                    self.errors.push(
+                        ParseError::new("`in` is a keyword, not a unit", kw.span)
+                            .with_secondary(tok.span, "number")
+                            .with_help("Sky has no inch; write `0.0254 m` for 1 in"),
+                    );
+                    return None;
                 }
                 Some(literal(value))
             }
@@ -2157,9 +2168,12 @@ impl<'t, 's> Parser<'t, 's> {
     //
     // Grammar (spec/v0.1.md, "Unit literals"; `~` = adjacent, no whitespace):
     //   unit_literal := NUMBER unit
-    //   unit         := factor (~("*" | "/")~ factor)*
-    //   factor       := IDENT (~"^"~ exponent)?
+    //   unit         := ["1"~ "/"~] factor (~("*" | "/")~ factor)*
+    //   factor       := (IDENT | "("~ unit ~")") (~"^"~ exponent)?
     //   exponent     := ["-"~] INT | "("~ ["-"~] INT ~"/"~ INT ~")"
+    //
+    // A parenthesized group cannot contain another group, so unit parsing
+    // never recurses more than one level.
 
     fn parse_unit_literal(&mut self, value: Literal) -> Option<Expr> {
         let unit = self.parse_unit(UnitCtx::Literal(&value))?;
@@ -2175,7 +2189,35 @@ impl<'t, 's> Parser<'t, 's> {
     /// wording of the errors, which name the number in a literal and have no
     /// quantity to mention in an annotation.
     fn parse_unit(&mut self, ctx: UnitCtx<'_>) -> Option<UnitExpr> {
-        let mut unit = self.parse_unit_factor()?;
+        self.parse_unit_in(ctx, false)
+    }
+
+    /// Whether the current token starts a unit: a name, or the `1` of
+    /// `1/m` (an integer `1` touching a `/` that touches a name or `(`).
+    fn at_unit_start(&self) -> bool {
+        self.peek() == TokenKind::Ident || self.at_unit_one()
+    }
+
+    fn at_unit_one(&self) -> bool {
+        let (Some(one), Some(slash), Some(next)) = (self.nth(0), self.nth(1), self.nth(2)) else {
+            return false;
+        };
+        one.kind == TokenKind::Int
+            && span_text(self.src, one.span) == Some("1")
+            && slash.kind == TokenKind::Slash
+            && one.span.end == slash.span.start
+            && slash.span.end == next.span.start
+            && matches!(next.kind, TokenKind::Ident | TokenKind::LParen)
+    }
+
+    /// [`Parser::parse_unit`], or the inside of a `(...)` group when
+    /// `grouped`.
+    fn parse_unit_in(&mut self, ctx: UnitCtx<'_>, grouped: bool) -> Option<UnitExpr> {
+        let mut unit = if self.at_unit_one() {
+            UnitExpr::One(self.bump().span)
+        } else {
+            self.parse_unit_factor(ctx, grouped)?
+        };
         self.reject_inverse_after_unit(ctx, &unit)?;
         let mut factors = 1usize;
         loop {
@@ -2203,7 +2245,7 @@ impl<'t, 's> Parser<'t, 's> {
             if is_mul && next.kind == TokenKind::StarAssign {
                 return self.fail_double_star_assign(op.span.join(next.span));
             }
-            if next.kind != TokenKind::Ident {
+            if !matches!(next.kind, TokenKind::Ident | TokenKind::LParen) {
                 let verb = if is_mul { "multiply" } else { "divide" };
                 let (what, help) = match ctx {
                     UnitCtx::Literal(_) => (
@@ -2216,7 +2258,7 @@ impl<'t, 's> Parser<'t, 's> {
                     UnitCtx::Annotation | UnitCtx::Display => (
                         "unit",
                         format!(
-                            "write a unit name after `{}`, e.g. `m/s` or `kg*m`",
+                            "write a unit name after `{}`, e.g. `m/s`, `kg*m` or `W/(m*K)`",
                             symbol(op.kind)
                         ),
                     ),
@@ -2243,7 +2285,7 @@ impl<'t, 's> Parser<'t, 's> {
                 ));
                 return None;
             }
-            let rhs = self.parse_unit_factor()?;
+            let rhs = self.parse_unit_factor(ctx, grouped)?;
             let span = unit.span().join(rhs.span());
             let (lhs, rhs) = (Box::new(unit), Box::new(rhs));
             unit = if is_mul {
@@ -2316,6 +2358,9 @@ impl<'t, 's> Parser<'t, 's> {
         loop {
             let tok = self.current();
             if tok.kind != TokenKind::Ident {
+                if self.at_unit_one() {
+                    break;
+                }
                 return self.fail_not_a_type(tok);
             }
             let word = span_text(self.src, tok.span).unwrap_or("");
@@ -2331,14 +2376,15 @@ impl<'t, 's> Parser<'t, 's> {
                 self.bump();
                 continue;
             }
-            let unit = self.parse_unit(UnitCtx::Annotation)?;
-            return Some(TypeExpr {
-                span: start.join(unit.span()),
-                tags,
-                shape: None,
-                unit: Some(unit),
-            });
+            break;
         }
+        let unit = self.parse_unit(UnitCtx::Annotation)?;
+        Some(TypeExpr {
+            span: start.join(unit.span()),
+            tags,
+            shape: None,
+            unit: Some(unit),
+        })
     }
 
     /// Whether the type starting at the current token begins with matrix
@@ -2404,7 +2450,7 @@ impl<'t, 's> Parser<'t, 's> {
         };
         let mut span = start.join(shape.span);
         let mut unit = None;
-        if self.peek() == TokenKind::Ident {
+        if self.at_unit_start() {
             if kind == ShapeKind::Scalar {
                 return self.fail_scalar_unit(shape.span);
             }
@@ -2723,20 +2769,26 @@ impl<'t, 's> Parser<'t, 's> {
         None
     }
 
-    /// `IDENT (~"^"~ exponent)?` with the `IDENT` current.
-    fn parse_unit_factor(&mut self) -> Option<UnitExpr> {
-        let name = self.bump();
-        if name.kind != TokenKind::Ident {
-            self.errors.push(ParseError::new(
-                format!("expected a unit name, found {}", self.describe(name)),
-                name.span,
-            ));
-            return None;
-        }
-        let base = UnitExpr::Name(Ident { span: name.span });
+    /// `(IDENT | "(" unit ")") (~"^"~ exponent)?` with the `IDENT` or `(`
+    /// current. `grouped` says we are already inside a group.
+    fn parse_unit_factor(&mut self, ctx: UnitCtx<'_>, grouped: bool) -> Option<UnitExpr> {
+        let base = if self.peek() == TokenKind::LParen {
+            self.parse_unit_group(ctx, grouped)?
+        } else {
+            let name = self.bump();
+            if name.kind != TokenKind::Ident {
+                self.errors.push(ParseError::new(
+                    format!("expected a unit name, found {}", self.describe(name)),
+                    name.span,
+                ));
+                return None;
+            }
+            UnitExpr::Name(Ident { span: name.span })
+        };
+        let base_span = base.span();
         let caret = self.current();
         let joined = |a: Span, b: Span| a.end == b.start;
-        if caret.kind != TokenKind::Caret || !joined(name.span, caret.span) {
+        if caret.kind != TokenKind::Caret || !joined(base_span, caret.span) {
             return Some(base);
         }
         match self.nth(1) {
@@ -2763,7 +2815,63 @@ impl<'t, 's> Parser<'t, 's> {
             num,
             den,
             exponent_span,
-            span: name.span.join(end),
+            span: base_span.join(end),
+        })
+    }
+
+    /// `(unit)` with the `(` current: `(m*K)` in `W/(m*K)`. The inside is
+    /// written with no spaces, like any unit, and touches both parentheses.
+    fn parse_unit_group(&mut self, ctx: UnitCtx<'_>, grouped: bool) -> Option<UnitExpr> {
+        let open = self.bump();
+        let nested = if grouped {
+            Some(open.span)
+        } else {
+            let inner = self.current();
+            (inner.kind == TokenKind::LParen && inner.span.start == open.span.end)
+                .then_some(inner.span)
+        };
+        if let Some(span) = nested {
+            self.errors.push(
+                ParseError::new("unit groups cannot be nested", span)
+                    .with_help("write the units in one group, e.g. `J/(mol*K)` or `m^3/(kg*s^2)`"),
+            );
+            return None;
+        }
+        let first = self.current();
+        if first.span.start != open.span.end || !self.at_unit_start() {
+            self.errors.push(
+                ParseError::new(
+                    format!(
+                        "expected a unit name after `(` in a unit, found {}",
+                        self.describe(first)
+                    ),
+                    first.span,
+                )
+                .with_secondary(open.span, "unit group")
+                .with_help("write the group with no spaces, e.g. `W/(m*K)`"),
+            );
+            return None;
+        }
+        let inner = self.parse_unit_in(ctx, true)?;
+        let close = self.current();
+        if close.kind != TokenKind::RParen || inner.span().end != close.span.start {
+            self.errors.push(
+                ParseError::new(
+                    format!(
+                        "expected `)` to close the unit group, found {}",
+                        self.describe(close)
+                    ),
+                    close.span,
+                )
+                .with_secondary(open.span, "unit group opened here")
+                .with_help("write the group with no spaces, e.g. `W/(m*K)`"),
+            );
+            return None;
+        }
+        self.bump();
+        Some(UnitExpr::Group {
+            inner: Box::new(inner),
+            span: open.span.join(close.span),
         })
     }
 

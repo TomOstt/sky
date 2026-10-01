@@ -3,7 +3,8 @@
 //! This crate is pure: it performs no I/O and never evaluates user code. It provides
 //!
 //! * [`Rational`]: a small exact rational number (checked `i64` arithmetic),
-//! * [`Dimension`]: seven rational exponents over L, M, T, I, Θ, N, J,
+//! * [`Dimension`]: seven rational exponents over L, M, T, I, Θ, N, J (shown as
+//!   `mol` and `cd` for the last two, which would read as newton and joule),
 //! * [`Unit`], [`lookup`], and [`is_unit_symbol`]: the unit table (a dimension
 //!   plus a scale factor) and SI prefixes, the single source of truth for unit names,
 //! * [`Constant`] and [`CONSTANTS`]: CODATA 2018 physical constants, which the checker
@@ -32,4 +33,7 @@ pub use dimension::{BaseDim, DimError, Dimension};
 pub use math::{DimRule, MathDimError, MathFn};
 pub use rational::{Rational, RationalError};
 pub use unify::{DimMismatch, DimTerm, DimUnifier, DimVar, UnifyError};
-pub use unit::{is_unit_symbol, lookup, suggest_unit, Prefix, Resolved, Unit, PREFIXES, UNITS};
+pub use unit::{
+    is_unit_symbol, lookup, si_unit_text, suggest_unit, temperature_hint, unit_hint, Prefix,
+    Resolved, Unit, NOT_UNITS, PREFIXES, UNITS,
+};

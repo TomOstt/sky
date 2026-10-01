@@ -1,7 +1,7 @@
 crates/sky-types/tests/ui/err_argument_tags.sky:8:9: error: `Q` of `f` must be Orthogonal, but `A` is not known to be Orthogonal
   |
 8 | print(f(A, [1, 1]))
-  |         ^ this is Matrix[2,2] [1]
+  |         ^ this is Matrix[2,2] [dimensionless]
 1 | def f(Q: Orthogonal Matrix[2, 2], b: Vector[2]) -> Vector[2]:
   |          ----------------------- expected because of this annotation
   = note: an Orthogonal promise is never verified when the program runs, so the checker must know it: from a declaration, `identity(n)`, or a product or negation of Orthogonal matrices
@@ -10,7 +10,7 @@ crates/sky-types/tests/ui/err_argument_tags.sky:8:9: error: `Q` of `f` must be O
 crates/sky-types/tests/ui/err_argument_tags.sky:11:9: error: `Q` of `f` must be Orthogonal, but `2 * identity(2)` is not known to be Orthogonal
    |
 11 | print(f(2 * identity(2), [1, 1]))
-   |         ^^^^^^^^^^^^^^^ this is Matrix[2,2] {Symmetric, Diagonal} [1]
+   |         ^^^^^^^^^^^^^^^ this is Matrix[2,2] {Symmetric, Diagonal} [dimensionless]
  1 | def f(Q: Orthogonal Matrix[2, 2], b: Vector[2]) -> Vector[2]:
    |          ----------------------- expected because of this annotation
    = note: an Orthogonal promise is never verified when the program runs, so the checker must know it: from a declaration, `identity(n)`, or a product or negation of Orthogonal matrices
@@ -19,7 +19,7 @@ crates/sky-types/tests/ui/err_argument_tags.sky:11:9: error: `Q` of `f` must be 
 crates/sky-types/tests/ui/err_argument_tags.sky:12:9: error: `Q` of `f` must be Orthogonal, but `[[1, 0], [0, 1]]` is not known to be Orthogonal
    |
 12 | print(f([[1, 0], [0, 1]], [1, 1]))
-   |         ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [1]
+   |         ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [dimensionless]
  1 | def f(Q: Orthogonal Matrix[2, 2], b: Vector[2]) -> Vector[2]:
    |          ----------------------- expected because of this annotation
    = note: an Orthogonal promise is never verified when the program runs, so the checker must know it: from a declaration, `identity(n)`, or a product or negation of Orthogonal matrices

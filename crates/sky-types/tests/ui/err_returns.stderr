@@ -39,7 +39,7 @@ crates/sky-types/tests/ui/err_returns.sky:19:5: error: `falls_off` can finish wi
 crates/sky-types/tests/ui/err_returns.sky:27:12: error: declared Vector[4], but the value is Vector[3]
    |
 27 |     return x
-   |            ^ this is Vector[3] [1]
+   |            ^ this is Vector[3] [dimensionless]
 26 | def declared_bad(x: Vector[3]) -> Vector[4]:
    |                                   --------- declared here
    = note: axis      0

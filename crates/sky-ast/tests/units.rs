@@ -164,7 +164,8 @@ fn juxtaposed_units_are_an_error_suggesting_star() {
 fn malformed_unit_parts_are_errors() {
     for (src, needle) in [
         ("10 m/2", "expected a unit name after `/`"),
-        ("10 m*(s)", "expected a unit name after `*`"),
+        ("10 m*(2)", "expected a unit name after `(` in a unit"),
+        ("10 m*2", "expected a unit name after `*`"),
         ("3 s^x", "must be an integer or a parenthesized rational"),
         ("3 s^2.5", "must be an integer or a parenthesized rational"),
         ("3 s^-x", "must be an integer or a parenthesized rational"),
@@ -362,4 +363,70 @@ fn spaced_caret_directly_after_a_unit_is_an_error() {
         assert_eq!(common::at(src, err.span), "^", "{src:?}");
         assert_eq!(err.help.as_deref(), Some(help), "{src:?}");
     }
+}
+
+#[test]
+fn parenthesized_unit_groups() {
+    // Dogfooding: `237 W/(m*K)` is how a textbook writes conductivity.
+    check(&[
+        ("237 W/(m*K)", "(unit 237 (/ W (* m K)))"),
+        ("1 m^3/(kg*s^2)", "(unit 1 (/ (^ m 3) (* kg (^ s 2))))"),
+        ("8.314 J/(mol*K)", "(unit 8.314 (/ J (* mol K)))"),
+        ("2 W/(m*K)^2", "(unit 2 (/ W (^ (* m K) 2)))"),
+        ("1 kg*(m/s)", "(unit 1 (* kg (/ m s)))"),
+        // A spaced `/` before a group is still arithmetic on the quantity.
+        ("10 m / (2 s)", "(/ (unit 10 m) (paren (unit 2 s)))"),
+    ]);
+    // The group's span covers its parentheses, so a unit's text is whole.
+    let src = "237 W/(m*K)";
+    let tokens = common::lex(src);
+    let Some(sky_ast::Expr {
+        kind: sky_ast::ExprKind::UnitLiteral { unit, .. },
+        ..
+    }) = sky_ast::parse_expr(&tokens, src).0
+    else {
+        panic!("not a unit literal");
+    };
+    assert_eq!(common::at(src, unit.span()), "W/(m*K)");
+}
+
+#[test]
+fn one_over_a_unit() {
+    check(&[
+        ("0.001 1/m", "(unit 0.001 (/ 1 m))"),
+        ("2 1/(s*K)", "(unit 2 (/ 1 (* s K)))"),
+        ("3 1/s^2", "(unit 3 (/ 1 (^ s 2)))"),
+        // Not `1/unit`: a division by a number, or a spaced `/`.
+        ("x * 1/2", "(/ (* x 1) 2)"),
+        ("x * 1 / s", "(/ (* x 1) s)"),
+    ]);
+    assert_eq!(
+        module_sexpr("def f(k: 1/m) -> 1/s:\n    return k * 1 m/s\n"),
+        module_sexpr("def f(k: m^-1) -> s^-1:\n    return k * 1 m/s\n")
+            .replace("(^ m -1)", "(/ 1 m)")
+            .replace("(^ s -1)", "(/ 1 s)")
+    );
+}
+
+#[test]
+fn malformed_unit_groups() {
+    for (src, message) in [
+        ("1 W/((m*K))", "unit groups cannot be nested"),
+        ("1 W/( m*K)", "expected a unit name after `(` in a unit"),
+        ("1 W/(m*K )", "expected `)` to close the unit group"),
+        ("1 W/(m K)", "unexpected name `K` after the unit `m`"),
+    ] {
+        let errors = expr_errors(src);
+        assert!(
+            errors.first().is_some_and(|e| e.message.contains(message)),
+            "{src}: {errors:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_number_before_in_is_an_inch() {
+    let err = one_error("1 in");
+    assert_eq!(err.message, "`in` is a keyword, not a unit");
+    assert!(err.help.as_deref().unwrap().contains("0.0254 m"));
 }

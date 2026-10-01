@@ -31,7 +31,7 @@ crates/sky-types/tests/ui/err_for_range.sky:10:16: error: `range` needs an integ
 crates/sky-types/tests/ui/err_for_range.sky:12:16: error: `range` needs a number, not an array
    |
 12 | for i in range([1, 2]):
-   |                ^^^^^^ this is Vector[2] [1]
+   |                ^^^^^^ this is Vector[2] [dimensionless]
    = help: to visit the elements of an array, loop over it: `for x in v:`
 
 crates/sky-types/tests/ui/err_for_range.sky:14:16: error: the bound `10000000000000000` of `range` is too large

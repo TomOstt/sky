@@ -11,7 +11,7 @@ tests/ui/types/err_array_shape_annotation.sky:1:18: error: declared Vector[3], b
 tests/ui/types/err_array_shape_annotation.sky:2:19: error: declared Matrix[2,3], but the value is Matrix[2,2]
   |
 2 | A: Matrix[2, 3] = [[1, 2], [3, 4]]
-  |                   ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [1]
+  |                   ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [dimensionless]
   |    ------------ expected because of this annotation
   = note: axis      0  1
   = note: declared  2  3

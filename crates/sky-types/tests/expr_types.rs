@@ -361,7 +361,7 @@ fn shape_variables_are_resolved_on_lookup() {
         let t = c.binding_types.get(&name.span).expect("declared type");
         assert_eq!(
             c.resolve_ty(t).to_string(),
-            "Matrix[3,3] {Symmetric, PositiveDefinite} [1]"
+            "Matrix[3,3] {Symmetric, PositiveDefinite} [dimensionless]"
         );
     });
 }

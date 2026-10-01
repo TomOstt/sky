@@ -1,7 +1,7 @@
 tests/ui/types/err_literal_tag_not_positive_definite.sky:1:36: error: `[[1, 2], [2, 1]]` is not known to be PositiveDefinite
   |
 1 | P: PositiveDefinite Matrix[2, 2] = [[1, 2], [2, 1]]
-  |                                    ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [1]
+  |                                    ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [dimensionless]
   |    ----------------------------- expected because of this annotation
   |                                                 - diagonal entry 1
   = note: the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it
@@ -11,7 +11,7 @@ tests/ui/types/err_literal_tag_not_positive_definite.sky:1:36: error: `[[1, 2], 
 tests/ui/types/err_literal_tag_not_positive_definite.sky:2:36: error: `[[1, 2], [3, 1]]` is not known to be PositiveDefinite
   |
 2 | Q: PositiveDefinite Matrix[2, 2] = [[1, 2], [3, 1]]
-  |                                    ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [1]
+  |                                    ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [dimensionless]
   |    ----------------------------- expected because of this annotation
   |                                         - entry [0, 1]
   |                                              - entry [1, 0]
@@ -22,7 +22,7 @@ tests/ui/types/err_literal_tag_not_positive_definite.sky:2:36: error: `[[1, 2], 
 tests/ui/types/err_literal_tag_not_positive_definite.sky:3:30: error: `[[1, 0], [0, 1]]` is not known to be Orthogonal
   |
 3 | O: Orthogonal Matrix[2, 2] = [[1, 0], [0, 1]]
-  |                              ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [1]
+  |                              ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [dimensionless]
   |    ----------------------- expected because of this annotation
   = note: the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it
   = note: the checker never proves Orthogonal from a literal: exact orthogonality needs exact sums of products, which decimal entries do not give

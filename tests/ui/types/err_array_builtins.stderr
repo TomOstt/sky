@@ -34,7 +34,7 @@ tests/ui/types/err_array_builtins.sky:7:11: error: `zeros` needs a size, a dimen
 tests/ui/types/err_array_builtins.sky:8:9: error: `len` needs a vector or a matrix, found a scalar
   |
 8 | g = len(1)
-  |         ^ this is Scalar [1]
+  |         ^ this is Scalar [dimensionless]
 
 tests/ui/types/err_array_builtins.sky:9:5: error: the array from `identity` is too large
   |

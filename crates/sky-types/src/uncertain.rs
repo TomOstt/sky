@@ -37,7 +37,7 @@ use crate::provenance::label_dim;
 const MAX_VISIT: usize = 256;
 
 /// What the checker remembers about uncertainty.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct UncertainState {
     /// Names bound to a value that may be uncertain.
     names: HashSet<String>,

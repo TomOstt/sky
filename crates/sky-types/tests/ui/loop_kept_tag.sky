@@ -1,0 +1,6 @@
+Q = identity(2)
+b = [1, 1]
+for i in range(3):
+    x = Q⁻¹ @ b
+    print(x)
+    Q = Q

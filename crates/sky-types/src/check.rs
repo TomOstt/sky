@@ -482,6 +482,7 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         unc: crate::uncertain::UncertainState::default(),
         shown_ok: None,
         contract_defs: HashMap::new(),
+        loop_depth: 0,
     };
     for stmt in &module.stmts {
         c.stmt(stmt);
@@ -561,6 +562,24 @@ pub(crate) struct Checker<'s> {
     /// The `requires` lines of the functions checked so far, by the span of
     /// the `def`'s name (see [`crate::contracts`]).
     pub(crate) contract_defs: HashMap<Span, Arc<crate::contracts::ContractDef>>,
+    /// How many loop bodies are being checked around this point, `def`s
+    /// included (unlike [`Self::loops`]): see [`Checker::loop_body`].
+    pub(crate) loop_depth: usize,
+}
+
+/// See [`Checker::loop_mark`].
+pub(crate) struct LoopMark {
+    diagnostics: usize,
+    rewrites: usize,
+    rewrites_omitted: usize,
+    chain_notes: usize,
+    chain_notes_omitted: usize,
+    ode_notes: usize,
+    num: crate::numerics::NumState,
+    unc: crate::uncertain::UncertainState,
+    prelude: BTreeSet<String>,
+    fn_ctx: Option<crate::flow::FnCtx>,
+    shadow_reported: Vec<String>,
 }
 
 /// Human wording for a dimension in error text: its name if it has one
@@ -666,6 +685,52 @@ impl<'s> Checker<'s> {
 
     pub(crate) fn error(&mut self, d: Diagnostic) {
         self.diagnostics.push(d);
+    }
+
+    /// What a pass over a loop body may change, as it was before the pass:
+    /// [`Self::loop_rollback`] undoes the pass when the body has to be
+    /// checked again from a weaker state (see [`Checker::loop_body`]).
+    pub(crate) fn loop_mark(&self) -> LoopMark {
+        LoopMark {
+            diagnostics: self.diagnostics.len(),
+            rewrites: self.rewrites.len(),
+            rewrites_omitted: self.rewrites_omitted,
+            chain_notes: self.chain_notes.len(),
+            chain_notes_omitted: self.chain_notes_omitted,
+            ode_notes: self.ode_notes.len(),
+            num: self.num.clone(),
+            unc: self.unc.clone(),
+            prelude: self.env.prelude.clone(),
+            fn_ctx: self.fns.last().cloned(),
+            shadow_reported: self.shadow_reported.clone(),
+        }
+    }
+
+    /// Forgets everything a pass over the loop at `span` recorded: what was
+    /// appended since `mark`, and every table entry for code inside the
+    /// loop, so a decision made from the stronger state of an earlier pass
+    /// (a rewrite that trusted a tag, say) cannot outlive it.
+    pub(crate) fn loop_rollback(&mut self, mark: &LoopMark, span: Span) {
+        let inside = |s: &Span| s.start >= span.start && s.end <= span.end;
+        self.diagnostics.truncate(mark.diagnostics);
+        self.rewrites.truncate(mark.rewrites);
+        self.rewrites_omitted = mark.rewrites_omitted;
+        self.chain_notes.truncate(mark.chain_notes);
+        self.chain_notes_omitted = mark.chain_notes_omitted;
+        self.ode_notes.truncate(mark.ode_notes);
+        self.num = mark.num.clone();
+        self.unc = mark.unc.clone();
+        self.env.prelude = mark.prelude.clone();
+        if let (Some(ctx), Some(saved)) = (self.fns.last_mut(), &mark.fn_ctx) {
+            *ctx = saved.clone();
+        }
+        self.shadow_reported = mark.shadow_reported.clone();
+        self.solves.retain(|s| !inside(s));
+        self.chains.retain(|s, _| !inside(s));
+        self.expr_types.retain(|s, _| !inside(s));
+        self.binding_types.retain(|s, _| !inside(s));
+        self.funcs.retain(|s, _| !inside(s));
+        self.contract_defs.retain(|s, _| !inside(s));
     }
 
     /// `this is Matrix[3,3] [1]` for secondary labels.

@@ -1,0 +1,14 @@
+def f(Q: Orthogonal Matrix[2, 2], b: Vector[2]) -> Vector[2]:
+    return Q⁻¹ @ b
+
+def g(D: Diagonal Matrix[2, 2], b: Vector[2]) -> Vector[2]:
+    return D⁻¹ @ b
+
+A = [[2, 0], [0, 2]]
+print(f(A, [1, 1]))
+print(f(identity(2), [1, 1]))
+print(f(-identity(2) @ identity(2), [1, 1]))
+print(f(2 * identity(2), [1, 1]))
+print(f([[1, 0], [0, 1]], [1, 1]))
+# Diagonal is taken on trust: the solve verifies it when it runs.
+print(g(A + A, [1, 1]))

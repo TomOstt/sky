@@ -37,7 +37,9 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use sky_ast::{Block, CompoundOp, Expr, ExprKind, Ident, Literal, Param, TypeExpr};
+use sky_ast::{
+    AssignTarget, Block, CompoundOp, Expr, ExprKind, Ident, Literal, Param, StmtKind, TypeExpr,
+};
 use sky_diag::{Diagnostic, Span};
 use sky_units::Dimension;
 
@@ -46,6 +48,7 @@ use crate::derivative::DerivativeOf;
 use crate::provenance::label_dim;
 use crate::rules::TensorType;
 use crate::shape::{Shape, ShapeContext, ShapeDim, ShapeVar};
+use crate::tags::Tag;
 use sky_diag::display_capped as quote;
 
 /// A function's signature, as the checker knows it: enough to check a call
@@ -127,6 +130,7 @@ pub(crate) struct ParamSig {
 }
 
 /// One `return` in the function being checked.
+#[derive(Clone)]
 pub(crate) struct ReturnSite {
     span: Span,
     /// The value's span and type; `None` for a bare `return`.
@@ -134,6 +138,7 @@ pub(crate) struct ReturnSite {
 }
 
 /// What the checker tracks about the `def` it is inside.
+#[derive(Clone)]
 pub(crate) struct FnCtx {
     name: String,
     /// The shape of `-> T`, and the span of `T`.
@@ -181,6 +186,86 @@ fn article(word: &str) -> &'static str {
         "an"
     } else {
         "a"
+    }
+}
+
+/// How many times a loop body is checked before its entry state gives up
+/// every tag (see [`Checker::loop_body`]). Each further pass removes at
+/// least one tag of one name, so real loops settle in two or three.
+const MAX_LOOP_PASSES: usize = 4;
+
+/// `t` if it is a value with at least one tag.
+fn tagged(t: &Ty) -> Option<&ValueTy> {
+    match t {
+        Ty::Value(v) if !v.ty.tags().is_empty() => Some(v),
+        _ => None,
+    }
+}
+
+/// `t` without its tags.
+fn untag(t: &mut Ty) {
+    if let Some(v) = tagged(t) {
+        *t = Ty::value(v.dim, TensorType::untagged(v.ty.shape().clone()));
+    }
+}
+
+/// `scope` with every tag removed: the weakest entry state a loop body can
+/// have, which no iteration can weaken further.
+fn untag_all(mut scope: Scope) -> Scope {
+    scope.names.values_mut().for_each(untag);
+    scope
+}
+
+/// `scope` with the tags of every name `body` assigns removed: only those
+/// can change from one iteration to the next.
+fn untag_assigned(src: &str, mut scope: Scope, body: &Block) -> Scope {
+    let mut names = BTreeSet::new();
+    assigned_names(src, body, &mut names);
+    for name in names {
+        if let Some(t) = scope.names.get_mut(name) {
+            untag(t);
+        }
+    }
+    scope
+}
+
+/// The names `block` binds in its own scope: assignments, annotated
+/// bindings and loop variables, in nested `if`s and loops too (a `def`
+/// body is a scope of its own).
+fn assigned_names<'s>(src: &'s str, block: &Block, out: &mut BTreeSet<&'s str>) {
+    for stmt in &block.stmts {
+        match &stmt.kind {
+            StmtKind::Assign {
+                target: AssignTarget::Name(id),
+                ..
+            }
+            | StmtKind::CompoundAssign {
+                target: AssignTarget::Name(id),
+                ..
+            } => {
+                out.extend(id.text(src));
+            }
+            StmtKind::Binding { name, .. } => {
+                out.extend(name.text(src));
+            }
+            StmtKind::If {
+                branches,
+                else_block,
+            } => {
+                for (_, b) in branches {
+                    assigned_names(src, b, out);
+                }
+                if let Some(b) = else_block {
+                    assigned_names(src, b, out);
+                }
+            }
+            StmtKind::While { body, .. } => assigned_names(src, body, out),
+            StmtKind::For { var, body, .. } => {
+                out.extend(var.text(src));
+                assigned_names(src, body, out);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -322,26 +407,85 @@ impl Checker<'_> {
     #[inline(never)]
     pub(crate) fn while_stmt(&mut self, span: Span, cond: &Expr, body: &Block) {
         let before = self.env.snapshot();
-        let t = self.expr(cond);
-        self.condition("while", cond, t);
         let forever = matches!(
             strip_parens(cond).kind,
             ExprKind::Literal(Literal::Bool { value: true, .. })
         );
         let runs = if forever { Runs::Forever } else { Runs::Maybe };
-        self.loop_body(span, before, body, runs);
+        self.loop_body(span, before, Some(cond), body, runs);
     }
 
     /// The body of a loop and the merge of every way out of it, for `while`
     /// and `for` alike (a `for` is a `while` over an index, see
     /// [`crate::for_loop`]). `before` is the state on entering the loop,
-    /// which is where the zero-iteration path ends up.
-    pub(crate) fn loop_body(&mut self, span: Span, before: Scope, body: &Block, runs: Runs) {
-        self.loops.push(LoopFrame::default());
-        self.diverged = false;
-        self.block(body);
-        let end_diverged = self.diverged;
-        let frame = self.loops.pop().unwrap_or_default();
+    /// which is where the zero-iteration path ends up. `cond` is a
+    /// `while`'s condition, checked before the body on every pass, since it
+    /// runs at the start of every iteration.
+    ///
+    /// The body starts from the state on entering the loop, and also from
+    /// the state at its own end and at each `continue` (the next
+    /// iteration). Dimensions and shapes cannot differ between those (that
+    /// is a conflict, reported by the merge after the loop), but tags can:
+    /// after `Q = 2 * Q`, `Q` is no longer orthogonal on the second
+    /// iteration. So the body is checked from the entry state; if a pass
+    /// ends with weaker tags for a name than it started with, the pass is
+    /// undone ([`Checker::loop_rollback`]) and the body is checked again
+    /// from the joined tags, until they stop changing. Tags only shrink, so
+    /// this ends. To keep nested loops from multiplying their passes, a
+    /// loop inside another one (and the outermost after a few passes)
+    /// instead drops every tag of the names its body assigns, which no
+    /// iteration can weaken further, so the next pass is the last; past
+    /// [`MAX_LOOP_PASSES`] every tag goes. Both are always sound.
+    pub(crate) fn loop_body(
+        &mut self,
+        span: Span,
+        before: Scope,
+        cond: Option<&Expr>,
+        body: &Block,
+        runs: Runs,
+    ) {
+        // What each pass checks: the code that runs again every iteration.
+        let start = cond.map_or(body.span.start, |c| c.span.start);
+        let repeated = Span::new(start, body.span.end.max(start));
+        let mut entry = self.env.snapshot();
+        // Only a tagged name can be weakened by a later iteration.
+        let mark = entry
+            .names
+            .values()
+            .any(|t| tagged(t).is_some())
+            .then(|| self.loop_mark());
+        let inner = self.loop_depth > 0;
+        self.loop_depth += 1;
+        let mut passes = 1;
+        let (end_diverged, frame) = loop {
+            if let Some(cond) = cond {
+                let t = self.expr(cond);
+                self.condition("while", cond, t);
+            }
+            self.loops.push(LoopFrame::default());
+            self.diverged = false;
+            self.block(body);
+            let end_diverged = self.diverged;
+            let frame = self.loops.pop().unwrap_or_default();
+            let Some(mark) = &mark else {
+                break (end_diverged, frame);
+            };
+            let end = (!end_diverged).then(|| self.env.snapshot());
+            let Some(next) = self.next_entry(&entry, end.iter().chain(&frame.continues)) else {
+                break (end_diverged, frame);
+            };
+            self.loop_rollback(mark, repeated);
+            passes += 1;
+            entry = if passes > MAX_LOOP_PASSES {
+                untag_all(next)
+            } else if inner || passes == MAX_LOOP_PASSES {
+                untag_assigned(self.src, next, body)
+            } else {
+                next
+            };
+            self.env.restore(entry.clone());
+        };
+        self.loop_depth -= 1;
         let mut paths = Vec::new();
         if runs != Runs::Forever {
             if runs == Runs::Maybe {
@@ -354,6 +498,44 @@ impl Checker<'_> {
         }
         paths.extend(frame.breaks);
         self.join_paths(paths, before, span, MergeKind::Loop);
+    }
+
+    /// The state a loop body starts the next iteration from, if it is
+    /// weaker than `entry`: each tagged name of `entry` with its tags
+    /// joined with those it has at each of `ends` (the end of the body and
+    /// each `continue`). A name whose type there is not a value of the same
+    /// dimension and shape (unknown, or a conflict the merge after the loop
+    /// reports) loses its tags. `None` if no tag changed.
+    fn next_entry<'a>(
+        &mut self,
+        entry: &Scope,
+        ends: impl Iterator<Item = &'a Scope>,
+    ) -> Option<Scope> {
+        let ends: Vec<&Scope> = ends.collect();
+        let mut next = entry.clone();
+        let mut changed = false;
+        for (name, ty) in &mut next.names {
+            let Some(v) = tagged(ty).cloned() else {
+                continue;
+            };
+            let mut acc = Ty::Value(v.clone());
+            for end in &ends {
+                let joined = match end.names.get(name) {
+                    Some(t @ Ty::Value(_)) => self.join_types(&acc, t),
+                    _ => None,
+                };
+                acc = match joined {
+                    Some(t @ Ty::Value(_)) => t,
+                    _ => Ty::value(v.dim, TensorType::untagged(v.ty.shape().clone())),
+                };
+            }
+            let tags = tagged(&acc).map(|a| a.ty.tags()).unwrap_or_default();
+            if tags != v.ty.tags() {
+                changed = true;
+                *ty = acc;
+            }
+        }
+        changed.then_some(next)
     }
 
     pub(crate) fn break_stmt(&mut self, span: Span) {
@@ -1100,7 +1282,9 @@ impl Checker<'_> {
                         d.with_help("convert the argument, or fix the unit in the call")
                     };
                     self.error(d);
+                    return;
                 }
+                self.check_argument_tags(&pname, fname, pt, ann, arg, av);
             }
             Ty::Bool | Ty::Func(_) | Ty::Ode(_) => {
                 let found = self.ty_label(t);
@@ -1112,6 +1296,50 @@ impl Checker<'_> {
             }
             Ty::Unknown => {}
         }
+    }
+
+    /// A parameter's tags are promises its body is checked with. Most are
+    /// taken on trust from the caller and verified where they are used (a
+    /// Cholesky solve checks positive definiteness, a diagonal one the zero
+    /// entries), but Orthogonal never is: `Q⁻¹` becomes `Qᵀ` unchecked
+    /// (spec, "Algorithm choice"). So an argument for an Orthogonal
+    /// parameter must be known to be Orthogonal, as a binding's value must
+    /// be for a declared tag; no literal proves it.
+    fn check_argument_tags(
+        &mut self,
+        pname: &str,
+        fname: &str,
+        pt: &ValueTy,
+        ann: Span,
+        arg: &Expr,
+        av: &ValueTy,
+    ) {
+        let tag = Tag::Orthogonal;
+        if !pt.ty.tags().closure().contains(tag) || av.ty.tags().closure().contains(tag) {
+            return;
+        }
+        let subject = self.quoted(arg.span);
+        let label = self.this_is(av);
+        self.error(
+            Diagnostic::error(
+                format!(
+                    "`{pname}` of `{fname}` must be {}, but `{subject}` is not known to be {}",
+                    tag.name(),
+                    tag.name()
+                ),
+                arg.span,
+            )
+            .with_label(label)
+            .with_secondary(ann, "expected because of this annotation")
+            .with_note(
+                "an Orthogonal promise is never verified when the program runs, so the checker must know it: from a declaration, `identity(n)`, or a product or negation of Orthogonal matrices",
+            )
+            .with_help(format!(
+                "pass a matrix known to be {}, or remove {} from the parameter's annotation",
+                tag.name(),
+                tag.name()
+            )),
+        );
     }
 
     /// `t` with each variable in `fresh` (by id) replaced by its copy.

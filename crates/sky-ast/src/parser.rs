@@ -2122,6 +2122,19 @@ impl<'t, 's> Parser<'t, 's> {
                     "write a unit right after a number (`10 {name}`), or multiply explicitly (`... * {name}`)"
                 ))
             }
+            // `f"x = {x}"`: the prefix is read as a name.
+            TokenKind::Str
+                if prev.end == tok.span.start
+                    && matches!(
+                        self.text(prev).to_ascii_lowercase().as_str(),
+                        "f" | "rf" | "fr"
+                    ) =>
+            {
+                ParseError::new("Sky has no f-strings", Span::new(prev.start, tok.span.end))
+                    .with_help(
+                        "there is no string formatting yet; print the text and the values as separate arguments: `print(\"x =\", x)`",
+                    )
+            }
             TokenKind::Int | TokenKind::Float | TokenKind::Str => ParseError::new(
                 format!(
                     "unexpected {} after an expression; expected {expected}",
@@ -2588,7 +2601,11 @@ impl<'t, 's> Parser<'t, 's> {
                 Some(u) => format!(
                     "declare a unit by itself (`{u}`), or give the name a value with `=`"
                 ),
-                None => "a type is a unit like `m/s` or a shape like `Matrix[3, 3]`; give the name a value with `=`".to_string(),
+                // `-> 1`, `x: 1`: a plain number's type.
+                None if self.text(tok.span) == "1" => {
+                    "the type of a plain number (no unit) is `Scalar`".to_string()
+                }
+                None => "a type is a unit like `m/s`, `Scalar` for a plain number, or a shape like `Matrix[3, 3]`; give the name a value with `=`".to_string(),
             };
             ParseError::new("an annotation is a type, not a value", tok.span).with_help(help)
         } else {

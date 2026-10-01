@@ -1,0 +1,7 @@
+# Arrays are immutable: the help builds a new vector instead.
+v = [1 m, 2 m, 3 m]
+v[0] = 5 m
+v[1] += 1 m
+v[2] *= 2
+A = [[1, 2], [3, 4]]
+A[0, 1] = 5

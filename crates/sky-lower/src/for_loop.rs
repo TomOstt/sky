@@ -49,7 +49,6 @@ use sky_units::Dimension;
 
 use crate::analysis::is_forever;
 use crate::ctx::{Lower, Needed, R};
-use crate::expr::ARRAYS;
 use crate::LowerError;
 
 /// What starts a loop: the condition of a `while`, or a counting header.
@@ -156,11 +155,16 @@ impl Lower<'_> {
         needed: &Needed,
     ) -> R<()> {
         let Some(args) = self.range_args(iter) else {
-            return Err(LowerError::new(
-                "iteration over arrays lowers once SIR has array values",
-                iter.span,
-            )
-            .with_note(ARRAYS));
+            let v = match &iter.kind {
+                ExprKind::Name(_) => self.text(iter.span).to_string(),
+                _ => "v".to_string(),
+            };
+            return Err(
+                LowerError::new("iteration over an array is not compiled yet", iter.span)
+                    .with_note(format!(
+                    "loop over its indices instead: `for i in range(len({v})):`, reading `{v}[i]`"
+                )),
+            );
         };
         let (start, stop, step) = match args {
             [stop] => (None, stop, None),

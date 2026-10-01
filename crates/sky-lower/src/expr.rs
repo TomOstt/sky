@@ -583,6 +583,6 @@ impl Lower<'_> {
 pub(crate) const UNCERTAINTY: &str =
     "values with an uncertainty run on the tree-walking interpreter (`--engine=ast`, or `--engine=auto`, which falls back to it)";
 
-/// Why an index or attribute write, or an attribute read, is rejected.
-pub(crate) const ARRAYS: &str =
-    "`sky run` cannot execute this either: arrays are immutable and attributes are not supported in v0.1";
+/// Why an index or attribute write, or an attribute read, is rejected (the
+/// checker rejects both first, so no checked program reaches it).
+pub(crate) const ARRAYS: &str = "arrays are immutable and values have no attributes in v0.1";

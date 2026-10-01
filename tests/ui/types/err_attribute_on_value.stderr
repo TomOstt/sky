@@ -1,0 +1,29 @@
+tests/ui/types/err_attribute_on_value.sky:4:9: error: a vector has no attribute `mean`
+  |
+4 | print(x.mean())
+  |         ^^^^ no such attribute
+  = help: Sky has no methods, and no `mean` function yet; a sum over the entries can be written as a loop over `range(len(x))`
+
+tests/ui/types/err_attribute_on_value.sky:5:9: error: a matrix has no attribute `T`
+  |
+5 | print(A.T)
+  |         ^ no such attribute
+  = help: write `Aᵀ` for the transpose
+
+tests/ui/types/err_attribute_on_value.sky:6:9: error: a vector has no attribute `T`
+  |
+6 | print(x.T)
+  |         ^ no such attribute
+  = help: a vector has no row or column orientation, so there is nothing to transpose: `u @ v` is already the dot product
+
+tests/ui/types/err_attribute_on_value.sky:7:9: error: a vector has no attribute `shape`
+  |
+7 | print(x.shape)
+  |         ^^^^^ no such attribute
+  = help: write `len(x)` for its length
+
+tests/ui/types/err_attribute_on_value.sky:8:9: error: a matrix has no attribute `foo`
+  |
+8 | print(A.foo)
+  |         ^^^ no such attribute
+  = help: Sky values have no attributes or methods: functions are called as `f(x)`

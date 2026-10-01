@@ -199,7 +199,7 @@ fn run_source(
                 };
                 let d = Diagnostic::error(format!("cannot run {what}: {}", e.message), e.span)
                     .with_note(format!(
-                        "`--engine={flag}` runs only programs that lower to SIR"
+                        "`--engine={flag}` runs only programs that lower to SIR; `--engine=ast` runs this one, and `--engine=auto` falls back to it"
                     ));
                 let d = match e.note {
                     Some(n) => d.with_note(n),
@@ -227,7 +227,7 @@ fn run_source(
                     let span = e.span.unwrap_or(module.span);
                     let d = Diagnostic::error(format!("cannot run natively: {}", e.message), span)
                         .with_note(
-                            "`--engine=native` runs only programs that compile to machine code"
+                            "`--engine=native` runs only programs that compile to machine code; `--engine=sir` runs this one, and `--engine=auto` falls back to it"
                                 .to_string(),
                         );
                     return fail_with(&d, &rendered, &file);

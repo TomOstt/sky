@@ -517,7 +517,7 @@ fn a_for_over_an_array_says_lowering_needs_array_values() {
     let e = sky_lower::lower_source(src).expect_err("arrays do not lower yet");
     assert!(
         e.to_string()
-            .contains("iteration over arrays lowers once SIR has array values"),
+            .contains("iteration over an array is not compiled yet"),
         "{e}"
     );
     // The tree walker still runs it.

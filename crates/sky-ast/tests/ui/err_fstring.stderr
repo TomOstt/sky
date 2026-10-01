@@ -1,0 +1,6 @@
+crates/sky-ast/tests/ui/err_fstring.sky:2:7: error: Sky has no f-strings
+  |
+2 | print(f"x = {x}")
+  |       ^^^^^^^^^^
+  |      - unclosed `(`
+  = help: there is no string formatting yet; print the text and the values as separate arguments: `print("x =", x)`

@@ -518,7 +518,7 @@ fn unused_operations_the_analysis_proves_infallible_are_removed_with_the_proof()
     assert_eq!(rws.len(), 1, "only the named division is news: {rws:?}");
     assert_eq!(rws[0].rule, "DCE-002");
     assert_eq!(rws[0].before, "%by_two = div %0, %2");
-    assert_eq!(rws[0].because[0], "`by_two` is never used");
+    assert_eq!(rws[0].because[0], "nothing uses `by_two` any more");
     assert!(
         rws[0].because[1]
             .starts_with("`div` can fail in general, but not here: the divisor is 2 (never zero)"),

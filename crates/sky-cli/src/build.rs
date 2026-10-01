@@ -236,17 +236,27 @@ fn runtime_library(args: &BuildArgs) -> Result<PathBuf, String> {
             ))
         };
     }
-    let beside = std::env::current_exe()
+    let dir = std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|d| d.join("libsky_rt.a")));
+        .and_then(|exe| exe.parent().map(Path::to_path_buf));
+    let beside = dir.as_ref().map(|d| d.join("libsky_rt.a"));
+    // The build command that puts the library next to this `sky`: a
+    // release `sky` lives in `target/release`.
+    let release = dir
+        .as_ref()
+        .and_then(|d| d.file_name())
+        .is_some_and(|n| n == "release");
+    let command = if release {
+        "cargo build --release -p sky-rt"
+    } else {
+        "cargo build -p sky-rt"
+    };
     match beside {
         Some(p) if p.is_file() => Ok(p),
-        _ => Err(
+        _ => Err(format!(
             "the runtime library `libsky_rt.a` was not found next to the `sky` executable; \
-                  build it with `cargo build -p sky-rt` or name it with `--runtime=<path>` \
-                  (or `SKY_RT_LIB`)"
-                .to_string(),
-        ),
+             build it with `{command}` or name it with `--runtime=<path>` (or `SKY_RT_LIB`)"
+        )),
     }
 }
 

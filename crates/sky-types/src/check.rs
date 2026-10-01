@@ -195,7 +195,7 @@ impl fmt::Display for Ty {
 /// variable.
 #[derive(Clone, Debug, Default)]
 pub struct Env {
-    names: BTreeMap<String, Ty>,
+    pub(crate) names: BTreeMap<String, Ty>,
     /// Names still bound to a predefined constant (see [`Env::with_prelude`]).
     /// A name leaves the set when the program rebinds it, which is when the
     /// checker warns once.
@@ -482,6 +482,7 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         unc: crate::uncertain::UncertainState::default(),
         shown_ok: None,
         contract_defs: HashMap::new(),
+        failed_defs: HashSet::new(),
         loop_depth: 0,
     };
     for stmt in &module.stmts {
@@ -562,6 +563,9 @@ pub(crate) struct Checker<'s> {
     /// The `requires` lines of the functions checked so far, by the span of
     /// the `def`'s name (see [`crate::contracts`]).
     pub(crate) contract_defs: HashMap<Span, Arc<crate::contracts::ContractDef>>,
+    /// The `def`s (by the span of the name) whose body had an error, so a
+    /// result left unknown by it is not reported again where it is used.
+    pub(crate) failed_defs: HashSet<Span>,
     /// How many loop bodies are being checked around this point, `def`s
     /// included (unlike [`Self::loops`]): see [`Checker::loop_body`].
     pub(crate) loop_depth: usize,
@@ -687,6 +691,14 @@ impl<'s> Checker<'s> {
         self.diagnostics.push(d);
     }
 
+    /// How many errors (not warnings or notes) have been reported so far.
+    pub(crate) fn error_count(&self) -> usize {
+        self.diagnostics
+            .iter()
+            .filter(|d| d.severity == sky_diag::Severity::Error)
+            .count()
+    }
+
     /// What a pass over a loop body may change, as it was before the pass:
     /// [`Self::loop_rollback`] undoes the pass when the body has to be
     /// checked again from a weaker state (see [`Checker::loop_body`]).
@@ -731,6 +743,7 @@ impl<'s> Checker<'s> {
         self.binding_types.retain(|s, _| !inside(s));
         self.funcs.retain(|s, _| !inside(s));
         self.contract_defs.retain(|s, _| !inside(s));
+        self.failed_defs.retain(|s| !inside(s));
     }
 
     /// `this is Matrix[3,3] [1]` for secondary labels.
@@ -756,7 +769,7 @@ impl<'s> Checker<'s> {
     /// `e`'s source text, parenthesized unless it is an atom (a name,
     /// literal, unit literal, call, index, attribute, or parenthesized
     /// expression), so it can be spliced into a larger suggested expression
-    /// such as `(K⁻¹)⁻¹` or `(-2) * ones(A)`.
+    /// such as `(K⁻¹)⁻¹` or `(-2) * exp(zeros(3))`.
     pub(crate) fn operand_text(&self, e: &Expr) -> String {
         let text = self.quoted(e.span);
         match e.kind {
@@ -903,7 +916,7 @@ impl<'s> Checker<'s> {
                             self.note_const_binding(self.ident(id), value);
                         }
                     }
-                    _ => self.reject_write(target, "="),
+                    _ => self.reject_write(target, "=", value),
                 }
             }
             StmtKind::CompoundAssign {
@@ -915,7 +928,7 @@ impl<'s> Checker<'s> {
                 AssignTarget::Name(id) => self.compound_assign(id, *op, *op_span, value),
                 _ => {
                     self.expr(value);
-                    self.reject_write(target, op.symbol());
+                    self.reject_write(target, op.symbol(), value);
                 }
             },
             StmtKind::Binding { name, ty, value } => {
@@ -1120,22 +1133,46 @@ impl<'s> Checker<'s> {
     /// Reports a write through an index or attribute target (`A[i] = x`,
     /// `a.b += 1`), which the v0.1 checker rejects (spec: "Statements and
     /// assignment"). The target's own subexpressions are still typed.
-    fn reject_write(&mut self, target: &AssignTarget, op: &str) {
+    fn reject_write(&mut self, target: &AssignTarget, op: &str, value: &Expr) {
         let d = match target {
             AssignTarget::Name(_) => return,
             AssignTarget::Index {
                 base, items, span, ..
             } => {
-                self.expr(base);
+                let bt = self.expr(base);
                 self.index_items(items);
-                Diagnostic::error(
+                let d = Diagnostic::error(
                     format!(
                         "cannot assign to an element of `{}`",
                         self.quoted(base.span)
                     ),
                     *span,
                 )
-                .with_note("arrays are immutable in v0.1")
+                .with_note("arrays are immutable in v0.1");
+                // A vector entry can be replaced by building a new vector:
+                // `identity(n)[i]` is the vector with a one at `i`.
+                let n = match &bt {
+                    Ty::Value(v) => match self.env.shapes.apply(v.ty.shape()).dims() {
+                        [ShapeDim::Known(n)] => Some(n.to_string()),
+                        [_] => Some("n".to_string()),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                match (n, items.as_slice()) {
+                    (Some(n), [IndexItem::Expr(i)]) if matches!(op, "=" | "+=" | "-=") => {
+                        let (v, i) = (self.operand_text(base), self.quoted(i.span));
+                        let x = self.operand_text(value);
+                        let help = if op == "=" {
+                            format!("to replace entry {i}, build a new vector: `{v} = {v} + ({x} - {v}[{i}]) * identity({n})[{i}]`")
+                        } else {
+                            let sym = &op[..1];
+                            format!("to change entry {i}, build a new vector: `{v} = {v} {sym} {x} * identity({n})[{i}]`")
+                        };
+                        d.with_help(help)
+                    }
+                    _ => d,
+                }
             }
             AssignTarget::Attribute { base, name, span } => {
                 self.expr(base);
@@ -2081,20 +2118,39 @@ impl<'s> Checker<'s> {
                     (_, true) => format!("cannot subtract a {noun} from a scalar"),
                 };
                 let c = self.operand_text(sc_e);
-                // The identity builtin needs a constant size; a symbolic
-                // one is spelled `n` for the user to fill in.
-                let n = match self.env.shapes.apply(arr.ty.shape()).dims() {
+                // There is no `ones` builtin: an array of ones of a known
+                // size is `exp(zeros(..))`. The identity builtin needs a
+                // constant size too; a symbolic one is spelled `n` for the
+                // user to fill in.
+                let dims = self.env.shapes.apply(arr.ty.shape());
+                let known: Option<Vec<String>> = dims
+                    .dims()
+                    .iter()
+                    .map(|d| match d {
+                        ShapeDim::Known(n) => Some(n.to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                let n = match dims.dims() {
                     [ShapeDim::Known(n), _] => n.to_string(),
                     _ => "n".to_string(),
                 };
+                let ones_of = known.map(|k| format!("exp(zeros({}))", k.join(", ")));
+                let scaled = |o: &String| {
+                    if c == "1" {
+                        o.clone()
+                    } else {
+                        format!("{c} * {o}")
+                    }
+                };
                 let (ones, identity) = if left_scalar {
                     (
-                        format!("{c} * ones({a}) {sym} {a}"),
+                        ones_of.as_ref().map(|o| format!("{} {sym} {a}", scaled(o))),
                         format!("identity({n}) {sym} {a}"),
                     )
                 } else {
                     (
-                        format!("{a} {sym} {c} * ones({a})"),
+                        ones_of.as_ref().map(|o| format!("{a} {sym} {}", scaled(o))),
                         format!("{a} {sym} identity({n})"),
                     )
                 };
@@ -2111,12 +2167,19 @@ impl<'s> Checker<'s> {
                         describe(&sc.dim),
                         describe(&arr.dim)
                     ));
-                } else if self.is_square_matrix(&arr.ty) {
-                    d = d.with_help(format!(
-                        "write `{ones}` for every element, or `{identity}` for the identity"
-                    ));
                 } else {
-                    d = d.with_help(format!("write `{ones}` for every element"));
+                    let ones_of = ones_of.unwrap_or_default();
+                    let square = self.is_square_matrix(&arr.ty);
+                    d = match (ones, square) {
+                        (Some(ones), true) => d.with_help(format!(
+                            "write `{ones}` for every element (`{ones_of}` is an array of ones), or `{identity}` for the identity"
+                        )),
+                        (Some(ones), false) => d.with_help(format!(
+                            "write `{ones}` for every element (`{ones_of}` is an array of ones)"
+                        )),
+                        (None, true) => d.with_help(format!("write `{identity}` for the identity")),
+                        (None, false) => d,
+                    };
                 }
                 self.error(d);
                 return Ty::Unknown;
@@ -2290,7 +2353,7 @@ fn suggest_tag(name: &str) -> Option<Tag> {
 }
 
 /// Levenshtein distance between two short strings.
-fn edit_distance(a: &[char], b: &[char]) -> usize {
+pub(crate) fn edit_distance(a: &[char], b: &[char]) -> usize {
     let mut row: Vec<usize> = (0..=b.len()).collect();
     for (i, ca) in a.iter().enumerate() {
         let mut diag = row[0];
@@ -2466,14 +2529,21 @@ mod tests {
         assert_eq!(
             help,
             vec![
+                // A's size is symbolic: no array of ones can be written.
+                vec!["write `A + identity(n)` for the identity".to_string()],
                 vec![
-                    "write `A + 2 * ones(A)` for every element, or `A + identity(n)` for the identity"
+                    "write `v + 2 * exp(zeros(3))` for every element (`exp(zeros(3))` is an array of ones)"
                         .to_string()
                 ],
-                vec!["write `v + 2 * ones(v)` for every element".to_string()],
-                vec!["write `M + 2 * ones(M)` for every element".to_string()],
-                // b is in metres too: the `ones` form applies, `I` doesn't.
-                vec!["write `2 m * ones(b) + b` for every element".to_string()],
+                vec![
+                    "write `M + 2 * exp(zeros(3, 4))` for every element (`exp(zeros(3, 4))` is an array of ones)"
+                        .to_string()
+                ],
+                // b is in metres too: the ones form applies, `I` doesn't.
+                vec![
+                    "write `2 m * exp(zeros(3)) + b` for every element (`exp(zeros(3))` is an array of ones)"
+                        .to_string()
+                ],
             ]
         );
     }

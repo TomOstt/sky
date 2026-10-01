@@ -190,7 +190,7 @@ impl Lower<'_> {
             self.st.scope.insert(RET.to_string(), f);
             if self.st.ret_value {
                 let scope = self.st.scope.clone();
-                let v = self.stand_in(&ret_ty, span, &scope)?;
+                let v = self.stand_in(&ret_ty, span, &scope, None)?;
                 self.st.scope.insert(RETVAL.to_string(), v);
             }
         }

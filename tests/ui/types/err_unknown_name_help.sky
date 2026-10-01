@@ -1,0 +1,7 @@
+# Unknown names: a typo of a defined name or a built-in gets "did you mean",
+# and the usual Python spellings of e and pi say what Sky writes.
+velocity = 3 m/s
+print(velocty)
+print(sqroot(4))
+print(e^2)
+print(math.pi)

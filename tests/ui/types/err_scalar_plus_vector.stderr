@@ -4,7 +4,7 @@ tests/ui/types/err_scalar_plus_vector.sky:7:7: error: cannot add a scalar to a v
   |       ^ no broadcasting between a scalar and an array
   |     - this is Vector[3] [1]
   |         - this is Scalar [1]
-  = help: write `v + 2 * ones(v)` for every element
+  = help: write `v + 2 * exp(zeros(3))` for every element (`exp(zeros(3))` is an array of ones)
 
 tests/ui/types/err_scalar_plus_vector.sky:9:12: error: cannot add a vector to a scalar
   |
@@ -20,7 +20,7 @@ tests/ui/types/err_scalar_plus_vector.sky:10:7: error: cannot subtract a scalar 
    |       ^ no broadcasting between a scalar and an array
    |     - this is Matrix[3,4] [1]
    |         - this is Scalar [1]
-   = help: write `M - 2 * ones(M)` for every element
+   = help: write `M - 2 * exp(zeros(3, 4))` for every element (`exp(zeros(3, 4))` is an array of ones)
 
 tests/ui/types/err_scalar_plus_vector.sky:11:7: error: cannot add a matrix to a scalar
    |
@@ -28,7 +28,7 @@ tests/ui/types/err_scalar_plus_vector.sky:11:7: error: cannot add a matrix to a 
    |       ^ no broadcasting between a scalar and an array
    |     - this is Scalar [1]
    |         - this is Matrix[N,N] [1]
-   = help: write `2 * ones(S) + S` for every element, or `identity(n) + S` for the identity
+   = help: write `identity(n) + S` for the identity
 
 tests/ui/types/err_scalar_plus_vector.sky:12:7: error: cannot subtract a scalar from a vector
    |
@@ -36,4 +36,4 @@ tests/ui/types/err_scalar_plus_vector.sky:12:7: error: cannot subtract a scalar 
    |       ^ no broadcasting between a scalar and an array
    |     - this is Vector[3] [1]
    |         ------- this is Scalar [1]
-   = help: write `v - (1 + 2) * ones(v)` for every element
+   = help: write `v - (1 + 2) * exp(zeros(3))` for every element (`exp(zeros(3))` is an array of ones)

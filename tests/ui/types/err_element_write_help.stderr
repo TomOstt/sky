@@ -1,0 +1,25 @@
+tests/ui/types/err_element_write_help.sky:3:1: error: cannot assign to an element of `v`
+  |
+3 | v[0] = 5 m
+  | ^^^^ written with `=`
+  = note: arrays are immutable in v0.1
+  = help: to replace entry 0, build a new vector: `v = v + (5 m - v[0]) * identity(3)[0]`
+
+tests/ui/types/err_element_write_help.sky:4:1: error: cannot assign to an element of `v`
+  |
+4 | v[1] += 1 m
+  | ^^^^ written with `+=`
+  = note: arrays are immutable in v0.1
+  = help: to change entry 1, build a new vector: `v = v + 1 m * identity(3)[1]`
+
+tests/ui/types/err_element_write_help.sky:5:1: error: cannot assign to an element of `v`
+  |
+5 | v[2] *= 2
+  | ^^^^ written with `*=`
+  = note: arrays are immutable in v0.1
+
+tests/ui/types/err_element_write_help.sky:7:1: error: cannot assign to an element of `A`
+  |
+7 | A[0, 1] = 5
+  | ^^^^^^^ written with `=`
+  = note: arrays are immutable in v0.1

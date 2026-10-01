@@ -140,7 +140,7 @@ f.sky:2:5: note: [ALG-001] `x * 1` is rewritten to `x`
 
 `sky run` has three engines that print the same bytes, on stdout and stderr, with the same exit status. The default, `--engine=ast`, is the tree-walking interpreter, which also stays as the oracle the other engines are tested against. `--engine=sir` lowers the program to SIR, runs the optimization pipeline with verification, and executes it on the SIR reference interpreter. `--engine=native` compiles the same optimized SIR to machine code through Cranelift (`crates/sky-jit`) and runs that; it is over 100 times faster than the interpreters on a loop of scalar arithmetic (see Benchmarks). `--engine=auto` picks native code, then SIR, then the tree-walker: a program native code cannot take runs on SIR, and a program SIR cannot express yet (iterating over an array, an input declaration inside a function, ...) silently runs on the tree-walking interpreter instead. `--engine=sir` and `--engine=native` never fall back and report such a program as an error (`cannot run on SIR: ...`, `cannot run natively: ...`). A runtime error found on SIR is re-run on the tree-walker, with its output discarded, so that it is pointed at and labelled exactly as before (see "Running programs" in `spec/v0.1.md`).
 
-`sky build file.sky -o prog` compiles a program ahead of time: the same SIR-to-Cranelift translation the native engine uses writes an object file (Mach-O on macOS, ELF on Linux), and the system C compiler links it with the runtime library `libsky_rt.a` (the `sky-rt` crate: printing, arrays, errors, math, the kernels, and the SIR interpreter that finishes a run when native code deoptimizes) into an executable. The executable prints the same stdout and the same diagnostics, and exits with the same status, as `sky run --engine=native` on the file; it carries the source text and the SIR, needs nothing from the machine that built it but the C library, and is about 6 MB, starting in about 4 ms. `cargo build --workspace` builds `libsky_rt.a` next to `sky`, where `sky build` looks for it (`--runtime=<path>` or `SKY_RT_LIB` name another). A program native code cannot take (an `equation`, for example) is refused (`cannot build: ...`). `--target=<triple>` builds an object for any x86-64 or arm64 target from any machine (`--emit=obj`), and an executable for either architecture on macOS. See "Building executables" in `spec/v0.1.md`.
+`sky build file.sky -o prog` compiles a program ahead of time: the same SIR-to-Cranelift translation the native engine uses writes an object file (Mach-O on macOS, ELF on Linux), and the system C compiler links it with the runtime library `libsky_rt.a` (the `sky-rt` crate: printing, arrays, errors, math, the kernels, and the SIR interpreter that finishes a run when native code deoptimizes) into an executable. The executable prints the same stdout and the same diagnostics, and exits with the same status, as `sky run --engine=native` on the file; it carries the source text and the SIR, needs nothing from the machine that built it but the C library, and is about 6 MB, starting in about 4 ms. `cargo build --workspace` (with `--release` for a release `sky`) builds `libsky_rt.a` next to `sky`, where `sky build` looks for it; `cargo build -p sky-cli` alone does not, so add `-p sky-rt` to it (`--runtime=<path>` or `SKY_RT_LIB` name another). A program native code cannot take (an `equation`, for example) is refused (`cannot build: ...`). `--target=<triple>` builds an object for any x86-64 or arm64 target from any machine (`--emit=obj`), and an executable for either architecture on macOS. See "Building executables" in `spec/v0.1.md`.
 
 Numbers are always finite: division by zero and overflow are runtime errors, not `inf` or `NaN`. See "Running programs" in `spec/v0.1.md`. The REPL keeps no session file.
 
@@ -154,12 +154,30 @@ edition = "2026"     # the only key; the file is a tiny data-only subset of TOML
 
 Without a `sky.toml` a file uses the latest edition. An edition newer than the installed Sky is an error. See "Editions" in `spec/v0.1.md`.
 
+`for` loops over `range(...)` and over arrays (`for x in v:`) work, with `break` and `continue`; a loop over an array runs on the tree-walker only, so on `--engine=sir`/`native` loop over `range(len(v))` and read `v[i]`.
+
 Not there yet:
-- `for` loops and `import`
+- `import`
 - rank-3 tensor literals, negative indices, and array writes (arrays are immutable)
+- array building: no `ones`, `linspace`, `arange`, `append` or concatenation; array sizes must be constant numbers (`zeros(3)`, not `zeros(n)`), and a scalar does not broadcast over an array (`v + 1 m` is an error)
+- reductions: no `sum`, `mean`, `std`, `min`/`max` of an array
+- strings: no formatting (no f-strings), no string operations; `print` takes several arguments instead
+- tuples, records and multiple return values; a `def` cannot take a function as an argument
+- data input: no files, command-line arguments, standard input or random numbers
 - inputs: a declaration without a value (`K: PositiveDefinite Matrix[N, N]`) is checked but has nothing to read it from at run time
-- multi-line input in the REPL
+- `solve` is a statement, not an expression, and has no events (no "stop when `y = 0 m`"), no output at chosen times, no `±` initial values, and no `derivative` through it
 - everything in [`ROADMAP.md`](ROADMAP.md) beyond v0.1
+
+Coming from Python or NumPy:
+
+| Python | Sky today |
+|---|---|
+| `x ** 2` | `x^2` |
+| `math.pi`, `np.pi`; `math.e` | `pi` or `π`; `exp(1)` |
+| `print(f"x = {x}")` | `print("x =", x)` |
+| `np.ones(3)` | `exp(zeros(3))` |
+| `v[i] = x` | `v = v + (x - v[i]) * identity(3)[i]` (a new vector) |
+| `A.T` (a matrix) | `Aᵀ` |
 
 ## Layout
 

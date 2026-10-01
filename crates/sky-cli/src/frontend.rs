@@ -125,9 +125,18 @@ pub fn analyze_ir(
                         ir::build(&module, src, &checked, context.print, explain, context);
                     match &outcome {
                         ir::Outcome::Ready(ready) => pass_notes = ready.notes.clone(),
-                        // Only `--emit-ir` says so: `--explain` alone stays
-                        // as it was for programs that cannot be lowered.
                         ir::Outcome::Unavailable(why) if emit_ir => pass_notes.push(why.clone()),
+                        // `--explain` says which engine runs the program
+                        // and why, in one line: the fallback is silent in
+                        // `sky run`, and much slower than native code.
+                        ir::Outcome::Unavailable(why) => pass_notes.push(Diagnostic::note(
+                            format!(
+                                "`sky run` runs this program on the tree-walking interpreter, \
+                                 not as native code: {}",
+                                why.message.trim_start_matches("no IR: ")
+                            ),
+                            why.primary.span,
+                        )),
                         _ => {}
                     }
                     ir_out = Some(outcome);

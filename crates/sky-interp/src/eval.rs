@@ -744,7 +744,21 @@ impl<'a> Interp<'a> {
 
     /// `base[items]`, reading only.
     fn index(&mut self, e: &Expr, base: &Expr, items: &[IndexItem]) -> R<Value> {
-        let b = self.eval(base)?;
+        // `v[i]` of a variable reads the entry where the variable holds the
+        // array: evaluating `v` would copy all of it, which makes a loop
+        // over `v[i]` quadratic. (An index cannot rebind `v`, so reading it
+        // after the indices sees the same array.)
+        let named = match &base.kind {
+            ExprKind::Name(id) if self.consume != Some(id.span) => {
+                let name = self.text(id.span);
+                self.lookup(name).is_some().then_some(name)
+            }
+            _ => None,
+        };
+        let b = match named {
+            Some(_) => Value::None,
+            None => self.eval(base)?,
+        };
         let mut ixs = Vec::with_capacity(items.len());
         for item in items {
             ixs.push(match item {
@@ -767,7 +781,10 @@ impl<'a> Interp<'a> {
                 }
             });
         }
-        array::index(&b, &ixs, e.span, base.span)
+        match named.and_then(|name| self.lookup(name)) {
+            Some(v) => array::index(v, &ixs, e.span, base.span),
+            None => array::index(&b, &ixs, e.span, base.span),
+        }
     }
 
     /// `l @ r`. Where the checker rewrote `A⁻¹ @ b` (`solves` holds the
@@ -822,15 +839,29 @@ impl<'a> Interp<'a> {
                 call.span,
             )
         };
+        if name == "len" {
+            let Some(a) = args.first() else {
+                return Err(takes("1 argument"));
+            };
+            if args.len() != 1 {
+                // The argument still runs first, as before.
+                self.eval(a)?;
+                return Err(takes("1 argument"));
+            }
+            // Of a variable, without copying its array (`while i < len(v)`
+            // reads it on every iteration).
+            if let ExprKind::Name(id) = &a.kind {
+                if self.consume != Some(id.span) {
+                    if let Some(v) = self.lookup(self.text(id.span)) {
+                        return array::len(v, a.span);
+                    }
+                }
+            }
+            return array::len(&self.eval(a)?, a.span);
+        }
         let mut sizes = Vec::with_capacity(args.len());
         for a in args {
             let v = self.eval(a)?;
-            if name == "len" {
-                let [_] = args else {
-                    return Err(takes("1 argument"));
-                };
-                return array::len(&v, a.span);
-            }
             sizes.push(array::size_arg(name, &v, a.span)?);
         }
         match (name, sizes.as_slice()) {

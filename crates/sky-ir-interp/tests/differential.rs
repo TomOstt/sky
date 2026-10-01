@@ -512,16 +512,45 @@ print(x, v)
 }
 
 #[test]
-fn a_for_over_an_array_says_lowering_needs_array_values() {
-    let src = "for x in [1, 2]:\n    print(x)\n";
-    let e = sky_lower::lower_source(src).expect_err("arrays do not lower yet");
-    assert!(
-        e.to_string()
-            .contains("iteration over an array is not compiled yet"),
-        "{e}"
+fn a_for_over_an_array_runs_on_sir() {
+    // Entries of a vector with their unit, rows of a matrix, `break` and
+    // `continue`, the variable after the loop, and a nested loop.
+    let src = "\
+A = [[1 m, 2 m], [3 m, 4 m]]
+total = 0 m
+for r in A:
+    for x in r:
+        total += x
+    print(r)
+print(total, r)
+n = 0
+for t in [1 s, 2 s, 3 s]:
+    if t > 1.5 s:
+        n += 1
+        continue
+    print(t)
+print(n, t)
+for t in [1, 2, 3]:
+    if t > 1.5:
+        break
+print(t)
+";
+    let o = assert_same(src);
+    assert_eq!(
+        o.stdout,
+        "[1 m, 2 m]\n[3 m, 4 m]\n10 m [3 m, 4 m]\n1 s\n2 3 s\n2\n"
     );
-    // The tree walker still runs it.
-    assert_eq!(run_tree_walker(src).stdout, "1\n2\n");
+    // The iterable is evaluated once, before the loop, and an error in the
+    // body has the tree-walker's spans.
+    let src = "\
+def make():
+    print(\"made\")
+    return [1, 2, 0]
+for x in make():
+    print(10 / x)
+";
+    let o = assert_same(src);
+    assert_eq!(o.stdout, "made\n10\n5\n");
 }
 
 // ----- arrays -----

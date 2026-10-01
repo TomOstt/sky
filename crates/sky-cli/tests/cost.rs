@@ -127,7 +127,8 @@ fn an_unbounded_loop_is_a_warning_that_says_where() {
 
 #[test]
 fn a_program_that_does_not_lower_is_warned_not_ignored() {
-    let src = "def total(v: Vector[N]) -> m/m:\n    cost flops <= N\n    s = 0\n    for x in v:\n        s += x\n    return s\n";
+    // Iterating over a parameter without an annotation does not lower.
+    let src = "def total(v: Vector[N], w) -> m/m:\n    cost flops <= N\n    s = 0\n    for x in w:\n        s += x\n    return s\n";
     let o = sky("nolower", &["check"], src);
     assert_eq!(o.status.code(), Some(0));
     assert!(

@@ -189,6 +189,39 @@ for i in range(N):
 print(x)
 ";
 
+/// Reading an entry and the length of a big vector held in a variable, as a
+/// loop that sums data does. `{READ}` is the expression read.
+const INDEXING: &str = "
+N = {N}
+v = zeros(5000)
+s = 0
+i = 0
+while i < N:
+    s = s + {READ}
+    i = i + 1
+print(s)
+";
+
+#[test]
+fn reading_an_entry_or_the_length_copies_nothing_on_the_tree_walker() {
+    // `v[i]` and `len(v)` read `v` where it is held: a copy of its 5000
+    // entries (two allocations, the entries and the shape) per read made a
+    // loop over `v[i]` quadratic. The loop with a constant instead is the
+    // baseline (the tree-walker's own allocations per iteration).
+    let reads = INDEXING.replace("{READ}", "v[i] + len(v)");
+    let (tree, tree_out) = per_iteration(&reads, Engine::TreeWalker);
+    let (base, _) = per_iteration(&INDEXING.replace("{READ}", "1"), Engine::TreeWalker);
+    let (opt, opt_out) = per_iteration(&reads, Engine::SirOpt);
+    println!(
+        "indexing: allocations per iteration: tree-walker {tree} (baseline {base}), SIR+opt {opt}"
+    );
+    assert_eq!(tree_out, opt_out);
+    assert!(
+        (tree - base).abs() < 0.05,
+        "the tree-walker allocates per entry read: {tree} per iteration, {base} without the reads"
+    );
+}
+
 #[test]
 fn entrywise_products_and_quotients_reuse_a_dying_buffer_on_sir() {
     let (tree, tree_out) = per_iteration(ENTRYWISE, Engine::TreeWalker);

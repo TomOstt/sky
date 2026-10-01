@@ -16,7 +16,7 @@ fn @<main>() -> () effects(io, fail, call) @ 0..586 {
   %11 = const.float 2000 : num[1; ()] @ 526..530
   %y = call @"work[n:Scalar]"(%11) : num[1; ()] @ 521..531
   %13 = const.float 1 : num[1; ()] @ 542..543
-  %p = call @"noisy[n:Scalar]"(%13) : unknown @ 536..544
+  %p = call @"noisy[n:Scalar]"(%13) : num[1; ()] @ 536..544
   %15 = const.float 3000 : num[1; ()] @ 554..558
   %q = call @"work[n:Scalar]"(%15) : num[1; ()] @ 549..559
   %17 = const.float 10 : num[1; ()] @ 568..570

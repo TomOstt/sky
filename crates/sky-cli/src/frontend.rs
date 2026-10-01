@@ -59,6 +59,10 @@ pub struct Context {
     /// The run uses relaxed numerics (`--numerics=relaxed`, or `sky.toml`),
     /// so `--explain` says where they apply.
     pub relaxed: bool,
+    /// Keep the text of the IR after every stage (`--emit-ir`). Printing a
+    /// large program 14 times is not free, so `--emit=clif`, which needs the
+    /// module and no text, leaves it off.
+    pub print: bool,
 }
 
 /// Lexes, parses, and (if parsing succeeded) type-checks `src` starting
@@ -73,6 +77,7 @@ pub fn analyze(src: &str, env: Env, explain: bool, edition: Edition) -> FrontEnd
     let context = Context {
         threads: 1,
         relaxed: false,
+        print: false,
     };
     analyze_ir(src, env, explain, false, false, context, edition)
 }
@@ -116,7 +121,8 @@ pub fn analyze_ir(
                 // checker never reports on a statement the parser dropped.
                 let checked = sky_types::check_module_with(&module, src, env);
                 if (explain || emit_ir) && !checked.has_errors() {
-                    let outcome = ir::build(&module, src, &checked, emit_ir, explain, context);
+                    let outcome =
+                        ir::build(&module, src, &checked, context.print, explain, context);
                     match &outcome {
                         ir::Outcome::Ready(ready) => pass_notes = ready.notes.clone(),
                         // Only `--emit-ir` says so: `--explain` alone stays

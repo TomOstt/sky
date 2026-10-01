@@ -470,6 +470,7 @@ impl Licm<'_> {
                     | OpKind::ConstRational(_)
                     | OpKind::ConstBool(_)
                     | OpKind::ConstStr(_)
+                    | OpKind::ConstArray { .. }
                     | OpKind::ConstNothing
             ) {
                 continue;

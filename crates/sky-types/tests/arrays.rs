@@ -348,3 +348,30 @@ fn a_bad_entry_by_entry_operand_reports_once() {
     let c = check("u = [1 m, 2 s]\nw = u * u\nz = sqrt(u)\n");
     assert_eq!(c.diagnostics.len(), 1, "{:#?}", c.diagnostics);
 }
+
+/// A literal of a hundred thousand entries is checked in one pass (this
+/// took minutes when the dimension vote compared every entry with every
+/// other), and a wrong unit is still reported at its own element, with the
+/// first entry as the reference.
+#[test]
+fn a_huge_literal_is_checked_in_linear_time_and_errors_at_the_odd_element() {
+    let n = 100_000;
+    let mut entries: Vec<String> = (0..n).map(|i| format!("{}", i % 10)).collect();
+    entries[5] = "2 m".to_string();
+    let src = format!("v = [{}]\n", entries.join(", "));
+    let start = std::time::Instant::now();
+    let c = check(&src);
+    assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
+    assert_eq!(c.diagnostics.len(), 1, "{:#?}", c.diagnostics);
+    let d = &c.diagnostics[0];
+    assert!(
+        d.message
+            .starts_with("array elements must have the same dimension"),
+        "{}",
+        d.message
+    );
+    assert_eq!(
+        &src[d.primary.span.start as usize..d.primary.span.end as usize],
+        "2 m"
+    );
+}

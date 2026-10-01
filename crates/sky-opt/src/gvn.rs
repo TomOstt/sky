@@ -180,6 +180,9 @@ impl Numbering<'_> {
         match &op.kind {
             // These fail every time they run: nothing to reuse.
             OpKind::Input { .. } | OpKind::LiteralError { .. } => false,
+            // Comparing two big constant tables costs a pass over them, and
+            // every one shares a bucket: not worth it for one-off data.
+            OpKind::ConstArray { .. } => false,
             OpKind::Call { callee } => self.quiet.get(callee).copied().unwrap_or(false),
             _ => true,
         }

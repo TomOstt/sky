@@ -221,6 +221,27 @@ pub fn all_ops() -> Module {
         ),
         sp(41, 45),
     );
+    // A constant 2x2 table, with entries that need exact printing.
+    b.op1(
+        OpKind::ConstArray {
+            cols: Some(2),
+            bits: vec![
+                0.1f64.to_bits(),
+                (-0.0f64).to_bits(),
+                1e300f64.to_bits(),
+                5e-324f64.to_bits(),
+            ]
+            .into(),
+        },
+        vec![],
+        num(
+            Dimension::LENGTH,
+            Shape::matrix(2, 2),
+            TagSet::EMPTY,
+            Repr::Unchosen,
+        ),
+        sp(41, 45),
+    );
     let zero = b.op1(
         OpKind::ConstRational(Rational::ZERO),
         vec![],

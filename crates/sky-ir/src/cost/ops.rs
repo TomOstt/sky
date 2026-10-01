@@ -507,6 +507,10 @@ impl Cx<'_> {
                 Some(n) => Self::make(&n, &n),
                 None => Ok(Parts::default()),
             },
+            OpKind::ConstArray { bits, .. } => {
+                let n = Poly::integer(i64::try_from(bits.len()).map_err(|_| Fail::TooLarge)?);
+                Self::make(&n, &Poly::zero())
+            }
             OpKind::ArrayLiteral { .. } => {
                 let n =
                     Poly::integer(i64::try_from(op.operands.len()).map_err(|_| Fail::TooLarge)?);

@@ -76,6 +76,48 @@ use crate::shape::{Shape, ShapeContext, ShapeDim, ShapeError, ShapeUnifier, Shap
 use crate::tags::{Tag, TagSet};
 use sky_diag::display_capped as quote;
 
+/// A hash map keyed by source span. A program records the type of every
+/// expression, so a literal of 100 000 numbers makes 100 000 insertions; the
+/// standard hasher (SipHash, built to resist hostile keys) was most of the
+/// checker's time on it. Spans are small integers the parser chose, not
+/// attacker-controlled hash keys, so a multiplicative hash does.
+pub type SpanMap<V> = HashMap<Span, V, std::hash::BuildHasherDefault<SpanHasher>>;
+
+/// The hasher of [`SpanMap`]: each word is mixed in with a rotate, an xor and
+/// a multiplication (the "Fx" hash).
+#[derive(Default, Clone, Copy)]
+pub struct SpanHasher(u64);
+
+impl SpanHasher {
+    const K: u64 = 0x517c_c1b7_2722_0a95;
+
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(Self::K);
+    }
+}
+
+impl std::hash::Hasher for SpanHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.add(u64::from_le_bytes(word));
+        }
+    }
+
+    fn write_usize(&mut self, n: usize) {
+        self.add(n as u64);
+    }
+
+    fn write_u64(&mut self, n: u64) {
+        self.add(n);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
 /// The type of a numeric value: element dimension plus shape and tags.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ValueTy {
@@ -372,7 +414,7 @@ pub struct Checked {
     ///
     /// Types hold the shape variables as they were when the expression was
     /// typed: resolve them with [`Checked::resolve_ty`].
-    pub expr_types: HashMap<Span, Ty>,
+    pub expr_types: SpanMap<Ty>,
     /// One note per `solve`, for `sky check --explain`: the structure the
     /// checker found in the equation and what the solver will be asked for
     /// (see the `ode` module).
@@ -432,7 +474,7 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         loops: Vec::new(),
         diverged: false,
         prov: Provenance::new(source),
-        expr_types: HashMap::new(),
+        expr_types: SpanMap::default(),
         ode_notes: Vec::new(),
         binding_types: HashMap::new(),
         funcs: HashMap::new(),
@@ -501,7 +543,7 @@ pub(crate) struct Checker<'s> {
     pub(crate) prov: Provenance,
     /// See [`Checked::expr_types`]. Recording is write-only: nothing in the
     /// walk reads these tables, so they cannot change a diagnostic.
-    pub(crate) expr_types: HashMap<Span, Ty>,
+    pub(crate) expr_types: SpanMap<Ty>,
     /// See [`Checked::ode_notes`].
     pub(crate) ode_notes: Vec<Diagnostic>,
     /// See [`Checked::binding_types`].

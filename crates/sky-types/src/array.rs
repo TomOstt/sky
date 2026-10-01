@@ -738,16 +738,37 @@ enum Part {
     Slice(Span, Option<u64>, Option<u64>, bool, bool),
 }
 
-/// The value that occurs most often in `items` (the earliest on a tie).
-fn majority<T: PartialEq + Copy>(items: &[T]) -> Option<T> {
-    let mut best: Option<(usize, T)> = None;
-    for &x in items {
-        let n = items.iter().filter(|&&y| y == x).count();
-        if best.is_none_or(|(m, _)| n > m) {
-            best = Some((n, x));
+/// The value that occurs most often in `items` (the earliest on a tie), in
+/// one pass: a literal of a million entries is checked in linear time.
+///
+/// Almost every literal is uniform, so the scan first compares each entry
+/// with the first and stops at the first that differs; only a literal with
+/// mixed entries pays for hashing.
+fn majority<T: Eq + std::hash::Hash + Copy>(items: &[T]) -> Option<T> {
+    let first = *items.first()?;
+    let Some(split) = items.iter().position(|&x| x != first) else {
+        return Some(first);
+    };
+    // Counts in order of first appearance, so a tie goes to the value that
+    // appears first.
+    let mut index: std::collections::HashMap<T, usize> = std::collections::HashMap::new();
+    let mut counts: Vec<(T, usize)> = Vec::new();
+    counts.push((first, split));
+    index.insert(first, 0);
+    for &x in &items[split..] {
+        let at = *index.entry(x).or_insert_with(|| {
+            counts.push((x, 0));
+            counts.len() - 1
+        });
+        counts[at].1 += 1;
+    }
+    let mut best = counts[0];
+    for &(x, n) in &counts[1..] {
+        if n > best.1 {
+            best = (x, n);
         }
     }
-    best.map(|(_, x)| x)
+    Some(best.0)
 }
 
 /// What the checker can prove about a matrix literal from its entries.
@@ -933,4 +954,25 @@ fn cholesky_pivot_failure(a: &[f64], n: usize) -> Option<(usize, f64)> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod majority_tests {
+    use super::majority;
+
+    #[test]
+    fn majority_picks_the_most_common_and_the_earliest_on_a_tie() {
+        assert_eq!(majority::<u8>(&[]), None);
+        assert_eq!(majority(&[4, 4, 4]), Some(4));
+        assert_eq!(majority(&[1, 2, 2]), Some(2));
+        assert_eq!(majority(&[1, 2, 1, 2]), Some(1));
+        assert_eq!(majority(&[2, 1, 1, 2]), Some(2));
+        assert_eq!(majority(&[3, 1, 2]), Some(3));
+    }
+
+    #[test]
+    fn majority_is_linear_on_a_large_mixed_input() {
+        let items: Vec<usize> = (0..200_000).map(|i| i % 1000).collect();
+        assert_eq!(majority(&items), Some(0));
+    }
 }

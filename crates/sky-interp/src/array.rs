@@ -749,6 +749,24 @@ pub fn len(v: &Value, span: Span) -> R<Value> {
     }
 }
 
+/// The value of a constant array (SIR's `const.array`): `bits` are the
+/// entries' `f64` bits in row-major order, and `cols` arranges them as
+/// `array.literal` does. `None` if they cannot be arranged or one is not
+/// finite (the verifier rules both out).
+pub fn const_array(cols: Option<u64>, bits: &[u64], dim: Dimension) -> Option<Value> {
+    let n = bits.len();
+    let dims = match cols {
+        None if n > 0 => vec![n],
+        Some(c) if c > 0 && n > 0 && n as u64 % c == 0 => vec![n / c as usize, c as usize],
+        _ => return None,
+    };
+    let data: Vec<f64> = bits.iter().map(|&b| f64::from_bits(b)).collect();
+    if !data.iter().all(|x| x.is_finite()) {
+        return None;
+    }
+    Some(Value::array(dims, data, dim))
+}
+
 /// Builds a literal from evaluated rows: every entry a number, all of one
 /// dimension, every row the same length. `rows` is one row for a vector
 /// literal (`vector` true), or one per row of a matrix literal. Each entry

@@ -2238,6 +2238,7 @@ impl<'a, 'm, M: ClModule> FnTx<'a, 'm, M> {
             | OpKind::MatMulEx { .. }
             | OpKind::DiagMul { .. }
             | OpKind::ArrayLiteral { .. }
+            | OpKind::ConstArray { .. }
             | OpKind::Index
             | OpKind::Slice { .. }
             | OpKind::Zeros

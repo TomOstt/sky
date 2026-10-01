@@ -1423,6 +1423,19 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             act.define1(op, v)
         }
         OpKind::ArrayLiteral { cols } => array_literal(act, op, *cols),
+        OpKind::ConstArray { cols, bits } => {
+            let dim = match op.results.first().and_then(|&r| act.ty(r)) {
+                Some(Type::Number(n)) => n.dim,
+                _ => Dimension::DIMENSIONLESS,
+            };
+            let Some(v) = array::const_array(*cols, bits, dim) else {
+                return Err(IrRuntimeError::malformed(
+                    "`const.array` cannot arrange its entries",
+                    s,
+                ));
+            };
+            act.define1(op, v)
+        }
         OpKind::Index => {
             let Some((&base, positions)) = op.operands.split_first() else {
                 return Err(IrRuntimeError::malformed("`index` has no operands", s));

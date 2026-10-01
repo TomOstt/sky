@@ -1,0 +1,8 @@
+# An error in the body of a differentiated function is reported once: the
+# derivative does not add "the unit of its result is not known".
+def model(A: Scalar, t: Vector[N] s) -> Vector[N]:
+    out = zeros(len(t))
+    return A * exp(-t / 1 s) + out
+
+t = [1 s, 2 s, 3 s]
+print(derivative(model, A)(2, t))

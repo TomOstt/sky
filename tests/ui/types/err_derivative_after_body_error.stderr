@@ -1,0 +1,6 @@
+tests/ui/types/err_derivative_after_body_error.sky:4:17: error: `zeros` needs a constant size, found `len(t)`
+  |
+4 |     out = zeros(len(t))
+  |                 ^^^^^^ not a constant
+  = note: an array's size is part of its type, so it is known before the program runs
+  = help: write the number, e.g. `zeros(3)`

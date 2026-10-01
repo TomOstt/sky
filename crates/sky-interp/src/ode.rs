@@ -587,7 +587,7 @@ impl Interp<'_> {
             },
             other => Err(RuntimeError::new(
                 format!(
-                    "attribute `{attr}` is not supported by the interpreter: {} has no attributes",
+                    "{} has no attribute `{attr}`: Sky values have no attributes or methods",
                     other.kind()
                 ),
                 e.span,

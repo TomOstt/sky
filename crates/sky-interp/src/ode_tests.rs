@@ -359,7 +359,7 @@ fn reading_what_a_solution_does_not_have() {
     let e = err(&format!("{DECAY}print(decay.n)"));
     assert_eq!(e.message, "an equation has no attribute `n`");
     let e = err("x = 3 m\nprint(x.y)");
-    assert!(e.message.contains("has no attributes"), "{}", e.message);
+    assert!(e.message.contains("has no attribute `"), "{}", e.message);
 }
 
 #[test]

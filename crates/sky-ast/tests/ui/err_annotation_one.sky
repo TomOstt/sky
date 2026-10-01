@@ -1,0 +1,2 @@
+def ratio(v: mm) -> 1:
+    return v / 1 mm

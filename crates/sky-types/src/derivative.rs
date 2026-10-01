@@ -592,7 +592,7 @@ impl Checker<'_> {
                 "each derivative has the unit of the result divided by the unit of its parameter, and an unannotated parameter accepts any unit"
             )
             .with_help(format!(
-                "annotate the parameter with its unit, for example `{pname}: m`"
+                "annotate the parameter with its unit, for example `{pname}: m`, or `{pname}: Scalar` for a plain number"
             )),
         );
     }
@@ -897,7 +897,7 @@ impl Checker<'_> {
         self.error(
             d.with_secondary(sig.def_span, format!("`{fname}` is defined here"))
                 .with_help(format!(
-                    "annotate the parameter with its unit, for example `{pname}: s`"
+                    "annotate the parameter with its unit, for example `{pname}: s`, or `{pname}: Scalar` for a plain number"
                 )),
         );
     }
@@ -954,6 +954,11 @@ impl Checker<'_> {
 
     #[cold]
     fn derivative_bad_result(&mut self, sig: &FuncSig, ret: &Ty, f_arg: &Expr) {
+        // The body's own error left the result unknown: that error says
+        // what to fix.
+        if matches!(ret, Ty::Unknown) && self.failed_defs.contains(&sig.def_span) {
+            return;
+        }
         let fname = quote(sig.name());
         let (msg, note) = match ret {
             Ty::Value(v) => (

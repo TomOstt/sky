@@ -107,12 +107,12 @@ fn a_loop_in_a_function_and_a_return_inside_it() {
 fn iterating_an_array_is_a_clear_lowering_error() {
     let e = lower_err("for x in [1, 2]:\n    print(x)\n");
     assert!(
-        e.contains("iteration over arrays lowers once SIR has array values"),
+        e.contains("iteration over an array is not compiled yet"),
         "{e}"
     );
     let e = lower_err("v: Vector[3]\nfor x in v:\n    print(x)\n");
     assert!(
-        e.contains("iteration over arrays lowers once SIR has array values"),
+        e.contains("iteration over an array is not compiled yet"),
         "{e}"
     );
 }

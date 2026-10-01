@@ -8,7 +8,7 @@ tests/ir/powers.sky:6:10: note: [DCE-001] `x ^ 2` is removed
 6 |     p2 = x ^ 2
   |          ^^^^^
   = note: applied by the `specialize` pass
-  = note: because `p2` is never used
+  = note: because nothing uses `p2` any more
   = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
 
 tests/ir/powers.sky:7:10: note: [DCE-001] `x ^ 5` is removed
@@ -16,7 +16,7 @@ tests/ir/powers.sky:7:10: note: [DCE-001] `x ^ 5` is removed
 7 |     p5 = x ^ 5
   |          ^^^^^
   = note: applied by the `specialize` pass
-  = note: because `p5` is never used
+  = note: because nothing uses `p5` any more
   = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
 
 tests/ir/powers.sky:8:11: note: [DCE-001] `x ^ 14` is removed
@@ -24,7 +24,7 @@ tests/ir/powers.sky:8:11: note: [DCE-001] `x ^ 14` is removed
 8 |     p14 = x ^ 14
   |           ^^^^^^
   = note: applied by the `specialize` pass
-  = note: because `p14` is never used
+  = note: because nothing uses `p14` any more
   = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
 
 tests/ir/powers.sky:9:11: note: [DCE-001] `x ^ 15` is removed
@@ -32,7 +32,7 @@ tests/ir/powers.sky:9:11: note: [DCE-001] `x ^ 15` is removed
 9 |     p15 = x ^ 15
   |           ^^^^^^
   = note: applied by the `specialize` pass
-  = note: because `p15` is never used
+  = note: because nothing uses `p15` any more
   = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
 
 tests/ir/powers.sky:10:20: note: [DCE-001] `x ^ -3` is removed
@@ -40,7 +40,7 @@ tests/ir/powers.sky:10:20: note: [DCE-001] `x ^ -3` is removed
 10 |     inverse_cube = x ^ -3
    |                    ^^^^^^
    = note: applied by the `specialize` pass
-   = note: because `inverse_cube` is never used
+   = note: because nothing uses `inverse_cube` any more
    = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
 
 tests/ir/powers.sky:11:12: note: [DCE-001] `x ^ 0.5` is removed
@@ -48,7 +48,7 @@ tests/ir/powers.sky:11:12: note: [DCE-001] `x ^ 0.5` is removed
 11 |     root = x ^ 0.5
    |            ^^^^^^^
    = note: applied by the `specialize` pass
-   = note: because `root` is never used
+   = note: because nothing uses `root` any more
    = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
 
 tests/ir/powers.sky:14:5: note: cost of `volume`: 2 flops

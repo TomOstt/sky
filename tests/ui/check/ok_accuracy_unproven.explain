@@ -3,7 +3,7 @@ tests/ui/check/ok_accuracy_unproven.sky:3:5: note: [DCE-001] `1e-10` is removed
 3 | x = 1e-10
   |     ^^^^^
   = note: applied by the `dce` pass
-  = note: because `x` is never used
+  = note: because nothing uses `x` any more
   = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
 
 tests/ui/check/ok_accuracy_unproven.sky:4:5: warning: `log(1 + x)` loses digits when the term added to 1 is small

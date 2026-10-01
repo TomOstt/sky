@@ -1,0 +1,5 @@
+crates/sky-ast/tests/ui/err_annotation_one.sky:1:21: error: an annotation is a type, not a value
+  |
+1 | def ratio(v: mm) -> 1:
+  |                     ^
+  = help: the type of a plain number (no unit) is `Scalar`

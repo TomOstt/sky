@@ -33,7 +33,7 @@ use sky_units::Dimension;
 
 use crate::check::{Checker, Ty, ValueTy};
 use crate::display::a_dimension;
-use crate::ode_analysis::{analyze_equation, EquationInfo};
+use crate::ode_analysis::{analyze_equation, name_uses, plus_minus_uses, EquationInfo};
 use crate::provenance::label_dim;
 use crate::rules::TensorType;
 use crate::shape::{Shape, ShapeContext, ShapeDim};
@@ -56,6 +56,11 @@ pub struct EquationSig {
     pub states: Vec<StateSig>,
     /// The structure read from the source (see [`EquationInfo`]).
     pub info: EquationInfo,
+    /// The names from outside its right sides read (each once, where it is
+    /// first read), and the `±`s written in them: they are evaluated by each
+    /// `solve`, which cannot take an uncertain number.
+    pub reads: Vec<(String, Span)>,
+    pub plus_minus: Vec<Span>,
 }
 
 /// A state variable: its name, dimension and (fixed) shape.
@@ -99,6 +104,39 @@ impl std::fmt::Display for OdeTy {
 }
 
 /// Words of a comma list: `a`, `a and b`, `a, b and c`.
+/// The names from outside that the right sides of `eq` read (not the time,
+/// a state variable or a local), each with its first use, and the `±`s in
+/// them.
+fn outside_reads(
+    src: &str,
+    eq: &Equation,
+    time: &str,
+    states: &[StateSig],
+) -> (Vec<(String, Span)>, Vec<Span>) {
+    let mut own: BTreeSet<String> = states.iter().map(|s| s.name.clone()).collect();
+    own.insert(time.to_string());
+    let (mut reads, mut pm) = (Vec::new(), Vec::new());
+    for item in &eq.items {
+        let value = match item {
+            EquationItem::Derivative { value, .. } => value,
+            EquationItem::Local { name, value, .. } => {
+                if let Some(t) = sky_ast::ast::span_text(src, name.span) {
+                    own.insert(t.to_string());
+                }
+                value
+            }
+            EquationItem::State { .. } => continue,
+        };
+        for (n, at) in name_uses(src, value) {
+            if !own.contains(&n) && !reads.iter().any(|(r, _)| *r == n) {
+                reads.push((n, at));
+            }
+        }
+        pm.extend(plus_minus_uses(src, value));
+    }
+    (reads, pm)
+}
+
 fn list(items: &[String]) -> String {
     match items {
         [] => String::new(),
@@ -237,12 +275,15 @@ impl Checker<'_> {
         }
 
         self.env.restore(saved);
+        let (reads, plus_minus) = outside_reads(self.src, eq, &time_name, &states);
         let sig = EquationSig {
             name: self.ident(&eq.name).to_string(),
             time_name,
             time: time_dim,
             info: analyze_equation(self.src, eq),
             states,
+            reads,
+            plus_minus,
         };
         let ty = Ty::Ode(Arc::new(OdeTy::Equation(Box::new(sig))));
         self.bind_name(&eq.name, ty);
@@ -446,6 +487,7 @@ impl Checker<'_> {
             self.time_bound(&sig, which, e, t);
         }
         self.initial_values(&sig, s, &initial);
+        self.uncertain_solve_inputs(&sig, s);
 
         let mut fields: Vec<(String, ValueTy)> =
             vec![(sig.time_name.clone(), ValueTy::scalar(sig.time))];

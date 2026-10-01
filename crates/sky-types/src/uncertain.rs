@@ -21,8 +21,9 @@
 //! The tracking is approximate on purpose: it is per name (a function
 //! parameter, a name reassigned in one branch), and its worst case is a
 //! warning that is not needed or one that is missing. It blocks a program
-//! in one place: a value that may be uncertain going into a `solve`, which
-//! run time would refuse anyway (`uncertain_solve_inputs`).
+//! in two places, where run time would refuse the value anyway: a value
+//! that may be uncertain going into a `solve` (`uncertain_solve_inputs`)
+//! or into a derivative (`uncertain_derivative_args`).
 
 use std::collections::HashSet;
 
@@ -307,6 +308,38 @@ impl Checker<'_> {
                 d = d.with_secondary(span, label);
             }
             self.error(d);
+        }
+    }
+
+    /// A derivative is taken at a point and does not propagate `±` (spec
+    /// "Derivatives"): an argument that may be uncertain is an error here,
+    /// rather than at run time inside the function, at whatever operation
+    /// meets it first.
+    pub(crate) fn uncertain_derivative_args(&mut self, t: &Ty, callee: &Expr, args: &[Expr]) {
+        let form = self.quoted(callee.span);
+        for (i, a) in args.iter().enumerate() {
+            if !self.may_be_uncertain(a) {
+                continue;
+            }
+            let which = match t {
+                Ty::Func(sig) => sig.param_name(i).map_or_else(
+                    || format!("argument {}", i + 1),
+                    |p| format!("`{}`", quote(p)),
+                ),
+                _ => format!("argument {}", i + 1),
+            };
+            self.error(
+                Diagnostic::error(
+                    format!("`{form}` needs exact arguments, but {which} may be an uncertain number"),
+                    a.span,
+                )
+                .with_label("this may carry an uncertainty")
+                .with_secondary(callee.span, "this derivative")
+                .with_note("a derivative does not propagate uncertainties (`±`) yet")
+                .with_help(format!(
+                    "pass `nominal(...)` to take it at the nominal value; the first-order uncertainty of the function is then `{form}` times `uncertainty(...)`"
+                )),
+            );
         }
     }
 

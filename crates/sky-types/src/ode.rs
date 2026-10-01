@@ -276,6 +276,10 @@ impl Checker<'_> {
 
         self.env.restore(saved);
         let (reads, plus_minus) = outside_reads(self.src, eq, &time_name, &states);
+        let eq_name = self.ident(&eq.name).to_string();
+        for (n, at) in &reads {
+            self.note_equation_read(&eq_name, n, *at);
+        }
         let sig = EquationSig {
             name: self.ident(&eq.name).to_string(),
             time_name,

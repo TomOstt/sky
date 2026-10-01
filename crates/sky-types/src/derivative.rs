@@ -172,7 +172,9 @@ impl Checker<'_> {
                     _ => break,
                 }
             }
-            return Some(self.call(t, callee, args, span));
+            let result = self.call(t.clone(), callee, args, span);
+            self.uncertain_derivative_args(&t, callee, args);
+            return Some(result);
         }
         // `derivative(...)` or `grad(...)` written without a call after it.
         let (t, text) = if self.is_derivative(callee) {

@@ -151,6 +151,13 @@ pub(crate) struct FnCtx {
     pub(crate) locals: BTreeSet<String>,
 }
 
+impl FnCtx {
+    /// The function's name.
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+}
+
 /// How often a loop's body is known to run: it decides which paths leave
 /// the loop (see [`Checker::loop_body`]).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -273,7 +280,7 @@ impl Checker<'_> {
     // ----- type wording -----
 
     /// `a length`, `` `Vector[3] [L]` ``, `a Bool`: a type as a noun phrase.
-    fn ty_noun(&self, t: &Ty) -> String {
+    pub(crate) fn ty_noun(&self, t: &Ty) -> String {
         match t {
             Ty::Value(v) if v.is_scalar() => match v.dim.name() {
                 Some("dimensionless") => "a dimensionless number".to_string(),

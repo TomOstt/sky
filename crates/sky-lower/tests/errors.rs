@@ -14,9 +14,9 @@ fn rejected(src: &str) -> (String, &str) {
 
 #[test]
 fn attributes_are_rejected() {
-    // The checker rejects an attribute of a number; one of a string (which
-    // it does not type) reaches lowering.
-    let (msg, at) = rejected("x = \"a\"\ny = x.value\n");
+    // The checker rejects an attribute of a number or a string; one of an
+    // unannotated parameter (which it does not type) reaches lowering.
+    let (msg, at) = rejected("def f(x):\n    return x.value\nprint(f(1))\n");
     assert!(msg.contains("attribute `value`"), "{msg}");
     assert_eq!(at, "x.value");
 }

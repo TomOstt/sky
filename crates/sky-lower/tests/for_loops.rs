@@ -104,15 +104,37 @@ fn a_loop_in_a_function_and_a_return_inside_it() {
 }
 
 #[test]
-fn iterating_an_array_is_a_clear_lowering_error() {
-    let e = lower_err("for x in [1, 2]:\n    print(x)\n");
+fn iterating_an_array_is_a_loop_over_its_index() {
+    // A vector: one `while`, the entry read by `index` at the top of the
+    // body.
+    let m = lower_ok("v = [1 s, 2 s, 3 s]\nfor x in v:\n    print(x)\nprint(x)\n");
+    check_structure(&m);
+    let main = func(&m, "<main>");
+    assert_eq!(count(main, "while"), 1);
     assert!(
-        e.contains("iteration over arrays lowers once SIR has array values"),
-        "{e}"
+        count(main, "index") >= 2,
+        "{}",
+        sky_ir::print_function(main)
     );
-    let e = lower_err("v: Vector[3]\nfor x in v:\n    print(x)\n");
+    // A matrix gives rows; the length comes from the type.
+    let m = lower_ok("A = [[1, 2], [3, 4], [5, 6]]\nfor r in A:\n    print(r)\n");
+    check_structure(&m);
+    assert_eq!(count(func(&m, "<main>"), "while"), 1);
+    // A size known only as a variable is read with `len`.
+    let m = lower_ok(
+        "def f(w: Vector[N]) -> Scalar:\n    s = 0\n    for y in w:\n        s += y\n    return s\nprint(f([1, 2]))\n",
+    );
+    check_structure(&m);
+    assert_eq!(count(func(&m, "f"), "len"), 1);
+}
+
+#[test]
+fn iterating_a_value_of_unknown_type_is_a_clear_lowering_error() {
+    // A parameter without an annotation may be a scalar or a string, which
+    // the interpreter rejects at run time with its own error.
+    let e = lower_err("def f(w):\n    for y in w:\n        print(y)\nf([1, 2])\n");
     assert!(
-        e.contains("iteration over arrays lowers once SIR has array values"),
+        e.contains("iteration over a value whose type is not known before the program runs"),
         "{e}"
     );
 }

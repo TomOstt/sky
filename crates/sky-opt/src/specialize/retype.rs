@@ -89,12 +89,21 @@ impl Ty {
     }
 }
 
+/// The result of a call given its arguments' inferred types, if known
+/// ([`Env::typed_call`]).
+pub(crate) type TypedCall<'a> = dyn Fn(&OpData, &[Ty]) -> Option<Ty> + 'a;
+
 /// What inference reads besides the function.
 pub(crate) struct Env<'a> {
     /// The module's functions, for the declared results of callees.
     pub(crate) funcs: &'a [Function],
     /// The results the iteration assumes for some callees (by name).
     pub(crate) results: &'a HashMap<String, Ty>,
+    /// For a caller typed again ([`super::Specializer::retype_callers`]):
+    /// the result of a call of a function with `unknown` parameters, given
+    /// the inferred types of its arguments, if the specialization for them
+    /// gives one.
+    pub(crate) typed_call: Option<&'a TypedCall<'a>>,
 }
 
 impl Env<'_> {
@@ -139,8 +148,8 @@ fn standin_type(t: &Ty) -> Option<Type> {
 
 /// The result of [`infer`].
 pub(crate) struct Inference {
-    tys: Vec<Ty>,
-    seen: Vec<bool>,
+    pub(crate) tys: Vec<Ty>,
+    pub(crate) seen: Vec<bool>,
     /// The type of what the function returns.
     pub(crate) result: Ty,
     /// Dead slots to fill: (`yield`, slot) and the type of the stand-in.
@@ -176,8 +185,8 @@ struct Walker<'a> {
     f: &'a Function,
     env: &'a Env<'a>,
     dead: &'a HashSet<(OpId, usize)>,
-    tys: Vec<Ty>,
-    seen: Vec<bool>,
+    pub(crate) tys: Vec<Ty>,
+    pub(crate) seen: Vec<bool>,
     ret: Ty,
     placeholders: HashMap<(OpId, usize), Type>,
 }
@@ -241,8 +250,15 @@ impl Walker<'_> {
             }
             OpKind::Yield | OpKind::Condition => {}
             OpKind::Call { callee } => {
+                let typed = self.env.typed_call.and_then(|typed| {
+                    let args: Vec<Ty> = op.operands.iter().map(|v| self.get(*v)).collect();
+                    typed(op, &args)
+                });
                 for (i, &r) in op.results.iter().enumerate() {
-                    let t = self.env.call_result(callee, i);
+                    let t = match &typed {
+                        Some(t) if i == 0 => t.clone(),
+                        _ => self.env.call_result(callee, i),
+                    };
                     self.define(r, t);
                 }
             }

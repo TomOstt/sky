@@ -2,13 +2,13 @@ sir edition 2026
 
 fn @<main>() -> () effects(io, fail, call) @ 0..777 {
   %0 = const.float 10 : num[1; ()] @ 727..729
-  %1 = call @"fib[n:Scalar]"(%0) : unknown @ 723..730
+  %1 = call @"fib[n:Scalar]"(%0) : num[1; ()] @ 723..730
   %2 = const.float 3 : num[1; ()] @ 735..736
-  %3 = call @"sq[x:Scalar]"(%2) : unknown @ 732..737
+  %3 = call @"sq[x:Scalar]"(%2) : num[1; ()] @ 732..737
   %4 = const.float 3 : num[L; ()] @ 742..745
-  %5 = call @"sq[x:Scalar(length)]"(%4) : unknown @ 739..746
+  %5 = call @"sq[x:Scalar(length)]"(%4) : num[L²; ()] @ 739..746
   %6 = const.float 2 : num[1; ()] @ 754..755
-  %7 = call @"twice[x:Scalar]"(%6) : unknown @ 748..756
+  %7 = call @"twice[x:Scalar]"(%6) : num[1; ()] @ 748..756
   print %1, %3, %5, %7 @ 717..757
   %8 = const.bool true : bool @ 770..774
   %9 = call @twice(%8) : unknown @ 764..775

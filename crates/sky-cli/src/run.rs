@@ -12,15 +12,15 @@
 //!   answers by falling back.
 //! * SIR: lower to SIR, run the default optimization pipeline with
 //!   verification, and execute on the SIR reference interpreter
-//!   (`sky_ir_interp`). `docs/design/ir.md` plans for it to become the
-//!   executor; it is not the default yet because, measured with
-//!   `sky-bench`, it is slower than the tree-walker today (about 1.6× on a
-//!   scalar loop, 2.5× on calls) and gives nothing a user can see in
-//!   return. The default flips when SIR is the faster engine (roadmap
-//!   Phase 4).
-//! * the tree-walking interpreter over the AST (`sky_interp`): the default,
-//!   the oracle the differential tests compare SIR against, and the fallback
-//!   for the programs SIR cannot express yet.
+//!   (`sky_ir_interp`).
+//! * the tree-walking interpreter over the AST (`sky_interp`): the oracle
+//!   the differential tests compare SIR against, and the fallback for the
+//!   programs SIR cannot express yet.
+//!
+//! The default is `auto`: native code, falling back to SIR and then to the
+//! tree-walker (below). It was the tree-walker until native code was the
+//! faster engine (roadmap Phase 4); on the programs users write first (a
+//! loop calling a helper, a sum over `v[i]`) it is 10 to 30 times faster.
 //!
 //! `--threads=N` (or `SKY_THREADS`) sets how many threads the SIR engine and
 //! native code may use for work that cannot change the output
@@ -66,11 +66,11 @@ use crate::numerics::Mode;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Engine {
     /// Native code, falling back to SIR when the program does not compile
-    /// natively, and to the tree-walker when it does not lower.
-    Auto,
-    /// The AST tree-walker: the default until SIR is faster (see the module
-    /// docs).
+    /// natively, and to the tree-walker when it does not lower: the
+    /// default.
     #[default]
+    Auto,
+    /// The AST tree-walker.
     Ast,
     /// SIR only: a program that does not lower is an error.
     Sir,

@@ -291,6 +291,39 @@ fn constant_of(caller: &Function, an: &Analysis, arg: ValueId, param: &Type) -> 
     }
 }
 
+/// The type facts a call of `callee` would give if its arguments had the
+/// types `args` (as inference has them, not as declared): one per
+/// `unknown` parameter the body reads, as [`derive`] makes them. `None` if
+/// such a parameter's argument has no fact type (it stays unknown), or if
+/// no parameter gets one.
+pub(crate) fn type_facts(callee: &Function, args: &[&Type]) -> Option<Vec<Fact>> {
+    if args.len() != callee.params.len() {
+        return None;
+    }
+    let used = used_params(callee);
+    let mut facts = Vec::new();
+    for (i, (arg, param)) in args.iter().zip(&callee.params).enumerate() {
+        if !used[i] || !matches!(param, Type::Unknown) {
+            continue;
+        }
+        let ty = fact_type(arg)?;
+        let name = param_name(callee, i);
+        facts.push(Fact {
+            kind: Kind::Type {
+                param: i,
+                ty: ty.clone(),
+            },
+            why: format!("the argument for `{name}` is a {}", type_words(&ty)),
+            name,
+        });
+    }
+    if facts.is_empty() {
+        return None;
+    }
+    sort(&mut facts);
+    Some(facts)
+}
+
 /// Every fact the call `call` (in `caller`, analysed as `an`) gives about
 /// the parameters of `callee` that its body reads. Empty when the call
 /// gives no usable fact (or contradicts itself).

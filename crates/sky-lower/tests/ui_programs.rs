@@ -36,10 +36,6 @@ fn ok_programs() -> Vec<PathBuf> {
 /// rejected, with the reason. Everything else in the suites must lower.
 const REJECTED: &[(&str, &str)] = &[
     ("ok_returns.sky", "top level of the file"),
-    (
-        "ok_for_arrays.sky",
-        "iteration over arrays lowers once SIR has array values",
-    ),
     // SIR has no uncertain value: such programs run on the tree-walker.
     ("ok_uncertainty.sky", "uncertainty (`±`) is not supported"),
     (

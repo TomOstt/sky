@@ -1,0 +1,79 @@
+# 2D pin-jointed truss, direct stiffness method (dogfood: structures).
+#
+# A statically determinate wall bracket: 6 nodes, 9 steel bars, pinned at
+# node 0 (both directions) and held against horizontal motion at node 1.
+# A 10 kN load hangs from the lower tip, node 4.
+#
+#   1 --- 3 --- 5            y = 1 m
+#   | \   |   / |
+#   |   \ | /   |
+#   0 --- 2 --- 4            y = 0       (x = 0, 1, 2 m)
+#
+# Stiffness assembly: every bar contributes  (Pi - Pj)ᵀ B (Pi - Pj)  where
+# Pi is the 2 x 12 slice of the identity that picks the two DOFs of node i
+# and B = k [[c², cs], [cs, s²]]. Arrays are immutable, so a scatter-add
+# is written as a product with a selection matrix.
+#
+# DOF numbering is node-major (2i = x, 2i+1 = y); with the supports at nodes 0
+# and 1 the fixed DOFs are 0, 1, 2, a contiguous block, so removing them is a
+# slice. Reactions come from K @ u_full - f.
+
+E = 210 GPa
+A = 5 cm^2
+
+# node coordinates and bars (node indices are plain numbers)
+xy = [[0 m, 0 m], [0 m, 1 m], [1 m, 0 m], [1 m, 1 m], [2 m, 0 m], [2 m, 1 m]]
+bars = [[0, 1], [2, 3], [4, 5], [0, 2], [2, 4], [1, 3], [3, 5], [0, 3], [2, 5]]
+
+K = 0 N/m * zeros(12, 12)
+for b in range(9):
+    i = bars[b, 0]
+    j = bars[b, 1]
+    dx = xy[j, 0] - xy[i, 0]
+    dy = xy[j, 1] - xy[i, 1]
+    Lb = hypot(dx, dy)
+    cx = dx / Lb
+    cy = dy / Lb
+    kb = E * A / Lb
+    B = kb * [[cx * cx, cx * cy], [cx * cy, cy * cy]]
+    D = identity(12)[2 * i : 2 * i + 2, :] - identity(12)[2 * j : 2 * j + 2, :]
+    K = K + Dᵀ @ B @ D
+
+# load: 10 kN downward at node 4 (DOF 9)
+f_full = -10 kN * identity(12)[9]
+
+# free DOFs are 3..11
+Kff = K[3:12, 3:12]
+Z = identity(12)[3:12, :]            # 9 x 12 selection of the free DOFs
+f = Z @ f_full
+u = Kff⁻¹ @ f
+u_full = Zᵀ @ u                      # zeros at the supports
+
+print("tip deflection (node 4, y):", u[6] as mm)
+print("node 5 (x, y):", u[7] as mm, u[8] as mm)
+
+R = K @ u_full - f_full
+print("reaction node 0 x:", R[0] as kN)
+print("reaction node 0 y:", R[1] as kN)
+print("reaction node 1 x:", R[2] as kN)
+
+# global equilibrium: sum of forces and moments about node 0 must vanish
+sum_x = R[0] + R[2]
+sum_y = R[1] - 10 kN
+moment = 2 m * (-10 kN) + 1 m * (-R[2])   # r x F about node 0: x Fy - y Fx
+print("sum Fx:", sum_x as kN)
+print("sum Fy:", sum_y as kN)
+print("sum M0:", moment as kN*m)
+
+# axial force of each bar: N = (E A / L) (c, s) . (u_j - u_i), + = tension
+for b in range(9):
+    i = bars[b, 0]
+    j = bars[b, 1]
+    dx = xy[j, 0] - xy[i, 0]
+    dy = xy[j, 1] - xy[i, 1]
+    Lb = hypot(dx, dy)
+    # (the slice u_full[2*j : 2*j + 2] cannot be lowered to SIR/native: see FRICTION.md)
+    dux = u_full[2 * j] - u_full[2 * i]
+    duy = u_full[2 * j + 1] - u_full[2 * i + 1]
+    N_axial = E * A / Lb * (dx / Lb * dux + dy / Lb * duy)
+    print("bar", i, "-", j, ":", N_axial as kN)

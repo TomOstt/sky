@@ -1,0 +1,4 @@
+right end: 0.025 mm  expected: 0.025 mm
+left end:  -0.009999999999999998 mm  expected: -0.01 mm
+reaction at the clamp: -0.5999999999999998 kN
+sum of all forces (must be 0): 2.2737367544323206e-16 kN

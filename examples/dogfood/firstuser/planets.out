@@ -1,0 +1,9 @@
+Planet	M (1e24 kg)	R (km)	g (m/s^2)	rho (kg/m^3)	T (yr)
+Mercury 	 0.33 		 2440 	 3.7 		 5427 		 0.24
+Venus 	 4.87 		 6052 	 8.87 		 5242 		 0.62
+Earth 	 5.97 		 6371 	 9.82 		 5513 		 1
+Mars 	 0.64 		 3390 	 3.73 		 3934 		 1.88
+Jupiter 	 1898 		 69911 	 25.92 		 1326 		 11.86
+
+Earth's surface gravity relative to g_n: 1
+Earth escape speed: 11.18597789184991 km/s

@@ -1,0 +1,11 @@
+intercept a = 119.82465153180203 mm  slope b = 0.151135950844 mm/g
+  sigma_a = 0.3305421285747503 mm  sigma_b = 0.001294406906188083 mm/g
+  correlation(a, b) = -0.7972261166937403
+chi2 = 3.2997910590835167  dof = 10  chi2/dof = 0.32997910590835167
+k = 64.9 ± 0.6 N/m
+via ±:  a = 119.82 ± 0.33 mm  b = 0.1511 ± 0.0013 mm/g
+via ±:  k = 64.9 ± 0.6 N/m
+L(325 g) = 168.94 ± 0.25 mm
+  uncertainty ignoring correlation = 0.5350062145523604 mm
+  uncertainty with covariance      = 0.25400385242814383 mm
+  uncertainty from ± propagation   = 0.25400385242814383 mm

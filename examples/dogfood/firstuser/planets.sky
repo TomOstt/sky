@@ -1,0 +1,40 @@
+# Mini data table: planets with mass, radius and orbital period; compute surface
+# gravity and density and print a table.
+# First-time-user program. Sky has no records/dicts/tuples and no array of
+# strings, so the data is parallel numeric arrays and the names come from a
+# function. There is no number formatting or padding, so columns are aligned
+# with tabs and numbers are rounded by hand (see FRICTION.md).
+mass   = [3.301e23 kg, 4.867e24 kg, 5.972e24 kg, 6.417e23 kg, 1.898e27 kg]
+radius = [2439.7 km, 6051.8 km, 6371.0 km, 3389.5 km, 69911 km]
+period = [87.97 day, 224.7 day, 365.25 day, 687.0 day, 4332.6 day]
+
+def name_of(i):
+    if i == 0:
+        return "Mercury"
+    if i == 1:
+        return "Venus"
+    if i == 2:
+        return "Earth"
+    if i == 3:
+        return "Mars"
+    return "Jupiter"
+
+# round to 3 significant-ish decimals: v is already a plain number
+def r2(v):
+    return round(v * 100) / 100
+
+print("Planet\tM (1e24 kg)\tR (km)\tg (m/s^2)\trho (kg/m^3)\tT (yr)")
+for i in range(len(mass)):
+    M = mass[i]
+    R = radius[i]
+    T = period[i]
+    g_surf = G * M / R^2
+    rho = M / (4 / 3 * pi * R^3)
+    print(name_of(i), "\t", r2(M / (1e24 kg)), "\t\t", round(R / (1 km)), "\t",
+          r2(g_surf / (1 m/s^2)), "\t\t", round(rho / (1 kg/m^3)), "\t\t",
+          r2(T / (1 yr)))
+
+# Kepler's third law check: T^2 / a^3 should be constant for the sun's planets
+print("")
+print("Earth's surface gravity relative to g_n:", r2(G * mass[2] / radius[2]^2 / g_n))
+print("Earth escape speed:", sqrt(2 * G * mass[2] / radius[2]) as km/s)

@@ -1,0 +1,7 @@
+n = 10
+mean = 2004 ms  std = 10.317191693694753 ms
+period =  2004.0 ± 3.3 ms
+± average of ten readings (sigma 10 ms each): 2004.0 ± 3.2 ms
+one reading counted ten times: 1990 ± 10 ms
+weighted g = 9.807451523545707 m/s^2
+chi2 = 0.7783933518005897  dof = 2

@@ -1,0 +1,85 @@
+# Same damped-pendulum fit as fit_oscillator.sky, written the other way round: the model is a
+# scalar function f(p, t) of a parameter VECTOR, so derivative(f, p)(p, t) is the Jacobian row
+# and the sums over the 50 points are explicit loops (no vectorised model, no unit-carrying
+# parameters).  Written to see which style is less painful; see FRICTION.md.
+# Run: sky run examples/dogfood/fitting/fit_oscillator_vec.sky
+
+t = [
+    0.0 s, 0.25 s, 0.5 s, 0.75 s, 1.0 s,
+    1.25 s, 1.5 s, 1.75 s, 2.0 s, 2.25 s,
+    2.5 s, 2.75 s, 3.0 s, 3.25 s, 3.5 s,
+    3.75 s, 4.0 s, 4.25 s, 4.5 s, 4.75 s,
+    5.0 s, 5.25 s, 5.5 s, 5.75 s, 6.0 s,
+    6.25 s, 6.5 s, 6.75 s, 7.0 s, 7.25 s,
+    7.5 s, 7.75 s, 8.0 s, 8.25 s, 8.5 s,
+    8.75 s, 9.0 s, 9.25 s, 9.5 s, 9.75 s,
+    10.0 s, 10.25 s, 10.5 s, 10.75 s, 11.0 s,
+    11.25 s, 11.5 s, 11.75 s, 12.0 s, 12.25 s,
+]
+theta = [
+    18.33 deg, 3.48 deg, -13.11 deg, -16.68 deg, -6.31 deg,
+    8.12 deg, 15.47 deg, 7.8 deg, -5.64 deg, -13.05 deg,
+    -8.74 deg, 3.26 deg, 11.23 deg, 9.22 deg, -0.63 deg,
+    -9.18 deg, -8.77 deg, -0.85 deg, 6.45 deg, 8.24 deg,
+    3.26 deg, -5.34 deg, -7.62 deg, -3.51 deg, 3.28 deg,
+    6.25 deg, 4.5 deg, -1.17 deg, -4.83 deg, -5.09 deg,
+    0.5 deg, 3.29 deg, 2.75 deg, 0.38 deg, -3.71 deg,
+    -3.51 deg, -0.99 deg, 1.48 deg, 4.12 deg, 1.21 deg,
+    -1.43 deg, -3.3 deg, -1.98 deg, 1.17 deg, 2.97 deg,
+    2.34 deg, 0.28 deg, -1.77 deg, -2.47 deg, -0.76 deg,
+]
+
+sigma = 0.6 deg
+npts = 50
+
+# Parameters as ONE dimensionless vector p = [A, gamma/(1 Hz), omega/(1 Hz), phi], so that a
+# single derivative(f, p) gives the whole Jacobian row (a gradient).  The price: the units
+# of gamma and omega are stripped by hand, and the checker no longer guards them.
+def f(p: Vector[4], t: s) -> Scalar:
+    return p[0] * exp(-p[1] * (t * (1 Hz))) * cos(p[2] * (t * (1 Hz)) + p[3])
+
+# No outer product in Sky (vectors have no transpose): spell out the 16 entries.
+def outer(g: Vector[4]) -> Matrix[4, 4]:
+    return [[g[0] * g[0], g[0] * g[1], g[0] * g[2], g[0] * g[3]],
+            [g[1] * g[0], g[1] * g[1], g[1] * g[2], g[1] * g[3]],
+            [g[2] * g[0], g[2] * g[1], g[2] * g[2], g[2] * g[3]],
+            [g[3] * g[0], g[3] * g[1], g[3] * g[2], g[3] * g[3]]]
+
+def chi2(p: Vector[4]) -> Scalar:
+    s = 0.0
+    for i in range(npts):
+        s += ((theta[i] - f(p, t[i])) / sigma)^2
+    return s
+
+p = [0.3, 0.1, 3.8, 0.0]
+lam = 0.001
+c0 = chi2(p)
+print("start: chi2 =", c0)
+for it in range(40):
+    H = zeros(4, 4)
+    g = zeros(4)
+    for i in range(npts):
+        row = derivative(f, p)(p, t[i])               # Jacobian row, Vector[4]
+        H = H + outer(row) / sigma^2
+        g = g + row * ((theta[i] - f(p, t[i])) / sigma^2)
+    D = [[H[0, 0], 0.0, 0.0, 0.0], [0.0, H[1, 1], 0.0, 0.0], [0.0, 0.0, H[2, 2], 0.0], [0.0, 0.0, 0.0, H[3, 3]]]
+    δ = (H + lam * D)⁻¹ @ g
+    c1 = chi2(p + δ)
+    if c1 < c0:
+        p = p + δ
+        c0 = c1
+        lam = lam / 3
+    else:
+        lam = lam * 4
+
+dof = npts - 4
+print("chi2 =", c0, " dof =", dof, " chi2/dof =", c0 / dof)
+C = H⁻¹
+print("p =", p)
+print("sigma_p =", [sqrt(C[0, 0]), sqrt(C[1, 1]), sqrt(C[2, 2]), sqrt(C[3, 3])])
+
+# residual table (first rows)
+print("   t        data       fit    resid/sigma")
+for i in range(8):
+    fit = f(p, t[i])
+    print(t[i] as s, "  ", theta[i] as deg, "  ", fit as deg, "  ", (theta[i] - fit) / sigma)

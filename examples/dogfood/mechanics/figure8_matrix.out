@@ -1,0 +1,8 @@
+[[1.0411187145281842 m, -0.15268230502693944 m], [-0.8505121463740134 m, 0.3199965754010499 m], [-0.19060656815417146 m, -0.16731427037411076 m]]
+-1.2871419924660743 J
+the system is second order and E is monitored: symplectic integrators keep E error bounded over long times instead of letting it drift
+at tolerance 1.00e-9 a fourth-order composition (Yoshida) needs far fewer steps than second-order velocity Verlet, so Yoshida's symplectic composition (order 4) was chosen
+the step comes from rtol = 1.00e-9 and atol = 1.00e-12: a probe (adaptive step doubling, where one step compared with two half steps estimates the local error) ran over the whole interval in 14 steps and estimated the largest step the tolerance allows at each point; the smallest was 0.0152 s, and 0.8 times that, 0.0122 s, is held fixed for the whole run, because varying the step would forfeit the bounded-energy property
+but a trial run at that step over the whole interval showed E drifting by 9.43e-9 (relative), more than the 1.00e-9 the tolerance asks, so the step was reduced to 0.00625 s (a fourth-order method's bounded error scales like the step to that power), where the trial drift was 6.52e-10
+took 33 fixed steps of at most 0.00625 s
+E drifted by at most 5.4e-10 (relative)

@@ -1,0 +1,95 @@
+# Damped pendulum: fit  theta(t) = A exp(-gamma t) cos(omega t + phi)  to 50 readings
+# by Levenberg-Marquardt, with the Jacobian from Sky's derivative() and
+# the parameter uncertainties from the covariance matrix (printed as `±` values).
+#
+# Truth used to generate the data (Python, since Sky cannot generate noise or read files):
+#   A = 20 deg, gamma = 0.18 /s, omega = 3.93 rad/s, phi = 0.4 rad, noise sigma = 0.6 deg
+# Run: sky run examples/dogfood/fitting/fit_oscillator.sky
+# See FRICTION.md for everything that was awkward.
+
+# --- the measurements, pasted in as literals (there is no file input) ---
+t = [
+    0.0 s, 0.25 s, 0.5 s, 0.75 s, 1.0 s,
+    1.25 s, 1.5 s, 1.75 s, 2.0 s, 2.25 s,
+    2.5 s, 2.75 s, 3.0 s, 3.25 s, 3.5 s,
+    3.75 s, 4.0 s, 4.25 s, 4.5 s, 4.75 s,
+    5.0 s, 5.25 s, 5.5 s, 5.75 s, 6.0 s,
+    6.25 s, 6.5 s, 6.75 s, 7.0 s, 7.25 s,
+    7.5 s, 7.75 s, 8.0 s, 8.25 s, 8.5 s,
+    8.75 s, 9.0 s, 9.25 s, 9.5 s, 9.75 s,
+    10.0 s, 10.25 s, 10.5 s, 10.75 s, 11.0 s,
+    11.25 s, 11.5 s, 11.75 s, 12.0 s, 12.25 s,
+]
+theta = [
+    18.33 deg, 3.48 deg, -13.11 deg, -16.68 deg, -6.31 deg,
+    8.12 deg, 15.47 deg, 7.8 deg, -5.64 deg, -13.05 deg,
+    -8.74 deg, 3.26 deg, 11.23 deg, 9.22 deg, -0.63 deg,
+    -9.18 deg, -8.77 deg, -0.85 deg, 6.45 deg, 8.24 deg,
+    3.26 deg, -5.34 deg, -7.62 deg, -3.51 deg, 3.28 deg,
+    6.25 deg, 4.5 deg, -1.17 deg, -4.83 deg, -5.09 deg,
+    0.5 deg, 3.29 deg, 2.75 deg, 0.38 deg, -3.71 deg,
+    -3.51 deg, -0.99 deg, 1.48 deg, 4.12 deg, 1.21 deg,
+    -1.43 deg, -3.3 deg, -1.98 deg, 1.17 deg, 2.97 deg,
+    2.34 deg, 0.28 deg, -1.77 deg, -2.47 deg, -0.76 deg,
+]
+
+sigma = 0.6 deg            # reading uncertainty of the protractor camera, per point
+npts = 50
+
+# phi is added through the angle-sum identity: `omega * t + phi` is an error
+# (no broadcasting of a scalar onto a vector), and there is no ones(n).
+def model(A: Scalar, γ: Hz, ω: rad/s, φ: Scalar, t: Vector[N] s) -> Vector[N]:
+    return A * exp(-γ * t) * (cos(ω * t) * cos(φ) - sin(ω * t) * sin(φ))
+
+# initial guess, by eye from the plot
+A = 0.30
+γ = 0.10 Hz
+ω = 3.80 rad/s
+φ = 0.0
+lam = 0.001
+
+def chi2(A: Scalar, γ: Hz, ω: rad/s, φ: Scalar) -> Scalar:
+    r = theta - model(A, γ, ω, φ, t)
+    return (r @ r) / sigma^2
+
+c0 = chi2(A, γ, ω, φ)
+print("start: chi2 =", c0)
+
+for it in range(40):
+    r = theta - model(A, γ, ω, φ, t)
+    # columns of the Jacobian, scaled by the unit of the parameter so all are plain numbers
+    j0 = derivative(model, A)(A, γ, ω, φ, t)
+    j1 = derivative(model, γ)(A, γ, ω, φ, t) * (1 Hz)
+    j2 = derivative(model, ω)(A, γ, ω, φ, t) * (1 rad/s)
+    j3 = derivative(model, φ)(A, γ, ω, φ, t)
+    H = [[dot(j0, j0), dot(j0, j1), dot(j0, j2), dot(j0, j3)],
+         [dot(j1, j0), dot(j1, j1), dot(j1, j2), dot(j1, j3)],
+         [dot(j2, j0), dot(j2, j1), dot(j2, j2), dot(j2, j3)],
+         [dot(j3, j0), dot(j3, j1), dot(j3, j2), dot(j3, j3)]] / sigma^2
+    g = [dot(j0, r), dot(j1, r), dot(j2, r), dot(j3, r)] / sigma^2
+    D = [[H[0, 0], 0.0, 0.0, 0.0], [0.0, H[1, 1], 0.0, 0.0], [0.0, 0.0, H[2, 2], 0.0], [0.0, 0.0, 0.0, H[3, 3]]]
+    δ = (H + lam * D)⁻¹ @ g
+    c1 = chi2(A + δ[0], γ + δ[1] * (1 Hz), ω + δ[2] * (1 rad/s), φ + δ[3])
+    if c1 < c0:
+        A = A + δ[0]
+        γ = γ + δ[1] * (1 Hz)
+        ω = ω + δ[2] * (1 rad/s)
+        φ = φ + δ[3]
+        c0 = c1
+        lam = lam / 3
+    else:
+        lam = lam * 4
+
+dof = npts - 4
+print("chi2 =", c0, " dof =", dof, " chi2/dof =", c0 / dof)
+
+C = H⁻¹                    # covariance of (A, gamma/(1 Hz), omega/(1 rad/s), phi)
+A_fit = A ± sqrt(C[0, 0])
+γ_fit = γ ± sqrt(C[1, 1]) * (1 Hz)
+ω_fit = ω ± sqrt(C[2, 2]) * (1 rad/s)
+φ_fit = φ ± sqrt(C[3, 3])
+print("A     =", A_fit as deg)
+print("gamma =", γ_fit)
+print("omega =", ω_fit as rad/s, "  (plain print says Hz:", ω_fit, ")")
+print("period =", (2 * π / ω_fit) as ms)
+print("phi   =", φ_fit as deg)

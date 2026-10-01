@@ -1,0 +1,17 @@
+# An `equation` defined inside a `def`, so it can use the def's parameters
+# (a drag coefficient and a launch speed here). Horizontal motion with
+# quadratic drag has the closed form x(t) = ln(1 + k v0 t) / k, so the answer
+# is checked: for k = 0.01 /m, v0 = 10 m/s, t = 10 s it is ln(2)/0.01 = 69.31 m.
+
+def final_x(kk: m^-1, vv: m/s) -> m:
+    equation fl(t: s):
+        x: m
+        v: m/s
+        x' = v
+        v' = -kk * v * abs(v)
+    sol = solve fl from 0 s to 10 s with x = 0 m, v = vv:
+        tolerance 1e-10
+    return sol.x
+
+print(final_x(0.01 m^-1, 10 m/s))
+print(log(2) / (0.01 m^-1))

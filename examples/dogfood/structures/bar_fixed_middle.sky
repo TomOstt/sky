@@ -1,0 +1,41 @@
+# A bar clamped in the middle, pulled at both ends (dogfood: structures).
+#
+# 10 elements, 11 nodes, node 5 (the middle) is fixed and the free DOFs are
+# 0-4 and 6-10: not a contiguous block, so `K[a:b, a:b]` cannot remove the
+# fixed row and column. Arrays have no fancy indexing, no concatenation and
+# no row/column assignment, so the selection matrix S (10 x 11, one 1 per row)
+# is built as a sum of outer products of identity rows:
+#       S = sum_k e_k (e_{free[k]})ᵀ      with e_k = identity(10)[k]
+# and the reduced system is S K Sᵀ u = S f. Reactions are K u_full - f.
+#
+# Loads: +1 kN at the right end, +0.4 kN at the left end (both pulling outward).
+# Element stiffness k = E A / Le, so by hand u_right = 1 kN * 0.5 m / (E A) and
+# u_left = -0.4 kN * 0.5 m / (E A) for the 0.5 m half-bar.
+
+E = 200 GPa
+A = 1 cm^2
+Le = 0.1 m
+k = E * A / Le
+ke = k * [[1, -1], [-1, 1]]
+
+K = 0 N/m * zeros(11, 11)
+for e in range(10):
+    P = identity(11)[e:e+2, :]
+    K = K + Pᵀ @ ke @ P
+
+free = [0, 1, 2, 3, 4, 6, 7, 8, 9, 10]
+S = zeros(10, 11)
+for r in range(10):
+    S = S + identity(10)[r:r+1, :]ᵀ @ identity(11)[free[r]:free[r]+1, :]
+
+f_full = 1 kN * identity(11)[10] - 0.4 kN * identity(11)[0]
+Kff = S @ K @ Sᵀ
+u = Kff⁻¹ @ (S @ f_full)
+u_full = Sᵀ @ u
+
+print("right end:", u_full[10] as mm, " expected:", 1 kN * 0.5 m / (E * A) as mm)
+print("left end: ", u_full[0] as mm, " expected:", -0.4 kN * 0.5 m / (E * A) as mm)
+
+R = K @ u_full - f_full
+print("reaction at the clamp:", R[5] as kN)
+print("sum of all forces (must be 0):", (R[5] + 1 kN - 0.4 kN) as kN)

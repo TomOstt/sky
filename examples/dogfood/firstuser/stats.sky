@@ -1,0 +1,65 @@
+# Simple statistics of measured lengths: mean, sample standard deviation,
+# min, max, and a text histogram.
+# First-time-user program. Sky has no sum/mean/std/min/max on arrays, no string
+# repetition, no number formatting and no print-without-newline, so everything
+# is a loop, numbers are rounded by hand, and the histogram bar is chosen from
+# a ladder of literals (see FRICTION.md).
+lengths = [10.2 mm, 10.5 mm, 9.8 mm, 10.1 mm, 10.4 mm, 10.0 mm, 9.9 mm, 10.3 mm,
+           10.6 mm, 9.7 mm, 10.2 mm, 10.1 mm, 10.0 mm, 10.3 mm, 10.2 mm, 9.9 mm]
+n = len(lengths)
+
+# round a length to 0.01 mm and drop the unit (the caller prints "mm")
+def r2(v: mm):
+    return round(v / (1 mm) * 100) / 100
+
+total = 0 mm
+lo = lengths[0]
+hi = lengths[0]
+for x in lengths:
+    total = total + x
+    lo = min(lo, x)
+    hi = max(hi, x)
+mean = total / n
+
+ss = 0 mm^2
+for x in lengths:
+    ss = ss + (x - mean)^2
+sd = sqrt(ss / (n - 1))
+sem = sd / sqrt(n)
+
+print("n      =", n)
+print("mean   =", r2(mean), "mm")
+print("sd     =", r2(sd), "mm")
+print("sem    =", r2(sem), "mm")
+print("min    =", r2(lo), "mm")
+print("max    =", r2(hi), "mm")
+print("range  =", r2(hi - lo), "mm")
+
+# Histogram with 5 bins from lo to hi
+bins = 5
+width = (hi - lo) / bins
+def bar(k):
+    if k >= 6:
+        return "######"
+    if k == 5:
+        return "#####"
+    if k == 4:
+        return "####"
+    if k == 3:
+        return "###"
+    if k == 2:
+        return "##"
+    if k == 1:
+        return "#"
+    return ""
+
+print("histogram of lengths (mm):")
+for b in range(bins):
+    left = lo + b * width
+    right = left + width
+    count = 0
+    for x in lengths:
+        # the last bin is closed on the right
+        if x >= left and (x < right or b == bins - 1):
+            count = count + 1
+    print(r2(left), "-", r2(right), "mm\t", count, "\t", bar(count))

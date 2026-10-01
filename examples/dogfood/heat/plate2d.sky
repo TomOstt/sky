@@ -1,0 +1,76 @@
+# 2D heat conduction in a square aluminium plate, explicit FTCS, with units.
+#
+# Physics: dT/dt = alpha (d2T/dx2 + d2T/dy2),  alpha = k / (rho c_p).
+# The plate is 0.2 m x 0.2 m on a 33 x 33 grid. The top edge is held at
+# 400 K and the other three edges at 300 K (Dirichlet); the plate starts at
+# 300 K. The stationary state solves Laplace's equation, and for this
+# boundary data it has the Fourier series
+#     T(x, y) = 300 K + 100 K * sum_{n odd} 4/(n pi) sin(n pi x/L) sinh(n pi y/L)/sinh(n pi)
+# (y measured from the cold bottom edge). By symmetry T(centre) = 325 K.
+#
+# 2D FTCS is stable only for r = alpha dt/dx^2 <= 1/4.
+
+k   = 237 W/m/K            # W/(m*K) does not parse; see FRICTION.md
+rho = 2700 kg/m^3
+c_p = 897 J/kg/K
+alpha = k / (rho * c_p)    # -> m^2/s
+print("alpha =", alpha)
+
+L  = 0.2 m
+dx = L / 32                # 33 nodes per side (hard-coded 33 below)
+dt = 0.05 s
+r  = alpha * dt / dx^2
+print("r = alpha dt/dx^2 =", r, "(2D limit 1/4)")
+assert r <= 0.25, "2D FTCS is unstable for alpha dt/dx^2 > 1/4"
+
+T_hot  = 400 K
+T_cold = 300 K
+
+# Row index = y (row 0 is the top edge), column index = x.
+ones_col = exp(zeros(33, 1))
+ones_row = exp(zeros(1, 33))
+E0 = identity(33)
+top    = E0[:, 0:1] @ ones_row            # 1 on row 0
+bottom = E0[:, 32:33] @ ones_row          # 1 on row 32
+left   = ones_col @ E0[0:1, :]            # 1 on column 0
+right  = ones_col @ E0[32:33, :]          # 1 on column 32
+# Boundary values; the four corners are never read by the 5-point stencil.
+Bc = T_hot * top + T_cold * (bottom + left + right)
+# Embedding of the 31 x 31 interior in the 33 x 33 grid (arrays are immutable).
+E = E0[:, 1:32]
+Et = Eᵀ
+
+U = T_cold * exp(zeros(33, 33))
+steps = 0
+change = 1 K
+while change > 1e-7 K:
+    C = U[1:32, 1:32]
+    lap = U[0:31, 1:32] + U[2:33, 1:32] + U[1:32, 0:31] + U[1:32, 2:33] - 4 * C
+    Unew = E @ (C + r * lap) @ Et + Bc
+    change = norm(Unew - U)
+    U = Unew
+    steps += 1
+
+print("steps:", steps, " t =", steps * dt)
+
+# Analytic series, truncated at 40 odd terms.
+def T_exact(x: m, y: m) -> K:
+    s = 0
+    for j in range(40):
+        n = 2 * j + 1
+        a = n * π / L
+        s += 4 / (n * π) * sin(a * x) * sinh(a * y) / sinh(a * L)
+    return T_cold + (T_hot - T_cold) * s
+
+err = 0 K
+err_core = 0 K
+for i in range(1, 32):
+    for j in range(1, 32):
+        # row i is at y = L - i dx measured from the bottom edge
+        e = abs(U[i, j] - T_exact(j * dx, L - i * dx))
+        err = max(err, e)
+        if i >= 4 and i <= 28 and j >= 4 and j <= 28:
+            err_core = max(err_core, e)
+print("max |T - T_series|, all interior nodes =", err, " (corner singularity)")
+print("max |T - T_series|, 4 nodes in from the edges =", err_core)
+print("T(centre) =", U[16, 16], " exact: 325 K")

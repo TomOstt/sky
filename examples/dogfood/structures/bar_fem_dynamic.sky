@@ -1,0 +1,32 @@
+# 1D bar with a run-time number of elements (dogfood: structures).
+#
+# `zeros(n, n)` with a top-level `n = 10` is a check error ("needs a constant
+# size"), so bar_fem.sky repeats the literal 11 everywhere. The only way we
+# found to write the bar for ANY n is to leave the parameters of the function
+# unannotated: then the checker does not look at sizes (or units, or tags) and
+# the sizes are checked when the program runs. It works on all three engines,
+# but the function is no longer checked: a force passed where a length is
+# expected is found only when the line runs (see FRICTION.md).
+
+def assemble(n, ke):
+    K = 0 N/m * zeros(n + 1, n + 1)
+    for e in range(n):
+        P = identity(n + 1)[e:e+2, :]
+        K = K + Pᵀ @ ke @ P
+    return K
+
+def tip_displacement(n, EA, L, F):
+    ke = EA / (L / n) * [[1, -1], [-1, 1]]
+    K = assemble(n, ke)
+    Kr = K[1:n+1, 1:n+1]
+    f = F * identity(n)[n - 1]
+    u = Kr⁻¹ @ f
+    return u[n - 1]
+
+EA = 20 MN
+L = 2 m
+F = 1 kN
+print("exact:", F * L / EA as mm)
+print("n = 10: ", tip_displacement(10, EA, L, F) as mm)
+print("n = 20: ", tip_displacement(20, EA, L, F) as mm)
+print("n = 100:", tip_displacement(100, EA, L, F) as mm)

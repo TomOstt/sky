@@ -1,0 +1,9 @@
+a, b, cc at t = 4e5 s: 0.004938278003257657 mol/m^3 1.9849954945569595e-8 mol/m^3 0.9950617021465866 mol/m^3
+total: 0.9999999999997993 mol/m^3
+no structure a specialised method could use is known, so the general-purpose Dormand-Prince 5(4) method was started, with adaptive steps for rtol = 1.00e-8 and atol = 1.00e-11
+by t = 0.0418 s the step size had shrunk to 0.00154 s while the solution changed slowly (by only 8.61e-5 relative per step) and the error estimate was only 0.538 of the tolerance: the step was limited by stability, not accuracy (the estimated h*lambda stayed near 3.42 for 15 steps, at Dormand-Prince's stability limit of about 3.3), which means the system is stiff
+so from t = 0.0418 s the integration continued from that state with Rodas3, an L-stable Rosenbrock method (order 3, finite-difference Jacobian, no Newton iteration), whose step is set by accuracy alone: it damps the fast decaying components instead of resolving them
+took 1378 steps in all: 49 with Dormand-Prince (13 rejected) before the switch and 1329 with Rodas3 (0 rejected) after it
+total drifted by at most 8.3e-13 (relative), within the allowed 1.0e-6
+t = 40 s: 0.715827068763216 mol/m^3 9.185534764157778e-6 mol/m^3 0.2841637457020216 mol/m^3
+error in a against the published value: 6.321598799985395e-11 mol/m^3

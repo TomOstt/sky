@@ -1,0 +1,90 @@
+# Weighted straight-line fit  y = a + b x  to (x, y ± sigma_y) data: a spring's length
+# against the hanging mass.  Slope b is in mm/g, so the spring constant is k = g_n / b.
+#
+# Three ways to the same uncertainties:
+#   1. the textbook closed-form weighted least squares with its covariance formulas,
+#   2. the same formulas evaluated on `y_i ± sigma_i` values, so Sky's `±` propagation
+#      (with correlations) does it for us,
+#   3. prediction at a new x, with and without the a-b correlation.
+# Data are literals; there is no file input.   Run: sky run examples/dogfood/fitting/fit_line.sky
+
+m = [50 g, 100 g, 150 g, 200 g, 250 g, 300 g, 350 g, 400 g, 450 g, 500 g, 550 g, 600 g]
+L = [127.4 mm, 135.25 mm, 142.37 mm, 149.8 mm, 156.83 mm, 164.83 mm,
+     173.48 mm, 180.41 mm, 188.58 mm, 195.28 mm, 202.97 mm, 210.24 mm]
+sL = [0.4 mm, 0.48 mm, 0.56 mm, 0.64 mm, 0.72 mm, 0.8 mm,
+      0.88 mm, 0.96 mm, 1.04 mm, 1.12 mm, 1.2 mm, 1.28 mm]
+n = 12
+
+# ---- 1. closed-form weighted least squares ------------------------------
+# No sum(): every sum is a loop with a hand-initialised accumulator.  The accumulators
+# carry units, so a slip like `Sxy += m[i] * L[i]` (forgetting the weight) is a unit
+# error at check time.
+S = 0 / (1 mm^2)
+Sx = 0 g / (1 mm^2)
+Sy = 0 / (1 mm)
+Sxx = 0 g^2 / (1 mm^2)
+Sxy = 0 g / (1 mm)
+for i in range(n):
+    w = 1 / sL[i]^2
+    S += w
+    Sx += w * m[i]
+    Sy += w * L[i]
+    Sxx += w * m[i]^2
+    Sxy += w * m[i] * L[i]
+
+D = S * Sxx - Sx^2
+a = (Sxx * Sy - Sx * Sxy) / D           # intercept, a length
+b = (S * Sxy - Sx * Sy) / D             # slope, a length per mass
+var_a = Sxx / D
+var_b = S / D
+cov_ab = -Sx / D
+
+print("intercept a =", a as mm, " slope b =", b as mm/g)
+print("  sigma_a =", sqrt(var_a) as mm, " sigma_b =", sqrt(var_b) as mm/g)
+print("  correlation(a, b) =", cov_ab / sqrt(var_a * var_b))
+
+chi2 = 0.0
+for i in range(n):
+    chi2 += ((L[i] - a - b * m[i]) / sL[i])^2
+print("chi2 =", chi2, " dof =", n - 2, " chi2/dof =", chi2 / (n - 2))
+
+# spring constant from the slope
+k = g_n / b
+sk = k * sqrt(var_b) / b
+print("k =", (k ± sk) as N/m)
+
+# ---- 2. the same thing through ± arithmetic ------------------------------
+# Each reading becomes a fresh error source; the sums, a and b inherit them.
+S2 = 0 / (1 mm^2)
+Sx2 = 0 g / (1 mm^2)
+Sy2 = 0 / (1 mm)
+Sxx2 = 0 g^2 / (1 mm^2)
+Sxy2 = 0 g / (1 mm)
+for i in range(n):
+    yi = L[i] ± sL[i]
+    w = 1 / sL[i]^2
+    S2 += w
+    Sx2 += w * m[i]
+    Sy2 += w * yi
+    Sxx2 += w * m[i]^2
+    Sxy2 += w * m[i] * yi
+D2 = S2 * Sxx2 - Sx2^2
+a2 = (Sxx2 * Sy2 - Sx2 * Sxy2) / D2
+b2 = (S2 * Sxy2 - Sx2 * Sy2) / D2
+print("via ±:  a =", a2 as mm, " b =", b2 as mm/g)
+k2 = g_n / b2
+print("via ±:  k =", k2 as N/m)
+
+# the two routes agree on the uncertainties to rounding
+assert abs(uncertainty(a2) - sqrt(var_a)) < 1e-9 * sqrt(var_a)
+assert abs(uncertainty(b2) - sqrt(var_b)) < 1e-9 * sqrt(var_b)
+
+# ---- 3. prediction at 325 g: the correlation matters ----------------------
+x0 = 325 g
+pred = a2 + b2 * x0
+naive = sqrt(var_a + (x0 * sqrt(var_b))^2)           # pretends a and b are independent
+exact = sqrt(var_a + (x0)^2 * var_b + 2 * x0 * cov_ab)
+print("L(325 g) =", pred as mm)
+print("  uncertainty ignoring correlation =", naive as mm)
+print("  uncertainty with covariance      =", exact as mm)
+print("  uncertainty from ± propagation   =", uncertainty(pred) as mm)

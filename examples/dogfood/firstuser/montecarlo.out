@@ -1,0 +1,7 @@
+trials: 200000
+pi estimate: 3.13534
+error: 0.006252653589793322
+expected error ~ 0.003667151483099655
+at 20 min of 20000 atoms:
+  A: 4940  B: 11401  C: 3659
+expected A, B, C: 5000 11399 3601

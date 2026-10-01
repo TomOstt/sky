@@ -1,0 +1,6 @@
+alpha = 9.785705437879351e-5 m^2/s
+r = alpha dt/dx^2 = 0.12525702960485566 (2D limit 1/4)
+steps: 6860  t = 343 s
+max |T - T_series|, all interior nodes = 0.7194716718250334 K  (corner singularity)
+max |T - T_series|, 4 nodes in from the edges = 0.07245912091400442 K
+T(centre) = 324.99999741951405 K  exact: 325 K

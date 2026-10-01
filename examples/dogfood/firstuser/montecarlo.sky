@@ -1,0 +1,68 @@
+# Monte Carlo: estimate pi, and simulate a two-step radioactive decay chain
+# A -> B -> C.
+# First-time-user program. Sky has no random number generator, so this carries
+# its own Park-Miller LCG (a=16807, m=2^31-1; the products stay below 2^53, so
+# f64 arithmetic is exact). There is no `%`, so the modulo is floor().
+# Functions return one value, so the generator state is threaded by hand.
+# Annotating the function (`s: Scalar -> Scalar`) makes the native engine ~90x
+# faster than leaving the parameter untyped (see FRICTION.md).
+m31 = 2147483647
+
+def next_state(s: Scalar) -> Scalar:
+    t = 16807 * s
+    return t - floor(t / m31) * m31
+
+# --- 1. pi by dart-throwing into the unit square -------------------------
+s = 12345
+inside = 0
+trials = 200000
+for i in range(trials):
+    s = next_state(s)
+    px = s / m31
+    s = next_state(s)
+    py = s / m31
+    if px * px + py * py <= 1:
+        inside = inside + 1
+pi_est = 4 * inside / trials
+print("trials:", trials)
+print("pi estimate:", pi_est)
+print("error:", abs(pi_est - pi))
+print("expected error ~", 1.64 / sqrt(trials))
+
+# --- 2. decay chain A -> B -> C -------------------------------------------
+# Each atom decays after an exponentially distributed time:
+#   t_A = -tau_A ln(u1),  then t_B = t_A - tau_B ln(u2).
+# Count how many atoms are A, B, C at time `when`.
+half_A = 10 min
+half_B = 30 min
+tau_A = half_A / log(2)
+tau_B = half_B / log(2)
+when = 20 min
+atoms = 20000
+nA = 0
+nB = 0
+nC = 0
+for i in range(atoms):
+    s = next_state(s)
+    u1 = s / m31
+    s = next_state(s)
+    u2 = s / m31
+    tA = -tau_A * log(u1)
+    tB = tA - tau_B * log(u2)
+    if tA > when:
+        nA = nA + 1
+    else:
+        if tB > when:
+            nB = nB + 1
+        else:
+            nC = nC + 1
+print("at", when as min, "of", atoms, "atoms:")
+print("  A:", nA, " B:", nB, " C:", nC)
+
+# Bateman solution for the expected fractions
+lamA = 1 / tau_A
+lamB = 1 / tau_B
+fracA = exp(-lamA * when)
+fracB = lamA / (lamB - lamA) * (exp(-lamA * when) - exp(-lamB * when))
+fracC = 1 - fracA - fracB
+print("expected A, B, C:", round(fracA * atoms), round(fracB * atoms), round(fracC * atoms))

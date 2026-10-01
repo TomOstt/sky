@@ -1,0 +1,61 @@
+# 1D heat conduction in a rod, explicit finite differences (FTCS).
+#
+# Physics: a rod of length L = 1 m, thermal diffusivity alpha, obeys
+#     dT/dt = alpha * d2T/dx2.
+# The left end is held at 400 K and the right end at 300 K (Dirichlet), and
+# the rod starts at 300 K everywhere except a warm bump in the middle. The
+# steady state is the straight line T(x) = T_hot + (T_cold - T_hot) x / L.
+#
+# FTCS update on a uniform grid of 21 nodes:
+#     T[i] <- T[i] + r * (T[i-1] - 2 T[i] + T[i+1]),   r = alpha dt / dx^2
+# and it is stable only for r <= 1/2. We pick dt from r, check r, run until
+# the profile stops changing and compare with the analytic line.
+
+L      = 1 m
+alpha  = 1e-4 m^2/s            # a good conductor (copper is about 1.1e-4)
+T_hot  = 400 K
+T_cold = 300 K
+dx     = L / 20                # 21 nodes -- must also be written as 21 below
+dt     = 10 s
+
+r = alpha * dt / dx^2          # dimensionless: m^2/s * s / m^2
+print("alpha dt / dx^2 =", r)
+assert r <= 0.5, "FTCS is unstable for alpha dt/dx^2 > 1/2"
+print("stability limit: dt <= ", dx^2 / (2 * alpha), " (using dt =", dt, ")")
+
+# Node coordinates as a literal: Sky has no linspace/arange.
+idx = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+x = idx * dx                   # array * scalar scales every entry
+ones21 = exp(zeros(21))
+
+# Initial profile: 300 K plus a 40 K Gaussian bump at the middle.
+w = (x - 0.5 m * ones21) / (0.1 m)
+u = T_cold * ones21 + 40 K * exp(-(w * w))
+
+# Dirichlet ends, as a vector that is zero in the interior.
+bc = T_hot * identity(21)[:, 0] + T_cold * identity(21)[:, 20]
+# Embeds the 19 interior values back into 21 nodes (arrays cannot be written to).
+E = identity(21)[:, 1:20]
+
+steps = 0
+change = 1 K
+while change > 1e-9 K:
+    interior = u[1:20] + r * (u[0:19] - 2 * u[1:20] + u[2:21])
+    unew = E @ interior + bc
+    change = norm(unew - u)
+    u = unew
+    steps += 1
+
+print("steps:", steps, " t =", steps * dt)
+exact = T_hot * ones21 + (T_cold - T_hot) * (x / L)
+err = 0 K
+for i in range(21):
+    err = max(err, abs(u[i] - exact[i]))
+print("max |T - T_exact| =", err)
+print("T(mid) =", u[10], " exact:", 350 K)
+
+# A table, since there is no plotting and no printf: every 4th node.
+# Sky prints full-precision floats, so round by hand to 1e-6 K for display.
+print("  x [cm]   T_num [K]   T_exact [K]")
+for i in range(0, 21, 4):
+    print(round(x[i] / (1 cm)), round(u[i] / (1 nK)) / 1e9, exact[i] / (1 K))

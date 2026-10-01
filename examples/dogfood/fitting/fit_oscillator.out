@@ -1,0 +1,7 @@
+start: chi2 = 5174.407741639846
+chi2 = 29.648313754300283  dof = 46  chi2/dof = 0.6445285598760931
+A     = 19.9 ± 0.4 deg
+gamma = 0.180 ± 0.005 Hz
+omega = 3.935 ± 0.005 rad/s   (plain print says Hz: 3.935 ± 0.005 Hz )
+period = 1596.8 ± 2.1 ms
+phi   = 23.0 ± 1.1 deg

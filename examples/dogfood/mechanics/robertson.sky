@@ -1,0 +1,41 @@
+# Robertson's stiff chemical kinetics problem, with concentrations in mol/m^3
+# and rate constants with real units.
+#
+#   A -> B        k1 = 0.04 1/s
+#   B + B -> C + B   k2 = 3e7 m^3/(mol s)
+#   B + C -> A + C   k3 = 1e4 m^3/(mol s)
+#
+# Total concentration a + b + cc is conserved. The system is famously stiff
+# (rates differ by nine orders of magnitude). Does Sky notice, and say so?
+# (The product is called `cc`, because `c` is the speed of light in Sky and
+# using it as a name draws a warning.)
+
+k1 = 0.04 s^-1
+k2 = 3e7 m^3/mol/s
+k3 = 1e4 m^3/mol/s
+
+equation robertson(t: s):
+    a: mol/m^3
+    b: mol/m^3
+    cc: mol/m^3
+    r1 = k1 * a
+    r2 = k2 * b^2
+    r3 = k3 * b * cc
+    a' = -r1 + r3
+    b' = r1 - r2 - r3
+    cc' = r2
+
+sol = solve robertson from 0 s to 4e5 s with a = 1 mol/m^3, b = 0 mol/m^3, cc = 0 mol/m^3:
+    tolerance 1e-8
+    conserve total = a + b + cc within 1e-6
+
+print("a, b, cc at t = 4e5 s:", sol.a, sol.b, sol.cc)
+print("total:", sol.total)
+print(explain(sol))
+
+# Check against the reference solution of Hairer & Wanner (Solving ODEs II,
+# t = 40 s: a = 0.7158270687, b = 9.185534764e-6, c = 0.2841637457).
+ref = solve robertson from 0 s to 40 s with a = 1 mol/m^3, b = 0 mol/m^3, cc = 0 mol/m^3:
+    tolerance 1e-10
+print("t = 40 s:", ref.a, ref.b, ref.cc)
+print("error in a against the published value:", abs(ref.a - 0.7158270687 mol/m^3))

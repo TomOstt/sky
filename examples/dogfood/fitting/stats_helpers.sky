@@ -1,0 +1,64 @@
+# Statistics the language does not ship (no sum, mean, std, weighted mean, sort, median,
+# linspace, arange, ones, rand): what a lab script has to define for itself.
+# The helpers take an UNANNOTATED vector so they work for any unit, and start the
+# accumulator from v[0] because `s = 0` would not be a length.
+# Run: sky run examples/dogfood/fitting/stats_helpers.sky
+
+def total(v):
+    s = v[0]
+    for i in range(1, len(v)):
+        s += v[i]
+    return s
+
+def mean(v):
+    return total(v) / len(v)
+
+def std(v):                              # sample standard deviation
+    m = mean(v)
+    s = (v[0] - m)^2
+    for i in range(1, len(v)):
+        s += (v[i] - m)^2
+    return sqrt(s / (len(v) - 1))
+
+# inverse-variance weighted mean: weights have to be built in a loop, since
+# `1 / (s * s)` on a vector is an error and there is no ones(n)
+def wmean(v, s):
+    w0 = 1 / s[0]^2
+    num = w0 * v[0]
+    den = w0
+    for i in range(1, len(v)):
+        w = 1 / s[i]^2
+        num += w * v[i]
+        den += w
+    return num / den
+
+# ten readings of a period with the stopwatch
+T = [1.994 s, 2.011 s, 2.003 s, 1.987 s, 2.021 s, 2.008 s, 1.996 s, 2.015 s, 1.999 s, 2.006 s]
+n = len(T)
+print("n =", n)
+print("mean =", mean(T) as ms, " std =", std(T) as ms)
+sem = std(T) / sqrt(n)
+print("period = ", (mean(T) ± sem) as ms)
+
+# the same average by ± arithmetic: ten independent readings of sigma = 10 ms each
+acc = T[0] ± 10 ms
+for i in range(1, n):
+    acc += T[i] ± 10 ms
+print("± average of ten readings (sigma 10 ms each):", (acc / n) as ms)
+# the same reading ten times is NOT ten readings: sigma does not shrink
+one = T[0] ± 10 ms
+rep = one
+for i in range(1, n):
+    rep += one
+print("one reading counted ten times:", (rep / n) as ms)
+
+# weighted mean of three g measurements from different pendula
+g_i = [9.81 m/s^2, 9.79 m/s^2, 9.84 m/s^2]
+s_i = [0.02 m/s^2, 0.03 m/s^2, 0.05 m/s^2]
+gw = wmean(g_i, s_i)
+print("weighted g =", gw as m/s^2)
+# chi2 of the three against their weighted mean
+chi2 = 0.0
+for i in range(3):
+    chi2 += ((g_i[i] - gw) / s_i[i])^2
+print("chi2 =", chi2, " dof = 2")

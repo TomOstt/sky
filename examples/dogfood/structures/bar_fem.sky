@@ -1,0 +1,62 @@
+# 1D finite-element bar, 10 elements (dogfood: structures).
+#
+# A steel bar of length L, area A, Young's modulus E, fixed at x = 0 and
+# pulled by an axial force F at x = L. We assemble the global stiffness
+# matrix K from 10 identical 2x2 element matrices, apply the boundary
+# condition by dropping the first row and column, solve K u = f and compare
+# with the exact displacement u(x) = F x / (E A).
+#
+# Sky arrays are immutable and cannot be written entry by entry, so the
+# "scatter-add" of the textbook assembly (K[i:i+2, i:i+2] += ke) is written as
+# the equivalent connectivity-matrix product  K += Pᵀ ke P, where P is the
+# 2 x 11 slice of the identity that picks the two nodes of element e.
+#
+# Sizes (11 nodes, 10 elements) are repeated as literals: Sky wants every
+# array size to be a literal constant (see FRICTION.md, entry 1).
+
+E = 200 GPa
+A = 1 cm^2
+L = 2 m
+F = 1 kN
+
+Le = L / 10                       # element length
+k = E * A / Le                    # element stiffness, N/m
+ke = k * [[1, -1], [-1, 1]]       # 2x2 element matrix
+
+K = 0 N/m * zeros(11, 11)         # zeros() is dimensionless: scale it into N/m
+for e in range(10):
+    P = identity(11)[e:e+2, :]    # nodes e and e+1
+    K = K + Pᵀ @ ke @ P
+
+# Fixed at node 0: drop row 0 and column 0.
+Kr = K[1:11, 1:11]
+f = F * identity(10)[9]           # unit vector e_10 scaled to F: load on the last node
+u = Kr⁻¹ @ f                      # Kr is an untagged matrix here: LU solve
+
+print("tip displacement:", u[9] as mm)
+print("exact F L/(E A): ", F * L / (E * A) as mm)
+
+# Every node against the analytic u_i = F x_i / (E A), x_i = i Le.
+err = 0 m
+for i in range(10):
+    exact = F * ((i + 1) * Le) / (E * A)
+    err = max(err, abs(u[i] - exact))
+print("max nodal error: ", err)
+assert err < 1e-12 m, "FE solution should be exact for a uniform bar"
+
+# Same solve, but with the reduced matrix written out as a literal so that
+# `PositiveDefinite` can be proven and Sky uses Cholesky.
+Kp: PositiveDefinite Matrix[10, 10] N/m = [
+    [2e8 N/m, -1e8 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m],
+    [-1e8 N/m, 2e8 N/m, -1e8 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m],
+    [0 N/m, -1e8 N/m, 2e8 N/m, -1e8 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m],
+    [0 N/m, 0 N/m, -1e8 N/m, 2e8 N/m, -1e8 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m],
+    [0 N/m, 0 N/m, 0 N/m, -1e8 N/m, 2e8 N/m, -1e8 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m],
+    [0 N/m, 0 N/m, 0 N/m, 0 N/m, -1e8 N/m, 2e8 N/m, -1e8 N/m, 0 N/m, 0 N/m, 0 N/m],
+    [0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, -1e8 N/m, 2e8 N/m, -1e8 N/m, 0 N/m, 0 N/m],
+    [0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, -1e8 N/m, 2e8 N/m, -1e8 N/m, 0 N/m],
+    [0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, -1e8 N/m, 2e8 N/m, -1e8 N/m],
+    [0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, 0 N/m, -1e8 N/m, 1e8 N/m]]
+up = Kp⁻¹ @ f                     # Cholesky solve
+print("tip (Cholesky):  ", up[9] as mm)
+print("max |u - up|:    ", norm(u - up))

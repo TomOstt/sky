@@ -55,6 +55,7 @@ tests/ir/parallel.sky:19:5: note: [PAR-001] this elementwise kernel over 1e6 ele
    = note: because every element is independent, so the array is split into contiguous chunks (at most four per thread); the result is bit-identical to the sequential one whatever the split
    = note: because it does not print or call, so no output can change order
    = note: because 3 of its operations can fail (`add`, `mul`, `sub`): if chunks fail, the failing operation that comes first in program order is reported, at its lowest failing element, which is the error a sequential run gives
+   = note: because native code runs it on 8 threads too, in the same chunks (the compiled kernel on each), and resolves a failure by the same rule, so its result and error are the same
 
 tests/ir/parallel.sky:19:5: note: [MEM-001] `(a + b) * 2 - a` reuses `a`'s buffer: no allocation for this result
    |
@@ -80,6 +81,7 @@ tests/ir/parallel.sky:20:5: note: [PAR-002] these 2 calls are independent (pure)
    = note: because `work[n:Scalar]` has no `print` (directly or in what it calls), and no call uses another's result, so their order cannot show in the output
    = note: because each is expensive enough to start elsewhere: at least 704 estimated operations (the threshold is 400)
    = note: because any of them may fail: every call is awaited and the error of the earliest one in program order is reported, as in a sequential run
+   = note: because native code runs them in place: it runs an operation 64 times faster than the interpreter, so a call must be estimated at least 25600 operations to pay for a thread (the smallest here is 704)
 
 tests/ir/parallel.sky:21:5: note: [SPEC-002] this call uses the existing specialization `work[n:Scalar]`
    |

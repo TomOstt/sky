@@ -18,6 +18,7 @@
 
 mod bench;
 mod compare;
+mod native_par;
 mod par;
 mod report;
 mod stats;
@@ -34,8 +35,9 @@ const USAGE: &str = "usage: sky-bench [--filter <substring>] [--json <file>] [--
                      --warmup   untimed runs of each engine first (default 1)\n\
                      --quick    tiny sizes, for a smoke run\n\
                      --list     print the workload names and exit\n\n\
-                     sky-bench par [--threads 1,2,4,8] [--reps <n>] [--quick]\n\
-                     \x20          measure automatic parallelism (speedups, break-even sizes)\n\n\
+                     sky-bench par [--threads 1,2,4,8] [--reps <n>] [--quick] [--native]\n\
+                     \x20          measure automatic parallelism (speedups, break-even sizes);\n\
+                     \x20          --native: on native code instead of the SIR interpreter\n\n\
                      Run it with `cargo run --release -p sky-bench`: debug timings mean nothing.\n\n\
                      `sky-bench compare --help` for the cross-language comparison.";
 

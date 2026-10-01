@@ -22,10 +22,11 @@
 //!   the oracle the differential tests compare SIR against, and the fallback
 //!   for the programs SIR cannot express yet.
 //!
-//! `--threads=N` (or `SKY_THREADS`) sets how many threads the SIR engine may
-//! use for work that cannot change the output (`sky_ir::parallel`: big
-//! elementwise kernels and independent pure calls); 1 means sequential, and
-//! the output is the same for every N. The tree-walker is always sequential,
+//! `--threads=N` (or `SKY_THREADS`) sets how many threads the SIR engine and
+//! native code may use for work that cannot change the output
+//! (`sky_ir::parallel`: big elementwise kernels and independent pure calls);
+//! 1 means sequential, and the output is the same for every N. The
+//! tree-walker is always sequential,
 //! except that every engine's array kernels (`sky_linalg`: big products,
 //! factorizations and solves) split their output across the same N threads,
 //! which changes no bit of any result.
@@ -217,7 +218,10 @@ fn run_source(
     // program it refuses has printed nothing yet.
     let native = match (&sir, engine) {
         (Some(ir), Engine::Native | Engine::Auto) => {
-            match sky_jit::compile_with(ir, mode.kernels()) {
+            // The same thread configuration as the SIR engine's (`--threads`,
+            // `SKY_THREADS`): big kernels run in chunks on the pool.
+            let cfg = par_config(threads);
+            match sky_jit::compile_par(ir, mode.kernels(), sky_jit::Slp::from_env(), &cfg) {
                 Ok(c) => Some(c),
                 Err(e) if engine == Engine::Native => {
                     let span = e.span.unwrap_or(module.span);

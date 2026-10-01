@@ -170,7 +170,7 @@ impl Jit {
         inputs: &[V],
         count: usize,
     ) -> Native {
-        self.run_into(func, op, inputs, count, &mut Vec::new())
+        self.run_into(func, op, inputs, count, &mut Vec::new(), None)
     }
 
     /// [`Jit::run`] writing the result into `out` (cleared and resized to
@@ -181,6 +181,10 @@ impl Jit {
     /// Nothing here allocates once the kernel is compiled: the operand kinds
     /// and data are gathered on the stack (a `fused` has few operands; one
     /// with more than [`MAX_INLINE`] is not run natively).
+    ///
+    /// With `par` (a run with threads), a kernel big enough for
+    /// `Config::fused_work` runs in chunks on the pool
+    /// (`sky_jit::kernel::Kernel::run_par`): the same bits and the same error.
     pub(crate) fn run_into<V: std::borrow::Borrow<Value>>(
         &mut self,
         func: &Function,
@@ -188,6 +192,7 @@ impl Jit {
         inputs: &[V],
         count: usize,
         out: &mut Vec<f64>,
+        par: Option<&sky_ir::parallel::Config>,
     ) -> Native {
         if !self.options.enabled || inputs.len() > MAX_INLINE {
             return Native::Declined;
@@ -240,7 +245,11 @@ impl Jit {
         NATIVE_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         out.clear();
         out.resize(count, 0.0);
-        match kernel.run(&args[..n], out) {
+        let ran = match par {
+            Some(cfg) => kernel.run_par(&args[..n], out, cfg),
+            None => kernel.run(&args[..n], out),
+        };
+        match ran {
             Ok(()) => Native::Done(std::mem::take(out), kernel.output_dim()),
             Err(e) => Native::Failed(e.into()),
         }

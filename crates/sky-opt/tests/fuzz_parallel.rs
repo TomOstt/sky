@@ -2,7 +2,10 @@
 //! programs: the same stdout and the same error, compared as the whole
 //! rendered diagnostic, on 1, 2, 4 and 8 threads, with every threshold at its
 //! minimum (so that small programs take the parallel paths) and with the
-//! defaults, for the lowered SIR and for the optimized SIR.
+//! defaults, for the lowered SIR and for the optimized SIR, on the SIR
+//! interpreter **and on native code** (`sky_jit::compile_par`: chunked
+//! kernels and calls started on the pool), which must also print and fail as
+//! the sequential SIR interpreter does.
 //!
 //! Three generators feed it:
 //!
@@ -63,6 +66,26 @@ fn run(ir: &Module, src: &str, cfg: &Config) -> Outcome {
     )
 }
 
+/// Native code under `cfg`, with the SIR interpreter (under the same
+/// configuration) finishing the run if it deoptimizes. `help` says whether a
+/// thread that joins the calls it started runs the ones no worker has started
+/// yet (the default) or leaves them all to workers: the output must not show
+/// which. `None` if native code refuses the program.
+fn run_native(ir: &Module, src: &str, cfg: &Config, help: bool) -> Option<Outcome> {
+    sky_jit::par::set_help_at_join_for_tests(help);
+    let code =
+        sky_jit::compile_par(ir, sky_jit::Numerics::Reproducible, sky_jit::Slp::Auto, cfg).ok()?;
+    let mut out = Vec::new();
+    let (r, _) = code.run_or_rerun(&mut out, |w| sky_ir_interp::run_with(ir, &mut { w }, cfg));
+    Some((
+        String::from_utf8_lossy(&out).into_owned(),
+        r.err().map(|e| {
+            e.to_diagnostic()
+                .render_to_string(&SourceFile::new("p.sky", src))
+        }),
+    ))
+}
+
 /// The configurations every program must give one outcome under.
 fn configs() -> Vec<Config> {
     let mut all = Vec::new();
@@ -86,11 +109,11 @@ fn notes(m: &Module, t: usize) -> Vec<String> {
         .iter()
         .map(|n| {
             format!(
-                "{} {:?} {} {:?}",
+                "{} {:?} {} {}",
                 n.rule,
                 n.span,
                 n.headline.replace(&words, "N threads"),
-                n.because
+                format!("{:?}", n.because).replace(&words, "N threads")
             )
         })
         .collect()
@@ -119,6 +142,28 @@ fn check(src: &str) -> Result<(), String> {
             if got != want {
                 return Err(format!(
                     "the {what} SIR differs with {cfg:?}\n--- 1 thread ---\n{}{}\n--- {} threads ---\n{}{}\n--- SIR text ---\n{}",
+                    want.0,
+                    want.1.as_deref().unwrap_or("(ok)"),
+                    cfg.threads,
+                    got.0,
+                    got.1.as_deref().unwrap_or("(ok)"),
+                    sky_ir::print(m),
+                ));
+            }
+        }
+        // Native code, sequential and on every configuration, does what the
+        // sequential SIR interpreter does.
+        let all = std::iter::once(Config::sequential()).chain(configs());
+        for (i, cfg) in all.enumerate() {
+            // Workers run every call in half of the runs, and the joining
+            // thread helps in the other half.
+            let help = (src.len() + i) % 2 == 0;
+            let Some(got) = run_native(m, src, &cfg, help) else {
+                break;
+            };
+            if got != want {
+                return Err(format!(
+                    "native code on the {what} SIR differs with {cfg:?}\n--- sequential SIR ---\n{}{}\n--- native, {} threads ---\n{}{}\n--- SIR text ---\n{}",
                     want.0,
                     want.1.as_deref().unwrap_or("(ok)"),
                     cfg.threads,
@@ -481,4 +526,43 @@ fn the_call_generator_reaches_groups_and_failures() {
         "only {failed_groups} grouped programs fail"
     );
     assert!(ok_groups > 20, "only {ok_groups} grouped programs succeed");
+}
+
+/// The generators' programs reach the native parallel paths (chunked kernels
+/// and elementwise operations, calls started on workers), or the native half
+/// of the campaigns would test nothing.
+#[test]
+fn the_generators_reach_the_native_parallel_paths() {
+    let before = sky_jit::par::stats();
+    let mut native_failed = 0;
+    for seed in 1..=40 {
+        for src in [array_program(seed), call_program(seed)] {
+            let mut ir = sky_lower::lower_source(&src).unwrap_or_else(|e| panic!("{e}\n{src}"));
+            default_passes(PassManager::new().verify_each(true))
+                .run(&mut ir)
+                .expect("the pipeline verifies");
+            let got = sky_ast::with_deep_stack(|| run_native(&ir, &src, &Config::eager(4), false));
+            if got.is_some_and(|(_, e)| e.is_some()) {
+                native_failed += 1;
+            }
+        }
+    }
+    let after = sky_jit::par::stats();
+    eprintln!("{before:?} -> {after:?}; {native_failed} of 80 runs failed");
+    assert!(
+        after.kernels_split > before.kernels_split + 5,
+        "few kernels were split: {before:?} -> {after:?}"
+    );
+    assert!(
+        after.elementwise_split > before.elementwise_split + 5,
+        "few elementwise operations were split: {before:?} -> {after:?}"
+    );
+    assert!(
+        after.calls_on_workers > before.calls_on_workers + 50,
+        "few calls ran on workers: {before:?} -> {after:?}"
+    );
+    assert!(
+        native_failed > 10,
+        "only {native_failed} native runs failed"
+    );
 }

@@ -247,6 +247,12 @@ fn method_section(o: &mut String, run: &Run) {
         o,
         "- Wall time includes process start-up and, for Sky, lexing, parsing, checking and lowering. The fixed part is in the floors below."
     );
+    if let Some(n) = run.opts.threads {
+        let _ = writeln!(
+            o,
+            "- Every Sky run used `--threads={n}` (automatic parallelism: big kernels in chunks, independent calls on workers; the output does not depend on it)."
+        );
+    }
     let _ = writeln!(
         o,
         "- All implementations build the same deterministic inputs and print the result on the last line; a cell whose numbers differ from the reference (the first implementation that ran, normally C) by more than the workload's relative tolerance is marked `!` and left out of every ratio."
@@ -711,6 +717,7 @@ mod tests {
             slow: Duration::from_secs(1),
             list: false,
             emit_sky: None,
+            threads: None,
             dir: ".".into(),
         }
     }

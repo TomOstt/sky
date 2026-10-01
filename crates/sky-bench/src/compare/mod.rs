@@ -26,7 +26,7 @@ use workloads::Case;
 
 const USAGE: &str = "usage: sky-bench compare [--filter <substring>] [--reps <n>] [--warmup <n>]\n\
                      \x20                      [--quick] [--out <file.md>] [--sky <path>] [--no-build]\n\
-                     \x20                      [--no-sky] [--timeout <secs>] [--slow <secs>]\n\x20                      [--emit-sky <dir>] [--list]\n\n\
+                     \x20                      [--no-sky] [--timeout <secs>] [--slow <secs>]\n\x20                      [--emit-sky <dir>] [--threads <n>] [--list]\n\n\
                      --filter    only cases whose id contains the text (see --list)\n\
                      --reps      timed repetitions per cell (default 5)\n\
                      --warmup    untimed runs first (default 1)\n\
@@ -40,6 +40,8 @@ const USAGE: &str = "usage: sky-bench compare [--filter <substring>] [--reps <n>
                      --slow      a cell whose first run takes longer than this is measured\n\
                      \x20           once instead of repeated (default 20)\n\
                      --emit-sky  also write each rendered Sky program into this directory\n\
+                     --threads   run every Sky program with `--threads=N` (default: the\n\
+                     \x20           machine's: SKY_THREADS, else the cores)\n\
                      --list      print the case ids and exit\n\n\
                      Run it with `cargo run --release -p sky-bench -- compare`.";
 
@@ -94,6 +96,9 @@ pub struct Options {
     pub list: bool,
     /// Also write each rendered Sky program here.
     pub emit_sky: Option<PathBuf>,
+    /// Run every `sky run` with `--threads=N` (else the machine's default:
+    /// `SKY_THREADS`, or the cores).
+    pub threads: Option<usize>,
     /// `benches/compare`.
     pub dir: PathBuf,
 }
@@ -187,6 +192,7 @@ fn parse_args(args: &[String], dir: PathBuf) -> Result<Options, String> {
         slow: Duration::from_secs(20),
         list: false,
         emit_sky: None,
+        threads: None,
         dir,
     };
     let mut it = args.iter();
@@ -219,6 +225,16 @@ fn parse_args(args: &[String], dir: PathBuf) -> Result<Options, String> {
             }
             "--slow" => o.slow = Duration::from_secs(number("--slow", value("--slow")?)?),
             "--emit-sky" => o.emit_sky = Some(PathBuf::from(value("--emit-sky")?)),
+            "--threads" => {
+                let n = number("--threads", value("--threads")?)? as usize;
+                if !(1..=sky_ir::parallel::MAX_THREADS).contains(&n) {
+                    return Err(format!(
+                        "--threads must be from 1 to {}",
+                        sky_ir::parallel::MAX_THREADS
+                    ));
+                }
+                o.threads = Some(n);
+            }
             "--list" => o.list = true,
             "-h" | "--help" => return Err(String::new()),
             other => return Err(format!("unknown argument `{other}`")),
@@ -592,6 +608,9 @@ fn command_for(
             }
             let mut c = Command::new(sky);
             c.arg("run").arg(format!("--engine={engine}"));
+            if let Some(n) = ctx.opts.threads {
+                c.arg(format!("--threads={n}"));
+            }
             if relaxed {
                 c.arg("--numerics=relaxed");
             }

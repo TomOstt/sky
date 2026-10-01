@@ -69,8 +69,11 @@ use sky_interp::array::{self, Ix};
 use sky_interp::contract;
 use sky_interp::solve;
 use sky_interp::{RuntimeError, Value};
+use sky_ir::parallel::Config;
 use sky_ir::{BlockData, CmpOp, Function, Module, OpData, OpKind, RangePart, SliceAxis, Type};
 use sky_units::{Dimension, MathFn, Rational};
+
+mod tasks;
 
 type R<T> = Result<T, RuntimeError>;
 
@@ -86,6 +89,9 @@ pub(crate) struct Program {
     pub sites: Vec<Site>,
     /// Relaxed numerics: kernels compiled while running fuse multiply-adds.
     pub relaxed: bool,
+    /// How many threads the run may use and from what sizes (see
+    /// `sky_ir::parallel`). One thread: everything runs on the caller's.
+    pub par: Config,
 }
 
 /// One entry of [`Program::sites`]: an operation of a function, or (`op ==
@@ -174,6 +180,12 @@ struct State {
     /// (stable while the run borrows the module; the state, and so the
     /// cache, is per run).
     kernels: Kernels,
+    /// The calls each open window of the function has started (see
+    /// `tasks`), by group handle.
+    groups: Vec<Option<tasks::Group>>,
+    /// The stack budget ran out (set with the error it caused): a call on a
+    /// worker that stops this way is run again on the calling thread.
+    stack_trip: bool,
     out: NonNull<dyn Write>,
 }
 
@@ -189,6 +201,11 @@ impl Drop for RunGuard {
         // The state (and with it the pointer to the writer) is gone before
         // `begin`'s borrow of the writer ends.
         let old = STATE.try_with(|s| s.try_borrow_mut().ok().and_then(|mut s| s.take()));
+        // A run that stopped without joining a window's calls still waits for
+        // them: no worker may be running native code when the run ends.
+        if let Ok(Some(state)) = &old {
+            tasks::wait_all(&state.groups);
+        }
         drop(old);
     }
 }
@@ -199,6 +216,12 @@ impl Drop for RunGuard {
 /// The guard must be dropped before `out`'s borrow ends, which the caller
 /// (`Compiled::run`) does by holding it for the duration of the call.
 pub(crate) fn begin(program: Arc<Program>, out: &mut dyn Write) -> RunGuard {
+    begin_with(program, out, None)
+}
+
+/// [`begin`], with the kernels a worker kept from earlier calls of the same
+/// program.
+fn begin_with(program: Arc<Program>, out: &mut dyn Write, kernels: Option<Kernels>) -> RunGuard {
     // SAFETY: only the lifetime bound of the trait object is erased. The
     // pointer is used only by runtime calls made while the returned guard is
     // alive, and `Compiled::run` keeps the guard (which removes the state
@@ -209,6 +232,12 @@ pub(crate) fn begin(program: Arc<Program>, out: &mut dyn Write) -> RunGuard {
         ))
     };
     let relaxed = program.relaxed;
+    let par = program.par.clone();
+    let kernels = kernels.unwrap_or(Kernels {
+        entries: HashMap::new(),
+        contract: relaxed,
+        par,
+    });
     STATE.with(|s| {
         *s.borrow_mut() = Some(State {
             program,
@@ -223,14 +252,18 @@ pub(crate) fn begin(program: Arc<Program>, out: &mut dyn Write) -> RunGuard {
             deopt: false,
             written: 0,
             scratch: Vec::new(),
-            kernels: Kernels {
-                entries: HashMap::new(),
-                contract: relaxed,
-            },
+            kernels,
+            groups: Vec::new(),
+            stack_trip: false,
             out,
         });
     });
     RunGuard(())
+}
+
+/// Takes the kernels out of this thread's runtime state, leaving it none.
+fn take_kernels() -> Option<Kernels> {
+    with(None, |st| Some(std::mem::take(&mut st.kernels)))
 }
 
 /// How a run stopped.
@@ -637,6 +670,7 @@ pub extern "C" fn sky_rt_fail_depth(site: i32) {
 pub extern "C" fn sky_rt_fail_stack(site: i32) {
     with((), |st| {
         let span = st.program.span(site);
+        st.stack_trip = true;
         st.fail(stack_exhausted(span));
     });
 }
@@ -1037,6 +1071,20 @@ fn eval_op(
         })
     };
     let (l, r) = (op.operand_span(0), op.operand_span(1));
+    // A big elementwise operation runs in chunks on the pool, when the run
+    // has threads (`crate::par::elementwise`: the interpreters' cases, bits
+    // and error).
+    if kernels.par.is_parallel()
+        && matches!(
+            op.kind,
+            OpKind::Add | OpKind::Sub | OpKind::Mul | OpKind::Div | OpKind::Neg
+        )
+    {
+        let operands: Vec<&Value> = a.iter().map(Arg::get).collect();
+        if let Some(done) = crate::par::elementwise(&op.kind, &operands, s, &kernels.par) {
+            return done;
+        }
+    }
     match &op.kind {
         OpKind::Add => arith(ArithOp::Add, arg(0)?, arg(1)?, s, l, r),
         OpKind::Sub => arith(ArithOp::Sub, arg(0)?, arg(1)?, s, l, r),
@@ -1218,11 +1266,22 @@ fn slice(op: &OpData, a: &[Arg], axes: &[SliceAxis]) -> R<Value> {
 /// entry point a compiled kernel replaces.
 /// The kernels of a run: one entry per `fused` operation that ran often
 /// enough to be compiled.
-#[derive(Default)]
 pub(crate) struct Kernels {
     entries: HashMap<usize, KernelEntry>,
     /// Compile kernels with fused multiply-adds (relaxed numerics).
     contract: bool,
+    /// The threads a big kernel or elementwise operation may use.
+    par: Config,
+}
+
+impl Default for Kernels {
+    fn default() -> Self {
+        Kernels {
+            entries: HashMap::new(),
+            contract: false,
+            par: Config::sequential(),
+        }
+    }
 }
 
 /// What the run knows of one `fused` operation: the operand kinds its kernel
@@ -1250,9 +1309,11 @@ fn fused_native(
     func: &Function,
     a: &[Arg],
     count: usize,
+    body_len: usize,
     kernels: &mut Kernels,
 ) -> Option<R<(Vec<f64>, Dimension)>> {
     use crate::kernel::{compile_kernel_with, Input, InputSig, Options};
+    let par = kernels.par.clone();
     let mut sigs = Vec::with_capacity(a.len());
     let mut args = Vec::with_capacity(a.len());
     for input in a {
@@ -1280,7 +1341,11 @@ fn fused_native(
         .or_default();
     if entry.sigs != sigs {
         entry.interpreted = entry.interpreted.saturating_add(count);
-        if entry.interpreted < kernel_threshold() {
+        // A kernel big enough to be split across threads is compiled at
+        // once: interpreting that much work costs more than compiling.
+        let big =
+            par.is_parallel() && count >= 2 && count.saturating_mul(body_len) >= par.fused_work;
+        if entry.interpreted < kernel_threshold() && !big {
             return None;
         }
         let options = Options {
@@ -1293,7 +1358,7 @@ fn fused_native(
     let kernel = entry.kernel.as_ref()?;
     Some(
         kernel
-            .run_alloc(&args, count)
+            .run_alloc_par(&args, count, &par)
             .map(|data| (data, kernel.output_dim())),
     )
 }
@@ -1358,7 +1423,7 @@ fn fused(
         return Err(malformed("`fused` needs an array operand", s));
     };
     let count: usize = dims.iter().product();
-    if let Some(done) = fused_native(op, func, a, count, kernels) {
+    if let Some(done) = fused_native(op, func, a, count, body.len(), kernels) {
         let (data, dim) = done?;
         return Ok(Value::array(dims.clone(), data, dim));
     }
@@ -1579,10 +1644,15 @@ pub(crate) enum Rt {
     Unpack,
     Elem,
     FailOp,
+    GroupBegin,
+    Spawn,
+    Join,
+    TaskResult,
+    GroupEnd,
 }
 
 impl Rt {
-    pub const ALL: [Rt; 38] = [
+    pub const ALL: [Rt; 43] = [
         Rt::BoxNum,
         Rt::BoxBool,
         Rt::ConstStr,
@@ -1621,6 +1691,11 @@ impl Rt {
         Rt::Unpack,
         Rt::Elem,
         Rt::FailOp,
+        Rt::GroupBegin,
+        Rt::Spawn,
+        Rt::Join,
+        Rt::TaskResult,
+        Rt::GroupEnd,
     ];
 
     /// The symbol name, also what `--emit=clif` shows.
@@ -1664,6 +1739,11 @@ impl Rt {
             Rt::Unpack => "sky_rt_unpack",
             Rt::Elem => "sky_rt_elem",
             Rt::FailOp => "sky_rt_fail_op",
+            Rt::GroupBegin => "sky_rt_group_begin",
+            Rt::Spawn => "sky_rt_spawn",
+            Rt::Join => "sky_rt_join",
+            Rt::TaskResult => "sky_rt_task_result",
+            Rt::GroupEnd => "sky_rt_group_end",
         }
     }
 
@@ -1708,6 +1788,11 @@ impl Rt {
             Rt::Unpack => sky_rt_unpack as *const u8,
             Rt::Elem => sky_rt_elem as *const u8,
             Rt::FailOp => sky_rt_fail_op as *const u8,
+            Rt::GroupBegin => tasks::sky_rt_group_begin as *const u8,
+            Rt::Spawn => tasks::sky_rt_spawn as *const u8,
+            Rt::Join => tasks::sky_rt_join as *const u8,
+            Rt::TaskResult => tasks::sky_rt_task_result as *const u8,
+            Rt::GroupEnd => tasks::sky_rt_group_end as *const u8,
         }
     }
 
@@ -1747,6 +1832,11 @@ impl Rt {
             Rt::Unpack => (&[I64, I32, I32, I32, I32], Some(I32)),
             Rt::Elem => (&[I32], Some(F64)),
             Rt::FailOp => (&[I32], None),
+            Rt::GroupBegin => (&[], Some(I64)),
+            Rt::Spawn => (&[I64, I64, I32, I64, I32, I64, I32, I32], None),
+            Rt::Join => (&[I64], Some(I32)),
+            Rt::TaskResult => (&[I64, I32], Some(I64)),
+            Rt::GroupEnd => (&[I64], None),
         }
     }
 }

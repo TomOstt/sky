@@ -952,7 +952,8 @@ impl Checker<'_> {
                 Ty::Value(v) => format!("a {}", crate::check::rank_noun(v.ty.shape().rank())),
                 Ty::Bool => "a comparison".to_string(),
                 Ty::Func(_) => "a function".to_string(),
-                // Strings and earlier errors: not typed here.
+                Ty::Str => "a string".to_string(),
+                // Earlier errors: not typed here.
                 Ty::Ode(_) | Ty::Unknown => return Ty::Unknown,
             };
             let b = self.operand_text(base);

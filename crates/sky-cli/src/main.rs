@@ -48,7 +48,7 @@ const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] [--emit=
 ///
 /// # Exit status
 ///
-/// The one place the exit codes are defined (the README repeats it):
+/// The one place the exit codes are defined (docs/guide.md repeats it):
 ///
 /// * `0`: ok. `sky check` found no error (warnings alone do not fail it),
 ///   `sky run` finished, or `sky repl` reached end of input.

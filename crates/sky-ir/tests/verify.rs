@@ -1738,25 +1738,42 @@ fn assume_changes_only_the_tags() {
         TagSet::of(Tag::PositiveDefinite).closure(),
         Repr::Unchosen,
     );
-    // A tag promise, or dropping a tag, is the type's business only.
-    accepts(&unary(OpKind::Assume, plain.clone(), pd.clone()));
-    accepts(&unary(OpKind::Assume, pd, plain.clone()));
-    accepts(&unary(OpKind::Assume, len(), len()));
+    let promise = |tags: TagSet| OpKind::Assume { tags };
+    let checks_pd = promise(TagSet::of(Tag::PositiveDefinite));
+    let none = promise(TagSet::EMPTY);
+    // A promise the operation checks, or dropping a tag, is the type's
+    // business only.
+    accepts(&unary(checks_pd.clone(), plain.clone(), pd.clone()));
+    accepts(&unary(none.clone(), pd.clone(), plain.clone()));
+    accepts(&unary(none.clone(), len(), len()));
+    // A value the checker could not type is checked when it runs.
+    accepts(&unary(checks_pd.clone(), Type::Unknown, Type::Unknown));
+    accepts(&unary(none.clone(), plain.clone(), Type::Unknown));
+    // Not a tag the operation does not check: the promise would go
+    // unchecked.
+    rejects(
+        &unary(none.clone(), plain.clone(), pd.clone()),
+        "`assume` needs a number and gives it back with no tags but its own",
+    );
+    rejects(
+        &unary(promise(TagSet::of(Tag::Symmetric)), plain.clone(), pd),
+        "`assume` needs a number and gives it back with no tags but its own",
+    );
     // Not the dimension, the shape, the kind.
     rejects(
-        &unary(OpKind::Assume, plain.clone(), mat(Dimension::MASS, 3, 3)),
-        "`assume` needs a number and gives it back with other tags",
+        &unary(checks_pd.clone(), plain.clone(), mat(Dimension::MASS, 3, 3)),
+        "`assume` needs a number and gives it back",
     );
     rejects(
-        &unary(OpKind::Assume, plain.clone(), mat(Dimension::LENGTH, 3, 4)),
+        &unary(none.clone(), plain.clone(), mat(Dimension::LENGTH, 3, 4)),
         "`assume` needs a number",
     );
     rejects(
-        &unary(OpKind::Assume, plain, Type::Unknown),
+        &unary(checks_pd.clone(), Type::Unknown, plain),
         "`assume` needs a number",
     );
     rejects(
-        &unary(OpKind::Assume, Type::Bool, Type::Bool),
+        &unary(none.clone(), Type::Bool, Type::Bool),
         "`assume` needs a number",
     );
 }

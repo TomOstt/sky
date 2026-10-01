@@ -971,6 +971,10 @@ impl Checker<'_> {
                 format!("cannot differentiate `{fname}`: it returns a Bool, not a number"),
                 "a Bool has no derivative",
             ),
+            Ty::Str => (
+                format!("cannot differentiate `{fname}`: it returns a string, not a number"),
+                "a string has no derivative",
+            ),
             _ => (
                 format!("cannot differentiate `{fname}`: the unit of its result is not known"),
                 "the derivative has the unit of the result divided by the unit of the parameter",

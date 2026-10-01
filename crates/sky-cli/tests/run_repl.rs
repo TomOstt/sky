@@ -1381,11 +1381,11 @@ const ENGINE_PROGRAMS: &[(&str, bool, &str)] = &[
         true,
         "print(\"before\")\nA: Matrix[2, 2]\nprint(\"after\")\n",
     ),
-    // The checker leaves `"a" + "b"` to run time; lowering builds an `add`
-    // of strings that does not verify, which is not the pass pipeline's fault.
+    // The checker types strings, so `"a" + "b"` is a check error, the same
+    // on every engine.
     (
         "eng-string-add",
-        false,
+        true,
         "print(\"before\")\ns = \"a\" + \"b\"\n",
     ),
     // `norm` and `dot` run on SIR through the tree-walker's own functions,

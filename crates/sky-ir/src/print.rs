@@ -235,6 +235,9 @@ impl Printer<'_> {
             OpKind::PowConst { exponent } => {
                 let _ = write!(self.out, "[{exponent}]");
             }
+            OpKind::Assume { tags } => {
+                let _ = write!(self.out, " {tags}");
+            }
             OpKind::Solve { .. }
             | OpKind::SolveRight { .. }
             | OpKind::MatMulEx { .. }

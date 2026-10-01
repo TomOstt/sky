@@ -45,10 +45,11 @@ impl Checker<'_> {
                 );
                 return;
             }
-            Ty::Bool | Ty::Func(_) | Ty::Ode(_) => {
+            Ty::Bool | Ty::Str | Ty::Func(_) | Ty::Ode(_) => {
                 let shown = self.quoted(name.span);
                 let what = match &t {
                     Ty::Bool => "a Bool".to_string(),
+                    Ty::Str => "a string".to_string(),
                     Ty::Ode(o) => o.describe(),
                     _ => "a function".to_string(),
                 };

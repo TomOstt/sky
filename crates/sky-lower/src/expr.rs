@@ -539,13 +539,13 @@ impl Lower<'_> {
     ///
     /// A tag on a parameter (`K: PositiveDefinite Matrix[N, N]`) is a
     /// promise: the checker does not prove it of the argument (a computed
-    /// matrix has no tags), and `sky run` does not check it at the call, only
-    /// where the callee relies on it (a Cholesky solve fails with "the matrix
-    /// is not positive definite"). SIR types carry the tags and a call
+    /// matrix has no tags), and `sky run` checks it at the call, at the
+    /// argument (Diagonal and Symmetric; positive definiteness where a
+    /// Cholesky solve relies on it). SIR types carry the tags and a call
     /// requires the argument to guarantee the parameter's, so an argument
     /// that does not gets an `assume`: the same value, typed with the tags
-    /// the parameter promises, and no check, so that the failure, if the
-    /// promise is broken, is the callee's, with the tree-walker's message.
+    /// the parameter promises, checked as `sky run` checks it, with the
+    /// tree-walker's message.
     pub(crate) fn promise_tags(
         &mut self,
         v: ValueId,
@@ -556,17 +556,21 @@ impl Lower<'_> {
         let Some(want) = sig.param_ty(i).map(|p| p.ty.tags().closure()) else {
             return v;
         };
-        let Type::Number(n) = self.st.b.ty(v).clone() else {
-            return v;
-        };
-        if want.is_empty() || n.tags.is_subtag_of(want) || n.shape.rank() != 2 {
+        if want.is_empty() {
             return v;
         }
-        let ty = Type::Number(NumberType {
-            tags: n.tags.meet(want),
-            ..n
-        });
-        self.op1(OpKind::Assume, vec![v], ty, span)
+        let ty = match self.st.b.ty(v).clone() {
+            // A value the checker could not type is checked all the same.
+            Type::Unknown => Type::Unknown,
+            Type::Number(n) if n.shape.rank() == 2 && !n.tags.is_subtag_of(want) => {
+                Type::Number(NumberType {
+                    tags: n.tags.meet(want),
+                    ..n
+                })
+            }
+            _ => return v,
+        };
+        self.op1(OpKind::Assume { tags: want }, vec![v], ty, span)
     }
 
     /// The value module-level name `name` has now, as a callee would read

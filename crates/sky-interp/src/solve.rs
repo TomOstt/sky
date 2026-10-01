@@ -90,6 +90,81 @@ fn promise(method: SolveMethod) -> &'static str {
     }
 }
 
+/// The note of a broken parameter promise.
+const PARAMETER_PROMISE: &str =
+    "a tag on a parameter is checked when the function is called, for the matrix passed";
+
+/// Checks, at a call, the tags a parameter declares (`declared`) of the
+/// matrix `v` passed for it, beyond those the caller already guarantees
+/// (`known`; the tree-walker passes none). The rewrites that rely on a tag
+/// are not checked where they run (`Kᵀ` of a Symmetric `K` is `K` itself),
+/// so every engine checks the promise here, once per call, with this one
+/// message, at the argument's span:
+///
+/// * Diagonal: every off-diagonal entry is zero (this implies Symmetric);
+/// * else Symmetric (also implied by PositiveDefinite): entry `[i, j]` is
+///   entry `[j, i]`, bit for bit, as the checker's own Symmetric results
+///   are (`sky_types::needs_mirroring`).
+///
+/// Positive definiteness is left to the Cholesky solve that relies on it,
+/// which checks it (and costs a factorization to check), and Orthogonal to
+/// the checker, which requires the argument to be known Orthogonal. A value
+/// that is not a square matrix has no promise to check.
+pub fn check_parameter_tags(
+    declared: sky_types::TagSet,
+    known: sky_types::TagSet,
+    v: &Value,
+    span: Span,
+) -> R<()> {
+    use sky_types::Tag;
+    let (want, have) = (declared.closure(), known.closure());
+    let Value::Array { dims, data, .. } = v else {
+        return Ok(());
+    };
+    let n = match dims[..] {
+        [r, c] if r == c => r,
+        _ => return Ok(()),
+    };
+    let needs = |t: Tag| want.contains(t) && !have.contains(t);
+    if want.contains(Tag::Diagonal) {
+        if !needs(Tag::Diagonal) {
+            return Ok(());
+        }
+        for i in 0..n {
+            for j in 0..n {
+                if i != j && data[i * n + j] != 0.0 {
+                    return Err(RuntimeError::new("the matrix is not diagonal", span)
+                        .with_label(format!(
+                            "declared Diagonal, but entry [{i}, {j}] is not zero"
+                        ))
+                        .with_note(PARAMETER_PROMISE));
+                }
+            }
+        }
+        return Ok(());
+    }
+    if !needs(Tag::Symmetric) {
+        return Ok(());
+    }
+    let declared = if want.contains(Tag::PositiveDefinite) {
+        "declared PositiveDefinite, which implies symmetric"
+    } else {
+        "declared Symmetric"
+    };
+    for i in 0..n {
+        for j in i + 1..n {
+            if data[i * n + j] != data[j * n + i] {
+                return Err(RuntimeError::new("the matrix is not symmetric", span)
+                    .with_label(format!(
+                        "{declared}, but entries [{i}, {j}] and [{j}, {i}] differ"
+                    ))
+                    .with_note(PARAMETER_PROMISE));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `A` as an `n` by `n` matrix: its size and entries, or the error a solve
 /// gives for anything else.
 fn square(a: &Value, whole: Span, aspan: Span) -> R<(usize, &[f64], Dimension)> {

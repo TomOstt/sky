@@ -243,6 +243,17 @@ impl Checker<'_> {
                             .with_note("v0.1 has no truthiness: a Bool is never a number"),
                     );
                 }
+                Ty::Str => {
+                    ok = false;
+                    self.error(
+                        Diagnostic::error(
+                            "an array element must be a number, found a string",
+                            x.span,
+                        )
+                        .with_label("this is a string")
+                        .with_note("in v0.1 an array holds numbers only"),
+                    );
+                }
                 Ty::Func(sig) => {
                     ok = false;
                     self.error(
@@ -347,6 +358,14 @@ impl Checker<'_> {
             Ty::Bool => {
                 self.error(
                     Diagnostic::error("cannot index a Bool", base.span).with_label("this is Bool"),
+                );
+                return Ty::Unknown;
+            }
+            Ty::Str => {
+                self.error(
+                    Diagnostic::error("cannot index a string", base.span)
+                        .with_label("this is a string")
+                        .with_note("in v0.1 a string is only printed; it has no elements"),
                 );
                 return Ty::Unknown;
             }
@@ -646,10 +665,14 @@ impl Checker<'_> {
                 );
                 return Ty::Unknown;
             }
-        } else if t == Ty::Bool {
+        } else if matches!(t, Ty::Bool | Ty::Str) {
+            let found = if t == Ty::Bool { "Bool" } else { "a string" };
             self.error(
-                Diagnostic::error("`len` needs a vector or a matrix, found Bool", arg.span)
-                    .with_label("this is Bool"),
+                Diagnostic::error(
+                    format!("`len` needs a vector or a matrix, found {found}"),
+                    arg.span,
+                )
+                .with_label(format!("this is {found}")),
             );
             return Ty::Unknown;
         }

@@ -34,7 +34,7 @@
 //! [`TagSet::join`]: crate::tags::TagSet::join
 //! [`ShapeUnifier`]: crate::shape::ShapeUnifier
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use sky_ast::{
@@ -149,6 +149,12 @@ pub(crate) struct FnCtx {
     /// Names bound in this function so far (parameters and assignments):
     /// what `x += 1` may update.
     pub(crate) locals: BTreeSet<String>,
+    /// The names of the code around the function that its body also
+    /// binds, each with its first binding in the body. Such a name is a
+    /// local of the whole body (Python's rule), so the outer one is hidden
+    /// there from the start: reading it before the body binds it is an
+    /// error, not a read of the outer value.
+    shadowed: BTreeMap<String, Span>,
 }
 
 impl FnCtx {
@@ -295,6 +301,7 @@ impl Checker<'_> {
                 }
             ),
             Ty::Bool => "a Bool".to_string(),
+            Ty::Str => "a string".to_string(),
             Ty::Func(f) => format!("function `{}`", quote(f.name())),
             Ty::Ode(o) => o.describe(),
             Ty::Unknown => "unknown".to_string(),
@@ -311,6 +318,7 @@ impl Checker<'_> {
             }
             .to_string(),
             Ty::Bool => "Bool".to_string(),
+            Ty::Str => "a string".to_string(),
             Ty::Func(f) => format!("function `{}`", quote(f.name())),
             Ty::Ode(o) => o.describe(),
             Ty::Unknown => "?".to_string(),
@@ -327,6 +335,10 @@ impl Checker<'_> {
         match (a, b) {
             (Ty::Unknown, _) | (_, Ty::Unknown) => Some(Ty::Unknown),
             (Ty::Bool, Ty::Bool) => Some(Ty::Bool),
+            (Ty::Str, Ty::Str) => Some(Ty::Str),
+            // A string on one path and something else on another is what
+            // it always was: unknown, checked where it is used at run time.
+            (Ty::Str, _) | (_, Ty::Str) => Some(Ty::Unknown),
             (Ty::Value(x), Ty::Value(y)) => {
                 if x.dim != y.dim {
                     return None;
@@ -690,16 +702,43 @@ impl Checker<'_> {
     /// value from here on, so it is reported once.
     pub(crate) fn undefined_name(&mut self, name: &str, span: Span) -> Ty {
         let shown = quote(name);
+        let shadowed = self
+            .fns
+            .last()
+            .and_then(|c| Some((quote(&c.name).into_owned(), *c.shadowed.get(name)?)));
+        let local_note = |fname: &str| {
+            format!(
+                "`{shown}` is bound in `{fname}`, so it is a local of the whole function: the `{shown}` outside it cannot be read there, and binding it never changes that one"
+            )
+        };
         if let Some((bound, in_loop)) = self.env.maybe.get(name).copied() {
+            let mut d = Diagnostic::error(format!("`{shown}` may be undefined here"), span)
+                .with_label("not assigned on every path")
+                .with_secondary(bound, format!("`{shown}` is assigned here"))
+                .with_help(if in_loop {
+                    "assign it before the loop"
+                } else {
+                    "assign it before the `if`"
+                });
+            if let Some((fname, _)) = &shadowed {
+                d = d.with_note(local_note(fname));
+            }
+            self.error(d);
+            self.env.bind(name, Ty::Unknown);
+            return Ty::Unknown;
+        }
+        if let Some((fname, at)) = shadowed {
             self.error(
-                Diagnostic::error(format!("`{shown}` may be undefined here"), span)
-                    .with_label("not assigned on every path")
-                    .with_secondary(bound, format!("`{shown}` is assigned here"))
-                    .with_help(if in_loop {
-                        "assign it before the loop"
-                    } else {
-                        "assign it before the `if`"
-                    }),
+                Diagnostic::error(
+                    format!("`{shown}` is read before `{fname}` assigns it"),
+                    span,
+                )
+                .with_label("read here, before any assignment in the function")
+                .with_secondary(at, format!("`{shown}` is assigned here"))
+                .with_note(local_note(&fname))
+                .with_help(format!(
+                    "pass `{shown}` in as a parameter and return the new value, or give the local another name"
+                )),
             );
             self.env.bind(name, Ty::Unknown);
             return Ty::Unknown;
@@ -847,11 +886,25 @@ impl Checker<'_> {
         });
         self.bind_at(&fname, Ty::Func(provisional), name.span);
 
+        // The outer names the body binds are its locals from the start.
+        let mut bound = BTreeMap::new();
+        self.bound_names(body, &mut bound);
+        let shadowed: BTreeMap<String, Span> = bound
+            .into_iter()
+            .filter(|(n, _)| {
+                !psigs.iter().any(|p| p.name == *n)
+                    && (self.env.is_bound(n) || self.env.maybe.contains_key(n))
+            })
+            .collect();
+        for n in shadowed.keys() {
+            self.env.unbind(n);
+        }
         self.fns.push(FnCtx {
             name: fname.clone(),
             declared: declared.clone(),
             returns: Vec::new(),
             locals: BTreeSet::new(),
+            shadowed,
         });
         let saved_loops = std::mem::take(&mut self.loops);
         for (p, sig) in params.iter().zip(&psigs) {
@@ -918,6 +971,45 @@ impl Checker<'_> {
         let sig = Arc::new(sig);
         self.funcs.insert(name.span, sig.clone());
         self.bind_at(&fname, Ty::Func(sig), name.span);
+    }
+
+    /// Every name `block` binds, with its first binding: assignments to a
+    /// name, annotated bindings, `for` variables, `def`s, `equation`s and
+    /// `solve`s, in nested blocks too but not in nested `def` bodies (those
+    /// are another function's). `x += 1` is not a binding: it updates.
+    fn bound_names(&self, block: &Block, out: &mut BTreeMap<String, Span>) {
+        let mut add = |id: &Ident| {
+            out.entry(self.ident(id).to_string()).or_insert(id.span);
+        };
+        let mut blocks = Vec::new();
+        for s in &block.stmts {
+            match &s.kind {
+                StmtKind::Assign {
+                    target: AssignTarget::Name(id),
+                    ..
+                }
+                | StmtKind::Binding { name: id, .. }
+                | StmtKind::Def { name: id, .. } => add(id),
+                StmtKind::For { var, body, .. } => {
+                    add(var);
+                    blocks.push(body);
+                }
+                StmtKind::Equation(eq) => add(&eq.name),
+                StmtKind::Solve(s) => add(&s.target),
+                StmtKind::If {
+                    branches,
+                    else_block,
+                } => {
+                    blocks.extend(branches.iter().map(|(_, b)| b));
+                    blocks.extend(else_block);
+                }
+                StmtKind::While { body, .. } => blocks.push(body),
+                _ => {}
+            }
+        }
+        for b in blocks {
+            self.bound_names(b, out);
+        }
     }
 
     /// The unsolved size variables in the parameters' types and `ret`.
@@ -1029,7 +1121,7 @@ impl Checker<'_> {
                     );
                 }
             }
-            Ty::Bool | Ty::Func(_) | Ty::Ode(_) => {
+            Ty::Bool | Ty::Str | Ty::Func(_) | Ty::Ode(_) => {
                 let found = self.ty_label(&t);
                 self.error(
                     Diagnostic::error(format!("expected a number, found {found}"), vspan)
@@ -1338,7 +1430,7 @@ impl Checker<'_> {
                 }
                 self.check_argument_tags(&pname, fname, pt, ann, arg, av);
             }
-            Ty::Bool | Ty::Func(_) | Ty::Ode(_) => {
+            Ty::Bool | Ty::Str | Ty::Func(_) | Ty::Ode(_) => {
                 let found = self.ty_label(t);
                 self.error(
                     Diagnostic::error(format!("expected a number, found {found}"), arg.span)

@@ -571,11 +571,13 @@ fn lowering_ignores_a_constant_rebound_in_a_block() {
     // A `for` variable named like a constant.
     assert_agree("for c in range(3):\n    print(c)\nprint(c)\n");
     assert_agree("x = 1\nif x > 0:\n    c = 2 m/s\nprint(c)\n");
-    assert_agree("def f(n):\n    if n > 0:\n        pi = 2\n    return pi\nprint(f(1), f(0))\n");
+    assert_agree(
+        "def f(n):\n    pi = 3\n    if n > 0:\n        pi = 2\n    return pi\nprint(f(1), f(0))\n",
+    );
     assert_agree("k = 0\nwhile k < 2:\n    k += 1\n    g_n = k * 1 m/s^2\nprint(g_n)\n");
-    // A loop that first reads the constant, then rebinds it: the function
-    // returns 0, then fails, instead of `pi`.
-    assert_agree("def f():\n    while true:\n        y = pi\n        pi = 2\n        break\n    return y\nprint(f())\n");
+    // A function that reads the constant where its body binds it only on
+    // some paths, or before binding it, is a check error now: a name the
+    // body binds is its local throughout (`err_local_hides_outer.sky`).
 }
 
 /// `sky run` used to look a called name up when the call ran, lowering bound

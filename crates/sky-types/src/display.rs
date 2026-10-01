@@ -57,7 +57,7 @@ impl Checker<'_> {
             return Ty::Unknown;
         }
         let (Ty::Value(v), Some(want)) = (&value_ty, unit_dim) else {
-            if matches!(value_ty, Ty::Bool | Ty::Func(_)) && unit_dim.is_some() {
+            if matches!(value_ty, Ty::Bool | Ty::Str | Ty::Func(_)) && unit_dim.is_some() {
                 self.show_non_number(value, unit, &value_ty);
             }
             return Ty::Unknown;

@@ -506,19 +506,25 @@ pub enum OpKind {
     ///   [`OpKind::properties`] says pure and the passes look inside).
     Fused,
 
-    /// `assume a`: one operand, one result: the operand's value, unchanged,
-    /// typed with the tags the callee's parameter promises. A tag on a
-    /// parameter (`K: PositiveDefinite Matrix[3, 3]`) is a promise the
-    /// checker takes on trust at a call, and that `sky run` checks only where
-    /// it is used (the Cholesky solve fails with "the matrix is not positive
-    /// definite" if it does not hold), so an argument the checker could not
-    /// prove tagged (a computed matrix) is passed on as it is; this operation
-    /// only changes its type, so that the call verifies. It checks nothing
-    /// and cannot fail: the operations that rely on a tag check it
-    /// themselves, with the tree-walker's messages. The result has the
-    /// operand's dimension, shape and representation and any tags at all
-    /// (closed, on a square matrix). Pure.
-    Assume,
+    /// `assume {tags} a`: one operand, one result: the operand's value,
+    /// unchanged, typed with `tags`, the tags the callee's parameter
+    /// promises. A tag on a parameter (`K: PositiveDefinite Matrix[3, 3]`)
+    /// is a promise the checker takes from the caller of an argument it
+    /// could not prove tagged (a computed matrix, or a value it could not
+    /// type at all). The rewrites that rely on a tag do not all check it
+    /// (`Kᵀ` of a Symmetric `K` is `K`), so this operation checks the tags
+    /// beyond those the operand's type has, as `sky run` does at every call
+    /// (`sky_interp::solve::check_parameter_tags`): Diagonal (every
+    /// off-diagonal entry zero), else Symmetric (also implied by
+    /// PositiveDefinite), with the tree-walker's message if the promise is
+    /// broken. Positive definiteness is left to the Cholesky solve, which
+    /// checks it, and Orthogonal to the checker, which requires it known.
+    /// The result has the operand's dimension, shape and representation and
+    /// no tags beyond the operand's and `tags` (closed, on a square matrix);
+    /// an unknown operand gives an unknown result. Fails.
+    Assume {
+        tags: sky_types::TagSet,
+    },
 
     // ----- comparison and logic -----
     /// Two operands (scalars of equal dimension, two Bools, or two
@@ -719,7 +725,7 @@ impl OpKind {
             OpKind::Identity => "identity",
             OpKind::Len => "len",
             OpKind::Fused => "fused",
-            OpKind::Assume => "assume",
+            OpKind::Assume { .. } => "assume",
             OpKind::Cmp(c) => match c {
                 CmpOp::Eq => "cmp.eq",
                 CmpOp::Ne => "cmp.ne",
@@ -779,7 +785,6 @@ impl OpKind {
             | OpKind::ConstNothing
             | OpKind::Neg
             | OpKind::Transpose
-            | OpKind::Assume
             | OpKind::ArrayLiteral { .. }
             | OpKind::ConstArray { .. }
             | OpKind::Cmp(_)
@@ -801,8 +806,8 @@ impl OpKind {
             OpKind::ExpectBool { .. }
             | OpKind::ExpectNumber { .. }
             | OpKind::ExpectRange { .. } => (fail, false, false, false),
-            // A false condition fails.
-            OpKind::Assert { .. } => (fail, false, false, false),
+            // A false condition fails, and so does a broken tag promise.
+            OpKind::Assert { .. } | OpKind::Assume { .. } => (fail, false, false, false),
             // A singular matrix or a zero scalar fails.
             OpKind::Inverse | OpKind::Solve { .. } | OpKind::SolveRight { .. } => {
                 (fail, false, false, false)

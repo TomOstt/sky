@@ -36,7 +36,7 @@
 //! user's `range` shadows it, as with `print`). Anywhere else it is an
 //! error that says so.
 
-use sky_ast::{Block, Expr, ExprKind, Ident, Literal};
+use sky_ast::{Block, Expr, ExprKind, Ident};
 use sky_diag::{display_capped as quote, Diagnostic, Span};
 use sky_units::Dimension;
 
@@ -231,7 +231,7 @@ impl Checker<'_> {
     /// reports once.
     fn iterable(&mut self, iter: &Expr) -> (Ty, Runs) {
         let t = self.expr(iter);
-        if let ExprKind::Literal(Literal::Str(_)) = iter.kind {
+        if t == Ty::Str {
             self.error(
                 Diagnostic::error("cannot iterate over a string", iter.span)
                     .with_label("this is a string")
@@ -260,7 +260,8 @@ impl Checker<'_> {
                 self.not_iterable(iter, &t, None);
                 Ty::Unknown
             }
-            Ty::Unknown => Ty::Unknown,
+            // Reported above.
+            Ty::Str | Ty::Unknown => Ty::Unknown,
         };
         (elem, Runs::AtLeastOnce)
     }

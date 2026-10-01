@@ -114,6 +114,12 @@ impl Checker<'_> {
     /// `±` needs a number: a Bool or a function operand is an error.
     fn reject_uncertain_operand(&mut self, what: &str, e: &Expr, t: &Ty) {
         match t {
+            Ty::Str => {
+                self.error(
+                    Diagnostic::error(format!("`{what}` needs a number, found a string"), e.span)
+                        .with_label("this is a string"),
+                );
+            }
             Ty::Bool => {
                 self.error(
                     Diagnostic::error(format!("`{what}` needs a number, found Bool"), e.span)

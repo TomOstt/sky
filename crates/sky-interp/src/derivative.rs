@@ -243,7 +243,7 @@ impl Interp<'_> {
             ));
         }
         let mut values = Vec::with_capacity(args.len());
-        for (a, param) in args.iter().zip(&func.params) {
+        for (i, (a, param)) in args.iter().zip(&func.params).enumerate() {
             let v = self.eval(a)?;
             // A derivative is taken at a point: an uncertain one would fail
             // inside the function, at whatever operation met it first.
@@ -259,6 +259,7 @@ impl Interp<'_> {
                     "pass `nominal(...)` to take it at the nominal value; the first-order uncertainty of the function is then `{label}` times `uncertainty(...)`"
                 )));
             }
+            self.check_parameter_tags(func, i, &v, a.span)?;
             values.push(v);
         }
         Ok(values)

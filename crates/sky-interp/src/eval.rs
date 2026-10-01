@@ -16,6 +16,7 @@ use sky_ast::{
 };
 use sky_diag::Span;
 use sky_syntax::lexer::unescape_str;
+use sky_types::{Tag, TagSet};
 use sky_units::MathFn;
 
 use crate::arith::{
@@ -422,6 +423,15 @@ impl<'a> Interp<'a> {
                     params: params
                         .iter()
                         .map(|p| self.text(p.name.span).to_string())
+                        .collect(),
+                    param_tags: params
+                        .iter()
+                        .map(|p| {
+                            let tags = p.ty.iter().flat_map(|t| &t.tags);
+                            TagSet::from_tags(
+                                tags.filter_map(|id| Tag::from_name(self.text(id.span))),
+                            )
+                        })
                         .collect(),
                     body: body.clone(),
                     captured: self.visible_functions(),
@@ -888,8 +898,9 @@ impl<'a> Interp<'a> {
             return Err(recursion_too_deep(&func.name, call.span));
         }
         let mut vars = BTreeMap::new();
-        for (name, a) in func.params.iter().zip(args) {
+        for (i, (name, a)) in func.params.iter().zip(args).enumerate() {
             let v = self.eval(a)?;
+            self.check_parameter_tags(func, i, &v, a.span)?;
             vars.insert(name.clone(), v);
         }
         // A postcondition sees the arguments as passed, and `result`. The
@@ -927,6 +938,24 @@ impl<'a> Interp<'a> {
             checked?;
         }
         Ok(value)
+    }
+
+    /// Checks the tags parameter `i` of `func` declares of the argument
+    /// `v` passed for it: see [`crate::solve::check_parameter_tags`], which
+    /// SIR's `assume` runs too.
+    pub(crate) fn check_parameter_tags(
+        &self,
+        func: &Function,
+        i: usize,
+        v: &Value,
+        span: Span,
+    ) -> R<()> {
+        match func.param_tags.get(i) {
+            Some(&tags) if !tags.is_empty() => {
+                crate::solve::check_parameter_tags(tags, TagSet::EMPTY, v, span)
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Checks the contract `kind cond, "message"`: the condition must be

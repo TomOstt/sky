@@ -154,10 +154,13 @@ fn a_user_binding_named_range_wins() {
 
 #[test]
 fn an_unknown_iterable_is_silent_and_gives_an_unknown_variable() {
-    // A string in a variable has no type, so the checker cannot object; the
-    // interpreter does at run time.
-    let c = check("s = \"abc\"\nfor ch in s:\n    d = ch\nz = d\n");
+    // A value the checker cannot type (a parameter without an annotation)
+    // gives no error; the interpreter checks it at run time.
+    let c = check("def f(s):\n    for ch in s:\n        d = ch\n    return d\n");
     assert_eq!(messages(&c), Vec::<&str>::new());
+    // A string in a variable is typed, and rejected like a literal.
+    let c = check("s = \"abc\"\nfor ch in s:\n    d = ch\nz = d\n");
+    assert_eq!(messages(&c), ["cannot iterate over a string"]);
 }
 
 #[test]

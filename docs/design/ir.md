@@ -277,7 +277,7 @@ The tree-walker has no analysis; it applies the same idea where it is cheap. A b
 
 * `sky check --emit-ir[=<stage>]` prints the SIR text to stdout: `lower` (straight out of lowering), `after:<pass>` (or just the pass name: `specialize`, `fold`, `egraph`, `gvn`, `licm`, `contracts`, `dce`, `fuse`, `cholesky`), or `final` (the default, the end of the pipeline). With the flag, stdout is only the IR, so it can be piped into a file and parsed back; the `edition:` and `ok` lines go to stderr.
 * `sky check --explain` also shows the passes' explanations, merged with the checker's notes in source order. The checker's Cholesky note is kept as it is (it names the operands by their source text, which SIR does not keep), and the pass's explanation of the same site is dropped, so it is never shown twice. A site only the IR sees (`B = inv(A)`, then `B @ b`) is shown once, from the pass, in the same words.
-* A program that checks but cannot be lowered yet (`sky_lower::LowerError`, today: array literals) is still `ok`. `--emit-ir` prints a note saying why there is no IR and nothing on stdout; `--explain` alone is unchanged.
+* A program that checks but cannot be lowered yet (`sky_lower::LowerError`: uncertainty, equations, iterating over a value of unknown type, ...) is still `ok`. `--emit-ir` prints a note saying why there is no IR and nothing on stdout; `--explain` alone says in one note that `sky run` runs the program on the tree-walking interpreter, and why.
 
 ### Explanations
 

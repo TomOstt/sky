@@ -1,0 +1,31 @@
+# `solve` does not propagate uncertainties yet: every way an uncertain
+# number can reach one is a check error, not a run-time error once the
+# solve is reached.
+g = 9.81 m/s^2
+L1 = 1 m ± 0.01 m
+th0 = 2.0 rad ± 0.01 rad
+
+equation pend(t: s):
+    th: rad
+    w: rad/s
+    th' = w
+    w' = -g / L1 * sin(th)
+
+sol = solve pend from 0 s to 1 s with th = th0, w = 0 rad/s:
+    conserve E = 0.5 * L1^2 * w^2 - g * L1 * cos(th)
+
+# A state named like an uncertain module name is the state, not the name.
+equation spin(t: s):
+    th: rad
+    th' = 1 rad/s
+
+th = 1 rad ± 0.1 rad
+ok = solve spin from 0 s to 1 s with th = nominal(th):
+    conserve E2 = th - 1 rad/s * t
+
+# Written into the right side.
+equation decay(t: s):
+    n: mol
+    n' = -(2 s^-1 ± 0.1 s^-1) * n
+
+bad = solve decay from 0 s to 1 s with n = 1 mol

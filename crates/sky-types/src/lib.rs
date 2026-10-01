@@ -55,6 +55,7 @@ pub mod flops;
 mod flow;
 mod for_loop;
 pub mod linalg;
+mod module_reads;
 pub mod numerics;
 mod ode;
 mod ode_analysis;

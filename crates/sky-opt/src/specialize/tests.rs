@@ -1075,10 +1075,10 @@ print(scale(2, 3))
 }
 
 #[test]
-fn an_argument_of_unknown_type_gives_no_type() {
-    // The result of a call to an unannotated function is `unknown` at the
-    // call (callers are not retyped), so `h`'s argument has no known type and
-    // `h` keeps its generic body; `fib` itself still gets its clone.
+fn the_result_of_a_typed_clone_types_the_next_call() {
+    // The result of a call to an unannotated function was `unknown` at the
+    // call; once `fib[n:Scalar]` is known to return a number the caller is
+    // typed again, and `h`'s argument has a type too.
     let src = "\
 def fib(n):
     if n < 2:
@@ -1091,7 +1091,7 @@ def h(y):
 print(h(fib(5)))
 ";
     let (m, _) = specialized(src);
-    assert!(clones_of(&m, "h").is_empty());
+    assert_eq!(clones_of(&m, "h"), ["h[y:Scalar]"]);
     assert_eq!(clones_of(&m, "fib"), ["fib[n:Scalar]"]);
 }
 
@@ -1145,4 +1145,56 @@ print(g(true))
     let (out, err) = run(&m, src);
     assert_eq!(out, "1\n");
     assert!(err.unwrap().contains("needs a number"));
+}
+
+#[test]
+fn a_loop_that_feeds_a_call_its_own_result_is_typed_and_calls_the_clone() {
+    // `s` is a number before the loop and whatever `next_state` returns in
+    // it: nothing gives the call a type fact until the caller is typed
+    // again, with the clone's result.
+    let src = "\
+def next_state(s):
+    return s * 16807 - floor(s * 16807 / 2147483647) * 2147483647
+
+s = 42
+for i in range(10):
+    s = next_state(s)
+print(s)
+";
+    let (m, ex) = specialized(src);
+    assert_eq!(clones_of(&m, "next_state"), ["next_state[s:Scalar]"]);
+    assert!(m.function("next_state").is_none());
+    let main = m.function("<main>").unwrap();
+    assert_eq!(callees(main), ["next_state[s:Scalar]"]);
+    assert_eq!(unknowns(main), 0, "{}", sky_ir::print_function(main));
+    assert_eq!(rules(&ex), [RULE_RETYPED]);
+}
+
+#[test]
+fn a_typed_clone_s_result_types_its_caller() {
+    // The call already goes to a clone; its result is a number now, and so
+    // is what the caller computes from it.
+    let src = "def double(x):\n    return x * 2\n\ny = double(3) + 1\nprint(y)\n";
+    let (m, _) = specialized(src);
+    let main = m.function("<main>").unwrap();
+    assert_eq!(unknowns(main), 0, "{}", sky_ir::print_function(main));
+}
+
+#[test]
+fn a_variable_that_holds_different_types_stays_unknown() {
+    // `x` is a number, then a Bool: the loop's join is unknown, so `x`
+    // keeps its run-time checks, and the output is the same.
+    let src = "\
+def pick(a, b):
+    return b
+
+x = 1
+for i in range(3):
+    print(x)
+    x = pick(x, i == 1)
+print(x)
+";
+    let (m, _) = specialized(src);
+    let main = m.function("<main>").unwrap();
+    assert!(unknowns(main) > 0, "{}", sky_ir::print_function(main));
 }

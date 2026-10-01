@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 9a1995481733dd382bfd66b4d7f4473db4d0528d57faa7186dcaa83d033476b3 # shrinks to e1 = Rational { num: -4611686018427387901, den: 1 }, e2 = Rational { num: -9223372036854775808, den: 3 }
+cc 720cc0d0415f5bcbef6093da88986ccbf8e61a83266cfc1165dce56e7ff8b52c # shrinks to u = Unit { name: "t", ascii: None, dim: Dimension { exps: [Rational { num: 0, den: 1 }, Rational { num: 1, den: 1 }, Rational { num: 0, den: 1 }, Rational { num: 0, den: 1 }, Rational { num: 0, den: 1 }, Rational { num: 0, den: 1 }, Rational { num: 0, den: 1 }] }, scale: 1000.0, prefixable: true, exp10: Some(3) }, extra = "a", any = ""

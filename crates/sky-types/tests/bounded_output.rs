@@ -174,7 +174,10 @@ fn rewrites_beyond_the_cap_are_counted_not_stored() {
     }
     // Checking went on past the cap: every name is bound.
     let last = format!("u{}", lines - 1);
-    assert_eq!(c.env.get(&last).unwrap().to_string(), "Vector[3] [1]");
+    assert_eq!(
+        c.env.get(&last).unwrap().to_string(),
+        "Vector[3] [dimensionless]"
+    );
 }
 
 #[test]

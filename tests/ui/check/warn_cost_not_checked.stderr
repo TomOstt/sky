@@ -1,6 +1,6 @@
-tests/ui/check/warn_cost_not_checked.sky:4:14: warning: the cost contracts were not checked: iteration over an array is not compiled yet
+tests/ui/check/warn_cost_not_checked.sky:4:14: warning: the cost contracts were not checked: iteration over a value whose type is not known before the program runs does not lower to SIR yet
   |
-4 |     for x in v:
+4 |     for x in w:
   |              ^
   = note: the program checks, but lowering to SIR does not support it yet, and the cost model runs on SIR
-  = note: loop over its indices instead: `for i in range(len(v)):`, reading `v[i]`
+  = note: annotate where it comes from, e.g. a parameter `w: Vector[N]`, and the loop compiles

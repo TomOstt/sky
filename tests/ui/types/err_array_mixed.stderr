@@ -27,11 +27,11 @@ tests/ui/types/err_array_mixed.sky:4:6: error: an array element must be a number
 tests/ui/types/err_array_mixed.sky:6:6: error: an array element must be a number, found a matrix
   |
 6 | f = [e, e]
-  |      ^ this is Matrix[2,2] [1]
+  |      ^ this is Matrix[2,2] [dimensionless]
   = help: write a matrix as rows: `[[1, 2], [3, 4]]`
 
 tests/ui/types/err_array_mixed.sky:6:9: error: an array element must be a number, found a matrix
   |
 6 | f = [e, e]
-  |         ^ this is Matrix[2,2] [1]
+  |         ^ this is Matrix[2,2] [dimensionless]
   = help: write a matrix as rows: `[[1, 2], [3, 4]]`

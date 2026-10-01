@@ -27,7 +27,7 @@ tests/ui/types/err_array_entrywise_shapes.sky:7:7: error: cannot apply `*` to a 
 7 | q = u * M
   |       ^ rank 1 vs rank 2
   |     - this is Vector[3] [L]
-  |         - this is Matrix[3,3] [1]
+  |         - this is Matrix[3,3] [dimensionless]
   = note: left: [3] has 1 axis, right: [3, 3] has 2 axes
   = note: axes are numbered from 0 and have no names yet; only shapes of the same rank can be compared axis by axis
   = note: `*` on two arrays works entry by entry, so both need one shape
@@ -37,7 +37,7 @@ tests/ui/types/err_array_entrywise_shapes.sky:8:7: error: cannot apply `/` to a 
   |
 8 | d = M / u
   |       ^ rank 2 vs rank 1
-  |     - this is Matrix[3,3] [1]
+  |     - this is Matrix[3,3] [dimensionless]
   |         - this is Vector[3] [L]
   = note: left: [3, 3] has 2 axes, right: [3] has 1 axis
   = note: axes are numbered from 0 and have no names yet; only shapes of the same rank can be compared axis by axis

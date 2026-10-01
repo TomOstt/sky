@@ -142,6 +142,20 @@ impl ValueTy {
     }
 }
 
+/// How a computed matrix gets `tag`: from the operations that keep it, or
+/// through a parameter that declares it, which is checked at the call
+/// (see `sky_interp::solve::check_parameter_tags`).
+fn tag_help(tag: Tag) -> String {
+    match tag {
+        Tag::Symmetric | Tag::Diagonal => format!(
+            "`+`, `-`, scaling, negation, `ᵀ` and `⁻¹` of {0} matrices are {0}; for another matrix, pass it to a function whose parameter is declared {0}, which checks it when the function is called",
+            tag.name()
+        ),
+        Tag::PositiveDefinite => "only `ᵀ` and `⁻¹` keep PositiveDefinite; for a matrix you know is positive definite, pass it to a function whose parameter is declared PositiveDefinite: its symmetry is checked when the function is called, and its positivity by the Cholesky solve that relies on it".to_string(),
+        Tag::Orthogonal => "build it from `identity(n)` and products and negations of Orthogonal matrices: an Orthogonal promise is never checked when the program runs, so the checker must know it".to_string(),
+    }
+}
+
 /// The type the walk assigns to an expression or a name.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Ty {
@@ -149,6 +163,11 @@ pub enum Ty {
     Value(ValueTy),
     /// The result of a comparison.
     Bool,
+    /// A string: a literal (`"mode 1"`), or a name or result holding one.
+    /// It can be printed, compared with `==`/`!=` to another string, bound,
+    /// passed to an unannotated parameter and returned; anything else is an
+    /// error here rather than when the program runs.
+    Str,
     /// A function defined with `def`: its signature, for checking calls.
     Func(Arc<FuncSig>),
     /// An `equation`, or the solution a `solve` gave (see [`OdeTy`]).
@@ -171,8 +190,14 @@ impl Ty {
 
 impl fmt::Display for ValueTy {
     /// `Matrix[3,3] {Symmetric} [L]`: shape, tags if any, element dimension.
+    /// A pure number is `[dimensionless]`, not the bare exponent `[1]`,
+    /// which reads like a unit bracket.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} [{}]", self.ty, self.dim)
+        if self.dim.is_dimensionless() {
+            write!(f, "{} [dimensionless]", self.ty)
+        } else {
+            write!(f, "{} [{}]", self.ty, self.dim)
+        }
     }
 }
 
@@ -181,6 +206,7 @@ impl fmt::Display for Ty {
         match self {
             Ty::Value(v) => v.fmt(f),
             Ty::Bool => f.write_str("Bool"),
+            Ty::Str => f.write_str("a string"),
             Ty::Func(sig) => write!(f, "function `{}`", sig.name()),
             Ty::Ode(o) => o.fmt(f),
             Ty::Unknown => f.write_str("?"),
@@ -267,6 +293,14 @@ impl Env {
         self.origins.remove(&name);
         self.maybe.remove(&name);
         self.names.insert(name, ty);
+    }
+
+    /// Removes `name` (bound or maybe-bound): it is not visible from here
+    /// on.
+    pub(crate) fn unbind(&mut self, name: &str) {
+        self.names.remove(name);
+        self.origins.remove(name);
+        self.maybe.remove(name);
     }
 
     /// The current bindings, to restore later or merge with others.
@@ -480,6 +514,7 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         funcs: HashMap::new(),
         num: NumState::default(),
         unc: crate::uncertain::UncertainState::default(),
+        reads: crate::module_reads::ModuleReads::default(),
         shown_ok: None,
         contract_defs: HashMap::new(),
         failed_defs: HashSet::new(),
@@ -556,6 +591,9 @@ pub(crate) struct Checker<'s> {
     pub(crate) num: NumState,
     /// What the uncertainty warning remembers (see [`crate::uncertain`]).
     pub(crate) unc: crate::uncertain::UncertainState,
+    /// The module names function and equation bodies read (see
+    /// [`crate::module_reads`]).
+    pub(crate) reads: crate::module_reads::ModuleReads,
     /// The one `v as unit` the next `expr` call may type without an error:
     /// the argument of `print` or the expression statement being checked
     /// (see [`crate::display`]).
@@ -581,6 +619,7 @@ pub(crate) struct LoopMark {
     ode_notes: usize,
     num: crate::numerics::NumState,
     unc: crate::uncertain::UncertainState,
+    reads: crate::module_reads::ModuleReads,
     prelude: BTreeSet<String>,
     fn_ctx: Option<crate::flow::FnCtx>,
     shadow_reported: Vec<String>,
@@ -712,6 +751,7 @@ impl<'s> Checker<'s> {
             ode_notes: self.ode_notes.len(),
             num: self.num.clone(),
             unc: self.unc.clone(),
+            reads: self.reads.clone(),
             prelude: self.env.prelude.clone(),
             fn_ctx: self.fns.last().cloned(),
             shadow_reported: self.shadow_reported.clone(),
@@ -732,6 +772,7 @@ impl<'s> Checker<'s> {
         self.ode_notes.truncate(mark.ode_notes);
         self.num = mark.num.clone();
         self.unc = mark.unc.clone();
+        self.reads = mark.reads.clone();
         self.env.prelude = mark.prelude.clone();
         if let (Some(ctx), Some(saved)) = (self.fns.last_mut(), &mark.fn_ctx) {
             *ctx = saved.clone();
@@ -746,7 +787,7 @@ impl<'s> Checker<'s> {
         self.failed_defs.retain(|s| !inside(s));
     }
 
-    /// `this is Matrix[3,3] [1]` for secondary labels.
+    /// `this is Matrix[3,3] [dimensionless]` for secondary labels.
     pub(crate) fn this_is(&self, v: &ValueTy) -> String {
         format!(
             "this is {}",
@@ -783,17 +824,23 @@ impl<'s> Checker<'s> {
         }
     }
 
-    /// If `t` is Bool, reports that `what` needs a number (v0.1 has no
-    /// truthiness in either direction) and returns true.
-    fn reject_bool(&mut self, what: &str, e: &Expr, t: &Ty) -> bool {
-        if *t != Ty::Bool {
-            return false;
+    /// If `t` is Bool or a string, reports that `what` needs a number (v0.1
+    /// has no truthiness in either direction, and a string is only printed
+    /// or compared) and returns true.
+    fn reject_non_number(&mut self, what: &str, e: &Expr, t: &Ty) -> bool {
+        match t {
+            Ty::Bool => self.error(
+                Diagnostic::error(format!("`{what}` needs a number, found Bool"), e.span)
+                    .with_label("this is Bool")
+                    .with_note("v0.1 has no truthiness: a Bool is never a number"),
+            ),
+            Ty::Str => self.error(
+                Diagnostic::error(format!("`{what}` needs a number, found a string"), e.span)
+                    .with_label("this is a string")
+                    .with_note("in v0.1 a string can be printed, and compared with `==` or `!=`"),
+            ),
+            _ => return false,
         }
-        self.error(
-            Diagnostic::error(format!("`{what}` needs a number, found Bool"), e.span)
-                .with_label("this is Bool")
-                .with_note("v0.1 has no truthiness: a Bool is never a number"),
-        );
         true
     }
 
@@ -827,6 +874,17 @@ impl<'s> Checker<'s> {
                     )
                     .with_label("not a Bool")
                     .with_help("call it to get a value, then compare that value"),
+                );
+                return;
+            }
+            Ty::Str => {
+                self.error(
+                    Diagnostic::error(
+                        format!("`{kw}` needs a Bool {noun}, found a string"),
+                        e.span,
+                    )
+                    .with_label("not a Bool")
+                    .with_note("v0.1 has no truthiness"),
                 );
                 return;
             }
@@ -890,6 +948,7 @@ impl<'s> Checker<'s> {
     /// Binds `name` at `span` (its origin, for labels), as a local of the
     /// function being checked if there is one.
     pub(crate) fn bind_at(&mut self, name: &str, ty: Ty, span: Span) {
+        self.check_module_rebind(name, &ty, span);
         self.env.bind(name, ty);
         self.num.on_bind(name);
         self.env.origins.insert(name.to_string(), span);
@@ -1029,6 +1088,14 @@ impl<'s> Checker<'s> {
                 );
                 return Ty::value(declared_dim, tensor);
             }
+            Ty::Str => {
+                self.error(
+                    Diagnostic::error("expected a number, found a string", value.span)
+                        .with_label("this is a string")
+                        .with_secondary(ty.span, "expected because of this annotation"),
+                );
+                return Ty::value(declared_dim, tensor);
+            }
             Ty::Unknown => return Ty::value(declared_dim, tensor),
         };
         let what = format!(
@@ -1081,33 +1148,30 @@ impl<'s> Checker<'s> {
             .with_note(
                 "the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it",
             );
-            d = match (&value.kind, &proof) {
-                (_, Some(p)) => {
+            d = match &proof {
+                Some(p) => {
                     let f = p.failure(tag);
                     for (span, label) in f.entries {
                         d = d.with_secondary(span, label);
                     }
                     d = d.with_note(f.note);
                     if tag == Tag::Orthogonal {
-                        d.with_help("declare Orthogonal on an input, or build the matrix from `identity(n)`")
+                        d.with_help(tag_help(tag))
                     } else {
-                        d.with_help(format!(
-                            "fix the entries, or declare the {} property on an input the value is computed from",
-                            tag.name()
-                        ))
+                        d.with_help(format!("fix the entries; {}", tag_help(tag)))
                     }
                 }
-                (ExprKind::Name(_), _) => {
-                    let shape = self.env.shapes.apply(v.ty.shape());
-                    d.with_help(format!(
-                        "if `{subject}` is an input with this property, declare it that way where it is defined: `{subject}: {} {shape}`",
-                        tag.name()
-                    ))
-                }
-                _ => d.with_help(format!(
-                    "declare the {} property on an input the value is computed from",
-                    tag.name()
-                )),
+                None => match &value.kind {
+                    ExprKind::Name(_) => {
+                        let shape = self.env.shapes.apply(v.ty.shape());
+                        d.with_help(format!(
+                            "if `{subject}` has this property where it is bound, declare it there: `{subject}: {} {shape}`; otherwise, {}",
+                            tag.name(),
+                            tag_help(tag)
+                        ))
+                    }
+                    _ => d.with_help(tag_help(tag)),
+                },
             };
             self.error(d);
         }
@@ -1492,7 +1556,7 @@ impl<'s> Checker<'s> {
             ExprKind::Literal(lit) => match lit {
                 Literal::Int(_) | Literal::Float(_) => Ty::scalar(Dimension::DIMENSIONLESS),
                 Literal::Bool { .. } => Ty::Bool,
-                Literal::Str(_) => Ty::Unknown,
+                Literal::Str(_) => Ty::Str,
             },
             ExprKind::BoolOp { op, operands, .. } => {
                 // Flat: a long chain is a loop here, not recursion.
@@ -1509,7 +1573,10 @@ impl<'s> Checker<'s> {
             ExprKind::Name(id) => {
                 let name = self.ident(id);
                 match self.env.get_symbolic(name) {
-                    Some(t) => t,
+                    Some(t) => {
+                        self.note_module_read(name, &t, id.span);
+                        t
+                    }
                     None => self.undefined_name(name, id.span),
                 }
             }
@@ -1525,7 +1592,7 @@ impl<'s> Checker<'s> {
                     return Ty::Bool;
                 }
                 if matches!(op, UnaryOp::Neg | UnaryOp::Pos)
-                    && self.reject_bool(op_sym(*op), operand, &t)
+                    && self.reject_non_number(op_sym(*op), operand, &t)
                 {
                     return Ty::Unknown;
                 }
@@ -1537,14 +1604,14 @@ impl<'s> Checker<'s> {
             }
             ExprKind::Inverse { operand, op_span } => {
                 let t = self.expr(operand);
-                if self.reject_bool("⁻¹", operand, &t) {
+                if self.reject_non_number("⁻¹", operand, &t) {
                     return Ty::Unknown;
                 }
                 self.invert(t, *op_span, operand)
             }
             ExprKind::Transpose { operand, op_span } => {
                 let t = self.expr(operand);
-                if self.reject_bool("ᵀ", operand, &t) {
+                if self.reject_non_number("ᵀ", operand, &t) {
                     return Ty::Unknown;
                 }
                 self.transposed(t, *op_span, operand)
@@ -1659,7 +1726,7 @@ impl<'s> Checker<'s> {
             return Ty::Unknown;
         };
         let t = self.expr(arg);
-        if self.reject_bool("transpose", arg, &t) {
+        if self.reject_non_number("transpose", arg, &t) {
             return Ty::Unknown;
         }
         self.transposed(t, callee.span, arg)
@@ -1704,7 +1771,9 @@ impl<'s> Checker<'s> {
                     None => {
                         let mut d =
                             Diagnostic::error(format!("unknown unit `{}`", quote(name)), id.span);
-                        if lookup_constant(name).is_some() {
+                        if let Some(hint) = sky_units::unit_hint(name) {
+                            d = d.with_help(hint);
+                        } else if lookup_constant(name).is_some() {
                             // `10 c`: a constant is a value, so it multiplies.
                             let q = quote(name);
                             d = d.with_help(format!(
@@ -1718,6 +1787,8 @@ impl<'s> Checker<'s> {
                     }
                 };
             }
+            UnitExpr::One(_) => return Some(Dimension::DIMENSIONLESS),
+            UnitExpr::Group { inner, .. } => return self.unit(inner),
             UnitExpr::Mul { lhs, rhs, .. } => {
                 let (a, b) = (self.unit(lhs), self.unit(rhs));
                 a?.checked_mul(b?)
@@ -1822,8 +1893,8 @@ impl<'s> Checker<'s> {
             }
         }
         let r = self.expr(rhs);
-        let lb = self.reject_bool("@", lhs, &l);
-        if self.reject_bool("@", rhs, &r) || lb {
+        let lb = self.reject_non_number("@", lhs, &l);
+        if self.reject_non_number("@", rhs, &r) || lb {
             return Ty::Unknown;
         }
         let (Ty::Value(lv), Ty::Value(rv)) = (l, r) else {
@@ -1902,8 +1973,8 @@ impl<'s> Checker<'s> {
     fn pow(&mut self, op_span: Span, base: &Expr, exp: &Expr) -> Ty {
         let b = self.expr(base);
         let x = self.expr(exp);
-        let bb = self.reject_bool("^", base, &b);
-        if self.reject_bool("^", exp, &x) || bb {
+        let bb = self.reject_non_number("^", base, &b);
+        if self.reject_non_number("^", exp, &x) || bb {
             return Ty::Unknown;
         }
         let Ty::Value(bv) = b else {
@@ -1991,14 +2062,30 @@ impl<'s> Checker<'s> {
     fn binary(&mut self, op: BinaryOp, op_span: Span, l: (&Expr, Ty), r: (&Expr, Ty)) -> Ty {
         let ((le, lt), (re, rt)) = (l, r);
         match (&lt, &rt) {
-            (Ty::Bool, Ty::Bool) if matches!(op, BinaryOp::Eq | BinaryOp::Ne) => return Ty::Bool,
-            (Ty::Bool, _) | (_, Ty::Bool) => {
+            (Ty::Bool, Ty::Bool) | (Ty::Str, Ty::Str)
+                if matches!(op, BinaryOp::Eq | BinaryOp::Ne) =>
+            {
+                return Ty::Bool
+            }
+            (Ty::Str, Ty::Value(_) | Ty::Bool) | (Ty::Value(_) | Ty::Bool, Ty::Str)
+                if matches!(op, BinaryOp::Eq | BinaryOp::Ne) =>
+            {
+                let (ln, rn) = (self.ty_noun(&lt), self.ty_noun(&rt));
+                self.error(
+                    Diagnostic::error(format!("cannot compare {ln} and {rn}"), op_span)
+                        .with_secondary(le.span, ln)
+                        .with_secondary(re.span, rn)
+                        .with_note("a string is equal only to another string"),
+                );
+                return Ty::Unknown;
+            }
+            (Ty::Bool | Ty::Str, _) | (_, Ty::Bool | Ty::Str) => {
                 // `==`/`!=` between a Bool and an unknown operand may be
                 // fine; stay silent rather than guess.
                 let eq = matches!(op, BinaryOp::Eq | BinaryOp::Ne);
                 if !(eq && (lt == Ty::Unknown || rt == Ty::Unknown)) {
-                    self.reject_bool(op.symbol(), le, &lt);
-                    self.reject_bool(op.symbol(), re, &rt);
+                    self.reject_non_number(op.symbol(), le, &lt);
+                    self.reject_non_number(op.symbol(), re, &rt);
                 }
                 return Ty::Unknown;
             }
@@ -2073,6 +2160,7 @@ impl<'s> Checker<'s> {
     ) -> Ty {
         let ((le, lv), (re, rv)) = (l, r);
         let sym = op.symbol();
+        let mut tags = TagSet::EMPTY;
         match (lv.is_scalar(), rv.is_scalar()) {
             (true, true) => {}
             (false, false) => {
@@ -2092,15 +2180,18 @@ impl<'s> Checker<'s> {
                 };
                 let checked = elementwise(shapes, &lv.ty, &rv.ty);
                 self.env.shapes.set_origin(None);
-                if let Err(e) = checked {
-                    let e = e.in_context(ShapeContext::Operator(Arc::from(sym)));
-                    let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
-                    self.error(
-                        self.shape_diagnostic(&e, op_span)
-                            .with_secondary(le.span, ll)
-                            .with_secondary(re.span, rl),
-                    );
-                    return Ty::Unknown;
+                match checked {
+                    Ok(t) => tags = t.tags(),
+                    Err(e) => {
+                        let e = e.in_context(ShapeContext::Operator(Arc::from(sym)));
+                        let (ll, rl) = (self.this_is(&lv), self.this_is(&rv));
+                        self.error(
+                            self.shape_diagnostic(&e, op_span)
+                                .with_secondary(le.span, ll)
+                                .with_secondary(re.span, rl),
+                        );
+                        return Ty::Unknown;
+                    }
                 }
             }
             (left_scalar, _) => {
@@ -2199,9 +2290,12 @@ impl<'s> Checker<'s> {
             self.plus_dash_hint(op, op_span);
             return Ty::Unknown;
         }
-        // Elementwise results carry no tags (see `rules::elementwise`).
+        // The tags both operands have that `+` and `-` keep (see
+        // `rules::elementwise`).
         let shape = self.env.shapes.apply(lv.ty.shape());
-        Ty::value(lv.dim, TensorType::untagged(shape))
+        let ty = TensorType::tagged(&mut self.env.shapes, shape.clone(), tags)
+            .unwrap_or_else(|_| TensorType::untagged(shape));
+        Ty::value(lv.dim, ty)
     }
 
     fn multiplicative(
@@ -2264,68 +2358,10 @@ fn op_sym(op: UnaryOp) -> &'static str {
 /// dimension, otherwise composes the SI base units (m, kg, s, A, K, mol, cd).
 /// `None` only if an exponent cannot be negated.
 fn zero_of(d: &Dimension) -> Option<String> {
-    use sky_units::{BaseDim, UNITS};
-    if d.is_dimensionless() {
-        return Some("0".to_string());
+    match sky_units::si_unit_text(d) {
+        None => Some("0".to_string()),
+        Some(unit) => Some(format!("0 {unit}")),
     }
-    if let Some(u) = UNITS.iter().find(|u| u.dim == *d && u.scale == 1.0) {
-        return Some(format!("0 {}", u.name));
-    }
-    let symbol = |b: BaseDim| match b {
-        BaseDim::Length => "m",
-        BaseDim::Mass => "kg",
-        BaseDim::Time => "s",
-        BaseDim::Temperature => "K",
-        BaseDim::Current => "A",
-        BaseDim::Amount => "mol",
-        BaseDim::Luminosity => "cd",
-    };
-    let power = |sym: &str, e: Rational| {
-        if e == Rational::ONE {
-            sym.to_string()
-        } else if e.is_integer() {
-            format!("{sym}^{}", e.numer())
-        } else {
-            format!("{sym}^({}/{})", e.numer(), e.denom())
-        }
-    };
-    let (mut pos, mut neg) = (Vec::new(), Vec::new());
-    // SI order for derived units: kg·m·s⁻²·K.
-    let order = [
-        BaseDim::Mass,
-        BaseDim::Length,
-        BaseDim::Time,
-        BaseDim::Temperature,
-        BaseDim::Current,
-        BaseDim::Amount,
-        BaseDim::Luminosity,
-    ];
-    for b in order {
-        let e = d.exponent(b);
-        if e.is_zero() {
-            continue;
-        }
-        let sym = symbol(b);
-        if e.numer() > 0 {
-            pos.push(power(sym, e));
-        } else {
-            neg.push((sym, e));
-        }
-    }
-    let unit = if pos.is_empty() {
-        neg.iter()
-            .map(|&(s, e)| power(s, e))
-            .collect::<Vec<_>>()
-            .join("*")
-    } else {
-        let mut u = pos.join("*");
-        for (s, e) in neg {
-            u.push('/');
-            u.push_str(&power(s, e.checked_neg().ok()?));
-        }
-        u
-    };
-    Some(format!("0 {unit}"))
 }
 
 /// The matrix property `name` is probably a misspelling or abbreviation of: within two

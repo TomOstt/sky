@@ -1,7 +1,7 @@
-a: Scalar [1]
+a: Scalar [dimensionless]
 b: ?
 c: ?
-d: Scalar [1]
+d: Scalar [dimensionless]
 fact: function `fact`
 forever: function `forever`
 inferred: function `inferred`

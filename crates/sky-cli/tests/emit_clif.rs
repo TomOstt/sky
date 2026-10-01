@@ -75,7 +75,7 @@ fn a_program_without_ir_has_no_clif_and_a_note_says_why() {
     let o = sky(
         "noir",
         &["check", "--emit=clif"],
-        "for x in [1, 2]:\n    print(x)\n",
+        "def f(w):\n    for x in w:\n        print(x)\nf([1, 2])\n",
     );
     assert_eq!(o.status.code(), Some(0), "{}", err(&o));
     assert_eq!(out(&o), "");

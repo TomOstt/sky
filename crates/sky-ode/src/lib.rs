@@ -166,8 +166,9 @@ pub struct Conserved {
     pub name: String,
     pub value: StateFn,
     /// The largest allowed relative drift `|Q(t) - Q(t0)| / |Q(t0)|`, or
-    /// `None` to only report it. (If `Q(t0)` is exactly zero the drift is
-    /// absolute, there being no scale to divide by.)
+    /// `None` to only report it. If `Q(t0)` is zero up to rounding, the
+    /// drift is relative to the size of `Q`'s terms instead (a quantity
+    /// that is zero by cancellation has no other scale).
     pub max_drift: Option<f64>,
 }
 
@@ -467,13 +468,14 @@ fn finish(
     y: Vec<f64>,
     mut explanation: Vec<String>,
 ) -> Solution {
-    for (c, d) in run.opts.conserved.iter().zip(&run.drift) {
+    for ((c, d), scale) in run.opts.conserved.iter().zip(&run.drift).zip(&run.scale) {
+        let relative = run::relative_to(*scale);
         explanation.push(match c.max_drift {
             Some(max) => format!(
-                "{} drifted by at most {d:.1e} (relative), within the allowed {max:.1e}",
+                "{} drifted by at most {d:.1e} ({relative}), within the allowed {max:.1e}",
                 c.name
             ),
-            None => format!("{} drifted by at most {d:.1e} (relative)", c.name),
+            None => format!("{} drifted by at most {d:.1e} ({relative})", c.name),
         });
     }
     Solution {

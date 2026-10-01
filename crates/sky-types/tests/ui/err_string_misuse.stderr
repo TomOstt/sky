@@ -1,0 +1,91 @@
+crates/sky-types/tests/ui/err_string_misuse.sky:2:5: error: `+` needs a number, found a string
+  |
+2 | a = "a" + "b"
+  |     ^^^ this is a string
+  = note: in v0.1 a string can be printed, and compared with `==` or `!=`
+
+crates/sky-types/tests/ui/err_string_misuse.sky:2:11: error: `+` needs a number, found a string
+  |
+2 | a = "a" + "b"
+  |           ^^^ this is a string
+  = note: in v0.1 a string can be printed, and compared with `==` or `!=`
+
+crates/sky-types/tests/ui/err_string_misuse.sky:3:6: error: `-` needs a number, found a string
+  |
+3 | b = -"x"
+  |      ^^^ this is a string
+  = note: in v0.1 a string can be printed, and compared with `==` or `!=`
+
+crates/sky-types/tests/ui/err_string_misuse.sky:4:5: error: `<` needs a number, found a string
+  |
+4 | c = "a" < "b"
+  |     ^^^ this is a string
+  = note: in v0.1 a string can be printed, and compared with `==` or `!=`
+
+crates/sky-types/tests/ui/err_string_misuse.sky:4:11: error: `<` needs a number, found a string
+  |
+4 | c = "a" < "b"
+  |           ^^^ this is a string
+  = note: in v0.1 a string can be printed, and compared with `==` or `!=`
+
+crates/sky-types/tests/ui/err_string_misuse.sky:5:9: error: cannot compare a string and a dimensionless number
+  |
+5 | d = "a" == 5
+  |         ^^
+  |     --- a string
+  |            - a dimensionless number
+  = note: a string is equal only to another string
+
+crates/sky-types/tests/ui/err_string_misuse.sky:6:9: error: `len` needs a vector or a matrix, found a string
+  |
+6 | e = len("hello")
+  |         ^^^^^^^ this is a string
+
+crates/sky-types/tests/ui/err_string_misuse.sky:7:10: error: `sqrt` needs a number, found a string
+  |
+7 | f = sqrt("x")
+  |          ^^^ this is a string
+
+crates/sky-types/tests/ui/err_string_misuse.sky:8:5: error: cannot index a string
+  |
+8 | g = "abc"[0]
+  |     ^^^^^ this is a string
+  = note: in v0.1 a string is only printed; it has no elements
+
+crates/sky-types/tests/ui/err_string_misuse.sky:9:13: error: expected a number, found a string
+  |
+9 | h: Scalar = "a"
+  |             ^^^ this is a string
+  |    ------ expected because of this annotation
+
+crates/sky-types/tests/ui/err_string_misuse.sky:12:8: error: expected a number, found a string
+   |
+12 | report("mode 1", 2 Hz)
+   |        ^^^^^^^^ this is a string
+10 | def report(label: Scalar, w: Hz):
+   |                   ------ expected because of this annotation
+
+crates/sky-types/tests/ui/err_string_misuse.sky:13:4: error: `if` needs a Bool condition, found a string
+   |
+13 | if "x":
+   |    ^^^ not a Bool
+   = note: v0.1 has no truthiness
+
+crates/sky-types/tests/ui/err_string_misuse.sky:15:9: error: an array element must be a number, found a string
+   |
+15 | v = [1, "a"]
+   |         ^^^ this is a string
+   = note: in v0.1 an array holds numbers only
+
+crates/sky-types/tests/ui/err_string_misuse.sky:17:5: error: `*` needs a number, found a string
+   |
+17 | w = s * 2
+   |     ^ this is a string
+   = note: in v0.1 a string can be printed, and compared with `==` or `!=`
+
+crates/sky-types/tests/ui/err_string_misuse.sky:18:11: error: cannot iterate over a string
+   |
+18 | for ch in s:
+   |           ^ this is a string
+   = note: in v0.1 a string is only printed; it has no elements to loop over
+   = help: loop over a vector, a matrix or `range(n)`

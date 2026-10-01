@@ -5,11 +5,11 @@ crates/sky-types/tests/ui/err_conditional_arms.sky:6:25: error: the `else` arm i
   |     --- this is length
   = note: both arms of a conditional expression must have the same dimension and shape
 
-crates/sky-types/tests/ui/err_conditional_arms.sky:7:23: error: the `else` arm is `Vector[4] [1]`, but the `if` arm is `Vector[3] [1]`
+crates/sky-types/tests/ui/err_conditional_arms.sky:7:23: error: the `else` arm is `Vector[4] [dimensionless]`, but the `if` arm is `Vector[3] [dimensionless]`
   |
 7 | b = v if x > 0 m else w
-  |                       ^ this is Vector[4] [1]
-  |     - this is Vector[3] [1]
+  |                       ^ this is Vector[4] [dimensionless]
+  |     - this is Vector[3] [dimensionless]
   = note: both arms of a conditional expression must have the same dimension and shape
 
 crates/sky-types/tests/ui/err_conditional_arms.sky:8:23: error: the `else` arm is a Bool, but the `if` arm is a dimensionless number

@@ -1,11 +1,10 @@
-crates/sky-types/tests/ui/err_derivative_result.sky:11:16: error: cannot differentiate `label`: the unit of its result is not known
+crates/sky-types/tests/ui/err_derivative_result.sky:11:16: error: cannot differentiate `label`: it returns a string, not a number
    |
 11 | a = derivative(label, t)(1 s)
    |                ^^^^^ this function's result
  2 | def label(t: s):
    |     ----- `label` is defined here
-   = note: the derivative has the unit of the result divided by the unit of the parameter
-   = help: declare the result's unit, for example `def f(t: s) -> m`
+   = note: a string has no derivative
 
 crates/sky-types/tests/ui/err_derivative_result.sky:12:16: error: cannot differentiate `is_positive`: it returns a Bool, not a number
    |

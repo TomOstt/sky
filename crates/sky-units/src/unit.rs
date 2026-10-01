@@ -32,12 +32,25 @@
 //! The test `every_spelling_is_unambiguous` enumerates every prefix and unit
 //! spelling to prove no other collision exists.
 //!
+//! # Spellings that are not units
+//!
+//! A few prefix readings are absurd units that people write for something
+//! else: `ft` would be femto-tonne, but everyone means the foot. Sky does
+//! not guess. These spellings ([`NOT_UNITS`]) are not units at all, so
+//! `3 ft + 2 m` is an "unknown unit" error whose help says what `ft` would
+//! have meant and what to write instead, never a silent mass. They are
+//! `ft` (foot), `pt` (pint, point), `ct` (carat), `qt` (quart), `at`
+//! (technical atmosphere), `dt` (usually a time-step variable written
+//! without spaces, `x/dt`), and `myr` (milli-year, but people mean `Myr`).
+//! The test `no_prefix_reading_hides_a_common_unit` pins the list.
+//!
 //! Lookup is allocation-free and never panics: it only compares string
 //! prefixes with `strip_prefix`, which respects character boundaries.
 //!
 //! Because `rad` is dimensionless, `Hz` and `rad/s` have the same dimension,
 //! so a missing 2π between frequency and angular frequency is not caught (a
-//! known v0.1 limitation).
+//! known v0.1 limitation). For the same reason a value of that dimension
+//! never prints as `Hz` ([`si_unit_text`]): it may be an angular frequency.
 //!
 //! Affine units such as °C are deliberately absent in v0.1. Full-name
 //! aliases (`meters`, `kelvin`) are not units; [`suggest_unit`] turns them
@@ -287,6 +300,40 @@ pub static UNITS: &[Unit] = &[
     unit("eV", Dimension::ENERGY, ELECTRONVOLT_IN_JOULES).prefixable(),
 ];
 
+/// Spellings that an SI prefix and a table unit would read as a unit, but
+/// that people write for a different unit (or a variable), with what the
+/// help says instead. [`lookup`] refuses them; [`unit_hint`] explains them.
+pub static NOT_UNITS: &[(&str, &str)] = &[
+    (
+        "ft",
+        "`ft` would be femto-tonne (10⁻¹² kg), not feet; Sky has no foot, so write `0.3048 m` for 1 ft",
+    ),
+    (
+        "pt",
+        "`pt` would be pico-tonne (10⁻⁹ kg), not a pint or a point; Sky has neither, so write the value in SI (1 US pint is `0.473176473 L`)",
+    ),
+    (
+        "ct",
+        "`ct` would be centi-tonne (10 kg), not a carat; Sky has no carat, so write `0.2 g` for 1 ct",
+    ),
+    (
+        "qt",
+        "`qt` would be quecto-tonne (10⁻²⁷ kg), not a quart; Sky has no quart, so write the value in SI (1 US quart is `0.946352946 L`)",
+    ),
+    (
+        "at",
+        "`at` would be atto-tonne (10⁻¹⁵ kg), not a technical atmosphere; write `98066.5 Pa` for 1 at",
+    ),
+    (
+        "dt",
+        "`dt` would be deci-tonne (100 kg); to divide by a variable `dt`, put spaces around the operator (`x / dt`), and for 100 kg write `100 kg`",
+    ),
+    (
+        "myr",
+        "`myr` would be milli-year; for a million years write `Myr` (capital M)",
+    ),
+];
+
 fn exact(name: &str) -> Option<&'static Unit> {
     UNITS.iter().find(|u| u.is_spelled(name))
 }
@@ -320,6 +367,9 @@ fn resolved(unit: &'static Unit, prefix: Option<&'static Prefix>) -> Resolved {
 pub fn lookup(name: &str) -> Option<Resolved> {
     if let Some(u) = exact(name) {
         return Some(resolved(u, None));
+    }
+    if NOT_UNITS.iter().any(|&(n, _)| n == name) {
+        return None;
     }
     for p in PREFIXES {
         for spelling in [Some(p.name), p.ascii].into_iter().flatten() {
@@ -379,6 +429,33 @@ static FULL_NAMES: &[(&str, &str)] = &[
     ("day", "day"),
 ];
 
+/// Help for a name that is not a unit but that people write as one: a
+/// spelling in [`NOT_UNITS`], a temperature scale with an offset (°C, °F),
+/// molar `M`, or the inch. `None` for anything else ([`suggest_unit`] may
+/// still find a near miss).
+pub fn unit_hint(name: &str) -> Option<String> {
+    if let Some(&(_, why)) = NOT_UNITS.iter().find(|&&(n, _)| n == name) {
+        return Some(why.to_string());
+    }
+    let lower = name.to_lowercase();
+    let hint = match lower.as_str() {
+        "degc" | "celsius" | "°c" | "℃" | "degf" | "fahrenheit" | "°f" | "℉" => {
+            temperature_hint()
+        }
+        "inch" | "inches" | "in" => "Sky has no inch; write `0.0254 m` for 1 in",
+        _ if name == "M" || name == "molar" => {
+            "`M` (molar) is not a unit; write `mol/L` (2 M is `2 mol/L`)"
+        }
+        _ => return None,
+    };
+    Some(hint.to_string())
+}
+
+/// The help for °C and °F, which the lexer also gives for a `°`.
+pub fn temperature_hint() -> &'static str {
+    "temperatures with an offset (°C, °F) are not units in Sky, which measures temperature in kelvin: write 25 °C as `298.15 K`; a temperature difference of 1 °C is `1 K`, and of 1 °F is 5/9 of a kelvin (`5 K / 9`)"
+}
+
 /// A unit spelling to suggest for something that is not a unit, or `None`.
 ///
 /// Handles full names with an optional plural and SI prefix name
@@ -409,6 +486,101 @@ pub fn suggest_unit(name: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// The SI unit text for `dim` as valid Sky unit syntax, or `None` if the
+/// dimension is dimensionless (a bare number). This is how every value
+/// prints, so all engines and the checker's help text agree.
+///
+/// If a unit in the table has exactly this dimension and scale 1 (`N`,
+/// `J`, `W`, `Pa`, and whatever the table gains), that symbol is used.
+/// Otherwise base units are composed: positive powers first, in the order
+/// kg, m, s, K, A, mol, cd (`kg*m^2/s^2`), then one `/` per negative power,
+/// with `mol` first and the rest in that order, the way chemistry writes
+/// "per mole" (`kg*m^2/mol/s^2/K` for J/(mol·K), `m^3/mol/s` for a rate
+/// constant). A dimension with only negative powers is `m^-1`, `s^-1*K^-1`.
+///
+/// `Hz` is never chosen: `rad` is dimensionless, so a value of dimension
+/// T⁻¹ may be a frequency, an angular frequency (`rad/s`) or a rate, and
+/// naming it `Hz` would be a 2π error for an angular frequency. It prints
+/// as `s^-1`, which is right for all three.
+pub fn si_unit_text(dim: &Dimension) -> Option<String> {
+    use crate::dimension::BaseDim;
+    use crate::rational::Rational;
+    if dim.is_dimensionless() {
+        return None;
+    }
+    let ambiguous = *dim == Dimension::FREQUENCY;
+    if let Some(u) = UNITS
+        .iter()
+        .find(|u| u.dim == *dim && u.scale == 1.0 && !ambiguous)
+    {
+        return Some(u.name.to_string());
+    }
+    let symbol = |b: BaseDim| match b {
+        BaseDim::Mass => "kg",
+        BaseDim::Length => "m",
+        BaseDim::Time => "s",
+        BaseDim::Temperature => "K",
+        BaseDim::Current => "A",
+        BaseDim::Amount => "mol",
+        BaseDim::Luminosity => "cd",
+    };
+    let power = |sym: &str, e: Rational| {
+        if e == Rational::ONE {
+            sym.to_string()
+        } else if e.is_integer() {
+            format!("{sym}^{}", e.numer())
+        } else {
+            format!("{sym}^({}/{})", e.numer(), e.denom())
+        }
+    };
+    const NUMERATOR: [BaseDim; 7] = [
+        BaseDim::Mass,
+        BaseDim::Length,
+        BaseDim::Time,
+        BaseDim::Temperature,
+        BaseDim::Current,
+        BaseDim::Amount,
+        BaseDim::Luminosity,
+    ];
+    const DENOMINATOR: [BaseDim; 7] = [
+        BaseDim::Amount,
+        BaseDim::Mass,
+        BaseDim::Length,
+        BaseDim::Time,
+        BaseDim::Temperature,
+        BaseDim::Current,
+        BaseDim::Luminosity,
+    ];
+    let pos: Vec<String> = NUMERATOR
+        .into_iter()
+        .map(|b| (b, dim.exponent(b)))
+        .filter(|(_, e)| e.numer() > 0)
+        .map(|(b, e)| power(symbol(b), e))
+        .collect();
+    if pos.is_empty() {
+        // No numerator: write the negative exponents, `s^-1*K^-1`.
+        let parts: Vec<String> = NUMERATOR
+            .into_iter()
+            .map(|b| (symbol(b), dim.exponent(b)))
+            .filter(|(_, e)| e.numer() < 0)
+            .map(|(s, e)| power(s, e))
+            .collect();
+        return Some(parts.join("*"));
+    }
+    let mut out = pos.join("*");
+    for b in DENOMINATOR {
+        let e = dim.exponent(b);
+        if e.numer() >= 0 {
+            continue;
+        }
+        out.push('/');
+        // `e` is negative, so it can be negated unless it is i64::MIN,
+        // which the checker's exponent limits keep out of any value.
+        out.push_str(&power(symbol(b), e.checked_neg().unwrap_or(e)));
+    }
+    Some(out)
 }
 
 #[cfg(test)]
@@ -549,6 +721,9 @@ mod tests {
         for u in UNITS.iter().filter(|u| u.prefixable && u.exp10.is_some()) {
             for p in PREFIXES {
                 let name = format!("{}{}", p.name, u.name);
+                if NOT_UNITS.iter().any(|&(n, _)| n == name) {
+                    continue;
+                }
                 let want: f64 = format!("1e{}", i32::from(u.exp10.unwrap()) + i32::from(p.exp10))
                     .parse()
                     .unwrap();
@@ -905,48 +1080,100 @@ mod tests {
         assert_eq!(dim("Hz"), rad_per_s);
     }
 
-    /// Shown by the guard tests below when they fail.
-    const DISPLAY_COLLISION: &str = "the `N`/`J` dimension display symbols collide with \
-         newton/joule; error text must name such dimensions in words";
-
     #[test]
-    fn newton_is_not_the_amount_dimension() {
-        // The unit `N` (force) and the base-dimension symbol `N` (amount of
-        // substance, shown by `Dimension`'s display) are different things.
-        assert_ne!(dim("N"), Dimension::AMOUNT, "{DISPLAY_COLLISION}");
-        assert_ne!(dim("J"), Dimension::LUMINOSITY, "{DISPLAY_COLLISION}");
-        assert_eq!(Dimension::AMOUNT.to_string(), "N", "{DISPLAY_COLLISION}");
-        assert_eq!(
-            Dimension::LUMINOSITY.to_string(),
-            "J",
-            "{DISPLAY_COLLISION}"
-        );
+    fn amount_and_luminosity_never_print_as_newton_or_joule() {
+        // Dogfooding: a rate law's dimension printed as `L⁻³·T⁻¹·N`, which
+        // reads as a force. Their SI symbols `N` and `J` are the newton and
+        // the joule, so messages show `mol` and `cd` instead.
+        assert_eq!(Dimension::AMOUNT.to_string(), "mol");
+        assert_eq!(Dimension::LUMINOSITY.to_string(), "cd");
+        let rate = dim("mol")
+            .checked_div(dim("m").pow_int(3).unwrap())
+            .unwrap()
+            .checked_div(dim("s"))
+            .unwrap();
+        assert_eq!(rate.to_string(), "L⁻³·T⁻¹·mol");
+        assert_eq!(rate.pow_int(2).unwrap().to_string(), "L⁻⁶·T⁻²·mol²");
         assert_eq!(dim("N").to_string(), "L·M·T⁻²");
         assert_eq!(dim("J").to_string(), "L²·M·T⁻²");
-        // `mol` and `cd` exist now, and their pure dimensions do have
-        // words, which is what diagnostics print (`describe` prefers names).
-        assert_eq!(dim("mol"), Dimension::AMOUNT);
-        assert_eq!(dim("cd"), Dimension::LUMINOSITY);
         assert_eq!(dim("mol").name(), Some("amount of substance"));
         assert_eq!(dim("cd").name(), Some("luminous intensity"));
     }
 
-    /// Only `mol` and `cd` (and their prefixed spellings) may have amount or
-    /// luminous intensity in their dimension, so only they can put the bare
-    /// symbols `N` and `J` into error text. Adding another such unit
-    /// should be a conscious decision: give its dimension a name.
     #[test]
-    fn only_mol_and_cd_use_the_n_and_j_display_symbols() {
-        use crate::dimension::BaseDim;
-        for u in UNITS {
-            let uses = [BaseDim::Amount, BaseDim::Luminosity]
-                .into_iter()
-                .any(|b| !u.dim.exponent(b).is_zero());
-            assert_eq!(uses, matches!(u.name, "mol" | "cd"), "{}", u.name);
-            if uses {
-                assert!(u.dim.name().is_some(), "{DISPLAY_COLLISION}: {}", u.name);
-            }
+    fn hertz_is_never_the_printed_unit() {
+        let hz = dim("Hz");
+        assert_eq!(si_unit_text(&hz).as_deref(), Some("s^-1"));
+        let rad_per_s = dim("rad").checked_div(dim("s")).unwrap();
+        assert_eq!(si_unit_text(&rad_per_s).as_deref(), Some("s^-1"));
+        // Other named units are still used.
+        for name in ["N", "J", "W", "Pa", "C", "V", "Ω", "T"] {
+            assert_eq!(si_unit_text(&dim(name)).as_deref(), Some(name));
         }
+        assert_eq!(si_unit_text(&Dimension::DIMENSIONLESS), None);
+    }
+
+    #[test]
+    fn per_mole_comes_first_in_a_denominator() {
+        let per = |a: &str, b: &str| dim(a).checked_div(dim(b)).unwrap();
+        // J/(mol·K), m³/(mol·s), mol/(m³·s): written the chemist's way.
+        let r = per("J", "mol").checked_div(dim("K")).unwrap();
+        assert_eq!(si_unit_text(&r).as_deref(), Some("kg*m^2/mol/s^2/K"));
+        let k = per("L", "mol").checked_div(dim("s")).unwrap();
+        assert_eq!(si_unit_text(&k).as_deref(), Some("m^3/mol/s"));
+        let rate = per("mol", "L").checked_div(dim("s")).unwrap();
+        assert_eq!(si_unit_text(&rate).as_deref(), Some("mol/m^3/s"));
+        // Unchanged where there is no amount.
+        let w_per_m_k = per("W", "m").checked_div(dim("K")).unwrap();
+        assert_eq!(si_unit_text(&w_per_m_k).as_deref(), Some("kg*m/s^3/K"));
+        let per_mol = dim("mol").inverse().unwrap();
+        assert_eq!(si_unit_text(&per_mol).as_deref(), Some("mol^-1"));
+    }
+
+    #[test]
+    fn no_prefix_reading_hides_a_common_unit() {
+        // Each of these would be a prefix plus a table unit, a reading nobody
+        // means. Pinned, so a change to the list is deliberate.
+        let names: Vec<&str> = NOT_UNITS.iter().map(|&(n, _)| n).collect();
+        assert_eq!(names, ["ft", "pt", "ct", "qt", "at", "dt", "myr"]);
+        for &(name, why) in NOT_UNITS {
+            assert!(exact(name).is_none(), "{name} is a table unit");
+            assert!(lookup(name).is_none(), "{name}");
+            assert_eq!(unit_hint(name).as_deref(), Some(why));
+            assert!(why.starts_with(&format!("`{name}` would be")), "{why}");
+        }
+        // The readings they block were real: the prefix and unit exist.
+        for (prefix, unit) in [
+            ("f", "t"),
+            ("p", "t"),
+            ("c", "t"),
+            ("q", "t"),
+            ("a", "t"),
+            ("d", "t"),
+            ("m", "yr"),
+        ] {
+            assert!(PREFIXES.iter().any(|p| p.name == prefix));
+            assert!(exact(unit).is_some_and(|u| u.prefixable));
+        }
+        // Neighbours stay units.
+        for name in ["kt", "Mt", "Gt", "mt", "Myr", "kyr", "ms", "mm"] {
+            assert!(lookup(name).is_some(), "{name}");
+        }
+    }
+
+    #[test]
+    fn hints_for_things_people_write_as_units() {
+        for name in ["degC", "celsius", "degF", "fahrenheit", "°C"] {
+            assert_eq!(
+                unit_hint(name).as_deref(),
+                Some(temperature_hint()),
+                "{name}"
+            );
+        }
+        assert!(unit_hint("M").unwrap().contains("`mol/L`"));
+        assert!(unit_hint("inch").unwrap().contains("`0.0254 m`"));
+        assert_eq!(unit_hint("meters"), None);
+        assert_eq!(unit_hint("m"), None);
     }
 
     #[test]

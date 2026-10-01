@@ -160,10 +160,9 @@ fn matmul_transpose_fix(u: &ShapeUnifier, l: &Shape, r: &Shape) -> Option<Transp
 }
 
 /// An elementwise operator (`+`, `-`, …): both shapes must be equal (no
-/// broadcasting in v0.1). The result has the left operand's shape and no
-/// tags. That is conservative: some tags survive some operators (a sum of
-/// symmetric matrices is symmetric), but v0.1 claims none. The tags are
-/// [`tag_result`]`(`[`TagOp::Elementwise`]`, ..)`.
+/// broadcasting in v0.1). The result has the left operand's shape and the
+/// tags [`tag_result`]`(`[`TagOp::Elementwise`]`, ..)` gives: Symmetric and
+/// Diagonal when both operands have them, nothing else.
 ///
 /// On error the unifier is unchanged; on success the bindings are committed,
 /// so a caller with a further check to make (the checker compares element

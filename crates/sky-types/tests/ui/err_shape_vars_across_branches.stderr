@@ -2,25 +2,25 @@ crates/sky-types/tests/ui/err_shape_vars_across_branches.sky:11:11: error: canno
    |
 11 |     r = A @ d
    |           ^ inner dimensions differ: N = 3 vs 4
-   |         - this is Matrix[3,3] [1]
-   |             - this is Vector[4] [1]
+   |         - this is Matrix[3,3] [dimensionless]
+   |             - this is Vector[4] [dimensionless]
    = note: `@` contracts the last axis of the left operand with the first axis of the right one: [m, k] @ [k] -> [m]
    = note: here [3, *3*] @ [*4*] needs 3 == 4
    = note: `N` was fixed to 3 at line 9 (`A @ c`)
    = help: check the size variable `N`: every `N` in a module (or, per call, in a function) stands for one size
 
-crates/sky-types/tests/ui/err_shape_vars_across_branches.sky:15:5: error: `s` is `Vector[4] [1]` here but `Vector[3] [1]` in the other branch
+crates/sky-types/tests/ui/err_shape_vars_across_branches.sky:15:5: error: `s` is `Vector[4] [dimensionless]` here but `Vector[3] [dimensionless]` in the other branch
    |
 15 |     s = d
    |     ^ this binding has a different type
 13 |     s = c
-   |     - `s` is `Vector[3] [1]` here
+   |     - `s` is `Vector[3] [dimensionless]` here
    = help: give both bindings the same type, or use different names
 
-crates/sky-types/tests/ui/err_shape_vars_across_branches.sky:19:5: error: `u` is `Vector[M] [1]` here but `Vector[3] [1]` in the other branch
+crates/sky-types/tests/ui/err_shape_vars_across_branches.sky:19:5: error: `u` is `Vector[M] [dimensionless]` here but `Vector[3] [dimensionless]` in the other branch
    |
 19 |     u = e
    |     ^ this binding has a different type
 17 |     u = c
-   |     - `u` is `Vector[3] [1]` here
+   |     - `u` is `Vector[3] [dimensionless]` here
    = help: give both bindings the same type, or use different names

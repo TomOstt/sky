@@ -1,0 +1,28 @@
+print("before")
+a = "a" + "b"
+b = -"x"
+c = "a" < "b"
+d = "a" == 5
+e = len("hello")
+f = sqrt("x")
+g = "abc"[0]
+h: Scalar = "a"
+def report(label: Scalar, w: Hz):
+    return w
+report("mode 1", 2 Hz)
+if "x":
+    print(1)
+v = [1, "a"]
+s = "mode"
+w = s * 2
+for ch in s:
+    print(ch)
+# Fine: printed, bound, passed on, returned and compared.
+def label(x):
+    if x > 1:
+        return "big"
+    return "small"
+def show(name, x: m):
+    print(name, x)
+show("length", 3 m)
+print(label(2) == "big", s != "mode", s)

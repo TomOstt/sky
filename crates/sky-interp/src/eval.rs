@@ -16,6 +16,7 @@ use sky_ast::{
 };
 use sky_diag::Span;
 use sky_syntax::lexer::unescape_str;
+use sky_types::{Tag, TagSet};
 use sky_units::MathFn;
 
 use crate::arith::{
@@ -423,6 +424,15 @@ impl<'a> Interp<'a> {
                         .iter()
                         .map(|p| self.text(p.name.span).to_string())
                         .collect(),
+                    param_tags: params
+                        .iter()
+                        .map(|p| {
+                            let tags = p.ty.iter().flat_map(|t| &t.tags);
+                            TagSet::from_tags(
+                                tags.filter_map(|id| Tag::from_name(self.text(id.span))),
+                            )
+                        })
+                        .collect(),
                     body: body.clone(),
                     captured: self.visible_functions(),
                 };
@@ -744,7 +754,21 @@ impl<'a> Interp<'a> {
 
     /// `base[items]`, reading only.
     fn index(&mut self, e: &Expr, base: &Expr, items: &[IndexItem]) -> R<Value> {
-        let b = self.eval(base)?;
+        // `v[i]` of a variable reads the entry where the variable holds the
+        // array: evaluating `v` would copy all of it, which makes a loop
+        // over `v[i]` quadratic. (An index cannot rebind `v`, so reading it
+        // after the indices sees the same array.)
+        let named = match &base.kind {
+            ExprKind::Name(id) if self.consume != Some(id.span) => {
+                let name = self.text(id.span);
+                self.lookup(name).is_some().then_some(name)
+            }
+            _ => None,
+        };
+        let b = match named {
+            Some(_) => Value::None,
+            None => self.eval(base)?,
+        };
         let mut ixs = Vec::with_capacity(items.len());
         for item in items {
             ixs.push(match item {
@@ -767,7 +791,10 @@ impl<'a> Interp<'a> {
                 }
             });
         }
-        array::index(&b, &ixs, e.span, base.span)
+        match named.and_then(|name| self.lookup(name)) {
+            Some(v) => array::index(v, &ixs, e.span, base.span),
+            None => array::index(&b, &ixs, e.span, base.span),
+        }
     }
 
     /// `l @ r`. Where the checker rewrote `A⁻¹ @ b` (`solves` holds the
@@ -822,15 +849,29 @@ impl<'a> Interp<'a> {
                 call.span,
             )
         };
+        if name == "len" {
+            let Some(a) = args.first() else {
+                return Err(takes("1 argument"));
+            };
+            if args.len() != 1 {
+                // The argument still runs first, as before.
+                self.eval(a)?;
+                return Err(takes("1 argument"));
+            }
+            // Of a variable, without copying its array (`while i < len(v)`
+            // reads it on every iteration).
+            if let ExprKind::Name(id) = &a.kind {
+                if self.consume != Some(id.span) {
+                    if let Some(v) = self.lookup(self.text(id.span)) {
+                        return array::len(v, a.span);
+                    }
+                }
+            }
+            return array::len(&self.eval(a)?, a.span);
+        }
         let mut sizes = Vec::with_capacity(args.len());
         for a in args {
             let v = self.eval(a)?;
-            if name == "len" {
-                let [_] = args else {
-                    return Err(takes("1 argument"));
-                };
-                return array::len(&v, a.span);
-            }
             sizes.push(array::size_arg(name, &v, a.span)?);
         }
         match (name, sizes.as_slice()) {
@@ -857,8 +898,9 @@ impl<'a> Interp<'a> {
             return Err(recursion_too_deep(&func.name, call.span));
         }
         let mut vars = BTreeMap::new();
-        for (name, a) in func.params.iter().zip(args) {
+        for (i, (name, a)) in func.params.iter().zip(args).enumerate() {
             let v = self.eval(a)?;
+            self.check_parameter_tags(func, i, &v, a.span)?;
             vars.insert(name.clone(), v);
         }
         // A postcondition sees the arguments as passed, and `result`. The
@@ -896,6 +938,24 @@ impl<'a> Interp<'a> {
             checked?;
         }
         Ok(value)
+    }
+
+    /// Checks the tags parameter `i` of `func` declares of the argument
+    /// `v` passed for it: see [`crate::solve::check_parameter_tags`], which
+    /// SIR's `assume` runs too.
+    pub(crate) fn check_parameter_tags(
+        &self,
+        func: &Function,
+        i: usize,
+        v: &Value,
+        span: Span,
+    ) -> R<()> {
+        match func.param_tags.get(i) {
+            Some(&tags) if !tags.is_empty() => {
+                crate::solve::check_parameter_tags(tags, TagSet::EMPTY, v, span)
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Checks the contract `kind cond, "message"`: the condition must be

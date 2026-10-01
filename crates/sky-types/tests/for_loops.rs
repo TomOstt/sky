@@ -28,7 +28,7 @@ fn ty(c: &Checked, name: &str) -> String {
 fn a_range_index_is_a_dimensionless_scalar_that_indexes() {
     let c = check("v = [1 m, 2 m, 3 m]\nfor i in range(3):\n    x = v[i]\n    y = v[i + 0]\n");
     assert_eq!(messages(&c), Vec::<&str>::new());
-    assert_eq!(ty(&c, "i"), "Scalar [1]");
+    assert_eq!(ty(&c, "i"), "Scalar [dimensionless]");
     assert_eq!(ty(&c, "x"), "Scalar [L]");
     // Also with a variable bound, and for a matrix row.
     let c =
@@ -154,10 +154,13 @@ fn a_user_binding_named_range_wins() {
 
 #[test]
 fn an_unknown_iterable_is_silent_and_gives_an_unknown_variable() {
-    // A string in a variable has no type, so the checker cannot object; the
-    // interpreter does at run time.
-    let c = check("s = \"abc\"\nfor ch in s:\n    d = ch\nz = d\n");
+    // A value the checker cannot type (a parameter without an annotation)
+    // gives no error; the interpreter checks it at run time.
+    let c = check("def f(s):\n    for ch in s:\n        d = ch\n    return d\n");
     assert_eq!(messages(&c), Vec::<&str>::new());
+    // A string in a variable is typed, and rejected like a literal.
+    let c = check("s = \"abc\"\nfor ch in s:\n    d = ch\nz = d\n");
+    assert_eq!(messages(&c), ["cannot iterate over a string"]);
 }
 
 #[test]
@@ -173,7 +176,7 @@ fn nested_loops_and_shadowed_variables() {
     let src = "for i in range(2):\n    for i in range(3):\n        pass\nz = i\n";
     let c = check(src);
     assert_eq!(messages(&c), Vec::<&str>::new());
-    assert_eq!(ty(&c, "z"), "Scalar [1]");
+    assert_eq!(ty(&c, "z"), "Scalar [dimensionless]");
 }
 
 #[test]

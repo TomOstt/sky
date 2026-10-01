@@ -1144,6 +1144,16 @@ const ENGINE_PROGRAMS: &[(&str, bool, &str)] = &[
         "i = 0\ntotal = 0\nwhile i < 100:\n    i += 1\n    if i % 2 == 0:\n        continue\n    if i > 50:\n        break\n    total += i\nprint(i, total)\n",
     ),
     (
+        "eng-array-loop",
+        true,
+        "v = [1 m, 2 m]\nfor x in v:\n    print(x)\nA = [[1, 2], [3, 4]]\nfor r in A:\n    for y in r:\n        print(y * x)\nprint(x, r)\n",
+    ),
+    (
+        "eng-untyped-loop-call",
+        true,
+        "def step(s):\n    return s * 3 - floor(s * 3 / 7) * 7\ns = 1\nfor i in range(5):\n    s = step(s)\n    print(s)\ndef half(x):\n    return x / 2\nprint(half(3) + 1, half(true))\n",
+    ),
+    (
         "eng-funcs",
         true,
         "def fact(n):\n    if n <= 1:\n        return 1\n    return n * fact(n - 1)\nprint(fact(10))\n",
@@ -1362,20 +1372,20 @@ const ENGINE_PROGRAMS: &[(&str, bool, &str)] = &[
     // Programs SIR cannot run yet: `--engine=sir` refuses them, and `auto`
     // must give the tree-walker's answer (`run_script` checks that).
     (
-        "eng-array-loop",
+        "eng-array-loop-untyped",
         false,
-        "v = [1 m, 2 m]\nfor x in v:\n    print(x)\n",
+        "def f(w):\n    for x in w:\n        print(x)\nf([1 m, 2 m])\n",
     ),
     (
         "eng-input-after-output",
         true,
         "print(\"before\")\nA: Matrix[2, 2]\nprint(\"after\")\n",
     ),
-    // The checker leaves `"a" + "b"` to run time; lowering builds an `add`
-    // of strings that does not verify, which is not the pass pipeline's fault.
+    // The checker types strings, so `"a" + "b"` is a check error, the same
+    // on every engine.
     (
         "eng-string-add",
-        false,
+        true,
         "print(\"before\")\ns = \"a\" + \"b\"\n",
     ),
     // `norm` and `dot` run on SIR through the tree-walker's own functions,

@@ -1,3 +1,8 @@
+tests/ui/check/ok_equation.sky:4:1: note: `sky run` runs this program on the tree-walking interpreter, not as native code: differential equations are not supported by SIR yet
+  |
+4 | equation orbit(t: s):
+  | ^^^^^^^^^^^^^^^^^^^^^
+
 tests/ui/check/ok_equation.sky:10:7: note: `orbit` is a second-order system, so a symplectic integrator applies
    |
 10 | sol = solve orbit from 0 s to 1 yr with r = [1 AU, 0 m], v = [0 m/s, 29.8 km/s]:

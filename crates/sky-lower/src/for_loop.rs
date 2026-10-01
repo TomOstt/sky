@@ -29,8 +29,23 @@
 //! right, and an `expect.range[step]` on the step, with the interpreter's
 //! own errors on the argument's span.
 //!
-//! `for x in v` over an array needs array values, which SIR does not have
-//! yet, so it is a [`LowerError`] that says so.
+//! `for x in v` over an array is the same loop over its first axis, as
+//! the spec defines it (`for i in range(len(v))` with `x = v[i]`):
+//!
+//! ```text
+//! for x in v:                         <a> = v
+//!     body                    ==>     <idx> = 0
+//!                                     while <idx> < len(<a>):
+//!                                         x = <a>[<idx>]
+//!                                         <idx> = <idx> + 1
+//!                                         body
+//! ```
+//!
+//! The iterable is evaluated once, before the loop; an array is never
+//! empty, so the loop runs. Over a vector `x` is an entry, over a matrix a
+//! row. An iterable whose type the checker does not know (a parameter
+//! without an annotation: it may be a scalar or a string, which the
+//! interpreter rejects with its own error) is a [`LowerError`].
 //!
 //! Which names the loop carries out of the body follows the checker
 //! ([`sky_types::range_runs_at_least_once`] is the shared rule): if the
@@ -43,8 +58,9 @@ use std::collections::BTreeSet;
 
 use sky_ast::{Block, Expr, ExprKind, Ident};
 use sky_diag::Span;
+use sky_ir::infer::result_type;
 use sky_ir::{BoolContext, CmpOp, OpKind, RangePart, Type, ValueId};
-use sky_types::{range_constants, range_runs_at_least_once};
+use sky_types::{range_constants, range_runs_at_least_once, ShapeDim};
 use sky_units::Dimension;
 
 use crate::analysis::is_forever;
@@ -54,7 +70,7 @@ use crate::LowerError;
 /// What starts a loop: the condition of a `while`, or a counting header.
 pub(crate) enum Head<'e> {
     While(&'e Expr),
-    Range(Range),
+    Range(Box<Range>),
 }
 
 /// A `for` over `range(...)`, after its bounds were evaluated.
@@ -69,6 +85,9 @@ pub(crate) struct Range {
     step_sign: Option<i64>,
     /// Whether the checker counts the loop as running at least once.
     runs: bool,
+    /// For `for x in v`: the array and the type of its entries (or rows),
+    /// and the loop variable is `v[<idx>]` rather than the index.
+    over: Option<(ValueId, Type)>,
     span: Span,
 }
 
@@ -121,7 +140,17 @@ impl Lower<'_> {
         let Some(&idx) = self.st.scope.get(&r.idx) else {
             return self.err("internal error: a loop index is not in scope", r.span);
         };
-        self.bind(&r.var, idx);
+        let item = match &r.over {
+            Some((array, ty)) => self.op1s(
+                OpKind::Index,
+                vec![*array, idx],
+                vec![r.span, r.span],
+                ty.clone(),
+                r.span,
+            ),
+            None => idx,
+        };
+        self.bind(&r.var, item);
         let next = self.op1(OpKind::Add, vec![idx, r.step], index_ty(), r.span);
         self.st.scope.insert(r.idx.clone(), next);
         Ok(())
@@ -155,16 +184,7 @@ impl Lower<'_> {
         needed: &Needed,
     ) -> R<()> {
         let Some(args) = self.range_args(iter) else {
-            let v = match &iter.kind {
-                ExprKind::Name(_) => self.text(iter.span).to_string(),
-                _ => "v".to_string(),
-            };
-            return Err(
-                LowerError::new("iteration over an array is not compiled yet", iter.span)
-                    .with_note(format!(
-                    "loop over its indices instead: `for i in range(len({v})):`, reading `{v}[i]`"
-                )),
-            );
+            return self.array_for(span, var, iter, body, needed);
         };
         let (start, stop, step) = match args {
             [stop] => (None, stop, None),
@@ -204,6 +224,7 @@ impl Lower<'_> {
             step: step_v,
             step_sign,
             runs: constants.is_some_and(range_runs_at_least_once),
+            over: None,
             span: iter.span,
         };
         self.st.scope.insert(idx.clone(), start_v);
@@ -214,7 +235,77 @@ impl Lower<'_> {
             let stand_in = self.placeholder(&index_ty(), iter.span);
             self.st.scope.insert(range.var.clone(), stand_in);
         }
-        self.while_loop(span, Head::Range(range), body, needed)?;
+        self.while_loop(span, Head::Range(Box::new(range)), body, needed)?;
+        self.st.scope.remove(&idx);
+        Ok(())
+    }
+
+    /// `for var in iter` over an array (see the module docs).
+    fn array_for(
+        &mut self,
+        span: Span,
+        var: &Ident,
+        iter: &Expr,
+        body: &Block,
+        needed: &Needed,
+    ) -> R<()> {
+        let array = self.expr(iter)?;
+        let array_ty = self.st.b.ty(array).clone();
+        let item_ty = match &array_ty {
+            Type::Number(n) if matches!(n.shape.rank(), 1 | 2) => {
+                result_type(&OpKind::Index, &[&array_ty, &index_ty()])
+            }
+            _ => None,
+        };
+        let Some(item_ty) = item_ty else {
+            return Err(LowerError::new(
+                "iteration over a value whose type is not known before the program runs does \
+                 not lower to SIR yet",
+                iter.span,
+            )
+            .with_note(
+                "annotate where it comes from, e.g. a parameter `w: Vector[N]`, and the loop \
+                 compiles",
+            ));
+        };
+        let stop = match &array_ty {
+            Type::Number(n) => match n.shape.dims().first() {
+                Some(ShapeDim::Known(len)) => self.const_float(*len as f64, index_ty(), iter.span),
+                _ => self.op1s(
+                    OpKind::Len,
+                    vec![array],
+                    vec![iter.span],
+                    index_ty(),
+                    iter.span,
+                ),
+            },
+            _ => unreachable!("an array type was matched above"),
+        };
+        let start = self.const_float(0.0, index_ty(), iter.span);
+        let step = self.const_float(1.0, index_ty(), iter.span);
+        let idx = format!("<i{}>", self.st.loops + 1);
+        let range = Range {
+            idx: idx.clone(),
+            var: self.text(var.span).to_string(),
+            stop,
+            step,
+            step_sign: Some(1),
+            runs: true,
+            over: Some((array, item_ty.clone())),
+            span: iter.span,
+        };
+        self.st.scope.insert(idx.clone(), start);
+        // The loop always runs and overwrites `var` first: its value on
+        // entry is dead, and the first item is a stand-in of the right type.
+        let first = self.op1s(
+            OpKind::Index,
+            vec![array, start],
+            vec![iter.span, iter.span],
+            item_ty,
+            iter.span,
+        );
+        self.st.scope.insert(range.var.clone(), first);
+        self.while_loop(span, Head::Range(Box::new(range)), body, needed)?;
         self.st.scope.remove(&idx);
         Ok(())
     }

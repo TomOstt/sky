@@ -330,6 +330,10 @@ fn describe(c: char) -> String {
     }
 }
 
+/// The help for `°C` and `°F`; the same text as
+/// `sky_units::temperature_hint`, which the checker gives for `degC`.
+pub const TEMPERATURE_HELP: &str = "temperatures with an offset (°C, °F) are not units in Sky, which measures temperature in kelvin: write 25 °C as `298.15 K`; a temperature difference of 1 °C is `1 K`, and of 1 °F is 5/9 of a kelvin (`5 K / 9`)";
+
 fn unexpected_char_help(c: char) -> Option<&'static str> {
     Some(match c {
         '\u{2212}' => "for subtraction, use ASCII `-`",
@@ -541,6 +545,20 @@ impl<'a> Lexer<'a> {
                 '∇' => TokenKind::Nabla,
                 '⁻' if self.eat('¹') => TokenKind::Inverse,
                 TRANSPOSE_GLYPH => TokenKind::Transpose,
+                '°' => {
+                    // `25 °C` or `30°`: say what to write instead.
+                    let temperature = matches!(self.peek(), Some('C' | 'F'));
+                    let diag = Diagnostic::error(
+                        format!("unexpected character {}", describe('°')),
+                        self.span_from(start),
+                    )
+                    .with_help(if temperature {
+                        TEMPERATURE_HELP
+                    } else {
+                        "for an angle in degrees, write the unit `deg` after the number: `30 deg`"
+                    });
+                    return err(LexErrorKind::UnexpectedChar, diag);
+                }
                 other => {
                     let mut diag = Diagnostic::error(
                         format!("unexpected character {}", describe(other)),

@@ -26,11 +26,11 @@ const USAGE: &str = "usage: sky check [--explain] [--emit-ir[=<stage>]] [--emit=
                      (`--emit=obj`: to an object file), linked with the system's C compiler\n\
                      and the runtime library `libsky_rt.a`; it runs like `sky run --engine=native`\n\
                      --emit=clif prints the Cranelift IR the native engine compiles\n\
-                     --engine picks how `sky run` executes: `ast` (the tree-walking\n\
-                     interpreter, the default), `sir` (lower to SIR, run the optimized IR),\n\
-                     `native` (compile the optimized IR to machine code), or `auto` (native,\n\
+                     --engine picks how `sky run` executes: `auto` (the default: native,\n\
                      falling back to SIR, then to the tree-walker, for programs an engine\n\
-                     cannot take yet)\n\
+                     cannot take yet), `ast` (the tree-walking interpreter), `sir` (lower to\n\
+                     SIR, run the optimized IR), or `native` (compile the optimized IR to\n\
+                     machine code)\n\
                      `sky hw` prints what this machine can do and what Sky uses it for;\n\
                      `sky tune` measures kernel parameters here and remembers the winners\n\
                      (`--show` lists them, `--reset` forgets them)\n\

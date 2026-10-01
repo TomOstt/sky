@@ -2,8 +2,8 @@ crates/sky-types/tests/ui/err_shape_var_conflict.sky:4:7: error: cannot add Matr
   |
 4 | U = S + T
   |       ^ axis 1 differs: N = 3 vs 4
-  |     - this is Matrix[N,N] [1]
-  |         - this is Matrix[3,4] [1]
+  |     - this is Matrix[N,N] [dimensionless]
+  |         - this is Matrix[3,4] [dimensionless]
   = note: axis     0  1
   = note: left     N  N = 3
   = note: right    3  4

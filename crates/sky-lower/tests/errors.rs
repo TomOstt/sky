@@ -14,9 +14,9 @@ fn rejected(src: &str) -> (String, &str) {
 
 #[test]
 fn attributes_are_rejected() {
-    // The checker rejects an attribute of a number; one of a string (which
-    // it does not type) reaches lowering.
-    let (msg, at) = rejected("x = \"a\"\ny = x.value\n");
+    // The checker rejects an attribute of a number or a string; one of an
+    // unannotated parameter (which it does not type) reaches lowering.
+    let (msg, at) = rejected("def f(x):\n    return x.value\nprint(f(1))\n");
     assert!(msg.contains("attribute `value`"), "{msg}");
     assert_eq!(at, "x.value");
 }
@@ -32,10 +32,11 @@ fn derivative_operators_are_rejected() {
 
 #[test]
 fn an_error_has_a_note_saying_why() {
-    let e = try_lower("v = [1 m, 2 m]\nfor x in v:\n    print(x)\n").expect_err("rejected");
+    let e = try_lower("def f(w):\n    for x in w:\n        print(x)\nf([1 m, 2 m])\n")
+        .expect_err("rejected");
     let note = e.note.as_deref().unwrap_or("");
-    assert!(note.contains("for i in range(len(v))"), "{note}");
-    assert!(e.to_string().contains("iteration over an array"));
+    assert!(note.contains("`w: Vector[N]`"), "{note}");
+    assert!(e.to_string().contains("type is not known"));
     let d = e.to_diagnostic();
     assert_eq!(d.primary.span, e.span);
 }

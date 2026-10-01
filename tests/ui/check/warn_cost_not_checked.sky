@@ -1,6 +1,6 @@
-def total(v: Vector[N]) -> m/m:
+def total(v: Vector[N], w) -> m/m:
     cost flops <= N
     s = 0
-    for x in v:
+    for x in w:
         s += x
     return s

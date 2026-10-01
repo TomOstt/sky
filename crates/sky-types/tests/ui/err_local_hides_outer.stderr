@@ -1,0 +1,43 @@
+crates/sky-types/tests/ui/err_local_hides_outer.sky:3:15: error: `counter` is read before `bump` assigns it
+  |
+3 |     counter = counter + 1
+  |               ^^^^^^^ read here, before any assignment in the function
+  |     ------- `counter` is assigned here
+  = note: `counter` is bound in `bump`, so it is a local of the whole function: the `counter` outside it cannot be read there, and binding it never changes that one
+  = help: pass `counter` in as a parameter and return the new value, or give the local another name
+
+crates/sky-types/tests/ui/err_local_hides_outer.sky:10:12: error: `n` may be undefined here
+   |
+10 |     return n
+   |            ^ not assigned on every path
+ 9 |         n = 1
+   |         - `n` is assigned here
+   = note: `n` is bound in `pick`, so it is a local of the whole function: the `n` outside it cannot be read there, and binding it never changes that one
+   = help: assign it before the `if`
+
+crates/sky-types/tests/ui/err_local_hides_outer.sky:14:15: error: `n` is read before `walk` assigns it
+   |
+14 |         print(n)
+   |               ^ read here, before any assignment in the function
+15 |         n = i
+   |         - `n` is assigned here
+   = note: `n` is bound in `walk`, so it is a local of the whole function: the `n` outside it cannot be read there, and binding it never changes that one
+   = help: pass `n` in as a parameter and return the new value, or give the local another name
+
+crates/sky-types/tests/ui/err_local_hides_outer.sky:21:9: error: `helper` is read before `uses` assigns it
+   |
+21 |     y = helper()
+   |         ^^^^^^ read here, before any assignment in the function
+22 |     helper = 5
+   |     ------ `helper` is assigned here
+   = note: `helper` is bound in `uses`, so it is a local of the whole function: the `helper` outside it cannot be read there, and binding it never changes that one
+   = help: pass `helper` in as a parameter and return the new value, or give the local another name
+
+crates/sky-types/tests/ui/err_local_hides_outer.sky:41:13: error: `k` is read before `loop_reads_first` assigns it
+   |
+41 |         y = k
+   |             ^ read here, before any assignment in the function
+42 |         k = 2
+   |         - `k` is assigned here
+   = note: `k` is bound in `loop_reads_first`, so it is a local of the whole function: the `k` outside it cannot be read there, and binding it never changes that one
+   = help: pass `k` in as a parameter and return the new value, or give the local another name

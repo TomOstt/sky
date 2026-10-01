@@ -19,6 +19,6 @@ tests/ui/types/err_array_pow.sky:8:6: error: cannot raise a matrix to a power
   |
 8 | B = A^2
   |      ^^
-  |     - this is Matrix[2,2] [1]
+  |     - this is Matrix[2,2] [dimensionless]
   = note: `^` needs a scalar base: on an array it could mean the square of every entry or the squared length
   = help: use `@` for matrix products, or `*` for entry by entry

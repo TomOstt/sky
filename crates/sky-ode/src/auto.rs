@@ -23,7 +23,7 @@
 use crate::dopri::{dopri5, Outcome};
 use crate::fixed::{drive, verify_second_order, Stepper, SymKind, Symplectic};
 use crate::rosenbrock::rodas3;
-use crate::run::{all_finite, initial_step, num, scaled_rms, step_underflow, Run};
+use crate::run::{all_finite, initial_step, num, relative_to, scaled_rms, step_underflow, Run};
 use crate::{Method, SolveError};
 
 /// The result of an automatic solve: what ran, the final state, and the
@@ -109,22 +109,59 @@ fn symplectic(run: &mut Run<'_>, n: usize, y0: &[f64]) -> Result<Chosen, SolveEr
     let mut h = h_probe;
     let mut first: Option<Trial> = None;
     let mut last: Trial;
+    // The previous trial and its step.
+    let mut prev: Option<(f64, Trial)> = None;
+    // Quantities a smaller step stopped helping: their drift is the
+    // rounding in computing them, which no step removes, so they no longer
+    // set the step (shrinking for them would only multiply the work).
+    let mut floored = vec![false; targets.len()];
     let mut tries = 0;
     loop {
-        last = trial(run, kind, n, y0, h, probe.covered, &targets)?;
-        if first.is_none() {
-            first = Some(last.clone());
-        }
+        let mut t = trial(run, kind, n, y0, h, probe.covered, &targets)?;
         tries += 1;
+        if let Some((h_prev, p)) = &prev {
+            // A smaller step should cut a drift by at least 0.9^p (0.81 at
+            // second order); not even by 0.9 means it has stopped working.
+            let mut newly = false;
+            for (i, f) in floored.iter_mut().enumerate() {
+                let was = p.drift[i] / targets[i];
+                if !*f && was > 1.0 && t.drift[i] / targets[i] > 0.9 * was {
+                    *f = true;
+                    newly = true;
+                }
+            }
+            if newly {
+                // The step was shrunk for a quantity that turned out not to
+                // care: size it again from the others at the previous step.
+                let (h_prev, mut p) = (*h_prev, p.clone());
+                p.rank(&targets, &floored);
+                if p.ratio <= 1.0 {
+                    h = h_prev;
+                    last = p;
+                    break;
+                }
+                let better = h_prev * shrink_factor(p.ratio, kind);
+                if better > h && tries < MAX_TRIALS {
+                    h = better;
+                    prev = Some((h_prev, p));
+                    continue;
+                }
+            }
+            t.rank(&targets, &floored);
+        }
+        if first.is_none() {
+            first = Some(t.clone());
+        }
+        last = t;
         if last.ratio <= 1.0 || tries == MAX_TRIALS {
             break;
         }
-        // The bounded energy error of a p-th order method scales like h^p.
-        let factor = (0.9 * libm::pow(last.ratio, -1.0 / f64::from(kind.order()))).clamp(0.1, 0.9);
-        h *= factor;
+        let h_prev = h;
+        h *= shrink_factor(last.ratio, kind);
         if h < 1e-3 * h_probe {
-            break; // the target is out of reach (or a roundoff floor): stop
+            break; // the target is out of reach: stop
         }
+        prev = Some((h_prev, last.clone()));
     }
     let first = first.expect("at least one trial ran");
 
@@ -160,25 +197,44 @@ fn symplectic(run: &mut Run<'_>, n: usize, y0: &[f64]) -> Result<Chosen, SolveEr
         num(h_probe),
     ));
     let worst = names[first.worst];
+    let relative = relative_to(run.scale[first.worst]);
+    let order = match kind {
+        SymKind::Verlet => "second",
+        SymKind::Yoshida4 => "fourth",
+    };
+    let floored: Vec<&str> = names
+        .iter()
+        .zip(&floored)
+        .filter_map(|(name, &f)| f.then_some(*name))
+        .collect();
+    let rounding = if floored.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; {} drifted no less at the smaller step: what is left is the rounding in computing {}, which no step removes, so {} no longer {} the step",
+            join_names(&floored),
+            if floored.len() > 1 { "them" } else { "it" },
+            if floored.len() > 1 { "they" } else { "it" },
+            if floored.len() > 1 { "set" } else { "sets" },
+        )
+    };
     if h == h_probe {
         explanation.push(format!(
-            "a trial run at that step over {} confirmed it: {worst} drifted by at most {} (relative), within the {} the tolerance asks",
+            "a trial run at that step over {} confirmed it: {worst} drifted by at most {} ({relative}), within the {} the tolerance asks",
             trial_window(&first, probe.whole),
             num(first.drift[first.worst]),
             num(targets[first.worst]),
         ));
     } else {
         explanation.push(format!(
-            "but a trial run at that step over {} showed {worst} drifting by {} (relative), more than the {} the tolerance asks, so the step was reduced to {} s (a {}-order method's bounded error scales like the step to that power), where the trial drift was {}",
+            "but a trial run at that step over {} showed {worst} drifting by {} ({relative}), more than the {} the tolerance asks, so the step was reduced to {} s (a {order}-order method's bounded error scales like the step to that power), where the trial drift of {} was {}{}",
             trial_window(&first, probe.whole),
             num(first.drift[first.worst]),
             num(targets[first.worst]),
             num(h),
-            match kind {
-                SymKind::Verlet => "second",
-                SymKind::Yoshida4 => "fourth",
-            },
+            names[last.worst],
             num(last.drift[last.worst]),
+            rounding,
         ));
     }
     explanation.push(format!(
@@ -192,6 +248,12 @@ fn symplectic(run: &mut Run<'_>, n: usize, y0: &[f64]) -> Result<Chosen, SolveEr
         y,
         explanation,
     })
+}
+
+/// How much to shrink a fixed step whose trial drift was `ratio` times its
+/// target: the bounded energy error of a p-th order method scales like h^p.
+fn shrink_factor(ratio: f64, kind: SymKind) -> f64 {
+    (0.9 * libm::pow(ratio, -1.0 / f64::from(kind.order()))).clamp(0.1, 0.9)
 }
 
 /// The most trial runs when shrinking the step.
@@ -244,13 +306,7 @@ fn trial(
 ) -> Result<Trial, SolveError> {
     let t0 = run.t0;
     let count = ((window / h).ceil().max(1.0) as usize).min(TRIAL_STEPS);
-    let initial: Vec<f64> = run
-        .opts
-        .conserved
-        .iter()
-        .map(|c| (c.value)(t0, y0))
-        .collect();
-    let mut drift = vec![0.0_f64; initial.len()];
+    let mut drift = vec![0.0_f64; run.opts.conserved.len()];
     let mut st = Symplectic::new(kind, n, y0);
     let mut covered = 0.0;
     for j in 0..count {
@@ -260,13 +316,8 @@ fn trial(
         let finite = all_finite(y);
         for (i, c) in run.opts.conserved.iter().enumerate() {
             let q = (c.value)(t0 + covered, y);
-            let scale = if initial[i] != 0.0 {
-                initial[i].abs()
-            } else {
-                1.0
-            };
             let d = if finite && q.is_finite() {
-                (q - initial[i]).abs() / scale
+                run.drift_of(i, q)
             } else {
                 f64::INFINITY
             };
@@ -276,21 +327,31 @@ fn trial(
             break;
         }
     }
-    let (worst, ratio) = drift
-        .iter()
-        .zip(targets)
-        .map(|(d, t)| d / t)
-        .enumerate()
-        .fold(
-            (0, 0.0_f64),
-            |best, (i, r)| if r > best.1 { (i, r) } else { best },
-        );
-    Ok(Trial {
+    let mut t = Trial {
         drift,
-        ratio,
-        worst,
+        ratio: 0.0,
+        worst: 0,
         covered: covered.min(window.max(h)),
-    })
+    };
+    t.rank(targets, &vec![false; targets.len()]);
+    Ok(t)
+}
+
+impl Trial {
+    /// Sets the worst `drift / target` among the quantities not `skip`ped.
+    fn rank(&mut self, targets: &[f64], skip: &[bool]) {
+        (self.worst, self.ratio) = self
+            .drift
+            .iter()
+            .zip(targets)
+            .zip(skip)
+            .map(|((d, t), &s)| if s { 0.0 } else { d / t })
+            .enumerate()
+            .fold(
+                (0, 0.0_f64),
+                |best, (i, r)| if r > best.1 { (i, r) } else { best },
+            );
+    }
 }
 
 struct Probe {

@@ -31,7 +31,7 @@ fn literals_have_exact_shapes_and_no_tags() {
     assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
     assert_eq!(ty(&c, "v"), "Vector[3] [L]");
     // Symmetric entries, but a literal is untagged until declared.
-    assert_eq!(ty(&c, "A"), "Matrix[2,2] [1]");
+    assert_eq!(ty(&c, "A"), "Matrix[2,2] [dimensionless]");
     assert_eq!(ty(&c, "B"), "Matrix[1,3] [T]");
 }
 
@@ -122,13 +122,13 @@ fn index_bounds_are_checked_only_when_constant() {
 fn builtins_are_typed_and_can_be_shadowed() {
     let c = check("z = zeros(3)\nZ = zeros(2, 3)\nI = identity(2)\nn = len(Z)\n");
     assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
-    assert_eq!(ty(&c, "z"), "Vector[3] [1]");
-    assert_eq!(ty(&c, "Z"), "Matrix[2,3] [1]");
+    assert_eq!(ty(&c, "z"), "Vector[3] [dimensionless]");
+    assert_eq!(ty(&c, "Z"), "Matrix[2,3] [dimensionless]");
     assert_eq!(
         ty(&c, "I"),
-        "Matrix[2,2] {Symmetric, PositiveDefinite, Diagonal, Orthogonal} [1]"
+        "Matrix[2,2] {Symmetric, PositiveDefinite, Diagonal, Orthogonal} [dimensionless]"
     );
-    assert_eq!(ty(&c, "n"), "Scalar [1]");
+    assert_eq!(ty(&c, "n"), "Scalar [dimensionless]");
     // A user's own `zeros` wins, as with `print` and `inv`.
     let c = check("def zeros(n):\n    return n\nz = zeros(3)\n");
     assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
@@ -269,8 +269,8 @@ fn entry_by_entry_products_and_quotients_are_typed_per_entry() {
     assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
     assert_eq!(ty(&c, "v"), "Vector[2] [L·T⁻¹]");
     assert_eq!(ty(&c, "a"), "Vector[2] [L²]");
-    assert_eq!(ty(&c, "P"), "Matrix[2,2] [1]");
-    assert_eq!(ty(&c, "Q"), "Matrix[2,2] [1]");
+    assert_eq!(ty(&c, "P"), "Matrix[2,2] [dimensionless]");
+    assert_eq!(ty(&c, "Q"), "Matrix[2,2] [dimensionless]");
 }
 
 #[test]
@@ -293,7 +293,7 @@ fn entry_by_entry_shapes_must_agree_and_a_size_variable_is_solved() {
         "def f(a: Vector[N], b: Vector[N]) -> Vector[N]:\n    return a * b / a\nr = f([1, 2], [3, 4])\n",
     );
     assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
-    assert_eq!(ty(&c, "r"), "Vector[2] [1]");
+    assert_eq!(ty(&c, "r"), "Vector[2] [dimensionless]");
 }
 
 #[test]
@@ -311,13 +311,13 @@ fn math_functions_of_arrays_are_arrays() {
     );
     assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
     assert_eq!(ty(&c, "r"), "Vector[2] [L]");
-    assert_eq!(ty(&c, "e"), "Vector[2] [1]");
+    assert_eq!(ty(&c, "e"), "Vector[2] [dimensionless]");
     assert_eq!(ty(&c, "hy"), "Vector[2] [L]");
     assert_eq!(ty(&c, "m"), "Vector[2] [L]");
     assert_eq!(ty(&c, "n"), "Vector[2] [L]");
-    assert_eq!(ty(&c, "q"), "Vector[2] [1]");
-    assert_eq!(ty(&c, "k"), "Vector[2] [1]");
-    assert_eq!(ty(&c, "s"), "Vector[2] [1]");
+    assert_eq!(ty(&c, "q"), "Vector[2] [dimensionless]");
+    assert_eq!(ty(&c, "k"), "Vector[2] [dimensionless]");
+    assert_eq!(ty(&c, "s"), "Vector[2] [dimensionless]");
     // Scalars keep working as before.
     let c = check("x = sqrt(9 m^2)\ny = max(1 m, 2 m)\n");
     assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
@@ -330,15 +330,15 @@ fn entry_by_entry_tags_are_conservative() {
         "S: Symmetric Matrix[2, 2]\nD: Diagonal Matrix[2, 2]\nP: PositiveDefinite Matrix[2, 2]\nG: Matrix[2, 2]\na = S * S\nb = G * D\nc = D / G\nd = G / D\ne = P * P\nf = sqrt(D)\ng = atan2(S, G)\n",
     );
     // `G` is the gravitational constant: only a warning.
-    let sym = "Matrix[2,2] {Symmetric} [1]";
-    let diag = "Matrix[2,2] {Symmetric, Diagonal} [1]";
+    let sym = "Matrix[2,2] {Symmetric} [dimensionless]";
+    let diag = "Matrix[2,2] {Symmetric, Diagonal} [dimensionless]";
     assert_eq!(ty(&c, "a"), sym);
     assert_eq!(ty(&c, "b"), diag);
     assert_eq!(ty(&c, "c"), diag);
-    assert_eq!(ty(&c, "d"), "Matrix[2,2] [1]");
+    assert_eq!(ty(&c, "d"), "Matrix[2,2] [dimensionless]");
     assert_eq!(ty(&c, "e"), sym);
     assert_eq!(ty(&c, "f"), sym);
-    assert_eq!(ty(&c, "g"), "Matrix[2,2] [1]");
+    assert_eq!(ty(&c, "g"), "Matrix[2,2] [dimensionless]");
 }
 
 #[test]

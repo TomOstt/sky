@@ -217,15 +217,18 @@ print(a, b, c, d, e, k)
 
 #[test]
 fn a_function_that_assigns_a_module_name_on_one_path_only() {
+    // The local `base` hides the module's in the whole body, so it is bound
+    // before the `if` (reading the module's value instead is a check error).
     let src = "\
 base = 10
 def f(flag):
+    base = 5
     if flag:
         base = 1
     return base + 1
-print(f(true), f(false))
+print(f(true), f(false), base)
 ";
-    assert_eq!(agree(src), "2 11\n");
+    assert_eq!(agree(src), "2 6 10\n");
 }
 
 #[test]
@@ -718,11 +721,21 @@ impl Gen {
         self.readable.extend(params.iter().cloned());
         self.assignable = params.clone();
         self.updatable = params.clone();
-        // Module names may be assigned too: that makes a local.
+        // Module names may be assigned too: that makes a local of the whole
+        // body, so it is bound first, from what the body can read without
+        // it (reading the module's value first is a check error).
+        let mut shadowed = Vec::new();
         for m in self.modnames.clone() {
             if self.rng.chance(30) {
-                self.assignable.push(m);
+                shadowed.push(m);
             }
+        }
+        self.readable.retain(|r| !shadowed.contains(r));
+        for m in shadowed {
+            let e = self.expr(1);
+            self.line(&format!("{m} = {e}"));
+            self.readable.push(m.clone());
+            self.assignable.push(m);
         }
         for v in ["v0", "v1"] {
             let e = self.expr(1);

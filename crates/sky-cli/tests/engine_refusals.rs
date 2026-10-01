@@ -53,17 +53,16 @@ fn refused(name: &str, src: &str) -> [String; 2] {
 }
 
 #[test]
-fn a_loop_over_an_array_suggests_a_loop_over_its_indices() {
-    let src = "v = [1 m, 2 m, 3 m]\nfor x in v:\n    print(x)\n";
+fn a_loop_over_an_unannotated_parameter_says_what_to_annotate() {
+    // A loop over an array compiles; over a parameter of unknown type it
+    // cannot, and the refusal says how to fix that.
+    let src = "def f(w):\n    for x in w:\n        print(x)\nf([1 m, 2 m, 3 m])\n";
     for e in refused("array_loop", src) {
         assert!(
-            e.contains("iteration over an array is not compiled yet"),
+            e.contains("iteration over a value whose type is not known"),
             "{e}"
         );
-        assert!(
-            e.contains("`for i in range(len(v)):`, reading `v[i]`"),
-            "{e}"
-        );
+        assert!(e.contains("`w: Vector[N]`"), "{e}");
     }
 }
 

@@ -292,7 +292,10 @@ height = s.y
 #[test]
 fn solve_needs_an_equation_and_initial_values() {
     let c = check("x = 3\ns = solve x from 0 s to 1 s\n");
-    assert_eq!(messages(&c), ["`x` is not an equation, it is Scalar [1]"]);
+    assert_eq!(
+        messages(&c),
+        ["`x` is not an equation, it is Scalar [dimensionless]"]
+    );
     let c = check("equation e(t: s):\n    x: m\n    x' = 1 m/s\ns = solve e from 0 s to 1 s\n");
     assert_eq!(
         messages(&c),

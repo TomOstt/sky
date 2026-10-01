@@ -118,8 +118,9 @@ proptest! {
         // ... and claims Symmetric only as a consequence of Diagonal.
         prop_assert!(!m.contains(Tag::Symmetric) || m.contains(Tag::Diagonal));
 
-        // Elementwise ops (`+`, `-`, ...) claim no tags at all, whatever the
-        // operands carry: e.g. `P - P` is the zero matrix, not PD.
+        // Elementwise ops (`+`, `-`, ...) keep only Symmetric and Diagonal,
+        // and only when both operands carry them: e.g. `P - P` is the zero
+        // matrix, not PD, and `Q + Q` is not Orthogonal.
         let mut u = ShapeUnifier::new();
         let sq = Shape::matrix(3u64, 3u64);
         let ta = TensorType::tagged(&mut u, sq.clone(), a).unwrap();
@@ -128,7 +129,14 @@ proptest! {
             let e = elementwise(&mut u, l, r).unwrap();
             prop_assert!(e.tags().is_closed());
             prop_assert!(l.tags().join(r.tags()).is_subtag_of(e.tags()));
-            prop_assert!(e.tags().is_empty(), "elementwise kept {}", e.tags());
+            let both = l.tags().join(r.tags());
+            for t in e.tags().iter() {
+                prop_assert!(
+                    matches!(t, Tag::Symmetric | Tag::Diagonal) && both.contains(t),
+                    "elementwise kept {}",
+                    e.tags()
+                );
+            }
         }
     }
 

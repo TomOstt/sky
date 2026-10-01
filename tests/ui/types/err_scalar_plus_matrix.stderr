@@ -2,30 +2,30 @@ tests/ui/types/err_scalar_plus_matrix.sky:3:7: error: cannot add a scalar to a m
   |
 3 | w = A + 2
   |       ^ no broadcasting between a scalar and an array
-  |     - this is Matrix[3,3] [1]
-  |         - this is Scalar [1]
+  |     - this is Matrix[3,3] [dimensionless]
+  |         - this is Scalar [dimensionless]
   = help: write `A + 2 * exp(zeros(3, 3))` for every element (`exp(zeros(3, 3))` is an array of ones), or `A + identity(3)` for the identity
 
 tests/ui/types/err_scalar_plus_matrix.sky:4:7: error: cannot subtract a scalar from a matrix
   |
 4 | x = A - 2
   |       ^ no broadcasting between a scalar and an array
-  |     - this is Matrix[3,3] [1]
-  |         - this is Scalar [1]
+  |     - this is Matrix[3,3] [dimensionless]
+  |         - this is Scalar [dimensionless]
   = help: write `A - 2 * exp(zeros(3, 3))` for every element (`exp(zeros(3, 3))` is an array of ones), or `A - identity(3)` for the identity
 
 tests/ui/types/err_scalar_plus_matrix.sky:5:7: error: cannot add a matrix to a scalar
   |
 5 | y = 2 + A
   |       ^ no broadcasting between a scalar and an array
-  |     - this is Scalar [1]
-  |         - this is Matrix[3,3] [1]
+  |     - this is Scalar [dimensionless]
+  |         - this is Matrix[3,3] [dimensionless]
   = help: write `2 * exp(zeros(3, 3)) + A` for every element (`exp(zeros(3, 3))` is an array of ones), or `identity(3) + A` for the identity
 
 tests/ui/types/err_scalar_plus_matrix.sky:6:7: error: cannot subtract a matrix from a scalar
   |
 6 | z = 2 - A
   |       ^ no broadcasting between a scalar and an array
-  |     - this is Scalar [1]
-  |         - this is Matrix[3,3] [1]
+  |     - this is Scalar [dimensionless]
+  |         - this is Matrix[3,3] [dimensionless]
   = help: write `2 * exp(zeros(3, 3)) - A` for every element (`exp(zeros(3, 3))` is an array of ones), or `identity(3) - A` for the identity

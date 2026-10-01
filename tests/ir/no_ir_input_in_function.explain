@@ -1,0 +1,4 @@
+tests/ir/no_ir_input_in_function.sky:5:5: note: `sky run` runs this program on the tree-walking interpreter, not as native code: an input declaration must be at the top level of the file
+  |
+5 |     y: m
+  |     ^^^^

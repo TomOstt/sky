@@ -78,9 +78,12 @@
 //!   the clone by name and recursion ends. The limits below apply.
 //! * **Results.** The clone's declared result is the type of what it
 //!   returns, computed to a fixed point over all the clones of the module
-//!   together, so mutual recursion (`even`, `odd`) types too. Calls from
-//!   outside the clone keep their `unknown` result type: the generic
-//!   function's callers are not retyped, only boxed on return.
+//!   together, so mutual recursion (`even`, `odd`) types too.
+//! * **Callers.** Then every function with values of unknown type is typed
+//!   again with the clones' results ([`callers`]): `y = double(3) + 1` is a
+//!   number, and a loop variable that only a call's result made unknown
+//!   (`s = next_state(s)`) gets the type it starts with, if the clone for
+//!   that type returns it, so that call is specialized too.
 //! * **Not worth it.** A clone is dropped if it removes no run-time type
 //!   check and passes no known type on to a call.
 //!
@@ -152,6 +155,7 @@
 //! that the exactness analysis now proves cannot fail, compared with the
 //! generic function.
 
+mod callers;
 mod clean;
 mod copy;
 mod facts;
@@ -325,6 +329,7 @@ pub(crate) fn build(
         let env = Env {
             funcs,
             results: &results,
+            typed_call: None,
         };
         let inferred = infer(&f, &env);
         apply(&mut f, &inferred, None);
@@ -481,6 +486,13 @@ impl<'m> Specializer<'m> {
 
     fn run(&mut self, start: Vec<usize>) {
         self.queue.extend(start);
+        self.drain();
+        self.retype_callers();
+    }
+
+    /// Looks at the calls of every function queued, then settles the result
+    /// types of the typed clones.
+    fn drain(&mut self) {
         while let Some(i) = self.queue.pop_front() {
             self.scan(i);
         }
@@ -522,8 +534,24 @@ impl<'m> Specializer<'m> {
         if facts.is_empty() {
             return;
         }
+        if let Some((name, facts)) = self.adopt(callee_idx, facts, span) {
+            self.retarget(ci, op, &name, &facts);
+        }
+    }
+
+    /// Finds or makes the specialization of function `callee_idx` for
+    /// `facts`, for a call at `span`, with its explanations; returns its
+    /// name and the facts it was made for (fewer than asked if some bought
+    /// nothing). `None` if the call keeps the function it calls.
+    fn adopt(
+        &mut self,
+        callee_idx: usize,
+        facts: Vec<Fact>,
+        span: Span,
+    ) -> Option<(String, Vec<Fact>)> {
+        let callee_name = self.m.functions[callee_idx].name.clone();
         match self.plan(callee_idx, facts) {
-            Plan::Skip(None) => {}
+            Plan::Skip(None) => None,
             Plan::Skip(Some((what, why))) => {
                 let family = source_name(&callee_name).to_string();
                 if self.said.insert((family.clone(), what)) {
@@ -536,17 +564,18 @@ impl<'m> Specializer<'m> {
                         because: vec![why],
                     });
                 }
+                None
             }
             Plan::Reuse { name, facts } => {
-                self.retarget(ci, op, &name, &facts);
                 self.out.push(Rewrite {
                     pass: PASS,
                     rule: RULE_REUSED,
                     span,
                     before: source_name(&callee_name).to_string(),
-                    after: name,
+                    after: name.clone(),
                     because: facts.iter().map(|f| f.why.clone()).collect(),
                 });
+                Some((name, facts))
             }
             Plan::Create { name, facts, built } => {
                 let base_ops = size(&self.m.functions[callee_idx]);
@@ -554,7 +583,6 @@ impl<'m> Specializer<'m> {
                 *self.families.entry(family.clone()).or_default() += 1;
                 self.clones += 1;
                 self.cloned_ops += base_ops;
-                self.retarget(ci, op, &name, &facts);
                 let notes = self.notes(span, &family, &name, &facts, &built);
                 if facts.iter().any(Fact::is_type) {
                     self.typed.push(TypedClone {
@@ -566,6 +594,7 @@ impl<'m> Specializer<'m> {
                 self.out.extend(notes);
                 self.m.functions.push(built.func);
                 self.queue.push_back(self.m.functions.len() - 1);
+                Some((name, facts))
             }
         }
     }
@@ -852,6 +881,7 @@ impl Specializer<'_> {
                     let env = Env {
                         funcs: &self.m.functions,
                         results: &results,
+                        typed_call: None,
                     };
                     let inferred = infer(b, &env);
                     let next = results[&b.name].join(&inferred.result);
@@ -884,6 +914,7 @@ impl Specializer<'_> {
                     let env = Env {
                         funcs: &self.m.functions,
                         results: &results,
+                        typed_call: None,
                     };
                     let inferred = infer(b, &env);
                     let mut g = b.clone();
@@ -924,10 +955,13 @@ impl Specializer<'_> {
             };
             let note = &mut self.out[t.note];
             note.because[0] = type_checks_line(&family, &t.name, removed);
+            // Settled again when callers are typed: the line is replaced,
+            // not added twice.
+            let prefix = format!("`{}` returns a ", t.name);
+            note.because.retain(|b| !b.starts_with(&prefix));
             if let Some(r) = returns {
                 let at = 1.min(note.because.len());
-                note.because
-                    .insert(at, format!("`{}` returns a {r}", t.name));
+                note.because.insert(at, format!("{prefix}{r}"));
             }
         }
     }

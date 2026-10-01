@@ -319,7 +319,7 @@ pub fn lower_with_defs(
     src: &str,
     checked: &Checked,
 ) -> Result<(Module, HashMap<Span, String>), LowerError> {
-    lower_impl(module, src, checked, false).map(|(m, d, _)| (m, d))
+    lower_impl(module, src, checked, Mode::Whole).map(|l| (l.module, l.defs))
 }
 
 /// [`lower_with_defs`] for the `def`s alone: `<main>` is empty, and the
@@ -335,7 +335,7 @@ pub fn lower_defs(
     src: &str,
     checked: &Checked,
 ) -> Result<(Module, HashMap<Span, String>), LowerError> {
-    lower_impl(module, src, checked, true).map(|(m, d, _)| (m, d))
+    lower_impl(module, src, checked, Mode::Defs).map(|l| (l.module, l.defs))
 }
 
 /// [`lower`], and the `accuracy` declarations of the program as goals for
@@ -347,7 +347,7 @@ pub fn lower_with_accuracy(
     src: &str,
     checked: &Checked,
 ) -> Result<(Module, Vec<sky_ir::roundoff::Goal>), LowerError> {
-    lower_impl(module, src, checked, false).map(|(m, _, g)| (m, g))
+    lower_impl(module, src, checked, Mode::Whole).map(|l| (l.module, l.goals))
 }
 
 /// [`lower`] for a module that is about to be executed in place of the tree
@@ -358,18 +358,166 @@ pub fn lower_with_accuracy(
 /// the one entry point execution uses, so that a check SIR cannot express
 /// can be refused here, with a [`LowerError`], rather than run differently.
 pub fn lower_for_run(module: &Ast, src: &str, checked: &Checked) -> Result<Module, LowerError> {
-    lower_impl(module, src, checked, false).map(|(m, _, _)| m)
+    lower_impl(module, src, checked, Mode::Whole).map(|l| l.module)
 }
 
-/// Everything one lowering produces: the module, which SIR function each
-/// `def` became, and the `accuracy` goals.
-type Lowered = (Module, HashMap<Span, String>, Vec<sky_ir::roundoff::Goal>);
+/// The `def`s of a program as SIR, as far as they lower: what
+/// [`lower_defs_partial`] returns.
+#[derive(Debug)]
+pub struct PartialDefs {
+    /// The `def`s that lowered (and nothing that calls one that did not),
+    /// verified.
+    pub module: Module,
+    /// The SIR function of each `def` in `module`, by the span of its name.
+    pub defs: HashMap<Span, String>,
+    /// Why each other `def` is missing, by the span of its name.
+    pub failed: HashMap<Span, DefFailure>,
+}
+
+/// Why a `def` is missing from [`PartialDefs::module`].
+#[derive(Clone, Debug)]
+pub struct DefFailure {
+    /// The error that stopped the `def` the failure comes from.
+    pub error: LowerError,
+    /// The calls from this `def` to that one, by name (the failing `def`
+    /// last); empty when this `def` failed itself.
+    pub calls: Vec<String>,
+}
+
+/// [`lower_defs`], except that a `def` SIR cannot express (one that
+/// `solve`s, say) does not stop the others: it is left out, with the
+/// reason, and so is every `def` that calls it, directly or through a
+/// derivative. So a derivative of a function that never reaches a `solve`
+/// works in a program that has one, and one that does reach it can say
+/// which call leads there.
+pub fn lower_defs_partial(
+    module: &Ast,
+    src: &str,
+    checked: &Checked,
+) -> Result<PartialDefs, LowerError> {
+    let l = lower_impl(module, src, checked, Mode::PartialDefs)?;
+    Ok(prune_failed(
+        l.module,
+        l.defs,
+        l.failed,
+        l.failed_derivatives,
+    ))
+}
+
+/// Takes out of `module` every function that calls one not in it (a
+/// failed `def`, or a derivative that could not be built), until none
+/// does, and says why for each `def` taken out.
+fn prune_failed(
+    mut module: Module,
+    mut defs: HashMap<Span, String>,
+    failed: Vec<(Span, LowerError)>,
+    failed_derivatives: Vec<(String, LowerError)>,
+) -> PartialDefs {
+    let span_of: HashMap<String, Span> = defs.iter().map(|(s, n)| (n.clone(), *s)).collect();
+    let mut why: HashMap<Span, DefFailure> = HashMap::new();
+    // By SIR function name: the failure a missing function stands for.
+    let mut missing: HashMap<String, DefFailure> = HashMap::new();
+    for (span, error) in failed {
+        let failure = DefFailure {
+            error,
+            calls: Vec::new(),
+        };
+        if let Some(name) = defs.remove(&span) {
+            missing.insert(name, failure.clone());
+        }
+        why.insert(span, failure);
+    }
+    // A derivative that could not be built: by the function it
+    // differentiates, which the callee's name (`d<f>/d<x>`) gives.
+    let primal_of = |callee: &str| -> Option<String> {
+        let rest = callee.strip_prefix('d')?;
+        Some(rest[..rest.rfind("/d")?].to_string())
+    };
+    loop {
+        let present: BTreeSet<String> = module.functions.iter().map(|f| f.name.clone()).collect();
+        let found = module.functions.iter().enumerate().find_map(|(i, f)| {
+            if f.name == Module::MAIN {
+                return None;
+            }
+            f.ops.iter().find_map(|op| match &op.kind {
+                sky_ir::OpKind::Call { callee } if !present.contains(callee) => {
+                    Some((i, callee.clone()))
+                }
+                _ => None,
+            })
+        });
+        let Some((i, callee)) = found else { break };
+        let name = module.functions.remove(i).name;
+        let inner = missing.get(&callee).cloned().or_else(|| {
+            let primal = primal_of(&callee)?;
+            let error = failed_derivatives
+                .iter()
+                .find(|(f, _)| *f == primal)
+                .map(|(_, e)| e.clone())?;
+            Some(DefFailure {
+                error,
+                calls: Vec::new(),
+            })
+        });
+        let failure = match inner {
+            Some(inner) => {
+                let mut calls = vec![callee.clone()];
+                calls.extend(inner.calls);
+                DefFailure {
+                    error: inner.error,
+                    calls,
+                }
+            }
+            None => DefFailure {
+                error: LowerError::new(
+                    format!("internal error: `{callee}` is missing"),
+                    span_of.get(&name).copied().unwrap_or(Span::point(0)),
+                ),
+                calls: vec![callee.clone()],
+            },
+        };
+        if let Some(span) = span_of.get(&name) {
+            defs.remove(span);
+            why.insert(*span, failure.clone());
+        }
+        missing.insert(name, failure);
+    }
+    PartialDefs {
+        module,
+        defs,
+        failed: why,
+    }
+}
+
+/// How much of a program one lowering covers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Everything: `<main>` and every `def`.
+    Whole,
+    /// The `def`s alone, stopping at the first that cannot be lowered.
+    Defs,
+    /// The `def`s alone, collecting the ones that cannot be lowered.
+    PartialDefs,
+}
+
+/// Everything one lowering produces.
+struct Lowered {
+    module: Module,
+    /// Which SIR function each `def` became.
+    defs: HashMap<Span, String>,
+    /// The `accuracy` goals.
+    goals: Vec<sky_ir::roundoff::Goal>,
+    /// [`Mode::PartialDefs`]: the `def`s that did not lower, and the
+    /// derivatives that could not be built (by the function differentiated).
+    failed: Vec<(Span, LowerError)>,
+    failed_derivatives: Vec<(String, LowerError)>,
+}
 
 fn lower_impl(
     module: &Ast,
     src: &str,
     checked: &Checked,
-    defs_only: bool,
+    mode: Mode,
 ) -> Result<Lowered, LowerError> {
     let main = FnState {
         b: Builder::new(Module::MAIN.to_string(), module.span),
@@ -395,12 +543,13 @@ fn lower_impl(
         stack: Vec::new(),
         derivatives: Vec::new(),
         goals: Vec::new(),
+        failed: (mode == Mode::PartialDefs).then(Vec::new),
     };
     lw.collect_defs(&module.stmts);
     lw.collect_module_names(&module.stmts);
     lw.collect_literal_bindings(&module.stmts);
     lw.seed_constants(&module.stmts, module.span);
-    if defs_only {
+    if mode != Mode::Whole {
         lw.defs_in(&module.stmts)?;
     } else {
         lw.block(&module.stmts, &Needed::new())?;
@@ -414,6 +563,7 @@ fn lower_impl(
         derivatives,
         fns,
         goals,
+        failed,
         ..
     } = lw;
     out.sort_by_key(|(start, _)| *start);
@@ -425,9 +575,19 @@ fn lower_impl(
     };
     // The derivative functions the program asked for, now that the
     // functions they differentiate exist.
+    let mut failed_derivatives = Vec::new();
     for want in derivatives {
-        sky_ad::differentiate_into(&mut module, &want.func, want.wrt)
-            .map_err(|e| derivative::ad_error(&e, want.span))?;
+        let partial = mode == Mode::PartialDefs;
+        if partial && module.function(&want.func).is_none() {
+            continue; // of a failed `def`: its callers go too
+        }
+        match sky_ad::differentiate_into(&mut module, &want.func, want.wrt) {
+            Ok(_) => {}
+            Err(e) if partial => {
+                failed_derivatives.push((want.func.clone(), derivative::ad_error(&e, want.span)));
+            }
+            Err(e) => return Err(derivative::ad_error(&e, want.span)),
+        }
     }
     // Effects follow from the bodies (the derivative functions included)
     // and the calls between them; one pass owns that rule
@@ -437,7 +597,13 @@ fn lower_impl(
         .into_iter()
         .map(|(def, info)| (def, info.name))
         .collect();
-    Ok((module, defs, goals))
+    Ok(Lowered {
+        module,
+        defs,
+        goals,
+        failed: failed.unwrap_or_default(),
+        failed_derivatives,
+    })
 }
 
 /// Lexes, parses, checks and lowers `src`: the whole path from source text

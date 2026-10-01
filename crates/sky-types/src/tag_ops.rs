@@ -113,7 +113,11 @@ impl fmt::Display for TagOp {
 /// * **MatMul** keeps Diagonal if both are Diagonal (so Symmetric by closure)
 ///   and Orthogonal if both are Orthogonal (`(Q₁Q₂)ᵀQ₁Q₂ = I`). Nothing
 ///   else: `(AB)ᵀ = BA ≠ AB` in general.
-/// * **Elementwise** (`+`, `-`) claims nothing (`P - P = 0` is not PD).
+/// * **Elementwise** (`+`, `-`) keeps Symmetric if both operands are
+///   (`aᵢⱼ ± bᵢⱼ` and `aⱼᵢ ± bⱼᵢ` are one operation on equal inputs) and
+///   Diagonal if both are (an off-diagonal entry is `0 ± 0`, which is
+///   zero). PositiveDefinite is dropped (`P - P = 0` is not PD) and so is
+///   Orthogonal (`Q + Q = 2Q`).
 /// * **Product** (`A * B`, entry by entry) keeps Symmetric if both operands
 ///   are (the entry at `(i, j)` and at `(j, i)` are one function of equal
 ///   inputs), and Diagonal if either is (an off-diagonal entry is `0 · b`,
@@ -144,7 +148,7 @@ pub fn tag_result(op: TagOp, inputs: &[TagSet]) -> TagSet {
             matches!(t, Tag::Symmetric | Tag::Diagonal | Tag::Orthogonal)
         }),
         TagOp::MatMul => kept(a.join(b), |t| matches!(t, Tag::Diagonal | Tag::Orthogonal)),
-        TagOp::Elementwise => TagSet::EMPTY,
+        TagOp::Elementwise => kept(a.join(b), |t| matches!(t, Tag::Symmetric | Tag::Diagonal)),
         // `join` is the tags both operands have, `meet` the tags either has.
         TagOp::Product => {
             let symmetric = kept(a.join(b), |t| t == Tag::Symmetric);
@@ -183,9 +187,8 @@ pub fn tag_result(op: TagOp, inputs: &[TagSet]) -> TagSet {
 ///
 /// **Inverse** is not exact: LU, Cholesky and friends compute `(A⁻¹)ᵢⱼ` and
 /// `(A⁻¹)ⱼᵢ` through different sequences of roundings, so a symmetric input
-/// gives a result that is symmetric only up to rounding. **Elementwise**
-/// never produces a tag, so it never needs mirroring either. **Product**,
-/// **Quotient**, **Map1** and **Map2** compute every entry with one
+/// gives a result that is symmetric only up to rounding. **Elementwise**,
+/// **Product**, **Quotient**, **Map1** and **Map2** compute every entry with one
 /// deterministic function of the entries at that position, so equal inputs
 /// `aᵢⱼ = aⱼᵢ` (and `bᵢⱼ = bⱼᵢ`) give equal outputs.
 pub const fn needs_mirroring(op: TagOp) -> bool {
@@ -221,13 +224,14 @@ mod tests {
             TagOp::Transpose
             | TagOp::Scale
             | TagOp::Negate
+            | TagOp::Elementwise
             | TagOp::Product
             | TagOp::Quotient
             | TagOp::Map1
             | TagOp::Map2 => true,
             // Only Diagonal @ Diagonal, computed as a product of diagonals.
             TagOp::MatMul => out.contains(Tag::Diagonal),
-            TagOp::Inverse | TagOp::Elementwise => false,
+            TagOp::Inverse => false,
         }
     }
 

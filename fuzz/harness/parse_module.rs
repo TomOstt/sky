@@ -415,6 +415,8 @@ fn walk_module(module: &Module, mut f: impl FnMut(Span)) {
                 f(u.span());
                 match u {
                     UnitExpr::Name(id) => f(id.span),
+                    UnitExpr::One(span) => f(*span),
+                    UnitExpr::Group { inner, .. } => stack.push(Node::Unit(inner)),
                     UnitExpr::Mul { lhs, rhs, .. } | UnitExpr::Div { lhs, rhs, .. } => {
                         stack.push(Node::Unit(lhs));
                         stack.push(Node::Unit(rhs));

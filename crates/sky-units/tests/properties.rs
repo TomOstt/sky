@@ -304,6 +304,10 @@ fn spelled_in_the_model(candidate: &str) -> bool {
             .flatten()
             .collect::<Vec<_>>()
     };
+    // Spellings refused on purpose (`ft` is not femto-tonne).
+    if sky_units::NOT_UNITS.iter().any(|&(n, _)| n == candidate) {
+        return false;
+    }
     for u in sky_units::UNITS {
         for us in spellings(u.name, u.ascii) {
             if candidate == us {

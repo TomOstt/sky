@@ -1,0 +1,44 @@
+counter = 0
+def bump():
+    counter = counter + 1
+    return counter
+
+n = 2
+def pick(c):
+    if c > 0:
+        n = 1
+    return n
+
+def walk():
+    for i in range(3):
+        print(n)
+        n = i
+    return 0
+
+def helper():
+    return 1
+def uses():
+    y = helper()
+    helper = 5
+    return y
+
+# Fine: the local is bound before it is read, or the outer one is only read.
+x = 5
+def own():
+    x = 3
+    return x
+def reads():
+    return x + counter
+def param(x):
+    x = x + 1
+    return x
+print(own(), reads(), param(1))
+
+# A loop that reads the outer name first, then binds it.
+k = 1
+def loop_reads_first():
+    while true:
+        y = k
+        k = 2
+        break
+    return y

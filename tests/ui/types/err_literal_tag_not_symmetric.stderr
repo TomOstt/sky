@@ -1,10 +1,10 @@
 tests/ui/types/err_literal_tag_not_symmetric.sky:1:29: error: `[[1, 2], [3, 4]]` is not known to be Symmetric
   |
 1 | S: Symmetric Matrix[2, 2] = [[1, 2], [3, 4]]
-  |                             ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [1]
+  |                             ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [dimensionless]
   |    ---------------------- expected because of this annotation
   |                                  - entry [0, 1]
   |                                       - entry [1, 0]
   = note: the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it
   = note: entry [0, 1] is 2 but entry [1, 0] is 3
-  = help: fix the entries, or declare the Symmetric property on an input the value is computed from
+  = help: fix the entries; `+`, `-`, scaling, negation, `ᵀ` and `⁻¹` of Symmetric matrices are Symmetric; for another matrix, pass it to a function whose parameter is declared Symmetric, which checks it when the function is called

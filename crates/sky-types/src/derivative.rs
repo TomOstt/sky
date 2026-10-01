@@ -172,7 +172,9 @@ impl Checker<'_> {
                     _ => break,
                 }
             }
-            return Some(self.call(t, callee, args, span));
+            let result = self.call(t.clone(), callee, args, span);
+            self.uncertain_derivative_args(&t, callee, args);
+            return Some(result);
         }
         // `derivative(...)` or `grad(...)` written without a call after it.
         let (t, text) = if self.is_derivative(callee) {
@@ -968,6 +970,10 @@ impl Checker<'_> {
             Ty::Bool => (
                 format!("cannot differentiate `{fname}`: it returns a Bool, not a number"),
                 "a Bool has no derivative",
+            ),
+            Ty::Str => (
+                format!("cannot differentiate `{fname}`: it returns a string, not a number"),
+                "a string has no derivative",
             ),
             _ => (
                 format!("cannot differentiate `{fname}`: the unit of its result is not known"),

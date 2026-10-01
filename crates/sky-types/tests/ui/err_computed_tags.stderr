@@ -1,0 +1,42 @@
+crates/sky-types/tests/ui/err_computed_tags.sky:2:29: error: `A + Aᵀ` is not known to be Symmetric
+  |
+2 | S: Symmetric Matrix[2, 2] = A + Aᵀ
+  |                             ^^^^^^ this is Matrix[2,2] [dimensionless]
+  |    ---------------------- expected because of this annotation
+  = note: the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it
+  = help: `+`, `-`, scaling, negation, `ᵀ` and `⁻¹` of Symmetric matrices are Symmetric; for another matrix, pass it to a function whose parameter is declared Symmetric, which checks it when the function is called
+
+crates/sky-types/tests/ui/err_computed_tags.sky:4:36: error: `P + P` is not known to be PositiveDefinite
+  |
+4 | Q: PositiveDefinite Matrix[2, 2] = P + P
+  |                                    ^^^^^ this is Matrix[2,2] {Symmetric} [dimensionless]
+  |    ----------------------------- expected because of this annotation
+  = note: the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it
+  = help: only `ᵀ` and `⁻¹` keep PositiveDefinite; for a matrix you know is positive definite, pass it to a function whose parameter is declared PositiveDefinite: its symmetry is checked when the function is called, and its positivity by the Cholesky solve that relies on it
+
+crates/sky-types/tests/ui/err_computed_tags.sky:5:28: error: `A - A` is not known to be Diagonal
+  |
+5 | D: Diagonal Matrix[2, 2] = A - A
+  |                            ^^^^^ this is Matrix[2,2] [dimensionless]
+  |    --------------------- expected because of this annotation
+  = note: the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it
+  = help: `+`, `-`, scaling, negation, `ᵀ` and `⁻¹` of Diagonal matrices are Diagonal; for another matrix, pass it to a function whose parameter is declared Diagonal, which checks it when the function is called
+
+crates/sky-types/tests/ui/err_computed_tags.sky:6:30: error: `identity(2) + identity(2)` is not known to be Orthogonal
+  |
+6 | O: Orthogonal Matrix[2, 2] = identity(2) + identity(2)
+  |                              ^^^^^^^^^^^^^^^^^^^^^^^^^ this is Matrix[2,2] {Symmetric, Diagonal} [dimensionless]
+  |    ----------------------- expected because of this annotation
+  = note: the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it
+  = help: build it from `identity(n)` and products and negations of Orthogonal matrices: an Orthogonal promise is never checked when the program runs, so the checker must know it
+
+crates/sky-types/tests/ui/err_computed_tags.sky:7:29: error: `[[1, 2], [3, 1]]` is not known to be Symmetric
+  |
+7 | L: Symmetric Matrix[2, 2] = [[1, 2], [3, 1]]
+  |                             ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [dimensionless]
+  |    ---------------------- expected because of this annotation
+  |                                  - entry [0, 1]
+  |                                       - entry [1, 0]
+  = note: the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it
+  = note: entry [0, 1] is 2 but entry [1, 0] is 3
+  = help: fix the entries; `+`, `-`, scaling, negation, `ᵀ` and `⁻¹` of Symmetric matrices are Symmetric; for another matrix, pass it to a function whose parameter is declared Symmetric, which checks it when the function is called

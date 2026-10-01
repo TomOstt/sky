@@ -1,0 +1,87 @@
+# Natural frequencies of a 3-DOF spring-mass chain (dogfood: structures).
+#
+#   wall -k- m1 -k- m2 -k- m3        (free at the right end)
+#
+# The generalised eigenproblem K phi = w^2 M phi. Sky has no eigen-solver
+# (no `eig`, no `eigvals`, not even `det` or `trace`), so this is written by
+# hand: inverse iteration for the lowest mode, a deflated inverse iteration for
+# the middle one, and plain power iteration for the highest. The result is
+# checked against the exact frequencies of the equal-mass chain,
+#   w_j = 2 sqrt(k/m) sin((2j - 1) pi / 14),   j = 1, 2, 3,
+# and, for the unequal masses, against the residual |K phi - w^2 M phi| and
+# the trace identity  sum w^2 = sum K_ii / m_i.
+
+k = 4000 N/m
+
+# Inverse iteration: x <- K⁻¹ M v, normalised. `K⁻¹ @ b` is a Cholesky solve
+# (K is a PositiveDefinite literal), but it refactors K at every iteration
+# because Sky has no way to keep a factorization.
+def rayleigh(K: Matrix[3, 3] N/m, M: Matrix[3, 3] kg, v: Vector[3]) -> Hz^2:
+    return (v @ (K @ v)) / (v @ (M @ v))
+
+def inverse_iteration(K: PositiveDefinite Matrix[3, 3] N/m, M: Diagonal Matrix[3, 3] kg) -> Vector[3]:
+    v = [1, 1, 1] / sqrt(3)
+    for it in range(80):
+        x = K⁻¹ @ (M @ v)
+        v = x / norm(x)
+    return v
+
+def remove_mode(v: Vector[3], phi: Vector[3], M: Diagonal Matrix[3, 3] kg) -> Vector[3]:
+    return v - phi * (dot(phi, M @ v) / dot(phi, M @ phi))
+
+def inverse_iteration_deflated(K: PositiveDefinite Matrix[3, 3] N/m, M: Diagonal Matrix[3, 3] kg,
+                               phi1: Vector[3]) -> Vector[3]:
+    v = remove_mode([1, 2, 3] / sqrt(14), phi1, M)
+    for it in range(80):
+        x = K⁻¹ @ (M @ v)
+        x = remove_mode(x / norm(x), phi1, M)   # keep it M-orthogonal to mode 1
+        v = x / norm(x)
+    return v
+
+def power_iteration(K: Matrix[3, 3] N/m, M: Diagonal Matrix[3, 3] kg) -> Vector[3]:
+    v = [1, -1, 1] / sqrt(3)
+    for it in range(200):
+        x = M⁻¹ @ (K @ v)                    # Diagonal solve: divisions only
+        v = x / norm(x)
+    return v
+
+def report(label, w2: Hz^2, K: Matrix[3, 3] N/m, M: Matrix[3, 3] kg, phi: Vector[3]) -> Hz:
+    w = sqrt(w2)
+    res = norm(K @ phi - w2 * (M @ phi))     # residual of K phi = w^2 M phi
+    print(label, "f =", (w / (2 * pi)) as Hz, " residual:", res as N/m)
+    return w
+
+# ---- case 1: equal masses, exact answer known ------------------------------
+K1: PositiveDefinite Matrix[3, 3] N/m = [[8000 N/m, -4000 N/m, 0 N/m],
+                                         [-4000 N/m, 8000 N/m, -4000 N/m],
+                                         [0 N/m, -4000 N/m, 4000 N/m]]
+M1: Diagonal Matrix[3, 3] kg = [[10 kg, 0 kg, 0 kg], [0 kg, 10 kg, 0 kg], [0 kg, 0 kg, 10 kg]]
+
+print("equal masses (10 kg), k = 4000 N/m")
+p1 = inverse_iteration(K1, M1)
+p2 = inverse_iteration_deflated(K1, M1, p1)
+p3 = power_iteration(K1, M1)
+w1 = report("mode 1", rayleigh(K1, M1, p1), K1, M1, p1)
+w2 = report("mode 2", rayleigh(K1, M1, p2), K1, M1, p2)
+w3 = report("mode 3", rayleigh(K1, M1, p3), K1, M1, p3)
+
+wn = sqrt(k / (10 kg))
+print("exact  1:", (2 * wn * sin(pi / 14) / (2 * pi)) as Hz)
+print("exact  2:", (2 * wn * sin(3 * pi / 14) / (2 * pi)) as Hz)
+print("exact  3:", (2 * wn * sin(5 * pi / 14) / (2 * pi)) as Hz)
+
+# ---- case 2: unequal masses -------------------------------------------------
+M2: Diagonal Matrix[3, 3] kg = [[20 kg, 0 kg, 0 kg], [0 kg, 15 kg, 0 kg], [0 kg, 0 kg, 5 kg]]
+print("unequal masses (20, 15, 5 kg)")
+q1 = inverse_iteration(K1, M2)
+q2 = inverse_iteration_deflated(K1, M2, q1)
+q3 = power_iteration(K1, M2)
+l1 = rayleigh(K1, M2, q1)
+l2 = rayleigh(K1, M2, q2)
+l3 = rayleigh(K1, M2, q3)
+report("mode 1", l1, K1, M2, q1)
+report("mode 2", l2, K1, M2, q2)
+report("mode 3", l3, K1, M2, q3)
+tr = 8000 N/m / (20 kg) + 8000 N/m / (15 kg) + 4000 N/m / (5 kg)
+print("sum of w^2:", l1 + l2 + l3, " trace(M^-1 K):", tr)
+print("M-orthogonality q1.M.q2:", dot(q1, M2 @ q2) as kg)

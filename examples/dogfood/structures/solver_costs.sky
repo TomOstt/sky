@@ -1,0 +1,49 @@
+# Performance contracts on structural solvers (dogfood: structures).
+#
+# Which `cost` lines does `sky check` prove, which does it refute, and what
+# does it say when the bound is something an engineer would naturally write?
+# Run `sky check --explain examples/dogfood/structures/solver_costs.sky` to
+# see the proofs; the program itself only solves a 2x2 spring pair at the end.
+
+# 1. A Cholesky solve of K u = f with K positive definite: n^3/3 + 2 n^2.
+def solve_spd(K: PositiveDefinite Matrix[N, N] N/m, f: Vector[N] N) -> Vector[N] m:
+    cost flops <= N^3 / 3 + 2 * N^2
+    cost allocations <= 2
+    return K⁻¹ @ f
+
+# 2. The same with a general (untagged) K goes through LU: 2/3 n^3 + 2 n^2.
+def solve_lu(K: Matrix[N, N] N/m, f: Vector[N] N) -> Vector[N] m:
+    cost flops <= 2 * N^3 / 3 + 2 * N^2
+    return K⁻¹ @ f
+
+# 3. A bound that is true for large N but not for N = 1..5: the contract
+#    holds "for every size from 1 up", so `sky check` refuses it.
+#    (Uncomment to see the refutation.)
+# def solve_lu_loose(K: Matrix[N, N] N/m, f: Vector[N] N) -> Vector[N] m:
+#     cost flops <= N^3
+#     return K⁻¹ @ f
+
+# 4. A matrix-vector product, K u: 2 n^2 flops.
+def apply(K: Matrix[N, N] N/m, u: Vector[N] m) -> Vector[N] N:
+    cost flops == 2 * N^2
+    return K @ u
+
+# 5. Residual r = f - K u, the check an engineer always wants.
+def residual(K: Matrix[N, N] N/m, u: Vector[N] m, f: Vector[N] N) -> Vector[N] N:
+    cost flops <= 2 * N^2 + N
+    return f - K @ u
+
+# 6. Gauss-Seidel-style sweep with a bounded loop over the entries.
+def sum_loads(f: Vector[N] N) -> N:
+    cost flops <= N
+    s = 0 N
+    for i in range(len(f)):
+        s = s + f[i]
+    return s
+
+K: PositiveDefinite Matrix[2, 2] N/m = [[3 N/m, -1 N/m], [-1 N/m, 1 N/m]]
+f = [0 N, 10 N]
+u = solve_spd(K, f)
+print(u)
+print(residual(K, u, f))
+print(sum_loads(f))

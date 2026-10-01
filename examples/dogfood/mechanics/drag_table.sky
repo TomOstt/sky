@@ -1,0 +1,61 @@
+# Sampling a trajectory: `solve` only returns the final state, so to get the
+# solution "every 0.5 s" the solve is chained: each solve starts from the
+# previous solve's final state. A table of the drag trajectory is printed,
+# and the landing point is found by chaining until y goes negative.
+#
+# Baseball, 40 m/s at 40 degrees, quadratic drag (same numbers as drag.sky).
+
+m = 0.145 kg
+Cd = 0.47
+rho = 1.2 kg/m^3
+r = 0.0366 m
+k = 0.5 * rho * Cd * π * r^2 / m
+
+equation flight(t: s):
+    x: m
+    y: m
+    vx: m/s
+    vy: m/s
+    speed = sqrt(vx^2 + vy^2)
+    x' = vx
+    y' = vy
+    vx' = -k * speed * vx
+    vy' = -g_n - k * speed * vy
+
+theta = 40 deg
+x = 0 m
+y = 0 m
+vx = 40 m/s * cos(theta)
+vy = 40 m/s * sin(theta)
+t = 0 s
+dt = 0.5 s
+print("    t [s]    x [m]    y [m]")
+while y >= 0 m:
+    print(round(t / 1 s * 10) / 10, round(x / 1 m * 100) / 100, round(y / 1 m * 100) / 100)
+    sol = solve flight from t to t + dt with x = x, y = y, vx = vx, vy = vy:
+        tolerance 1e-10
+    t = sol.t
+    x = sol.x
+    y = sol.y
+    vx = sol.vx
+    vy = sol.vy
+print("first sample below ground at t =", t, "x =", x, "y =", y)
+
+# Landing: bisect on the last interval (restart from the last sample above ground).
+# (The variables above hold the first state below ground; step back by re-solving
+# from the launch state is simplest here.)
+lo = t - dt
+hi = t
+n = 0
+while n < 30:
+    mid = (lo + hi) / 2
+    s = solve flight from 0 s to mid with x = 0 m, y = 0 m, vx = 40 m/s * cos(theta), vy = 40 m/s * sin(theta):
+        tolerance 1e-10
+    if s.y > 0 m:
+        lo = mid
+    else:
+        hi = mid
+    n += 1
+land = solve flight from 0 s to hi with x = 0 m, y = 0 m, vx = 40 m/s * cos(theta), vy = 40 m/s * sin(theta):
+    tolerance 1e-10
+print("landing at t =", hi, "range =", land.x)

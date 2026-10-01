@@ -1,0 +1,11 @@
+energy: -1.2871419917663127 J
+distance of body 1 from its start after one period: 0.0603578039630912 m
+distance of body 2 from its start after one period: 0.06716942315829344 m
+distance of body 3 from its start after one period: 0.12709424029443425 m
+the system is second order and Lz and energy are monitored: symplectic integrators keep their error bounded over long times instead of letting it drift
+at tolerance 1.00e-6 a fourth-order composition (Yoshida) needs far fewer steps than second-order velocity Verlet, so Yoshida's symplectic composition (order 4) was chosen
+the step comes from rtol = 1.00e-6 and atol = 1.00e-9: a probe (adaptive step doubling, where one step compared with two half steps estimates the local error) ran over the whole interval in 4 steps and estimated the largest step the tolerance allows at each point; the smallest was 0.083 s, and 0.8 times that, 0.0664 s, is held fixed for the whole run, because varying the step would forfeit the bounded-energy property
+but a trial run at that step over the whole interval showed Lz drifting by 6 (relative), more than the 1.00e-6 the tolerance asks, so the step was reduced to 6.64e-6 s (a fourth-order method's bounded error scales like the step to that power), where the trial drift was 170
+took 15060 fixed steps of at most 6.64e-6 s
+Lz drifted by at most 2.3e2 (relative)
+energy drifted by at most 1.6e-14 (relative)

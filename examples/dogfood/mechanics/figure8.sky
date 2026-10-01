@@ -1,0 +1,53 @@
+# Three-body figure-eight orbit (Chenciner & Montgomery 2000).
+#
+# Three equal masses chase each other along one figure-eight curve. In units
+# G = m = 1 the period is T = 6.32591398. Here the units are real: lengths in
+# metres, time in seconds, masses 1 kg and G = 1 m^3/(kg s^2) (not the real G).
+#
+# (Total angular momentum is also conserved, and is exactly 0 on this orbit.
+# Declaring it with `conserve` makes the solver grind forever: see
+# figure8_lz.sky and FRICTION.md.)
+#
+# After one period the bodies should be back where they started: the program
+# prints how far they are, the energy drift the solver observed, and its
+# explanation. Every body has its own pair of state variables (r1, v1, ...),
+# because `equation` has no way to say "for each body".
+
+Gs = 1 m^3/kg/s^2
+mb = 1 kg
+T = 6.32591398 s
+
+equation fig8(t: s):
+    r1: Vector[2] m
+    r2: Vector[2] m
+    r3: Vector[2] m
+    v1: Vector[2] m/s
+    v2: Vector[2] m/s
+    v3: Vector[2] m/s
+    r1' = v1
+    r2' = v2
+    r3' = v3
+    v1' = Gs * mb * ((r2 - r1) / norm(r2 - r1)^3 + (r3 - r1) / norm(r3 - r1)^3)
+    v2' = Gs * mb * ((r1 - r2) / norm(r1 - r2)^3 + (r3 - r2) / norm(r3 - r2)^3)
+    v3' = Gs * mb * ((r1 - r3) / norm(r1 - r3)^3 + (r2 - r3) / norm(r2 - r3)^3)
+
+p1 = [0.97000436 m, -0.24308753 m]
+p3 = [0 m, 0 m]
+w3 = [-0.93240737 m/s, -0.86473146 m/s]
+
+sol = solve fig8 from 0 s to T with r1 = p1, r2 = -p1, r3 = p3, v1 = -0.5 * w3, v2 = -0.5 * w3, v3 = w3:
+    tolerance 1e-9
+    conserve energy = 0.5 * mb * (norm(v1)^2 + norm(v2)^2 + norm(v3)^2) - Gs * mb^2 * (1 / norm(r1 - r2) + 1 / norm(r1 - r3) + 1 / norm(r2 - r3))
+
+print("energy:", sol.energy)
+print("distance of body 1 from its start after one period:", norm(sol.r1 - p1))
+print("distance of body 2 from its start after one period:", norm(sol.r2 + p1))
+print("distance of body 3 from its start after one period:", norm(sol.r3 - p3))
+print(explain(sol))
+
+# Ten periods: the bounded energy error of the symplectic method is the point.
+sol10 = solve fig8 from 0 s to 10 * T with r1 = p1, r2 = -p1, r3 = p3, v1 = -0.5 * w3, v2 = -0.5 * w3, v3 = w3:
+    tolerance 1e-9
+    conserve energy = 0.5 * mb * (norm(v1)^2 + norm(v2)^2 + norm(v3)^2) - Gs * mb^2 * (1 / norm(r1 - r2) + 1 / norm(r1 - r3) + 1 / norm(r2 - r3))
+print("after 10 periods, body 1 is", norm(sol10.r1 - p1), "from its start")
+print(explain(sol10))

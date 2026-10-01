@@ -1,0 +1,17 @@
+energy: -1.28714199176633 J
+distance of body 1 from its start after one period: 2.355659264149452e-8 m
+distance of body 2 from its start after one period: 2.3612662455208052e-8 m
+distance of body 3 from its start after one period: 4.716062909526338e-8 m
+the system is second order and energy is monitored: symplectic integrators keep energy error bounded over long times instead of letting it drift
+at tolerance 1.00e-9 a fourth-order composition (Yoshida) needs far fewer steps than second-order velocity Verlet, so Yoshida's symplectic composition (order 4) was chosen
+the step comes from rtol = 1.00e-9 and atol = 1.00e-12: a probe (adaptive step doubling, where one step compared with two half steps estimates the local error) ran over the whole interval in 450 steps and estimated the largest step the tolerance allows at each point; the smallest was 0.00756 s, and 0.8 times that, 0.00605 s, is held fixed for the whole run, because varying the step would forfeit the bounded-energy property
+but a trial run at that step over the whole interval showed energy drifting by 2.60e-9 (relative), more than the 1.00e-9 the tolerance asks, so the step was reduced to 0.00429 s (a fourth-order method's bounded error scales like the step to that power), where the trial drift was 6.56e-10
+took 1477 fixed steps of at most 0.00429 s
+energy drifted by at most 6.5e-10 (relative)
+after 10 periods, body 1 is 2.401550828758914e-7 m from its start
+the system is second order and energy is monitored: symplectic integrators keep energy error bounded over long times instead of letting it drift
+at tolerance 1.00e-9 a fourth-order composition (Yoshida) needs far fewer steps than second-order velocity Verlet, so Yoshida's symplectic composition (order 4) was chosen
+the step comes from rtol = 1.00e-9 and atol = 1.00e-12: a probe (adaptive step doubling, where one step compared with two half steps estimates the local error) ran over the first 28.2 s of the interval in 2000 steps and estimated the largest step the tolerance allows at each point; the smallest was 0.00754 s, and 0.8 times that, 0.00603 s, is held fixed for the whole run, because varying the step would forfeit the bounded-energy property
+but a trial run at that step over the first 28.2 s showed energy drifting by 2.57e-9 (relative), more than the 1.00e-9 the tolerance asks, so the step was reduced to 0.00429 s (a fourth-order method's bounded error scales like the step to that power), where the trial drift was 6.56e-10
+took 14763 fixed steps of at most 0.00429 s
+energy drifted by at most 6.6e-10 (relative)

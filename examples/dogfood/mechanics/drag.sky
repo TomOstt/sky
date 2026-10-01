@@ -1,0 +1,73 @@
+# Projectile with quadratic air drag: which launch angle gives the longest range?
+#
+# A baseball (m = 0.145 kg, radius 3.66 cm, Cd = 0.47) is hit at 40 m/s in air
+# (rho = 1.2 kg/m^3). With drag the best angle is below 45 degrees.
+#
+# Plan: solve the flight ODE inside a function; find the landing time with
+# Newton's method on y(t) (using the solution's vertical speed as the slope);
+# maximize the range over the angle with golden-section search.
+#
+# Sky has no event / stop condition and no sampled output for `solve`, so the
+# landing time is found by re-solving from 0 to a trial time (see FRICTION.md).
+
+m = 0.145 kg
+Cd = 0.47
+rho = 1.2 kg/m^3
+r = 0.0366 m
+A = π * r^2
+k = 0.5 * rho * Cd * A / m      # drag per metre: a = -k |v| v
+v0 = 40 m/s
+
+equation flight(t: s):
+    x: m
+    y: m
+    vx: m/s
+    vy: m/s
+    speed = sqrt(vx^2 + vy^2)
+    x' = vx
+    y' = vy
+    vx' = -k * speed * vx
+    vy' = -g_n - k * speed * vy
+
+# Range for a launch angle: Newton iteration for the time when y returns to 0.
+def range_for(theta: rad) -> m:
+    T = 2 * v0 * sin(theta) / g_n          # vacuum flight time: first guess
+    xr = 0 m
+    i = 0
+    while i < 12:
+        sol = solve flight from 0 s to T with x = 0 m, y = 0 m, vx = v0 * cos(theta), vy = v0 * sin(theta):
+            tolerance 1e-10
+        xr = sol.x
+        T = T - sol.y / sol.vy
+        i += 1
+    return xr
+
+# Golden-section search for the maximum of f on [lo, hi]. `f` is passed as an
+# argument (an unannotated parameter accepts a function).
+def argmax(f, lo: rad, hi: rad) -> rad:
+    phi = (sqrt(5) - 1) / 2
+    a = hi - phi * (hi - lo)
+    b = lo + phi * (hi - lo)
+    fa = f(a)
+    fb = f(b)
+    n = 0
+    while n < 40:
+        if fa < fb:
+            lo = a
+            a = b
+            fa = fb
+            b = lo + phi * (hi - lo)
+            fb = f(b)
+        else:
+            hi = b
+            b = a
+            fb = fa
+            a = hi - phi * (hi - lo)
+            fa = f(a)
+        n += 1
+    return (lo + hi) / 2
+
+best = argmax(range_for, 0.2 rad, 1.3 rad)
+print("vacuum optimum: 45 deg, range", v0^2 / g_n)
+print("best angle with drag:", best as deg)
+print("range:", range_for(best))

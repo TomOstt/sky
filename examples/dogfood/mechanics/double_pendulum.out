@@ -1,0 +1,6 @@
+angles at t = 20 s: -1.9302044912482723 -44.94415427621692
+velocities: 0.4090812868396662 Hz -5.633487220446431 Hz
+energy: 16.018547801723685 J
+no structure a specialised method could use is known, so the general-purpose Dormand-Prince 5(4) method was started, with adaptive steps for rtol = 1.00e-10 and atol = 1.00e-13
+the step was limited by accuracy for the whole interval, never by stability, so the system is not stiff and no other method was needed; 3749 steps, 749 rejected
+energy drifted by at most 1.1e-9 (relative), within the allowed 1.0e-8

@@ -1,0 +1,70 @@
+# Projectile with quadratic drag again, but with a hand-written RK4 integrator
+# in plain `def`s (no `equation`), so that `derivative` can differentiate the
+# whole trajectory: d(range)/d(angle) is exact, by automatic differentiation
+# through the time-stepping loop. Then Newton's method on d(range)/d(angle) = 0
+# finds the best launch angle, using the second derivative from a `def` that
+# wraps the first.
+#
+# Same ball as drag.sky: 0.145 kg, radius 3.66 cm, Cd = 0.47, rho = 1.2 kg/m^3,
+# launched at 40 m/s.
+
+m = 0.145 kg
+Cd = 0.47
+rho = 1.2 kg/m^3
+r = 0.0366 m
+A = π * r^2
+k = 0.5 * rho * Cd * A / m      # drag per metre
+v0 = 40 m/s
+dt0 = 0.01 s
+
+def acc(v: Vector[2] m/s) -> Vector[2] m/s^2:
+    return -k * norm(v) * v - [0 m/s^2, g_n]
+
+# One RK4 step of p' = v, v' = acc(v) (acceleration does not depend on position).
+def step_p(p: Vector[2] m, v: Vector[2] m/s, dt: s) -> Vector[2] m:
+    k1v = acc(v)
+    k2v = acc(v + 0.5 * dt * k1v)
+    k3v = acc(v + 0.5 * dt * k2v)
+    k4v = acc(v + dt * k3v)
+    k2p = v + 0.5 * dt * k1v
+    k3p = v + 0.5 * dt * k2v
+    k4p = v + dt * k3v
+    return p + dt / 6 * (v + 2 * k2p + 2 * k3p + k4p)
+
+def step_v(v: Vector[2] m/s, dt: s) -> Vector[2] m/s:
+    k1v = acc(v)
+    k2v = acc(v + 0.5 * dt * k1v)
+    k3v = acc(v + 0.5 * dt * k2v)
+    k4v = acc(v + dt * k3v)
+    return v + dt / 6 * (k1v + 2 * k2v + 2 * k3v + k4v)
+
+# Range for a launch angle: step until y < 0, then refine the last step by Newton.
+def range_for(theta: rad) -> m:
+    p = [0 m, 0 m]
+    v = [v0 * cos(theta), v0 * sin(theta)]
+    while step_p(p, v, dt0)[1] >= 0 m:
+        p = step_p(p, v, dt0)
+        v = step_v(v, dt0)
+    dt = dt0 * p[1] / (p[1] - step_p(p, v, dt0)[1])      # secant first guess
+    i = 0
+    while i < 3:
+        dt = dt - step_p(p, v, dt)[1] / step_v(v, dt)[1]
+        i += 1
+    return step_p(p, v, dt)[0]
+
+def dR(theta: rad) -> m/rad:
+    return derivative(range_for, theta)(theta)
+
+def d2R(theta: rad) -> m/rad^2:
+    return derivative(dR, theta)(theta)
+
+print("range at 45 deg:", range_for(45 deg))
+print("dR/dtheta at 45 deg:", dR(45 deg))
+theta = 45 deg
+i = 0
+while i < 6:
+    theta = theta - dR(theta) / d2R(theta)
+    i += 1
+print("best angle:", theta as deg)
+print("range:", range_for(theta))
+print("dR/dtheta there:", dR(theta))

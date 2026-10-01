@@ -1,0 +1,12 @@
+lengths    [32.45 cm, 46.05 cm, 61.34999999999999 cm, 76.65 cm, 91.25 cm, 105.95 cm]
+20 swings  [22.814 s, 27.267 s, 31.483 s, 35.144 s, 38.29 s, 41.329 s]
+amplitude  [5 deg, 7.5 deg, 6 deg, 8 deg, 5.5 deg, 7 deg]
+trial 0 : L = 32.5 ± 0.1 cm  T = 1140.7 ± 2.5 ms  g = 9.85 ± 0.05 m/s^2
+trial 1 : L = 46.0 ± 0.1 cm  T = 1363.4 ± 2.5 ms  g = 9.80 ± 0.04 m/s^2
+trial 2 : L = 61.3 ± 0.1 cm  T = 1574.1 ± 2.5 ms  g = 9.788 ± 0.035 m/s^2
+trial 3 : L = 76.7 ± 0.1 cm  T = 1757.2 ± 2.5 ms  g = 9.824 ± 0.031 m/s^2
+trial 4 : L = 91.2 ± 0.1 cm  T = 1914.5 ± 2.5 ms  g = 9.840 ± 0.028 m/s^2
+trial 5 : L = 106.0 ± 0.1 cm  T = 2066.5 ± 2.5 ms  g = 9.813 ± 0.026 m/s^2
+weighted mean g = 9.819 ± 0.014 m/s^2
+standard gravity g_n = 9.80665 m/s^2
+deviation from g_n: 0.9235260509230777 sigma

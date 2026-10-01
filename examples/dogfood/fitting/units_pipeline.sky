@@ -1,0 +1,44 @@
+# A lab-notebook pipeline in mixed units: a simple pendulum measured at six lengths.
+# Raw columns are bare numbers in the units the instruments read out
+# (ruler in cm, calipers in mm, stopwatch in ms for 20 swings, protractor in deg).
+# Convert to SI by attaching the unit once, compute g with its uncertainty, and
+# print in human units with `as`.
+# Run: sky run examples/dogfood/fitting/units_pipeline.sky
+
+wire_cm = [31.2, 44.8, 60.1, 75.4, 90.0, 104.7]        # ruler, +/- 1 mm
+bob_mm = [12.5, 12.5, 12.5, 12.5, 12.5, 12.5]          # calipers, bob radius, +/- 0.05 mm
+t20_ms = [22814.0, 27267.0, 31483.0, 35144.0, 38290.0, 41329.0]   # 20 swings, +/- 50 ms
+amp_deg = [5.0, 7.5, 6.0, 8.0, 5.5, 7.0]               # release angle, +/- 1 deg
+n = 6
+
+# Attach the units once, here; everything after is dimension-checked.
+wire = wire_cm * (1 cm)
+bob = bob_mm * (1 mm)
+t20 = t20_ms * (1 ms)
+amp = amp_deg * (1 deg)
+
+print("lengths   ", (wire + bob) as cm)
+print("20 swings ", t20 as s)
+print("amplitude ", amp as deg)
+
+g_sum = 0 s^2/m
+w_sum = 0 s^4/m^2
+rows = 0
+for i in range(n):
+    L = (wire[i] ± 1 mm) + (bob[i] ± 0.05 mm)           # length to the bob's centre
+    T = (t20[i] ± 50 ms) / 20                           # period
+    θ = amp[i] ± 1 deg
+    T0 = T / (1 + θ^2 / 16)                             # finite-amplitude correction
+    gi = 4 * π^2 * L / T0^2
+    print("trial", i, ": L =", L as cm, " T =", T as ms, " g =", gi as m/s^2)
+    # weight each trial by 1 / sigma^2 for the weighted mean
+    w = 1 / uncertainty(gi)^2
+    g_sum += w * nominal(gi)
+    w_sum += w
+
+g_mean = g_sum / w_sum
+g_err = 1 / sqrt(w_sum)
+print("weighted mean g =", (g_mean ± g_err) as m/s^2)
+print("standard gravity g_n =", g_n as m/s^2)
+dev = abs(g_mean - g_n) / g_err
+print("deviation from g_n:", dev, "sigma")

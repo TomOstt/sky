@@ -701,11 +701,52 @@ impl Checker<'_> {
             .with_label("not defined");
         if matches!(name, "True" | "False") {
             d = d.with_help("Sky writes booleans as `true`/`false`");
+        } else if name == "e" {
+            d = d.with_help("Euler's number is `exp(1)`; `e^x` is `exp(x)`");
+        } else if matches!(name, "math" | "np" | "numpy" | "scipy") {
+            d = d.with_help(
+                "Sky has no modules: `pi` (or `π`), `sqrt`, `exp`, `sin` and the other math functions are built in, so `math.pi` is `pi`",
+            );
+        } else if let Some(s) = self.similar_name(name) {
+            d = d.with_help(format!("did you mean `{}`?", quote(&s)));
         } else if !self.fns.is_empty() {
             d = d.with_help("a function body sees only names defined above its `def`");
         }
         self.error(d);
         Ty::Unknown
+    }
+
+    /// A defined name or built-in function `name` is probably a typo of:
+    /// within two edits and a third of its length, so short names never
+    /// match each other.
+    fn similar_name(&self, name: &str) -> Option<String> {
+        let want: Vec<char> = name.chars().collect();
+        if want.len() < 3 || want.len() > 64 {
+            return None;
+        }
+        let builtins = sky_units::MathFn::ALL.into_iter().map(|f| f.name()).chain([
+            "print",
+            "zeros",
+            "identity",
+            "len",
+            "range",
+            "derivative",
+            "grad",
+            "explain",
+        ]);
+        self.env
+            .names
+            .keys()
+            .map(String::as_str)
+            .filter(|n| !n.starts_with('<'))
+            .chain(builtins)
+            .map(|n| {
+                let have: Vec<char> = n.chars().collect();
+                (crate::check::edit_distance(&want, &have), n)
+            })
+            .filter(|&(d, _)| d > 0 && d <= 2 && d <= want.len() / 3)
+            .min_by_key(|&(d, _)| d)
+            .map(|(_, n)| n.to_string())
     }
 
     // ----- the conditional expression -----
@@ -816,7 +857,11 @@ impl Checker<'_> {
         self.diverged = false;
         let entry = self.begin_contracts(params, body);
         self.check_cost_lines(&fname, params, body);
+        let errors = self.error_count();
         self.block(body);
+        if self.error_count() > errors {
+            self.failed_defs.insert(name.span);
+        }
         let ends_diverged = self.diverged;
         let ctx = self.fns.pop();
         self.loops = saved_loops;

@@ -701,7 +701,7 @@ impl Lower<'_> {
             for (name, ty) in &results {
                 let v = match p.scope.get(name) {
                     Some(v) if assignable(self.st.b.ty(*v), ty) => *v,
-                    _ => self.stand_in(ty, span, base)?,
+                    _ => self.stand_in(ty, span, base, Some(name))?,
                 };
                 vals.push(v);
             }
@@ -837,7 +837,7 @@ impl Lower<'_> {
                 Some(v) => *v,
                 None => {
                     let ty = self.st.b.ty(after_args[i]).clone();
-                    self.stand_in(&ty, span, &base)?
+                    self.stand_in(&ty, span, &base, Some(c))?
                 }
             };
             next.push(v);
@@ -860,7 +860,7 @@ impl Lower<'_> {
                 // Built after the loop, where the type is known, and moved
                 // to before it.
                 let mark = self.st.b.block_len(outer);
-                let v = self.stand_in(&ty, span, &after_scope)?;
+                let v = self.stand_in(&ty, span, &after_scope, Some(c))?;
                 self.st.b.hoist_before(outer, mark, wop);
                 self.st.b.set_operand(wop, i, v);
             }

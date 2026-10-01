@@ -3,7 +3,7 @@ tests/ui/check/ok_accuracy_proven.sky:2:5: note: [DCE-001] `1.1` is removed
 2 | a = 1.1
   |     ^^^
   = note: applied by the `dce` pass
-  = note: because `a` is never used
+  = note: because nothing uses `a` any more
   = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
 
 tests/ui/check/ok_accuracy_proven.sky:3:5: note: [DCE-001] `2.3` is removed
@@ -11,7 +11,7 @@ tests/ui/check/ok_accuracy_proven.sky:3:5: note: [DCE-001] `2.3` is removed
 3 | b = 2.3
   |     ^^^
   = note: applied by the `dce` pass
-  = note: because `b` is never used
+  = note: because nothing uses `b` any more
   = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
 
 tests/ui/check/ok_accuracy_proven.sky:4:5: note: [FOLD-FLOAT-001] `1.1 * 2.3` is rewritten to `2.53`

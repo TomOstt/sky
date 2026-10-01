@@ -345,7 +345,9 @@ fn explain(f: &Function, id: OpId, facts: &Analysis) -> Option<Rewrite> {
     };
     let mut proofs = Vec::new();
     collect_proofs(f, id, facts, &mut proofs);
-    let mut because = vec![format!("{what} is never used")];
+    // "Not used any more", not "never used": folding may have replaced
+    // every use of a named constant with its value.
+    let mut because = vec![format!("nothing uses {what} any more")];
     let rule = if proofs.is_empty() {
         because.push(format!(
             "`{}` has no side effects (it cannot print, fail, call or loop), so removing \

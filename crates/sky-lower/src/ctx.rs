@@ -228,8 +228,15 @@ impl<'a> Lower<'a> {
     /// the dimension of `ty` by scaling with a one of that dimension, and
     /// given its tags by an `assume`. It is emitted at the insertion point
     /// and never observed. Fails only for a shape variable no value in
-    /// `scope` has.
-    pub(crate) fn stand_in(&mut self, ty: &Type, span: Span, scope: &Scope) -> R<ValueId> {
+    /// `scope` has. `name` is the variable the stand-in is for, for that
+    /// error (`None`, or an internal name, for a function's result).
+    pub(crate) fn stand_in(
+        &mut self,
+        ty: &Type,
+        span: Span,
+        scope: &Scope,
+        name: Option<&str>,
+    ) -> R<ValueId> {
         let Type::Number(n) = ty else {
             return Ok(self.placeholder(ty, span));
         };
@@ -238,18 +245,25 @@ impl<'a> Lower<'a> {
         }
         let index = || Type::scalar(sky_units::Dimension::DIMENSIONLESS);
         let mut sizes = Vec::with_capacity(2);
-        for (axis, d) in n.shape.dims().iter().enumerate() {
+        for d in n.shape.dims() {
             let size = match d {
                 sky_types::ShapeDim::Known(k) => self.const_float(*k as f64, index(), span),
                 var => match self.size_of_axis(var, scope, span) {
                     Some(v) => v,
                     None => {
+                        let what = match name {
+                            Some(n) if !n.starts_with('<') => format!("`{n}`"),
+                            _ => "the result".to_string(),
+                        };
                         return Err(LowerError::new(
                             format!(
-                                "cannot build a stand-in for an array of type {ty}: its size on axis {axis} is known only as a variable that no value in scope has"
+                                "{what} is an array whose size is known only while the program runs, which is not compiled yet"
                             ),
                             span,
-                        ))
+                        )
+                        .with_note(
+                            "a slice with a computed bound, such as `v[i : i + 2]`, has such a size; read its entries one by one instead (`v[i]`, `v[i + 1]`)",
+                        ));
                     }
                 },
             };

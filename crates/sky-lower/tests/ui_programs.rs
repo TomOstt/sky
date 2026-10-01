@@ -38,7 +38,7 @@ const REJECTED: &[(&str, &str)] = &[
     ("ok_returns.sky", "top level of the file"),
     (
         "ok_for_arrays.sky",
-        "iteration over arrays lowers once SIR has array values",
+        "iteration over an array is not compiled yet",
     ),
     // SIR has no uncertain value: such programs run on the tree-walker.
     ("ok_uncertainty.sky", "uncertainty (`±`) is not supported"),

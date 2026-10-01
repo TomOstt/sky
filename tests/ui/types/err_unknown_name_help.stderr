@@ -1,0 +1,23 @@
+tests/ui/types/err_unknown_name_help.sky:4:7: error: cannot find `velocty` in this scope
+  |
+4 | print(velocty)
+  |       ^^^^^^^ not defined
+  = help: did you mean `velocity`?
+
+tests/ui/types/err_unknown_name_help.sky:5:7: error: cannot find `sqroot` in this scope
+  |
+5 | print(sqroot(4))
+  |       ^^^^^^ not defined
+  = help: did you mean `sqrt`?
+
+tests/ui/types/err_unknown_name_help.sky:6:7: error: cannot find `e` in this scope
+  |
+6 | print(e^2)
+  |       ^ not defined
+  = help: Euler's number is `exp(1)`; `e^x` is `exp(x)`
+
+tests/ui/types/err_unknown_name_help.sky:7:7: error: cannot find `math` in this scope
+  |
+7 | print(math.pi)
+  |       ^^^^ not defined
+  = help: Sky has no modules: `pi` (or `π`), `sqrt`, `exp`, `sin` and the other math functions are built in, so `math.pi` is `pi`

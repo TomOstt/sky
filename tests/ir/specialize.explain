@@ -21,7 +21,7 @@ tests/ir/specialize.sky:12:9: note: [DCE-001] `i += 1` is removed
 12 |         i += 1
    |         ^^^^^^
    = note: applied by the `specialize` pass
-   = note: because `i` is never used
+   = note: because nothing uses `i` any more
    = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
 
 tests/ir/specialize.sky:15:5: note: cost of `scale`: at most 3 flops

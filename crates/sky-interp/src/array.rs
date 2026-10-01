@@ -452,6 +452,9 @@ pub fn inverse(v: &Value, whole: Span, operand: Span) -> R<Value> {
             .with_secondary(operand, format!("this is {}", shape_text(dims)))
             .with_note(
                 "a matrix is singular when a pivot of the elimination is zero, or too small to tell from rounding error",
+            )
+            .with_help(
+                "a system of equations is singular when an unknown is not pinned down: a structure without enough supports, a circuit node with no path to ground, or two equations that say the same thing",
             )),
     }
 }

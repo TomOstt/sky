@@ -1,0 +1,8 @@
+# Values have no attributes or methods.
+x = [1, 2, 3]
+A = [[1, 2], [3, 4]]
+print(x.mean())
+print(A.T)
+print(x.T)
+print(x.shape)
+print(A.foo)

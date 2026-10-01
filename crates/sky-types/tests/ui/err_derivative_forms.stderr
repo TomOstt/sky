@@ -22,7 +22,7 @@ crates/sky-types/tests/ui/err_derivative_forms.sky:15:23: error: cannot differen
  7 | def loose(t, k: m) -> m:
    |     ----- `loose` is defined here
    = note: the derivative is computed through every parameter, so each needs a unit to type it
-   = help: annotate the parameter with its unit, for example `t: s`
+   = help: annotate the parameter with its unit, for example `t: s`, or `t: Scalar` for a plain number
 
 crates/sky-types/tests/ui/err_derivative_forms.sky:16:23: error: cannot differentiate `loose` with respect to `t`: it has no unit
    |
@@ -31,7 +31,7 @@ crates/sky-types/tests/ui/err_derivative_forms.sky:16:23: error: cannot differen
  7 | def loose(t, k: m) -> m:
    |     ----- `loose` is defined here
    = note: the derivative has the unit of the result divided by the unit of `t`, and an unannotated parameter accepts any unit
-   = help: annotate the parameter with its unit, for example `t: s`
+   = help: annotate the parameter with its unit, for example `t: s`, or `t: Scalar` for a plain number
 
 crates/sky-types/tests/ui/err_derivative_forms.sky:17:16: error: `derivative` needs a function defined with `def`, found the built-in `sqrt`
    |

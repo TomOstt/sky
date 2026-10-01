@@ -5,7 +5,7 @@ crates/sky-types/tests/ui/err_grad_forms.sky:18:10: error: cannot take the gradi
  3 | def loose(x, y: m) -> m:
    |     ----- `loose` is defined here
    = note: each derivative has the unit of the result divided by the unit of its parameter, and an unannotated parameter accepts any unit
-   = help: annotate the parameter with its unit, for example `x: m`
+   = help: annotate the parameter with its unit, for example `x: m`, or `x: Scalar` for a plain number
 
 crates/sky-types/tests/ui/err_grad_forms.sky:19:10: error: cannot take the gradient of `with_time`: its array parameter `p` is not its only parameter
    |

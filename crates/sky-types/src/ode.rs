@@ -900,10 +900,43 @@ impl Checker<'_> {
     /// (there are no other attributes yet).
     pub(crate) fn attribute_expr(&mut self, base: &Expr, name: &Ident) -> Ty {
         let t = self.expr(base);
+        let attr = self.ident(name);
         let Ty::Ode(o) = t else {
+            let what = match &t {
+                Ty::Value(v) => format!("a {}", crate::check::rank_noun(v.ty.shape().rank())),
+                Ty::Bool => "a comparison".to_string(),
+                Ty::Func(_) => "a function".to_string(),
+                // Strings and earlier errors: not typed here.
+                Ty::Ode(_) | Ty::Unknown => return Ty::Unknown,
+            };
+            let b = self.operand_text(base);
+            let rank = match &t {
+                Ty::Value(v) => v.ty.shape().rank(),
+                _ => 0,
+            };
+            let help = match attr {
+                "T" if rank == 2 => format!("write `{b}ᵀ` for the transpose"),
+                "T" if rank == 1 => {
+                    "a vector has no row or column orientation, so there is nothing to transpose: `u @ v` is already the dot product".to_string()
+                }
+                "shape" | "size" | "len" => format!("write `len({b})` for its length"),
+                "mean" | "sum" | "std" | "var" | "min" | "max" | "argmin" | "argmax"
+                | "median" | "prod" => format!(
+                    "Sky has no methods, and no `{attr}` function yet; a sum over the entries can be written as a loop over `range(len({b}))`"
+                ),
+                _ => "Sky values have no attributes or methods: functions are called as `f(x)`"
+                    .to_string(),
+            };
+            self.error(
+                Diagnostic::error(
+                    format!("{what} has no attribute `{}`", quote(attr)),
+                    name.span,
+                )
+                .with_label("no such attribute")
+                .with_help(help),
+            );
             return Ty::Unknown;
         };
-        let attr = self.ident(name);
         match &*o {
             OdeTy::Solution(sol) => match sol.fields.iter().find(|(f, _)| f == attr) {
                 Some((_, v)) => Ty::Value(v.clone()),

@@ -8,7 +8,7 @@ tests/ir/exact.sky:6:13: note: [DCE-001] `x / 2` is removed
 6 |     spare = x / 2
   |             ^^^^^
   = note: applied by the `specialize` pass
-  = note: because `spare` is never used
+  = note: because nothing uses `spare` any more
   = note: because `const.float` has no side effects (it cannot print, fail, call or loop), so removing it cannot change what the program does
 
 tests/ir/exact.sky:9:8: note: [DCE-002] `sqrt(2)` is removed
@@ -16,7 +16,7 @@ tests/ir/exact.sky:9:8: note: [DCE-002] `sqrt(2)` is removed
 9 | root = sqrt(2)
   |        ^^^^^^^
   = note: applied by the `dce` pass
-  = note: because `root` is never used
+  = note: because nothing uses `root` any more
   = note: because `math.sqrt` can fail in general, but not here: the argument is 2, inside the domain of `sqrt`, and the result is 1.4142135623730951, which fits an f64, so removing it cannot change what the program does
 
 tests/ir/exact.sky:10:7: note: [ALG-003] `sqrt(3) - sqrt(3)` is rewritten to `0`

@@ -73,6 +73,9 @@ fn singular(whole: Span, operand: Span, dims: &[usize]) -> RuntimeError {
         .with_note(
             "a matrix is singular when a pivot of the elimination is zero, or too small to tell from rounding error",
         )
+        .with_help(
+            "a system of equations is singular when an unknown is not pinned down: a structure without enough supports, a circuit node with no path to ground, or two equations that say the same thing",
+        )
 }
 
 fn promise(method: SolveMethod) -> &'static str {

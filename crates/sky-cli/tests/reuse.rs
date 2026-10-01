@@ -185,11 +185,13 @@ fn a_function_reads_the_global_the_caller_reassigns() {
 
 #[test]
 fn a_local_shadows_a_module_array() {
-    // Inside the function `w = w + w` reads the module's `w` (no local of
-    // that name exists yet) and assigns a local: the module's must survive.
+    // Inside the function `w = w + w` reads the parameter `w`, which holds
+    // the module's array, and rebinds the local: the module's must survive.
+    // (Reading the module's `w` itself before binding a local `w` is a
+    // check error: the local hides it in the whole body.)
     prints(
         "shadow",
-        "w = [1, 2]\ndef f() -> Vector[2]:\n    w = w + w\n    return w\nprint(f())\nprint(w)\n",
+        "w = [1, 2]\ndef f(w: Vector[2]) -> Vector[2]:\n    w = w + w\n    return w\nprint(f(w))\nprint(w)\n",
         "[2, 4]\n[1, 2]\n",
     );
 }

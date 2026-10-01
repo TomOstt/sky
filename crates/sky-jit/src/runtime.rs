@@ -1180,7 +1180,15 @@ fn eval_op(
         OpKind::ExpectBool { context } => {
             Ok(Value::Bool(expect_bool(context.keyword(), arg(0)?, s)?))
         }
-        OpKind::Assume => Ok(arg(0)?.clone()),
+        OpKind::Assume { tags } => {
+            let operand = op.operands.first().and_then(|v| func.values.get(v.index()));
+            let have = match operand.map(|d| &d.ty) {
+                Some(Type::Number(n)) => n.tags,
+                _ => Default::default(),
+            };
+            solve::check_parameter_tags(*tags, have, arg(0)?, l)?;
+            Ok(arg(0)?.clone())
+        }
         OpKind::ExpectRange { part } => match part {
             RangePart::Bound => range_bound(arg(0)?, s),
             RangePart::Step => range_step(arg(0)?, s),

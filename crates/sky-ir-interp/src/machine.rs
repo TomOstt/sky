@@ -1522,10 +1522,16 @@ fn pure_op(act: &mut Act<'_>, op: &OpData) -> R<()> {
             act.define(op, vec![out])
         }
 
-        // A tag promise: the value as it is (the retag is the type's).
-        OpKind::Assume => {
+        // A parameter's tag promise: checked, then the value as it is (the
+        // retag is the type's).
+        OpKind::Assume { tags } => {
             let [a] = fixed(op)?;
             let v = act.get(a, s)?.clone();
+            let have = match act.ty(a) {
+                Some(Type::Number(n)) => n.tags,
+                _ => Default::default(),
+            };
+            solve::check_parameter_tags(*tags, have, &v, op.operand_span(0))?;
             act.define(op, vec![v])
         }
 

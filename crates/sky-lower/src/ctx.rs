@@ -120,6 +120,7 @@ pub(crate) fn map_ty(t: &Ty) -> Option<Type> {
             repr: Repr::Unchosen,
         })),
         Ty::Bool => Some(Type::Bool),
+        Ty::Str => Some(Type::Str),
         Ty::Unknown => Some(Type::Unknown),
         Ty::Func(_) | Ty::Ode(_) => None,
     }
@@ -286,7 +287,8 @@ impl<'a> Lower<'a> {
             );
         }
         if !n.tags.is_empty() {
-            v = self.op1(OpKind::Assume, vec![v], ty.clone(), span);
+            let tags = n.tags;
+            v = self.op1(OpKind::Assume { tags }, vec![v], ty.clone(), span);
         }
         Ok(v)
     }

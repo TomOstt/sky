@@ -1,5 +1,0 @@
-P : Matrix[3,3] {Symmetric, PositiveDefinite}
-P - P : Matrix[3,3]
-P + P : Matrix[3,3]
-Q + Q : Matrix[3,3]
-D - D : Matrix[3,3]

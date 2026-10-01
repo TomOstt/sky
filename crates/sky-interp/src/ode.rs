@@ -288,6 +288,7 @@ impl Interp<'_> {
             name: name.to_string(),
             def_span: eq.name.span,
             params: Vec::new(),
+            param_tags: Vec::new(),
             body: Block {
                 stmts: Vec::new(),
                 span: eq.name.span,

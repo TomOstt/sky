@@ -1003,7 +1003,10 @@ impl<'a> Parser<'a> {
                 self.expect(']')?;
                 OpKind::ExpectRange { part }
             }
-            "assume" => OpKind::Assume,
+            "assume" => {
+                self.skip_inline();
+                OpKind::Assume { tags: self.tags()? }
+            }
             "assert" => self.assert_attrs()?,
             "if" => OpKind::If,
             "while" => OpKind::While,

@@ -2232,7 +2232,7 @@ impl<'a, 'm, M: ClModule> FnTx<'a, 'm, M> {
             | OpKind::Norm
             | OpKind::Dot
             | OpKind::Transpose
-            | OpKind::Assume
+            | OpKind::Assume { .. }
             | OpKind::Solve { .. }
             | OpKind::SolveRight { .. }
             | OpKind::MatMulEx { .. }

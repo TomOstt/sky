@@ -4,7 +4,7 @@ tests/ui/types/err_annotation_tag_not_proven.sky:5:36: error: `B` is not known t
   |                                    ^ this is Matrix[3,3] [1]
   |    ----------------------------- expected because of this annotation
   = note: the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it
-  = help: if `B` is an input with this property, declare it that way where it is defined: `B: PositiveDefinite Matrix[3,3]`
+  = help: if `B` has this property where it is bound, declare it there: `B: PositiveDefinite Matrix[3,3]`; otherwise, only `ᵀ` and `⁻¹` keep PositiveDefinite; for a matrix you know is positive definite, pass it to a function whose parameter is declared PositiveDefinite: its symmetry is checked when the function is called, and its positivity by the Cholesky solve that relies on it
 
 tests/ui/types/err_annotation_tag_not_proven.sky:7:36: error: `S` is not known to be PositiveDefinite
   |
@@ -12,7 +12,7 @@ tests/ui/types/err_annotation_tag_not_proven.sky:7:36: error: `S` is not known t
   |                                    ^ this is Matrix[3,3] {Symmetric} [1]
   |    ----------------------------- expected because of this annotation
   = note: the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it
-  = help: if `S` is an input with this property, declare it that way where it is defined: `S: PositiveDefinite Matrix[3,3]`
+  = help: if `S` has this property where it is bound, declare it there: `S: PositiveDefinite Matrix[3,3]`; otherwise, only `ᵀ` and `⁻¹` keep PositiveDefinite; for a matrix you know is positive definite, pass it to a function whose parameter is declared PositiveDefinite: its symmetry is checked when the function is called, and its positivity by the Cholesky solve that relies on it
 
 tests/ui/types/err_annotation_tag_not_proven.sky:9:36: error: `A @ A` is not known to be PositiveDefinite
   |
@@ -20,4 +20,4 @@ tests/ui/types/err_annotation_tag_not_proven.sky:9:36: error: `A @ A` is not kno
   |                                    ^^^^^ this is Matrix[3,3] [1]
   |    ----------------------------- expected because of this annotation
   = note: the checker only knows a matrix property if it can prove it: from a declaration, or an operation that preserves it
-  = help: declare the PositiveDefinite property on an input the value is computed from
+  = help: only `ᵀ` and `⁻¹` keep PositiveDefinite; for a matrix you know is positive definite, pass it to a function whose parameter is declared PositiveDefinite: its symmetry is checked when the function is called, and its positivity by the Cholesky solve that relies on it

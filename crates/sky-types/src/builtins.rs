@@ -45,9 +45,10 @@ impl Checker<'_> {
         for (a, t) in args.iter().zip(&tys) {
             match t {
                 Ty::Value(v) => dims.push(v.dim),
-                Ty::Bool | Ty::Func(_) | Ty::Ode(_) => {
+                Ty::Bool | Ty::Str | Ty::Func(_) | Ty::Ode(_) => {
                     let what = match t {
                         Ty::Bool => "Bool".to_string(),
+                        Ty::Str => "a string".to_string(),
                         other => other.to_string(),
                     };
                     self.error(

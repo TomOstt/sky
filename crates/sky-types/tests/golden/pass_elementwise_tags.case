@@ -1,0 +1,11 @@
+# Elementwise results keep Symmetric and Diagonal when both operands have
+# them, and nothing else: `P - P` is the zero matrix, which is not positive
+# definite, and a sum of orthogonal matrices is not orthogonal.
+let P = Matrix[3,3] PositiveDefinite
+let Q = Matrix[3,3] Orthogonal
+let D = Matrix[3,3] Diagonal
+show P
+show P - P
+show P + P
+show Q + Q
+show D - D

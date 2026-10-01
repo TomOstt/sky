@@ -95,6 +95,10 @@ pub struct Function {
     /// and lowering use.
     pub def_span: Span,
     pub params: Vec<String>,
+    /// The tags each parameter's annotation declares (none if it has no
+    /// annotation), checked of the argument at a call
+    /// ([`crate::solve::check_parameter_tags`]).
+    pub param_tags: Vec<sky_types::TagSet>,
     pub body: Block,
     /// The functions in scope where the `def` ran, by name. A call inside
     /// the body of a name that is not a local refers to the function here

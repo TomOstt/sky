@@ -2128,9 +2128,13 @@ impl Gen<'_> {
             .cloned()
             .collect();
         for v in module_vars {
-            let assign = v.assign && self.c.chance(30);
+            // A function never assigns a module name it can read: a name the
+            // body binds is its local throughout, so reading the module's
+            // value first is a check error. (The draw is kept so programs
+            // stay what they were otherwise.)
+            let _ = self.c.chance(30);
             self.vars.push(Var {
-                assign,
+                assign: false,
                 update: false,
                 retype: false,
                 ..v
@@ -2153,6 +2157,25 @@ impl Gen<'_> {
         self.mult = 1;
         self.weight = 0;
         self.ind = 1;
+        // Sometimes a local takes a module name too, with another type. The
+        // body binds it, so it is a local of the whole body: nothing in the
+        // body may read the module's value, not even the contracts or the
+        // right side of that first binding.
+        let shadow = if self.c.chance(20) {
+            let candidates: Vec<String> = self
+                .vars
+                .iter()
+                .filter(|v| v.module)
+                .map(|v| v.name.clone())
+                .collect();
+            (!candidates.is_empty()).then(|| {
+                let name = self.c.pick(&candidates).clone();
+                self.vars.retain(|v| v.name != name);
+                name
+            })
+        } else {
+            None
+        };
         // A contract cannot call the function it belongs to (`rec` is not
         // set yet, and `cur` keeps the others from it).
         if self.c.chance(15) {
@@ -2167,24 +2190,11 @@ impl Gen<'_> {
             });
         }
 
-        // Sometimes a local takes a module name too, with another type. The
-        // right side still reads the module's value (a name is read from the
-        // locals, then from the module).
-        if self.c.chance(20) {
-            let candidates: Vec<String> = self
-                .vars
-                .iter()
-                .filter(|v| v.module && v.assign)
-                .map(|v| v.name.clone())
-                .collect();
-            if !candidates.is_empty() {
-                let name = self.c.pick(&candidates).clone();
-                let ty = self.rand_ty();
-                let e = self.ty_expr(ty, 2);
-                self.line(&format!("{name} = {}", e.s));
-                self.vars.retain(|v| v.name != name);
-                self.bind(name, ty, false);
-            }
+        if let Some(name) = shadow {
+            let ty = self.rand_ty();
+            let e = self.ty_expr(ty, 2);
+            self.line(&format!("{name} = {}", e.s));
+            self.bind(name, ty, false);
         }
 
         let mut ends = Exit::Falls;

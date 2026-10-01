@@ -242,7 +242,13 @@ impl Interp<'_> {
                 call.span,
             ));
         }
-        args.iter().map(|a| self.eval(a)).collect()
+        let mut values = Vec::with_capacity(args.len());
+        for (i, a) in args.iter().enumerate() {
+            let v = self.eval(a)?;
+            self.check_parameter_tags(func, i, &v, a.span)?;
+            values.push(v);
+        }
+        Ok(values)
     }
 
     /// The derivative of `func` at `values` with respect to each parameter

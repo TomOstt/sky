@@ -1,0 +1,71 @@
+# 1D heat conduction, implicit time stepping: backward Euler and Crank-Nicolson.
+#
+# Physics: dT/dt = alpha d2T/dx2 on a rod of length L = 1 m with Dirichlet ends
+# T(0) = 400 K, T(L) = 300 K. The initial profile is the steady line plus one
+# sine mode,
+#     T(x, 0) = T_hot + (T_cold - T_hot) x/L + 50 K sin(pi x / L),
+# whose exact evolution is the line plus 50 K sin(pi x / L) exp(-alpha (pi/L)^2 t).
+#
+# theta-scheme on the 19 interior nodes (21 nodes in all), with the second-
+# difference matrix Tm (tridiagonal 1, -2, 1) and r = alpha dt/dx^2:
+#     (I - theta r Tm) u_new = (I + (1 - theta) r Tm) u_old + r bc
+# theta = 1 is backward Euler (first order), theta = 1/2 is Crank-Nicolson
+# (second order). Both are unconditionally stable, so dt can be far above the
+# explicit limit dx^2/(2 alpha) = 12.5 s. The solve is `A⁻¹ @ b`.
+
+L      = 1 m
+alpha  = 1e-4 m^2/s
+T_hot  = 400 K
+T_cold = 300 K
+dx     = L / 20
+t_end  = 1000 s
+
+I19 = identity(19)
+sub = I19[:, 1:19] @ I19[0:18, :]          # ones on the sub-diagonal
+Tm  = sub + subᵀ - 2 * I19                 # second-difference matrix
+e_first = I19[:, 0]
+e_last  = I19[:, 18]
+bc = T_hot * e_first + T_cold * e_last     # boundary temperatures seen by the interior
+
+# Interior node coordinates i dx, i = 1..19 (there is no arange/linspace).
+idx = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+x = idx * dx
+ones19 = exp(zeros(19))
+line = T_hot * ones19 + (T_cold - T_hot) * (x / L)
+mode = sin(π * x / L)
+u0 = line + 50 K * mode
+
+def theta_scheme(theta, dt: s, nsteps) -> Vector[19] K:
+    r = alpha * dt / dx^2
+    A = I19 - theta * r * Tm
+    B = I19 + (1 - theta) * r * Tm
+    u = u0
+    for n in range(nsteps):
+        u = A⁻¹ @ (B @ u + r * bc)
+    return u
+
+# The sine mode is an exact eigenvector of the discrete operator, so the
+# semi-discrete solution (exact in time, discrete in space) decays at
+# lambda = 4 alpha/dx^2 sin^2(pi dx / 2L); this isolates the time-stepping error.
+lam = 4 * alpha / dx^2 * sin(π * dx / (2 * L))^2
+
+def max_err(u: Vector[19] K, t: s) -> K:
+    decay = exp(-lam * t)
+    exact = line + 50 K * decay * mode
+    e = 0 K
+    for i in range(19):
+        e = max(e, abs(u[i] - exact[i]))
+    return e
+
+print("explicit stability limit: dt <=", dx^2 / (2 * alpha))
+print("decay factor of the mode at t_end: exact", exp(-alpha * (π / L)^2 * t_end), " semi-discrete", exp(-lam * t_end))
+print("dt, theta, r, max error vs the semi-discrete solution at t_end = 1000 s")
+def report(dt: s):
+    n = round(t_end / dt)
+    r = alpha * dt / dx^2
+    print(dt, "backward Euler  r =", r, " err =", max_err(theta_scheme(1, dt, n), t_end))
+    print(dt, "Crank-Nicolson  r =", r, " err =", max_err(theta_scheme(0.5, dt, n), t_end))
+
+report(100 s)
+report(50 s)
+report(25 s)

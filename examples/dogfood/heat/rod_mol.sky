@@ -1,0 +1,41 @@
+# 1D heat conduction by the method of lines with Sky's built-in ODE solver.
+#
+# Physics: dT/dt = alpha d2T/dx2 on a rod of length 1 m, ends held at 400 K
+# and 300 K. Discretising only in space (19 interior nodes, dx = L/20) gives
+# the linear ODE system u' = (alpha/dx^2) (Tm u + bc) with Tm the 1,-2,1
+# matrix and bc the boundary temperatures; `equation`/`solve` then integrate
+# it in time with an adaptive method. No stability limit on dt to check: the
+# solver chooses its own steps. We compare with the same initial condition as
+# implicit1d.sky: line + 50 K sin(pi x/L), whose semi-discrete solution is exact.
+
+L      = 1 m
+alpha  = 1e-4 m^2/s
+T_hot  = 400 K
+T_cold = 300 K
+dx     = L / 20
+
+I19 = identity(19)
+sub = I19[:, 1:19] @ I19[0:18, :]
+Tm  = sub + subᵀ - 2 * I19
+bc  = T_hot * I19[:, 0] + T_cold * I19[:, 18]
+idx = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+x = idx * dx
+ones19 = exp(zeros(19))
+line = T_hot * ones19 + (T_cold - T_hot) * (x / L)
+mode = sin(π * x / L)
+u0 = line + 50 K * mode
+
+equation rod(t: s):
+    u: Vector[19] K
+    u' = alpha / dx^2 * (Tm @ u + bc)
+
+sol = solve rod from 0 s to 1000 s with u = u0:
+    tolerance 1e-10
+
+lam = 4 * alpha / dx^2 * sin(π * dx / (2 * L))^2
+exact = line + 50 K * exp(-lam * 1000 s) * mode
+err = 0 K
+for i in range(19):
+    err = max(err, abs(sol.u[i] - exact[i]))
+print("max error vs semi-discrete exact at t = 1000 s:", err)
+print(explain(sol))

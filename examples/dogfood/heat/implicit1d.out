@@ -1,0 +1,9 @@
+explicit stability limit: dt <= 12.500000000000002 s
+decay factor of the mode at t_end: exact 0.3727078388534379  semi-discrete 0.373464340676943
+dt, theta, r, max error vs the semi-discrete solution at t_end = 1000 s
+100 s backward Euler  r = 3.999999999999999  err = 0.8699965491078387 K
+100 s Crank-Nicolson  r = 3.999999999999999  err = 0.014883911952438211 K
+50 s backward Euler  r = 1.9999999999999996  err = 0.44371874223912755 K
+50 s Crank-Nicolson  r = 1.9999999999999996  err = 0.003718026111812378 K
+25 s backward Euler  r = 0.9999999999999998  err = 0.22411891941322892 K
+25 s Crank-Nicolson  r = 0.9999999999999998  err = 0.0009293222768178566 K

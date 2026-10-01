@@ -1,0 +1,3 @@
+max error vs semi-discrete exact at t = 1000 s: 7.795222245476907e-9 K
+no structure a specialised method could use is known, so the general-purpose Dormand-Prince 5(4) method was started, with adaptive steps for rtol = 1.00e-10 and atol = 1.00e-13
+the step was limited by accuracy for the whole interval, never by stability, so the system is not stiff and no other method was needed; 48 steps, 15 rejected

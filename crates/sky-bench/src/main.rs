@@ -13,7 +13,7 @@
 //! Python and BLAS/LAPACK and writes `benches/compare/RESULTS.md` (see
 //! `compare/mod.rs`).
 //!
-//! See the "Benchmarks" section of the README. Not shipped: nothing depends
+//! See the "Benchmarks" section of docs/guide.md. Not shipped: nothing depends
 //! on this crate, and it uses only `std` for timing.
 
 mod bench;

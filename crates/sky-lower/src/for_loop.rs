@@ -262,6 +262,10 @@ impl Lower<'_> {
                 "iteration over a value whose type is not known before the program runs does \
                  not lower to SIR yet",
                 iter.span,
+            )
+            .with_note(
+                "annotate where it comes from, e.g. a parameter `w: Vector[N]`, and the loop \
+                 compiles",
             ));
         };
         let stop = match &array_ty {

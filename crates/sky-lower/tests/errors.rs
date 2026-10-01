@@ -32,10 +32,11 @@ fn derivative_operators_are_rejected() {
 
 #[test]
 fn an_error_has_a_note_saying_why() {
-    let e = try_lower("v = [1 m, 2 m]\nfor x in v:\n    print(x)\n").expect_err("rejected");
+    let e = try_lower("def f(w):\n    for x in w:\n        print(x)\nf([1 m, 2 m])\n")
+        .expect_err("rejected");
     let note = e.note.as_deref().unwrap_or("");
-    assert!(note.contains("for i in range(len(v))"), "{note}");
-    assert!(e.to_string().contains("iteration over an array"));
+    assert!(note.contains("`w: Vector[N]`"), "{note}");
+    assert!(e.to_string().contains("type is not known"));
     let d = e.to_diagnostic();
     assert_eq!(d.primary.span, e.span);
 }

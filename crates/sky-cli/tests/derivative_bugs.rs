@@ -214,7 +214,7 @@ for i in range(2):
     kk = (i + 1) * 1 s^-1
     print(rate())
 ",
-        "1 Hz\n2 Hz\n",
+        "1 s^-1\n2 s^-1\n",
     );
     let o = sky(
         "sweep-eq",

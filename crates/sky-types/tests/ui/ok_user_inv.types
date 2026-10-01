@@ -1,5 +1,5 @@
-K: Matrix[3,3] {Symmetric, PositiveDefinite} [1]
+K: Matrix[3,3] {Symmetric, PositiveDefinite} [dimensionless]
 a: Scalar [L⁻¹]
-b: Matrix[3,3] {Symmetric, PositiveDefinite} [1]
+b: Matrix[3,3] {Symmetric, PositiveDefinite} [dimensionless]
 c: ?
 inv: function `inv`

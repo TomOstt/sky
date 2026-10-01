@@ -1,7 +1,7 @@
 tests/ui/types/err_literal_tag_not_symmetric.sky:1:29: error: `[[1, 2], [3, 4]]` is not known to be Symmetric
   |
 1 | S: Symmetric Matrix[2, 2] = [[1, 2], [3, 4]]
-  |                             ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [1]
+  |                             ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [dimensionless]
   |    ---------------------- expected because of this annotation
   |                                  - entry [0, 1]
   |                                       - entry [1, 0]

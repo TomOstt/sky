@@ -1,7 +1,7 @@
 crates/sky-types/tests/ui/err_shape_debugger_call.sky:9:15: error: the parameter takes Vector[3], but the argument is Vector[4]
   |
 9 | r = apply(A3, b4)
-  |               ^^ this is Vector[4] [1]
+  |               ^^ this is Vector[4] [dimensionless]
 2 | def apply(A: Matrix[N, N], b: Vector[N]) -> Vector[N]:
   |                               --------- expected because of this annotation
   = note: axis       0

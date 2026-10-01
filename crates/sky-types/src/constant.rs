@@ -117,6 +117,8 @@ fn convert_unit(
             Some(unit) => Ok((dir.scale(v, unit.scale), unit.dim)),
             None => Err(UnitError::Unknown(id.span)),
         },
+        UnitExpr::One(_) => Ok((v, Dimension::DIMENSIONLESS)),
+        UnitExpr::Group { inner, .. } => convert_unit(src, inner, v, dir),
         UnitExpr::Mul { lhs, rhs, .. } => {
             // Forward: left factor then right. Backward: undo in reverse.
             let (first, second) = match dir {

@@ -5,7 +5,7 @@ crates/sky-types/tests/ui/err_condition_not_bool.sky:5:4: error: `if` needs a Bo
   = note: v0.1 has no truthiness
   = help: compare it instead, e.g. `x != 0 m`
 
-crates/sky-types/tests/ui/err_condition_not_bool.sky:7:6: error: `elif` needs a Bool condition, found Scalar [1]
+crates/sky-types/tests/ui/err_condition_not_bool.sky:7:6: error: `elif` needs a Bool condition, found Scalar [dimensionless]
   |
 7 | elif 3:
   |      ^ not a Bool

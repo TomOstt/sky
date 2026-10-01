@@ -73,6 +73,18 @@ impl BaseDim {
         }
     }
 
+    /// The symbol a dimension is shown with in messages: the SI symbol,
+    /// except `mol` for amount of substance and `cd` for luminous
+    /// intensity. Their SI symbols `N` and `J` read as the newton and the
+    /// joule, so `L⁻³·T⁻¹·N` would look like a force; `L⁻³·T⁻¹·mol` cannot.
+    pub const fn display_symbol(self) -> &'static str {
+        match self {
+            BaseDim::Amount => "mol",
+            BaseDim::Luminosity => "cd",
+            other => other.symbol(),
+        }
+    }
+
     /// Looks a base dimension up by its SI symbol.
     pub fn from_symbol(s: &str) -> Option<BaseDim> {
         BaseDim::ALL.into_iter().find(|b| b.symbol() == s)
@@ -325,7 +337,7 @@ pub(crate) fn write_factors(
             f.write_str("·")?;
         }
         first = false;
-        write_power(f, b.symbol(), e)?;
+        write_power(f, b.display_symbol(), e)?;
     }
     Ok(!first)
 }

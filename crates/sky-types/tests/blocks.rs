@@ -138,8 +138,8 @@ z = dot(u, v)
     let c = check(src);
     assert_eq!(messages(&c).len(), 1, "{:#?}", c.diagnostics);
     assert!(messages(&c)[0].starts_with("the parameter takes Vector["));
-    assert_eq!(ty(&c, "x"), "Vector[3] [1]");
-    assert_eq!(ty(&c, "y"), "Vector[4] [1]");
+    assert_eq!(ty(&c, "x"), "Vector[3] [dimensionless]");
+    assert_eq!(ty(&c, "y"), "Vector[4] [dimensionless]");
 }
 
 #[test]
@@ -168,9 +168,9 @@ d = f(v)
 ";
     let c = check(src);
     assert!(c.diagnostics.is_empty(), "{:#?}", c.diagnostics);
-    assert_eq!(ty(&c, "d"), "Vector[3] [1]");
+    assert_eq!(ty(&c, "d"), "Vector[3] [dimensionless]");
     // The module's N is untouched by the call.
-    assert_eq!(ty(&c, "A"), "Matrix[N,N] [1]");
+    assert_eq!(ty(&c, "A"), "Matrix[N,N] [dimensionless]");
 }
 
 #[test]

@@ -21,7 +21,7 @@ tests/ui/types/err_compound_assign.sky:8:3: error: `@=` would drop `K`'s Symmetr
   |
 8 | K @= B
   |   ^^
-  | - this is Matrix[3,3] {Symmetric, PositiveDefinite} [1]
+  | - this is Matrix[3,3] {Symmetric, PositiveDefinite} [dimensionless]
   = note: the result of `@=` must keep the type of `K`
 
 tests/ui/types/err_compound_assign.sky:10:1: error: cannot find `y` in this scope

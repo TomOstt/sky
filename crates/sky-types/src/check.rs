@@ -171,8 +171,14 @@ impl Ty {
 
 impl fmt::Display for ValueTy {
     /// `Matrix[3,3] {Symmetric} [L]`: shape, tags if any, element dimension.
+    /// A pure number is `[dimensionless]`, not the bare exponent `[1]`,
+    /// which reads like a unit bracket.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} [{}]", self.ty, self.dim)
+        if self.dim.is_dimensionless() {
+            write!(f, "{} [dimensionless]", self.ty)
+        } else {
+            write!(f, "{} [{}]", self.ty, self.dim)
+        }
     }
 }
 
@@ -753,7 +759,7 @@ impl<'s> Checker<'s> {
         self.failed_defs.retain(|s| !inside(s));
     }
 
-    /// `this is Matrix[3,3] [1]` for secondary labels.
+    /// `this is Matrix[3,3] [dimensionless]` for secondary labels.
     pub(crate) fn this_is(&self, v: &ValueTy) -> String {
         format!(
             "this is {}",
@@ -1715,7 +1721,9 @@ impl<'s> Checker<'s> {
                     None => {
                         let mut d =
                             Diagnostic::error(format!("unknown unit `{}`", quote(name)), id.span);
-                        if lookup_constant(name).is_some() {
+                        if let Some(hint) = sky_units::unit_hint(name) {
+                            d = d.with_help(hint);
+                        } else if lookup_constant(name).is_some() {
                             // `10 c`: a constant is a value, so it multiplies.
                             let q = quote(name);
                             d = d.with_help(format!(
@@ -1729,6 +1737,8 @@ impl<'s> Checker<'s> {
                     }
                 };
             }
+            UnitExpr::One(_) => return Some(Dimension::DIMENSIONLESS),
+            UnitExpr::Group { inner, .. } => return self.unit(inner),
             UnitExpr::Mul { lhs, rhs, .. } => {
                 let (a, b) = (self.unit(lhs), self.unit(rhs));
                 a?.checked_mul(b?)
@@ -2275,68 +2285,10 @@ fn op_sym(op: UnaryOp) -> &'static str {
 /// dimension, otherwise composes the SI base units (m, kg, s, A, K, mol, cd).
 /// `None` only if an exponent cannot be negated.
 fn zero_of(d: &Dimension) -> Option<String> {
-    use sky_units::{BaseDim, UNITS};
-    if d.is_dimensionless() {
-        return Some("0".to_string());
+    match sky_units::si_unit_text(d) {
+        None => Some("0".to_string()),
+        Some(unit) => Some(format!("0 {unit}")),
     }
-    if let Some(u) = UNITS.iter().find(|u| u.dim == *d && u.scale == 1.0) {
-        return Some(format!("0 {}", u.name));
-    }
-    let symbol = |b: BaseDim| match b {
-        BaseDim::Length => "m",
-        BaseDim::Mass => "kg",
-        BaseDim::Time => "s",
-        BaseDim::Temperature => "K",
-        BaseDim::Current => "A",
-        BaseDim::Amount => "mol",
-        BaseDim::Luminosity => "cd",
-    };
-    let power = |sym: &str, e: Rational| {
-        if e == Rational::ONE {
-            sym.to_string()
-        } else if e.is_integer() {
-            format!("{sym}^{}", e.numer())
-        } else {
-            format!("{sym}^({}/{})", e.numer(), e.denom())
-        }
-    };
-    let (mut pos, mut neg) = (Vec::new(), Vec::new());
-    // SI order for derived units: kg·m·s⁻²·K.
-    let order = [
-        BaseDim::Mass,
-        BaseDim::Length,
-        BaseDim::Time,
-        BaseDim::Temperature,
-        BaseDim::Current,
-        BaseDim::Amount,
-        BaseDim::Luminosity,
-    ];
-    for b in order {
-        let e = d.exponent(b);
-        if e.is_zero() {
-            continue;
-        }
-        let sym = symbol(b);
-        if e.numer() > 0 {
-            pos.push(power(sym, e));
-        } else {
-            neg.push((sym, e));
-        }
-    }
-    let unit = if pos.is_empty() {
-        neg.iter()
-            .map(|&(s, e)| power(s, e))
-            .collect::<Vec<_>>()
-            .join("*")
-    } else {
-        let mut u = pos.join("*");
-        for (s, e) in neg {
-            u.push('/');
-            u.push_str(&power(s, e.checked_neg().ok()?));
-        }
-        u
-    };
-    Some(format!("0 {unit}"))
 }
 
 /// The matrix property `name` is probably a misspelling or abbreviation of: within two

@@ -1291,19 +1291,26 @@ impl<'a> Parser<'a> {
         let mut seen = [false; 7];
         loop {
             let at = self.pos;
-            let Some(c) = self.bump() else {
-                return self.err("expected a dimension");
-            };
-            let Some(i) = BaseDim::ALL
+            // The symbols `Dimension` displays: `mol` and `cd` for amount
+            // and luminous intensity (their SI letters `N` and `J` read as
+            // the newton and the joule).
+            let rest = &self.src[self.pos..];
+            let Some((i, symbol)) = BaseDim::ALL
                 .iter()
-                .position(|b| b.symbol().chars().eq(std::iter::once(c)))
+                .map(|b| b.display_symbol())
+                .enumerate()
+                .find(|(_, s)| rest.starts_with(s))
             else {
+                if self.bump().is_none() {
+                    return self.err("expected a dimension");
+                }
                 return self.err_at(
                     at,
                     self.pos,
-                    "expected a dimension symbol (L, M, T, I, Θ, N, J) or `1`",
+                    "expected a dimension symbol (L, M, T, I, Θ, mol, cd) or `1`",
                 );
             };
+            self.pos += symbol.len();
             if std::mem::replace(&mut seen[i], true) {
                 return self.err_at(at, self.pos, "a dimension symbol appears twice");
             }

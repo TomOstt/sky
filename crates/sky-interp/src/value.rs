@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use sky_ast::Block;
 use sky_diag::Span;
-use sky_units::{BaseDim, Dimension, Rational, UNITS};
+use sky_units::Dimension;
 
 use crate::uncertain::Uncertain;
 
@@ -299,71 +299,9 @@ pub fn format_number(x: f64) -> String {
 }
 
 /// The SI unit text for `dim` as valid Sky unit syntax, or `None` if the
-/// dimension is dimensionless (a bare number).
-///
-/// If a unit in the table has exactly this dimension and scale 1 (`N`,
-/// `J`, `W`, `Pa`, `Hz`, and whatever the table gains), that symbol is
-/// used. Otherwise base units are composed in SI order (kg, m, s, K):
-/// `m/s^2`, `kg*m^2/s^2`, `m^-1`, `m^(1/2)`.
+/// dimension is dimensionless (a bare number); see
+/// [`sky_units::si_unit_text`] for the rules (`m/s^2`, `kg*m^2/s^2`,
+/// `m^-1`, never `Hz`).
 pub fn si_unit(dim: &Dimension) -> Option<String> {
-    if dim.is_dimensionless() {
-        return None;
-    }
-    if let Some(u) = UNITS.iter().find(|u| u.dim == *dim && u.scale == 1.0) {
-        return Some(u.name.to_string());
-    }
-    // Current, amount and luminosity have no table unit yet, so these
-    // symbols are not valid Sky source; no v0.1 value has such a dimension.
-    let symbol = |b: BaseDim| match b {
-        BaseDim::Mass => "kg",
-        BaseDim::Length => "m",
-        BaseDim::Time => "s",
-        BaseDim::Temperature => "K",
-        BaseDim::Current => "A",
-        BaseDim::Amount => "mol",
-        BaseDim::Luminosity => "cd",
-    };
-    let power = |sym: &str, e: Rational| {
-        if e == Rational::ONE {
-            sym.to_string()
-        } else if e.is_integer() {
-            format!("{sym}^{}", e.numer())
-        } else {
-            format!("{sym}^({}/{})", e.numer(), e.denom())
-        }
-    };
-    let order = [
-        BaseDim::Mass,
-        BaseDim::Length,
-        BaseDim::Time,
-        BaseDim::Temperature,
-        BaseDim::Current,
-        BaseDim::Amount,
-        BaseDim::Luminosity,
-    ];
-    let (mut pos, mut neg) = (Vec::new(), Vec::new());
-    for b in order {
-        let e = dim.exponent(b);
-        if e.is_zero() {
-            continue;
-        }
-        if e.numer() > 0 {
-            pos.push(power(symbol(b), e));
-        } else {
-            neg.push((symbol(b), e));
-        }
-    }
-    if pos.is_empty() {
-        // No numerator: write the negative exponents, `s^-1*K^-1`.
-        let parts: Vec<String> = neg.iter().map(|&(s, e)| power(s, e)).collect();
-        return Some(parts.join("*"));
-    }
-    let mut out = pos.join("*");
-    for (s, e) in neg {
-        out.push('/');
-        // `e` is negative, so it can be negated unless it is i64::MIN,
-        // which the checker's exponent limits keep out of any value.
-        out.push_str(&power(s, e.checked_neg().unwrap_or(e)));
-    }
-    Some(out)
+    sky_units::si_unit_text(dim)
 }

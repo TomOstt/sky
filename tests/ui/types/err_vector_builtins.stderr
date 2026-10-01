@@ -30,7 +30,7 @@ tests/ui/types/err_vector_builtins.sky:7:14: error: `dot` needs two vectors, fou
 tests/ui/types/err_vector_builtins.sky:8:14: error: `dot` needs two vectors, found Matrix[2,2]
   |
 8 | matrix = dot([[1, 2], [3, 4]], [[1, 2], [3, 4]])
-  |              ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [1]
+  |              ^^^^^^^^^^^^^^^^ this is Matrix[2,2] [dimensionless]
   = help: for matrices, use `@`
 
 tests/ui/types/err_vector_builtins.sky:9:13: error: `norm` needs a vector, found Bool

@@ -349,6 +349,8 @@ fn write_expr(out: &mut String, e: &Expr, src: &str) {
 fn write_unit(out: &mut String, u: &UnitExpr, src: &str) {
     match u {
         UnitExpr::Name(id) => out.push_str(text(src, id.span)),
+        UnitExpr::One(_) => out.push('1'),
+        UnitExpr::Group { inner, .. } => write_unit(out, inner, src),
         UnitExpr::Mul { lhs, rhs, .. } | UnitExpr::Div { lhs, rhs, .. } => {
             out.push_str(if matches!(u, UnitExpr::Mul { .. }) {
                 "(* "

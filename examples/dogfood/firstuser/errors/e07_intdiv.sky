@@ -1,0 +1,9 @@
+# Mistake 7: integer division expectations (`//` and `%` are Python habits).
+# `7 // 2` and `7 % 2` are tried separately because both are lexer/parser errors.
+print(7 / 2)
+n = 10
+half = n / 2
+for i in range(half):
+    print(i)
+for j in range(7 / 2):
+    print(j)

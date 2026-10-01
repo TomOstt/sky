@@ -1,0 +1,5 @@
+# Mistake 9: mutating an array element
+v = [1 m, 2 m, 3 m]
+v[0] = 5 m
+v[1] += 1 m
+print(v)

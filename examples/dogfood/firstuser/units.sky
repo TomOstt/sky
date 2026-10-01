@@ -1,0 +1,34 @@
+# Unit conversion calculator: fuel economy, electricity cost, recipe scaling.
+# First-time-user program. Sky has no mi / gal / lb / kWh, so they are defined
+# by hand as plain named quantities (see FRICTION.md).
+mile    = 1609.344 m
+gallon  = 3.785411784 L
+pound   = 0.45359237 kg
+kWh     = 1000 W * 1 h
+
+# 1. Fuel economy: 7.5 L per 100 km is how Europe says it; the US says mpg.
+consumption = 7.5 L / (100 km)
+print("consumption:", consumption)
+fuel_economy = 1 / consumption            # a length per volume, as in km/L
+print("km per litre:", fuel_economy as km/L)
+mpg = fuel_economy / (mile / gallon)      # a plain number
+print("miles per gallon:", mpg)
+
+# 2. Electricity: a 2 kW heater for 3 h at 0.30 per kWh
+power  = 2 kW
+time   = 3 h
+energy = power * time
+print("energy:", energy)                  # SI: joules
+print("energy in kWh:", energy / kWh)     # plain number
+price  = 0.30                             # currency per kWh (units cannot hold currency)
+print("cost:", energy / kWh * price)
+print("in MJ:", energy as MJ)
+
+# 3. Recipe scaling by mass: 250 g flour serves 4; scale it to 10 servings
+flour  = 250 g
+servings_base = 4
+servings_want = 10
+scaled = flour * servings_want / servings_base
+print("flour for 10:", scaled as g)
+print("flour for 10 (lb):", scaled / pound)
+print("flour in kg:", scaled as kg)

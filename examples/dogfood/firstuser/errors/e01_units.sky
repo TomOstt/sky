@@ -1,0 +1,5 @@
+# Mistake 1: wrong units - adding a length to a time; passing seconds to a metres parameter
+d = 5 m + 3 s
+def speed(d: m, t: s) -> m/s:
+    return d / t
+print(speed(10 s, 2 m))

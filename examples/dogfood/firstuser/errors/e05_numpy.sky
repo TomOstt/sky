@@ -1,0 +1,8 @@
+# Mistake 5: NumPy habits. The parser stops at the first syntax error, so each
+# habit was tried one at a time; the file keeps the last two probes.
+# Tried separately: `x**2` ("`**` is not an operator ... Sky writes powers as `^`"),
+# `x^2` on a vector, `np.sum(x)`, `sum(x)`, `x.mean()`, `x.T`.
+x = [1 m, 2 m, 3 m]
+b = x^2
+d = sum(x)
+e2 = x.mean()

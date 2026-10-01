@@ -1,0 +1,4 @@
+# Mistake 8: off-by-one in range / indexing
+v = [10, 20, 30]
+for i in range(len(v) + 1):
+    print(v[i])

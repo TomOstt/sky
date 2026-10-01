@@ -1,0 +1,4 @@
+# Mistake 2: a typo in a name
+velocity = 10 m / 2 s
+print(velocty)
+print(sqroot(4))

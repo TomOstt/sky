@@ -1,0 +1,5 @@
+# Mistake 10: using `e` for Euler's number, and other constant habits
+x = e^2
+y = math.pi
+z = 1e3 + e
+w = 2 * np.pi

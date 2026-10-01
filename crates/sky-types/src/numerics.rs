@@ -43,6 +43,7 @@
 //! between the `def` and a call).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use sky_ast::{Expr, ExprKind};
 use sky_diag::{Diagnostic, Span};
@@ -224,13 +225,13 @@ pub(crate) fn const_matrix(src: &str, e: &Expr) -> Option<ConstMatrix> {
 
 /// What the checker remembers for the numerical warnings: which names hold
 /// constant matrices, and what has been warned about already.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct NumState {
     /// Names bound so far, ever, on any path.
     bound: HashSet<String>,
     /// Names bound more than once: never constant.
     rebound: HashSet<String>,
-    consts: HashMap<String, ConstMatrix>,
+    consts: HashMap<String, Arc<ConstMatrix>>,
     /// Sites already warned about (a loop body's code is one site).
     pub(crate) warned: HashSet<Span>,
     /// Numerical warnings emitted, against [`MAX_WARNINGS`].
@@ -249,7 +250,7 @@ impl NumState {
 
     fn set_const(&mut self, name: &str, m: ConstMatrix) {
         if !self.rebound.contains(name) {
-            self.consts.insert(name.to_string(), m);
+            self.consts.insert(name.to_string(), Arc::new(m));
         }
     }
 }
@@ -292,7 +293,7 @@ impl Checker<'_> {
                 return None;
             }
         }
-        self.num.consts.get(name).cloned()
+        self.num.consts.get(name).map(|m| ConstMatrix::clone(m))
     }
 
     /// Whether another numerical warning may be emitted for the site `key`,

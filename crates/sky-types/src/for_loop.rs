@@ -4,9 +4,10 @@
 //!
 //! A `for` is a `while` over an index, so scoping is `while`'s
 //! ([`Checker::loop_body`]): the body shares the enclosing scope and is
-//! checked once, and the loop variable stays bound after the loop, as in
-//! Python. What changes is the zero-iteration path. A `while` may never run,
-//! so a name first bound in its body is only maybe-defined after it. A `for`
+//! checked as a `while` body is, and the loop variable stays bound after
+//! the loop, as in Python. What changes is the zero-iteration path. A
+//! `while` may never run, so a name first bound in its body is only
+//! maybe-defined after it. A `for`
 //! over an array always runs (arrays are never empty in v0.1), and so does
 //! a `range` whose bounds are constants that make at least one step, so for
 //! those the loop variable and everything the body binds is defined after
@@ -81,7 +82,7 @@ impl Checker<'_> {
             None => self.iterable(iter),
         };
         self.bind_name(var, elem);
-        self.loop_body(span, before, body, runs);
+        self.loop_body(span, before, None, body, runs);
     }
 
     /// The arguments if `iter` is a call of the builtin `range`: callee

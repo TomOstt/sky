@@ -1,0 +1,27 @@
+def grow(A):
+    return A + A
+
+b = [1, 1]
+Q = identity(2)
+k = 0
+while (Q⁻¹ @ b)[0] > 0.2:
+    print(Q⁻¹ @ b)
+    Q = 2 * Q
+    k = k + 1
+print(k)
+P = identity(2)
+for i in range(2):
+    for j in range(2):
+        print(P⁻¹ @ b)
+    P = grow(P)
+R = identity(2)
+for i in range(3):
+    print(R⁻¹ @ b)
+    if i == 0:
+        R = 3 * R
+        continue
+    R = R
+S = identity(2)
+for i in range(3):
+    print(Sᵀ @ b)
+    S = [[1, 2], [3, 4]]

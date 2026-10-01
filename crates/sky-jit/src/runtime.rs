@@ -1122,6 +1122,17 @@ fn eval_op(
             solve::diag_mul(*side, d, x, s, dspan, xspan)
         }
         OpKind::ArrayLiteral { cols } => array_literal(op, a, *cols),
+        OpKind::ConstArray { cols, bits } => {
+            let dim = match op.results.first().and_then(|&r| func.values.get(r.index())) {
+                Some(d) => match &d.ty {
+                    Type::Number(n) => n.dim,
+                    _ => Dimension::DIMENSIONLESS,
+                },
+                None => Dimension::DIMENSIONLESS,
+            };
+            array::const_array(*cols, bits, dim)
+                .ok_or_else(|| malformed("`const.array` cannot arrange its entries", s))
+        }
         OpKind::Index => {
             let mut items = Vec::with_capacity(a.len().saturating_sub(1));
             for k in 1..a.len() {

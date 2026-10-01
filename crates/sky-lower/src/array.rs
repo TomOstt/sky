@@ -135,6 +135,16 @@ impl Lower<'_> {
                 e.span,
             ));
         }
+        // A big literal of plain numbers is one `const.array`: its entries
+        // are read from the source in one pass (the checker's own
+        // `entry_value`, so the same `f64`s), instead of one operation and
+        // one operand each. A literal with any other entry, or a number too
+        // large to hold, takes the general path below.
+        if rows.len() * width >= OpKind::CONST_ARRAY_MIN {
+            if let Some(v) = self.const_array(e, &rows, width, matrix)? {
+                return Ok(v);
+            }
+        }
         let mut operands = Vec::with_capacity(rows.len() * width);
         let mut spans = Vec::with_capacity(rows.len() * width);
         for row in rows {
@@ -146,6 +156,37 @@ impl Lower<'_> {
         let ty = self.literal_type(e)?;
         let cols = matrix.then_some(width as u64);
         Ok(self.op1s(OpKind::ArrayLiteral { cols }, operands, spans, ty, e.span))
+    }
+
+    /// The literal as one `const.array`, if every entry is a numeric
+    /// constant (`sky_types::entry_value`) and the checker typed the
+    /// literal as a number; `None` otherwise.
+    fn const_array(
+        &mut self,
+        e: &Expr,
+        rows: &[&[Expr]],
+        width: usize,
+        matrix: bool,
+    ) -> R<Option<ValueId>> {
+        let mut bits = Vec::with_capacity(rows.len() * width);
+        for row in rows {
+            for x in *row {
+                match sky_types::entry_value(self.src, x) {
+                    Some(v) => bits.push(v.to_bits()),
+                    None => return Ok(None),
+                }
+            }
+        }
+        let ty = self.literal_type(e)?;
+        if !matches!(ty, Type::Number(_)) {
+            return Ok(None);
+        }
+        let cols = matrix.then_some(width as u64);
+        let kind = OpKind::ConstArray {
+            cols,
+            bits: bits.into(),
+        };
+        Ok(Some(self.op1(kind, Vec::new(), ty, e.span)))
     }
 
     /// `base[items]`: `index` when every item is a position, `slice` when

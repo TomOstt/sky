@@ -251,6 +251,7 @@ impl Walker<'_> {
             | OpKind::ConstRational(_)
             | OpKind::ConstBool(_)
             | OpKind::ConstStr(_)
+            | OpKind::ConstArray { .. }
             | OpKind::ConstNothing
             | OpKind::LiteralError { .. }
             | OpKind::Input { .. }
@@ -616,6 +617,7 @@ pub(crate) fn dynamic_checks(f: &Function) -> usize {
                 | OpKind::ConstRational(_)
                 | OpKind::ConstBool(_)
                 | OpKind::ConstStr(_)
+                | OpKind::ConstArray { .. }
                 | OpKind::ConstNothing
                 | OpKind::Input { .. }
                 | OpKind::LiteralError { .. }

@@ -911,6 +911,34 @@ impl<'a> Parser<'a> {
                 };
                 OpKind::ArrayLiteral { cols }
             }
+            "const.array" => {
+                self.skip_inline();
+                let cols = if self.peek() == Some('[') {
+                    self.expect('[')?;
+                    self.skip_inline();
+                    let c = self.uint()?;
+                    self.expect(']')?;
+                    Some(c)
+                } else {
+                    None
+                };
+                self.skip_inline();
+                self.expect('(')?;
+                let mut bits = Vec::new();
+                loop {
+                    self.skip_inline();
+                    bits.push(self.float_bits()?);
+                    self.skip_inline();
+                    if !self.eat(',') {
+                        break;
+                    }
+                }
+                self.expect(')')?;
+                OpKind::ConstArray {
+                    cols,
+                    bits: bits.into(),
+                }
+            }
             "index" => OpKind::Index,
             "slice" => {
                 self.expect('[')?;

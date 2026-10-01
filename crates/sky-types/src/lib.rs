@@ -73,8 +73,8 @@ mod vecfn;
 pub use algo::{Algorithm, Side, SolveMethod};
 pub use chain::{ChainPlan, LeafForm, Node, PlanFactor};
 pub use check::{
-    check_module, check_module_with, const_exponent, Checked, Env, RewriteSite, Ty, ValueTy,
-    MAX_STORED_REWRITES,
+    check_module, check_module_with, const_exponent, Checked, Env, RewriteSite, SpanHasher,
+    SpanMap, Ty, ValueTy, MAX_STORED_REWRITES,
 };
 pub use constant::{
     apply_unit, entry_value, express_in_unit, parse_number, NumberError, UnitError,

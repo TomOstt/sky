@@ -98,6 +98,60 @@ impl FnVerifier<'_> {
         }
     }
 
+    /// `const.array`: finite entries, arranged as `cols` says, in a number
+    /// whose shape restates the arrangement.
+    pub(super) fn check_const_array(
+        &mut self,
+        o: OpId,
+        op: &OpData,
+        cols: Option<u64>,
+        bits: &[u64],
+    ) {
+        let n = bits.len();
+        if n == 0 {
+            self.err_op(o, "`const.array` needs at least one entry".into());
+            return;
+        }
+        let expected = match cols {
+            None => Shape::vector(n as u64),
+            Some(c) if c > 0 && (n as u64) % c == 0 => Shape::matrix(n as u64 / c, c),
+            Some(c) => {
+                self.err_op(
+                    o,
+                    format!("`const.array` cannot arrange {n} entries in rows of {c}"),
+                );
+                return;
+            }
+        };
+        if let Some(i) = bits.iter().position(|&b| !f64::from_bits(b).is_finite()) {
+            self.err_op(
+                o,
+                format!(
+                    "`const.array` entries must be finite, entry {i} has bits {:#018x}",
+                    bits[i]
+                ),
+            );
+        }
+        match self.f.ty(op.results[0]) {
+            Type::Unknown => {}
+            Type::Number(r) => {
+                if r.shape != expected {
+                    self.err_op(
+                        o,
+                        format!(
+                            "`const.array` of {n} entries has shape {expected}, found {}",
+                            r.shape
+                        ),
+                    );
+                }
+            }
+            other => self.err_op(
+                o,
+                format!("the result of `const.array` must be a number, found {other}"),
+            ),
+        }
+    }
+
     /// `index`: a base and one position per leading axis.
     pub(super) fn check_index(&mut self, o: OpId, op: &OpData) {
         let k = op.operands.len().saturating_sub(1);

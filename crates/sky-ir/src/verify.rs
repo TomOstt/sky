@@ -636,6 +636,7 @@ impl<'a> FnVerifier<'a> {
             | OpKind::ConstBool(_)
             | OpKind::ConstStr(_)
             | OpKind::ConstNothing
+            | OpKind::ConstArray { .. }
             | OpKind::LiteralError { .. }
             | OpKind::Input { .. } => (Some(0), Some(1)),
             OpKind::Add
@@ -745,6 +746,7 @@ impl<'a> FnVerifier<'a> {
             }
             OpKind::DiagMul { side } => self.check_diag_mul(o, op, *side),
             OpKind::ArrayLiteral { cols } => self.check_array_literal(o, op, *cols),
+            OpKind::ConstArray { cols, bits } => self.check_const_array(o, op, *cols, bits),
             OpKind::Index => self.check_index(o, op),
             OpKind::Slice { axes } => self.check_slice(o, op, axes),
             OpKind::Zeros | OpKind::Identity => self.check_zeros_or_identity(o, op),

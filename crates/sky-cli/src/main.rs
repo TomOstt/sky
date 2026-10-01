@@ -385,6 +385,7 @@ fn check_source(
                 .threads
                 .unwrap_or_else(sky_ir::parallel::Config::default_threads),
             relaxed: mode.relaxed(),
+            print: opts.emit_ir.is_some(),
         },
         edition,
     );

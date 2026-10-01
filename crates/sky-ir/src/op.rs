@@ -11,6 +11,8 @@
 //! run time, which is why most arithmetic has [`Effect::Fail`].
 
 pub use sky_types::{Algorithm, Side, SolveMethod};
+use std::sync::Arc;
+
 use sky_units::Rational;
 
 use crate::ir::{Effect, EffectSet};
@@ -401,6 +403,26 @@ pub enum OpKind {
     ArrayLiteral {
         cols: Option<u64>,
     },
+    /// A constant array: the entries of an `array.literal` whose operands are
+    /// all numeric constants, stored in one operation instead of one
+    /// `const.float` and one operand each. No operands, one result.
+    /// `bits` are the entries' `f64` bits in SI, in row-major order (so the
+    /// kind is `Eq`-friendly and prints exactly, as for [`OpKind::ConstFloat`]),
+    /// and `cols` arranges them as for [`OpKind::ArrayLiteral`]. `N >= 1`
+    /// entries, every one finite. The result has one dimension for all
+    /// entries, and its type restates the shape. Pure.
+    ///
+    /// Lowering writes it for a literal of at least
+    /// [`OpKind::CONST_ARRAY_MIN`] numeric entries, so a program that spells
+    /// its data out (a 100 000-number literal) costs the front end and the
+    /// passes one operation, not 100 000. Smaller literals stay
+    /// `array.literal`, which the passes and the small-matrix code generator
+    /// see through. Native code keeps the entries in the module's constant
+    /// table, once.
+    ConstArray {
+        cols: Option<u64>,
+        bits: Arc<[u64]>,
+    },
     /// `A[i]`, `A[i, j]`: an operand `A` (a vector or matrix) followed by
     /// `k` positions, one per leading axis (`1 <= k <=` the rank), one
     /// result. Each position is a dimensionless scalar that must be a
@@ -655,6 +677,10 @@ pub struct OpProperties {
 }
 
 impl OpKind {
+    /// The fewest entries for which lowering writes a numeric-constant array
+    /// literal as one [`OpKind::ConstArray`] (see there).
+    pub const CONST_ARRAY_MIN: usize = 64;
+
     /// The name in the text format: `add`, `const.float`, `cmp.lt`, ...
     /// Kinds with attributes print them after the name (see the printer).
     pub fn mnemonic(&self) -> &'static str {
@@ -686,6 +712,7 @@ impl OpKind {
             OpKind::Show { .. } => "show",
 
             OpKind::ArrayLiteral { .. } => "array.literal",
+            OpKind::ConstArray { .. } => "const.array",
             OpKind::Index => "index",
             OpKind::Slice { .. } => "slice",
             OpKind::Zeros => "zeros",
@@ -754,6 +781,7 @@ impl OpKind {
             | OpKind::Transpose
             | OpKind::Assume
             | OpKind::ArrayLiteral { .. }
+            | OpKind::ConstArray { .. }
             | OpKind::Cmp(_)
             | OpKind::Not => (EffectSet::PURE, false, false, false),
             // Overflow to infinity fails (numbers are always finite).

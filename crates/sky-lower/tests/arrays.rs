@@ -312,3 +312,73 @@ i = 1\nprint(v[i], A[:, 1], A[0:1, 1:2], zeros(2, 2), identity(2), len(v), Kâ»Â
     assert_eq!(sky_ir::print(&back), text);
     assert!(sky_ir::verify(&back).is_ok());
 }
+
+/// `0.5, 1.5, ...`: `n` numbers.
+fn numbers(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("{}.5", i % 7))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[test]
+fn a_big_literal_of_numbers_is_one_const_array() {
+    let m = lower_ok(&format!("v = [{}]\n", numbers(100)));
+    let f = main_fn(&m);
+    assert_eq!(top_kinds(f)[0], "const.array");
+    assert_eq!(count(f, "const.float"), 0);
+    let op = f.op(def_op(f, named(f, "v")).expect("op"));
+    let OpKind::ConstArray { cols: None, bits } = &op.kind else {
+        panic!("not a const.array: {:?}", op.kind);
+    };
+    assert!(op.operands.is_empty());
+    assert_eq!(bits.len(), 100);
+    assert_eq!(f64::from_bits(bits[8]), 1.5);
+    assert_eq!(dims(number(f, named(f, "v"))), [100]);
+}
+
+#[test]
+fn a_big_matrix_literal_keeps_its_rows_units_and_negatives() {
+    let row = (0..10)
+        .map(|i| {
+            if i == 3 {
+                "-2 m".to_string()
+            } else {
+                format!("{i} m")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let rows = vec![format!("[{row}]"); 8].join(", ");
+    let m = lower_ok(&format!("A = [{rows}]\n"));
+    let f = main_fn(&m);
+    let a = named(f, "A");
+    let op = f.op(def_op(f, a).expect("op"));
+    let OpKind::ConstArray {
+        cols: Some(10),
+        bits,
+    } = &op.kind
+    else {
+        panic!("not a const.array: {:?}", op.kind);
+    };
+    assert_eq!(f64::from_bits(bits[3]), -2.0);
+    assert_eq!(dims(number(f, a)), [8, 10]);
+    assert_eq!(number(f, a).dim, sky_units::Dimension::LENGTH);
+}
+
+#[test]
+fn a_literal_with_a_variable_entry_stays_an_array_literal() {
+    let m = lower_ok(&format!("x = 2\nv = [{}, x]\n", numbers(100)));
+    let f = main_fn(&m);
+    let op = f.op(def_op(f, named(f, "v")).expect("op"));
+    assert_eq!(op.kind, OpKind::ArrayLiteral { cols: None });
+    assert_eq!(op.operands.len(), 101);
+}
+
+#[test]
+fn a_small_literal_is_still_an_array_literal() {
+    let m = lower_ok(&format!("v = [{}]\n", numbers(63)));
+    let f = main_fn(&m);
+    let op = f.op(def_op(f, named(f, "v")).expect("op"));
+    assert_eq!(op.kind, OpKind::ArrayLiteral { cols: None });
+}

@@ -286,6 +286,19 @@ impl Printer<'_> {
             OpKind::ArrayLiteral { cols: Some(c) } => {
                 let _ = write!(self.out, "[{c}]");
             }
+            OpKind::ConstArray { cols, bits } => {
+                if let Some(c) = cols {
+                    let _ = write!(self.out, "[{c}]");
+                }
+                self.out.push_str(" (");
+                for (i, &b) in bits.iter().enumerate() {
+                    if i > 0 {
+                        self.out.push_str(", ");
+                    }
+                    self.out.push_str(&float_text(b));
+                }
+                self.out.push(')');
+            }
             OpKind::Slice { axes } => {
                 let items: Vec<&str> = axes.iter().map(|a| a.text()).collect();
                 let _ = write!(self.out, "[{}]", items.join(", "));

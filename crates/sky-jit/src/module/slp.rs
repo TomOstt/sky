@@ -437,7 +437,10 @@ impl<'f> Est<'f> {
             OpKind::Math(_) => (40.0, 20.0),
             OpKind::Cmp(_) | OpKind::Not => (1.0, 1.0),
             OpKind::ExpectBool { .. } | OpKind::ExpectNumber { .. } => (0.0, 0.0),
-            OpKind::Index | OpKind::ArrayLiteral { .. } | OpKind::Transpose => (1.0, 0.5 * n),
+            OpKind::Index
+            | OpKind::ArrayLiteral { .. }
+            | OpKind::ConstArray { .. }
+            | OpKind::Transpose => (1.0, 0.5 * n),
             // A sum of `k` products in order: a multiplication and `k - 1`
             // dependent additions.
             OpKind::Dot | OpKind::Norm | OpKind::MatMul | OpKind::MatMulEx { .. } => {

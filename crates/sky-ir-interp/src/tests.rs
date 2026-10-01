@@ -1694,3 +1694,24 @@ mod operand_spans {
 
     use sky_units::Dimension;
 }
+
+#[test]
+fn const_array_is_its_entries_arranged() {
+    let bits: std::sync::Arc<[u64]> = [1.0f64, 2.0, 3.0].map(f64::to_bits).to_vec().into();
+    let make = |cols| {
+        apply(
+            OpKind::ConstArray {
+                cols,
+                bits: bits.clone(),
+            },
+            vec![],
+        )
+    };
+    assert_eq!(make(None), Ok(vector(&[1.0, 2.0, 3.0])));
+    assert_eq!(make(Some(3)), Ok(matrix(1, 3, &[1.0, 2.0, 3.0])));
+    let e = make(Some(2)).expect_err("ragged");
+    assert_eq!(
+        msg(&e),
+        "malformed IR: `const.array` cannot arrange its entries"
+    );
+}

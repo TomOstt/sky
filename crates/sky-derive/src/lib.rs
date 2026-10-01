@@ -22,12 +22,16 @@
 //!
 //! Only the `def`s are lowered: the module's values come from the tree
 //! walker, so top-level statements SIR cannot express yet (`equation`,
-//! `solve`, `±`) do not stop a derivative. A `def` SIR cannot express (an
-//! input declaration inside it, say) still cannot be differentiated, and a function `sky-ad` cannot differentiate (an
-//! unannotated parameter the derivative flows through, or the gradient of a
-//! loop over an array whose size is not known) is an error. Both are runtime
-//! errors on the derivative call that say so; the checker cannot know,
-//! because `sky check` never lowers.
+//! `solve`, `±`) do not stop a derivative. Nor does a `def` SIR cannot
+//! express (one that `solve`s, say) that the differentiated function never
+//! calls: such `def`s are left out (`sky_lower::lower_defs_partial`). A
+//! function that does reach one cannot be differentiated, and the error
+//! names the chain of calls and points at what stopped it (the `solve`). A
+//! function `sky-ad` cannot differentiate (an unannotated parameter the
+//! derivative flows through, or the gradient of a loop over an array whose
+//! size is not known) is an error too. Both are runtime errors on the
+//! derivative call; the checker cannot know, because `sky check` never
+//! lowers.
 //!
 //! # Arrays
 //!
@@ -60,6 +64,8 @@ struct Lowered {
     module: sky_ir::Module,
     /// The SIR function of each `def`, by the span of its name.
     defs: HashMap<Span, String>,
+    /// Why each `def` that is not in `module` is not.
+    failed: HashMap<Span, sky_lower::DefFailure>,
 }
 
 impl<'a> SirDerivatives<'a> {
@@ -92,13 +98,57 @@ impl<'a> SirDerivatives<'a> {
             if checked.has_errors() {
                 return Err(fail("the program does not check".into(), None));
             }
-            let (sir, defs) = sky_lower::lower_defs(module, src, &checked)
+            let partial = sky_lower::lower_defs_partial(module, src, &checked)
                 .map_err(|e| fail(e.message, e.note))?;
-            verified(&sir, at)?;
-            Ok(Lowered { module: sir, defs })
+            verified(&partial.module, at)?;
+            Ok(Lowered {
+                module: partial.module,
+                defs: partial.defs,
+                failed: partial.failed,
+            })
         });
         sir.as_mut().map_err(|e| e.clone())
     }
+}
+
+/// The error for a derivative of `name`, a `def` that did not lower: what
+/// stopped it, through which calls, pointing at the cause.
+fn unlowered(name: &str, failure: &sky_lower::DefFailure, at: Span) -> RuntimeError {
+    // `d<f>/d<x>` is a derivative SIR builds for a `derivative(f, x)` call.
+    let show = |callee: &str| match callee
+        .strip_prefix('d')
+        .and_then(|rest| Some(&rest[..rest.rfind("/d")?]))
+    {
+        Some(f) => format!("the derivative of `{f}`"),
+        None => format!("`{callee}`"),
+    };
+    let e = &failure.error;
+    let message = if failure.calls.is_empty() {
+        format!(
+            "cannot evaluate a derivative: `{name}` cannot run on SIR: {}",
+            e.message
+        )
+    } else {
+        // "`f` calls `g`, which calls `h`, which cannot run on SIR: ..."
+        let mut text = format!("`{name}`");
+        for (i, c) in failure.calls.iter().enumerate() {
+            text.push_str(if i == 0 { " calls " } else { ", which calls " });
+            text.push_str(&show(c));
+        }
+        format!(
+            "cannot evaluate a derivative: {text}, which cannot run on SIR: {}",
+            e.message
+        )
+    };
+    let mut err = RuntimeError::new(message, at)
+        .with_label("this derivative")
+        .with_secondary(e.span, "SIR stops here");
+    if let Some(n) = &e.note {
+        err = err.with_note(n.clone());
+    }
+    err.with_note(
+        "derivatives run on SIR, so the function differentiated and every function it calls must lower to SIR",
+    )
 }
 
 /// SIR that `sky-lower` or `sky-ad` built must verify; anything else is a
@@ -120,6 +170,9 @@ impl DerivativeHook for SirDerivatives<'_> {
     ) -> Result<Value, RuntimeError> {
         let at = request.span;
         let lowered = self.lowered(at)?;
+        if let Some(failure) = lowered.failed.get(&request.func.def_span) {
+            return Err(unlowered(&request.func.name, failure, at));
+        }
         let Some(func) = lowered.defs.get(&request.func.def_span).cloned() else {
             return Err(RuntimeError::new(
                 format!(

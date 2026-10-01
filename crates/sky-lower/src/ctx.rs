@@ -107,6 +107,10 @@ pub(crate) struct Lower<'a> {
     pub(crate) derivatives: Vec<Wanted>,
     /// The `accuracy` declarations met so far (see `accuracy.rs`).
     pub(crate) goals: Vec<sky_ir::roundoff::Goal>,
+    /// When lowering only the `def`s for derivatives: the `def`s that
+    /// could not be lowered (by the span of the name), so the others still
+    /// are (see [`crate::lower_defs_partial`]). `None` stops at the first.
+    pub(crate) failed: Option<Vec<(Span, crate::LowerError)>>,
 }
 
 /// A checker type as a SIR type. `None` for a function value (and for an

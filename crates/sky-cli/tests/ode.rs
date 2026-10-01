@@ -397,15 +397,84 @@ fn an_uncertain_value_in_solve_says_how_to_proceed() {
     );
     assert_eq!(o.status.code(), Some(1));
     let e = err(&o);
+    // Found by the check, before anything runs.
     assert!(
-        e.contains("`x'` must be a number, found an uncertain number"),
+        e.contains("the equations of `decay` read `k`, which may be an uncertain number"),
         "{e}"
     );
+    assert!(e.contains("`k` is read here"), "{e}");
     assert!(
         e.contains("`solve` does not propagate uncertainties"),
         "{e}"
     );
     assert!(e.contains("nominal(v)"), "{e}");
+}
+
+const FALL: &str = "equation fall(t: s):
+    y: m
+    v: m/s
+    y' = v
+    v' = -9.81 m/s^2
+
+def drop(h: m) -> m:
+    sol = solve fall from 0 s to 1 s with y = h, v = 0 m/s
+    return sol.y
+
+def twice(h: m) -> m:
+    return 2 * drop(h)
+
+def sq(x: m) -> m^2:
+    return x * x
+";
+
+/// A `solve` inside one `def` does not stop the derivative of another that
+/// never reaches it (before, every `def` had to lower to SIR).
+#[test]
+fn a_solve_in_one_def_does_not_stop_the_derivative_of_another() {
+    for engine in ["--engine=ast", "--engine=auto"] {
+        let o = sky(
+            "solve_def_derivative",
+            "run",
+            &[engine],
+            &format!("{FALL}print(derivative(sq, x)(3 m))\nprint(drop(10 m))\n"),
+        );
+        assert_eq!(err(&o), "", "{engine}");
+        assert_eq!(out(&o), "6 m\n5.094999999999999 m\n", "{engine}");
+    }
+}
+
+/// A derivative of a function that does reach a `solve` names the calls
+/// that lead there and points at the `solve`.
+#[test]
+fn a_derivative_through_a_solve_names_the_calls_and_the_solve() {
+    let o = sky(
+        "solve_def_derivative_err",
+        "run",
+        &[],
+        &format!("{FALL}print(derivative(twice, h)(10 m))\n"),
+    );
+    assert_eq!(o.status.code(), Some(1));
+    let e = err(&o);
+    assert!(
+        e.contains("cannot evaluate a derivative: `twice` calls `drop`, which cannot run on SIR: differential equations are not supported by SIR yet"),
+        "{e}"
+    );
+    assert!(
+        e.contains("sol = solve fall from 0 s to 1 s with y = h, v = 0 m/s")
+            && e.contains("SIR stops here"),
+        "{e}"
+    );
+    let o = sky(
+        "solve_def_derivative_err2",
+        "run",
+        &[],
+        &format!("{FALL}print(derivative(drop, h)(10 m))\n"),
+    );
+    assert!(
+        err(&o).contains("cannot evaluate a derivative: `drop` cannot run on SIR"),
+        "{}",
+        err(&o)
+    );
 }
 
 /// The force as the gradient of a potential, `v' = -grad(U)(r)`: the

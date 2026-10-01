@@ -47,7 +47,7 @@ impl Lower<'_> {
             match &s.kind {
                 StmtKind::Def {
                     name, params, body, ..
-                } => self.lower_def(name, params, body, s.span)?,
+                } => self.lower_def_or_record(name, params, body, s.span)?,
                 StmtKind::Assign {
                     target: AssignTarget::Name(name),
                     ..
@@ -69,6 +69,42 @@ impl Lower<'_> {
                 }
                 _ => {}
             }
+        }
+        Ok(())
+    }
+
+    /// [`Self::lower_def`], or, when failures are being collected, the
+    /// failure recorded and everything the failed `def` started undone, so
+    /// the next `def` lowers as if it had not been there.
+    fn lower_def_or_record(
+        &mut self,
+        name: &Ident,
+        params: &[Param],
+        body: &Block,
+        span: Span,
+    ) -> R<()> {
+        if self.failed.is_none() {
+            return self.lower_def(name, params, body, span);
+        }
+        let mark = (
+            self.stack.len(),
+            self.out.len(),
+            self.derivatives.len(),
+            self.goals.len(),
+        );
+        let Err(e) = self.lower_def(name, params, body, span) else {
+            return Ok(());
+        };
+        while self.stack.len() > mark.0 {
+            if let Some(parent) = self.stack.pop() {
+                self.st = parent;
+            }
+        }
+        self.out.truncate(mark.1);
+        self.derivatives.truncate(mark.2);
+        self.goals.truncate(mark.3);
+        if let Some(failed) = &mut self.failed {
+            failed.push((name.span, e));
         }
         Ok(())
     }

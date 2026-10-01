@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use sky_ast::ast::span_text;
 use sky_ast::{Equation, EquationItem, Expr, ExprKind, IndexItem};
+use sky_diag::Span;
 
 use crate::check::strip_parens;
 
@@ -136,13 +137,34 @@ pub fn dependencies(src: &str, e: &Expr, locals: &BTreeMap<String, &Expr>) -> BT
 
 /// The names written in `e`, without looking through definitions.
 pub fn free_names(src: &str, e: &Expr) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
+    name_uses(src, e).into_iter().map(|(n, _)| n).collect()
+}
+
+/// Every name written in `e` and where, and every `±` in it (as `None`
+/// with the span of the `±` expression).
+pub(crate) fn name_uses(src: &str, e: &Expr) -> Vec<(String, Span)> {
+    uses(src, e)
+        .into_iter()
+        .filter_map(|(n, s)| Some((n?, s)))
+        .collect()
+}
+
+/// The spans of the `±` expressions in `e`.
+pub(crate) fn plus_minus_uses(src: &str, e: &Expr) -> Vec<Span> {
+    uses(src, e)
+        .into_iter()
+        .filter_map(|(n, s)| n.is_none().then_some(s))
+        .collect()
+}
+
+fn uses(src: &str, e: &Expr) -> Vec<(Option<String>, Span)> {
+    let mut out = Vec::new();
     let mut stack: Vec<&Expr> = vec![e];
     while let Some(e) = stack.pop() {
         match &e.kind {
             ExprKind::Name(id) => {
                 if let Some(t) = span_text(src, id.span) {
-                    out.insert(t.to_string());
+                    out.push((Some(t.to_string()), id.span));
                 }
             }
             ExprKind::Literal(_) | ExprKind::UnitLiteral { .. } => {}
@@ -180,10 +202,13 @@ pub fn free_names(src: &str, e: &Expr) -> BTreeSet<String> {
             }
             ExprKind::As { value, .. } => stack.push(value),
             ExprKind::PlusMinus { value, sigma, .. } => {
+                out.push((None, e.span));
                 stack.push(value);
                 stack.push(sigma);
             }
         }
     }
+    // In source order, so "first use" means the first one written.
+    out.sort_by_key(|(_, s)| (s.start, s.end));
     out
 }

@@ -461,6 +461,18 @@ impl Lower<'_> {
                 },
             }
         }
+        // `derivative(h, x)(...)` where the checker could not tie `h` to a
+        // `def`: a function passed as a value.
+        if let ExprKind::Call { callee: inner, .. } = &callee.kind {
+            if matches!(&inner.kind, ExprKind::Name(id) if matches!(self.text(id.span), "derivative" | "grad"))
+            {
+                return Err(LowerError::new(
+                    "cannot differentiate a function passed as a value",
+                    callee.span,
+                )
+                .with_note("SIR has no function values: `derivative` and `grad` of a function SIR runs must name its `def` (the tree-walking interpreter, `--engine=ast` or `auto`, runs this)"));
+            }
+        }
         self.err(
             "only functions defined with `def` can be called",
             callee.span,

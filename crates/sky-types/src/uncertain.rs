@@ -19,22 +19,31 @@
 //!   with the way to ask the real question.
 //!
 //! The tracking is approximate on purpose: it is per name (a function
-//! parameter, a name reassigned in one branch), never blocks a program, and
-//! its worst case is a warning that is not needed or one that is missing.
+//! parameter, a name reassigned in one branch), and its worst case is a
+//! warning that is not needed or one that is missing. It blocks a program
+//! in two places, where run time would refuse the value anyway: a value
+//! that may be uncertain going into a `solve` (`uncertain_solve_inputs`)
+//! or into a derivative (`uncertain_derivative_args`).
 
 use std::collections::HashSet;
 
-use sky_ast::{BinaryOp, Expr, ExprKind};
-use sky_diag::{Diagnostic, Span};
+use sky_ast::{BinaryOp, Expr, ExprKind, Solve, SolveOption};
+use sky_diag::{display_capped as quote, Diagnostic, Span};
 
 use crate::check::{Checker, Ty};
 use crate::constant::entry_value;
 use crate::display::a_dimension;
+use crate::ode::EquationSig;
+use crate::ode_analysis::{name_uses, plus_minus_uses};
 use crate::provenance::label_dim;
 
 /// Most expression nodes one "may be uncertain" walk visits. A walk is
 /// iterative and bounded, so a huge expression costs a constant amount.
 const MAX_VISIT: usize = 256;
+
+/// An uncertain value going into a `solve`: the message, where, and a
+/// secondary label (the use, when the error is on the `solve`).
+type SolveFinding = (String, Span, Option<(Span, String)>);
 
 /// What the checker remembers about uncertainty.
 #[derive(Clone, Debug, Default)]
@@ -195,6 +204,142 @@ impl Checker<'_> {
     pub(crate) fn note_uncertain_update(&mut self, name: &str, value: &Expr) {
         if self.may_be_uncertain(value) {
             self.unc.names.insert(name.to_string());
+        }
+    }
+
+    /// A `solve` cannot take an uncertain number anywhere (spec
+    /// "Uncertainty"): not as an initial value or a time, nor in a value its
+    /// equations or `conserve`s read. Run time refuses one, but only once
+    /// the solve is reached, so the check rejects every value that may be
+    /// uncertain here (the tracking described above), with the way out.
+    pub(crate) fn uncertain_solve_inputs(&mut self, sig: &EquationSig, s: &Solve) {
+        let help = "pass `nominal(v)` for each uncertain value `v`, and solve again with `nominal(v) + uncertainty(v)` to see how far the result moves";
+        let note = "`solve` does not propagate uncertainties (`±`) yet";
+        let eq = quote(&sig.name);
+        let mut found: Vec<SolveFinding> = Vec::new();
+        for init in &s.initial {
+            if self.may_be_uncertain(&init.value) {
+                found.push((
+                    format!(
+                        "the initial value of `{}` may be an uncertain number",
+                        self.quoted(init.name.span)
+                    ),
+                    init.value.span,
+                    None,
+                ));
+            }
+        }
+        for (what, e) in [("the start time", &s.from), ("the end time", &s.to)] {
+            if self.may_be_uncertain(e) {
+                found.push((format!("{what} may be an uncertain number"), e.span, None));
+            }
+        }
+        for (name, at) in &sig.reads {
+            if self.unc.names.contains(name) {
+                found.push((
+                    format!(
+                        "the equations of `{eq}` read `{}`, which may be an uncertain number",
+                        quote(name)
+                    ),
+                    s.keyword,
+                    Some((*at, format!("`{}` is read here", quote(name)))),
+                ));
+            }
+        }
+        if let Some(&at) = sig.plus_minus.first() {
+            found.push((
+                format!("the equations of `{eq}` contain an uncertain number"),
+                s.keyword,
+                Some((at, "this `±`".to_string())),
+            ));
+        }
+        let own: HashSet<&str> = sig
+            .states
+            .iter()
+            .map(|st| st.name.as_str())
+            .chain([sig.time_name.as_str()])
+            .collect();
+        for option in &s.options {
+            let SolveOption::Conserve {
+                name,
+                value,
+                within,
+                ..
+            } = option
+            else {
+                continue;
+            };
+            let q = self.quoted(name.span);
+            let uncertain_read = name_uses(self.src, value)
+                .into_iter()
+                .find(|(n, _)| !own.contains(n.as_str()) && self.unc.names.contains(n));
+            if let Some((n, at)) = uncertain_read {
+                found.push((
+                    format!(
+                        "the conserved quantity `{q}` reads `{}`, which may be an uncertain number",
+                        quote(&n)
+                    ),
+                    at,
+                    None,
+                ));
+            } else if let Some(&at) = plus_minus_uses(self.src, value).first() {
+                found.push((
+                    format!("the conserved quantity `{q}` contains an uncertain number"),
+                    at,
+                    None,
+                ));
+            }
+            if let Some(w) = within {
+                if self.may_be_uncertain(w) {
+                    found.push((
+                        "the allowed drift may be an uncertain number".to_string(),
+                        w.span,
+                        None,
+                    ));
+                }
+            }
+        }
+        for (message, at, secondary) in found {
+            let mut d = Diagnostic::error(message, at)
+                .with_label("`solve` needs exact numbers")
+                .with_note(note)
+                .with_help(help);
+            if let Some((span, label)) = secondary {
+                d = d.with_secondary(span, label);
+            }
+            self.error(d);
+        }
+    }
+
+    /// A derivative is taken at a point and does not propagate `±` (spec
+    /// "Derivatives"): an argument that may be uncertain is an error here,
+    /// rather than at run time inside the function, at whatever operation
+    /// meets it first.
+    pub(crate) fn uncertain_derivative_args(&mut self, t: &Ty, callee: &Expr, args: &[Expr]) {
+        let form = self.quoted(callee.span);
+        for (i, a) in args.iter().enumerate() {
+            if !self.may_be_uncertain(a) {
+                continue;
+            }
+            let which = match t {
+                Ty::Func(sig) => sig.param_name(i).map_or_else(
+                    || format!("argument {}", i + 1),
+                    |p| format!("`{}`", quote(p)),
+                ),
+                _ => format!("argument {}", i + 1),
+            };
+            self.error(
+                Diagnostic::error(
+                    format!("`{form}` needs exact arguments, but {which} may be an uncertain number"),
+                    a.span,
+                )
+                .with_label("this may carry an uncertainty")
+                .with_secondary(callee.span, "this derivative")
+                .with_note("a derivative does not propagate uncertainties (`±`) yet")
+                .with_help(format!(
+                    "pass `nominal(...)` to take it at the nominal value; the first-order uncertainty of the function is then `{form}` times `uncertainty(...)`"
+                )),
+            );
         }
     }
 

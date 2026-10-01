@@ -18,7 +18,9 @@ pub(crate) struct Run<'a> {
     /// The largest relative drift seen so far, per conserved quantity.
     pub(crate) drift: Vec<f64>,
     /// The value of each conserved quantity at `t0`.
-    initial: Vec<f64>,
+    pub(crate) initial: Vec<f64>,
+    /// What each quantity's drift is measured against: see [`drift_scale`].
+    pub(crate) scale: Vec<DriftScale>,
     next_out: usize,
 }
 
@@ -31,12 +33,14 @@ impl<'a> Run<'a> {
         y0: &[f64],
     ) -> Result<Self, SolveError> {
         let mut initial = Vec::with_capacity(opts.conserved.len());
+        let mut scale = Vec::with_capacity(opts.conserved.len());
         for c in &opts.conserved {
             let q = (c.value)(t0, y0);
             if !q.is_finite() {
                 return Err(SolveError::NotFinite { t: t0 });
             }
             initial.push(q);
+            scale.push(drift_scale(&c.value, t0, y0, q));
         }
         Ok(Run {
             sys,
@@ -47,6 +51,7 @@ impl<'a> Run<'a> {
             samples: Vec::new(),
             drift: vec![0.0; opts.conserved.len()],
             initial,
+            scale,
             next_out: 0,
         })
     }
@@ -73,17 +78,15 @@ impl<'a> Run<'a> {
 
     /// Updates the drift of every conserved quantity at an accepted state
     /// and fails if one exceeds its `max_drift`. Relative to the initial
-    /// value; if that is exactly zero, absolute (there is no scale to
-    /// divide by).
+    /// value, or to the size of the quantity's terms if that value is zero
+    /// by cancellation (see [`drift_scale`]).
     pub(crate) fn monitor(&mut self, t: f64, y: &[f64]) -> Result<(), SolveError> {
         for (i, c) in self.opts.conserved.iter().enumerate() {
             let q = (c.value)(t, y);
             if !q.is_finite() {
                 return Err(SolveError::NotFinite { t });
             }
-            let q0 = self.initial[i];
-            let scale = if q0 != 0.0 { q0.abs() } else { 1.0 };
-            let d = (q - q0).abs() / scale;
+            let d = self.drift_of(i, q);
             if d > self.drift[i] {
                 self.drift[i] = d;
             }
@@ -97,6 +100,12 @@ impl<'a> Run<'a> {
             }
         }
         Ok(())
+    }
+
+    /// The drift of quantity `i` at value `q`, as [`Run::monitor`] measures
+    /// it (trial runs use it without touching the monitor's record).
+    pub(crate) fn drift_of(&self, i: usize, q: f64) -> f64 {
+        (q - self.initial[i]).abs() / self.scale[i].value
     }
 
     /// The next requested output time not yet recorded.
@@ -218,5 +227,79 @@ pub(crate) fn num(x: f64) -> String {
         }
     } else {
         format!("{x:.2e}")
+    }
+}
+
+/// What a conserved quantity's drift is divided by.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DriftScale {
+    pub(crate) value: f64,
+    /// Whether `value` is the size of the quantity's terms rather than its
+    /// initial value (the quantity starts at zero, up to rounding).
+    pub(crate) by_terms: bool,
+}
+
+/// A quantity at or below this fraction of the size of its terms is zero
+/// by cancellation, up to rounding: about 4500 machine epsilons, well above
+/// the rounding of a sum of a few hundred terms and far below any value a
+/// scientist would call nonzero.
+pub(crate) const CANCELLED: f64 = 1e-12;
+
+/// The scale of a conserved quantity `Q` with value `q0` at `(t0, y0)`.
+///
+/// Normally `|Q(t0)|`, so the drift is relative. But a quantity can be zero
+/// by construction (the angular momentum of the figure-eight orbit, the
+/// momentum of a system at rest), and then `Q(t0)` is rounding noise: a
+/// drift relative to it is noise divided by noise, which no step can make
+/// small. So the size of `Q`'s terms is measured too,
+/// `S = Σ_j |y_j ∂Q/∂y_j|` (by central differences, exact for a sum of
+/// products), and if `|Q(t0)| <= CANCELLED * S` the drift is relative to
+/// `S` instead: how far `Q` moved compared with the size of what cancels
+/// in it. A zero quantity that does not depend on the state (`S` is zero)
+/// is measured absolutely.
+pub(crate) fn drift_scale(q: &crate::StateFn, t0: f64, y0: &[f64], q0: f64) -> DriftScale {
+    let mut terms = 0.0_f64;
+    let mut y = y0.to_vec();
+    for (j, &yj) in y0.iter().enumerate() {
+        if yj == 0.0 {
+            continue; // y_j ∂Q/∂y_j is zero
+        }
+        let d = 1e-6 * yj.abs();
+        y[j] = yj + d;
+        let up = q(t0, &y);
+        y[j] = yj - d;
+        let down = q(t0, &y);
+        y[j] = yj;
+        let slope = (up - down) / (2.0 * d);
+        if slope.is_finite() {
+            terms += (yj * slope).abs();
+        }
+    }
+    let q0 = q0.abs();
+    if q0 > CANCELLED * terms {
+        DriftScale {
+            value: q0,
+            by_terms: false,
+        }
+    } else if terms > 0.0 {
+        DriftScale {
+            value: terms,
+            by_terms: true,
+        }
+    } else {
+        DriftScale {
+            value: 1.0,
+            by_terms: false,
+        }
+    }
+}
+
+/// How a drift is described: "relative", or relative to the size of the
+/// quantity's terms (see [`drift_scale`]).
+pub(crate) fn relative_to(scale: DriftScale) -> &'static str {
+    if scale.by_terms {
+        "relative to the size of its terms, since it starts at 0"
+    } else {
+        "relative"
     }
 }

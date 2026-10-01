@@ -480,6 +480,7 @@ pub fn check_module_with(module: &Module, source: &str, env: Env) -> Checked {
         funcs: HashMap::new(),
         num: NumState::default(),
         unc: crate::uncertain::UncertainState::default(),
+        reads: crate::module_reads::ModuleReads::default(),
         shown_ok: None,
         contract_defs: HashMap::new(),
         failed_defs: HashSet::new(),
@@ -556,6 +557,9 @@ pub(crate) struct Checker<'s> {
     pub(crate) num: NumState,
     /// What the uncertainty warning remembers (see [`crate::uncertain`]).
     pub(crate) unc: crate::uncertain::UncertainState,
+    /// The module names function and equation bodies read (see
+    /// [`crate::module_reads`]).
+    pub(crate) reads: crate::module_reads::ModuleReads,
     /// The one `v as unit` the next `expr` call may type without an error:
     /// the argument of `print` or the expression statement being checked
     /// (see [`crate::display`]).
@@ -581,6 +585,7 @@ pub(crate) struct LoopMark {
     ode_notes: usize,
     num: crate::numerics::NumState,
     unc: crate::uncertain::UncertainState,
+    reads: crate::module_reads::ModuleReads,
     prelude: BTreeSet<String>,
     fn_ctx: Option<crate::flow::FnCtx>,
     shadow_reported: Vec<String>,
@@ -712,6 +717,7 @@ impl<'s> Checker<'s> {
             ode_notes: self.ode_notes.len(),
             num: self.num.clone(),
             unc: self.unc.clone(),
+            reads: self.reads.clone(),
             prelude: self.env.prelude.clone(),
             fn_ctx: self.fns.last().cloned(),
             shadow_reported: self.shadow_reported.clone(),
@@ -732,6 +738,7 @@ impl<'s> Checker<'s> {
         self.ode_notes.truncate(mark.ode_notes);
         self.num = mark.num.clone();
         self.unc = mark.unc.clone();
+        self.reads = mark.reads.clone();
         self.env.prelude = mark.prelude.clone();
         if let (Some(ctx), Some(saved)) = (self.fns.last_mut(), &mark.fn_ctx) {
             *ctx = saved.clone();
@@ -890,6 +897,7 @@ impl<'s> Checker<'s> {
     /// Binds `name` at `span` (its origin, for labels), as a local of the
     /// function being checked if there is one.
     pub(crate) fn bind_at(&mut self, name: &str, ty: Ty, span: Span) {
+        self.check_module_rebind(name, &ty, span);
         self.env.bind(name, ty);
         self.num.on_bind(name);
         self.env.origins.insert(name.to_string(), span);
@@ -1509,7 +1517,10 @@ impl<'s> Checker<'s> {
             ExprKind::Name(id) => {
                 let name = self.ident(id);
                 match self.env.get_symbolic(name) {
-                    Some(t) => t,
+                    Some(t) => {
+                        self.note_module_read(name, &t, id.span);
+                        t
+                    }
                     None => self.undefined_name(name, id.span),
                 }
             }

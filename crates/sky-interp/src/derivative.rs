@@ -242,7 +242,26 @@ impl Interp<'_> {
                 call.span,
             ));
         }
-        args.iter().map(|a| self.eval(a)).collect()
+        let mut values = Vec::with_capacity(args.len());
+        for (a, param) in args.iter().zip(&func.params) {
+            let v = self.eval(a)?;
+            // A derivative is taken at a point: an uncertain one would fail
+            // inside the function, at whatever operation met it first.
+            if matches!(v, Value::Uncertain(_)) {
+                return Err(RuntimeError::new(
+                    format!("`{label}` needs exact arguments, but `{param}` is an uncertain number"),
+                    a.span,
+                )
+                .with_label("this is uncertain")
+                .with_secondary(call.span, "this derivative")
+                .with_note("a derivative does not propagate uncertainties (`±`) yet")
+                .with_help(format!(
+                    "pass `nominal(...)` to take it at the nominal value; the first-order uncertainty of the function is then `{label}` times `uncertainty(...)`"
+                )));
+            }
+            values.push(v);
+        }
+        Ok(values)
     }
 
     /// The derivative of `func` at `values` with respect to each parameter

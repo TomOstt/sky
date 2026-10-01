@@ -104,6 +104,26 @@ impl Lower<'_> {
             Some(t @ Type::Number(_)) => t,
             _ => return self.err("internal error: a derivative without a number type", e.span),
         };
+        // The signature's result has the callee's size variables
+        // (`Vector[N]`); this call solves them, and the checker's type of
+        // the call has them solved. A derivative with respect to a scalar
+        // has the shape of the value, so the value's shape is the call's.
+        let wrt_scalar = !d.is_gradient()
+            && d.wrts()
+                .next()
+                .and_then(|w| f.param_ty(w))
+                .is_some_and(|p| p.is_scalar());
+        let primal = match (primal, &tangent) {
+            (Type::Number(p), Type::Number(t))
+                if wrt_scalar && p.shape.rank() == t.shape.rank() =>
+            {
+                Type::Number(NumberType {
+                    shape: t.shape.clone(),
+                    ..p
+                })
+            }
+            (p, _) => p,
+        };
         let mut vals = Vec::with_capacity(args.len() + globals.len());
         for (i, a) in args.iter().enumerate() {
             let v = self.expr(a)?;

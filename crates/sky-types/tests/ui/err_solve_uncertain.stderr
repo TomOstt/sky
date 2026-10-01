@@ -1,0 +1,31 @@
+crates/sky-types/tests/ui/err_solve_uncertain.sky:14:44: error: the initial value of `th` may be an uncertain number
+   |
+14 | sol = solve pend from 0 s to 1 s with th = th0, w = 0 rad/s:
+   |                                            ^^^ `solve` needs exact numbers
+   = note: `solve` does not propagate uncertainties (`±`) yet
+   = help: pass `nominal(v)` for each uncertain value `v`, and solve again with `nominal(v) + uncertainty(v)` to see how far the result moves
+
+crates/sky-types/tests/ui/err_solve_uncertain.sky:14:7: error: the equations of `pend` read `L1`, which may be an uncertain number
+   |
+14 | sol = solve pend from 0 s to 1 s with th = th0, w = 0 rad/s:
+   |       ^^^^^ `solve` needs exact numbers
+12 |     w' = -g / L1 * sin(th)
+   |               -- `L1` is read here
+   = note: `solve` does not propagate uncertainties (`±`) yet
+   = help: pass `nominal(v)` for each uncertain value `v`, and solve again with `nominal(v) + uncertainty(v)` to see how far the result moves
+
+crates/sky-types/tests/ui/err_solve_uncertain.sky:15:24: error: the conserved quantity `E` reads `L1`, which may be an uncertain number
+   |
+15 |     conserve E = 0.5 * L1^2 * w^2 - g * L1 * cos(th)
+   |                        ^^ `solve` needs exact numbers
+   = note: `solve` does not propagate uncertainties (`±`) yet
+   = help: pass `nominal(v)` for each uncertain value `v`, and solve again with `nominal(v) + uncertainty(v)` to see how far the result moves
+
+crates/sky-types/tests/ui/err_solve_uncertain.sky:31:7: error: the equations of `decay` contain an uncertain number
+   |
+31 | bad = solve decay from 0 s to 1 s with n = 1 mol
+   |       ^^^^^ `solve` needs exact numbers
+29 |     n' = -(2 s^-1 ± 0.1 s^-1) * n
+   |            ----------------- this `±`
+   = note: `solve` does not propagate uncertainties (`±`) yet
+   = help: pass `nominal(v)` for each uncertain value `v`, and solve again with `nominal(v) + uncertainty(v)` to see how far the result moves

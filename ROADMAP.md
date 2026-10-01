@@ -57,10 +57,17 @@ These come cheaply once the IR exists:
 - Automatic parallelism from the dependency graph [22]. Built so far, on the SIR interpreter and on native code: big elementwise kernels (compiled kernels run chunk by chunk) and independent pure calls (started on workers with a runtime state each) run on thread pools with the output, the error and its order unchanged (`sky_ir::parallel`, `--threads`); see `docs/design/ir.md`, "Automatic parallelism".
 - Algorithm variants chosen by size and hardware [15], and discovery of hardware capabilities [20]. Started, on shapes and tags (`spec/v0.1.md`, "Algorithm choice"): the compiler picks the association of an `@` chain by flops, solves `A⁻¹ @ b` and `x @ A⁻¹` by LU, Cholesky or division instead of forming the inverse, reads transposes and Gram products without copies, scales by a Diagonal matrix in O(n²), and expands small integer powers, each explained by `--explain` with its flops. Every `matmul` can record an algorithm class (`matmul[alg=...]`) that must give the reference bits, which is the plug point for kernels and tuning. Hardware-dependent choice comes with those. Also built: `sky hw` and the `sky-hw` crate (SIMD, cores, caches, memory, a machine fingerprint); the variants themselves need the fast kernels.
 - Autotuning with a local performance database [16, 17]. Built so far: `sky tune` and the `sky-tune` crate (a tuner, a data-only database keyed by the fingerprint, a registry for kernels to plug into) and the kernels plugged into it: GEMM cache blocks, the Cholesky block size, the thread threshold, the native-kernel threshold and the parallel thresholds; see the spec's "Hardware and tuning".
-- Allocation and copy elimination guided by lifetimes [25, 26, 85].
+- Allocation and copy elimination guided by lifetimes [25, 26, 85]. Built: a last-use analysis (`sky_ir::lifetime`) lets array operations write into a dying operand's buffer, so a time-stepping loop allocates nothing per step on SIR (see `crates/sky-bench/tests/allocations.rs`).
 - Performance contracts [86]. Built so far: `cost flops <= 2 * N^3` lines in a function header, proven or refuted by `sky check` from a static cost model over SIR (`sky_ir::cost`: flops, bytes moved, allocations, as polynomials in the symbolic shape sizes), and a per-function cost report under `--explain`. A run-time time budget is deliberately not part of it (time is noise). See `spec/v0.1.md`, "Performance contracts".
 
 **Done when:** dense linear algebra and fused elementwise code in Sky are within 2× of hand-tuned libraries.
+
+**Status: met** (2026-10-01; `benches/compare/RESULTS.md`, an M2 Pro, idle):
+- **Dense linear algebra.**
+  - Reproducible mode: matrix products are faster than straightforward C `-O3` loops (0.44× its time at n = 512) and within 2× of `faer`/`matrixmultiply`, whose FMAs Sky's default mode does not use.
+  - Relaxed numerics (`--numerics=relaxed`, opt-in): products reach Accelerate's speed (it uses the AMX unit) on the kernel benchmark. In whole programs they are at about 3× of it, set-up included.
+- **Fused elementwise kernels:** within 1.4× of hand-written C and Rust loops, per pass (`cargo bench -p sky-jit --bench kernels`).
+- **Whole programs, native code against C `-O3`:** Mandelbrot 1.5×, fib(30) 1.6×, RK4 1.7×, N-body 4.0×. Large elementwise programs are 5–30× off, from work outside the kernels; that is the next gap to close.
 
 ### Phase 5: accelerators and scale
 - GPUs through MLIR [19, 21, 55].

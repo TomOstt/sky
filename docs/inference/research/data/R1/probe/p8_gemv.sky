@@ -1,0 +1,5 @@
+A = exp(zeros(2048, 2048)) * 0.00048828125
+x = exp(zeros(2048))
+for i in range(200):
+    x = A @ x
+print(x[0])

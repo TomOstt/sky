@@ -1,0 +1,4 @@
+agent-a1dadc02119fe9b29 libs_bins rc=0 errors=0 | tests(keep-going) rc=101 errors=2 failed_targets=2
+agent-ad1ea58eab8e832fb libs_bins rc=0 errors=0 | tests(keep-going) rc=101 errors=4 failed_targets=2
+agent-afa55e105ab8ee772 libs_bins rc=0 errors=0 | tests(keep-going) rc=101 errors=1 failed_targets=1
+DONE

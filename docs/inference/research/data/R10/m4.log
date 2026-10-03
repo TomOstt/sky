@@ -1,0 +1,27 @@
+== native elementwise-1e7.sky
+        0.12 real         0.08 user         0.03 sys
+           526286848  maximum resident set size
+               32362  page reclaims
+                   7  page faults
+== native elem1e7-r6.sky
+        0.14 real         0.10 user         0.03 sys
+           526172160  maximum resident set size
+               32362  page reclaims
+                   0  page faults
+== sir elementwise-1e7.sky
+        0.10 real         0.07 user         0.02 sys
+           365379584  maximum resident set size
+               22534  page reclaims
+                   9  page faults
+== sir elem1e7-r6.sky
+        0.14 real         0.09 user         0.02 sys
+           365412352  maximum resident set size
+               22545  page reclaims
+                   0  page faults
+== c r2 / r6
+        0.06 real         0.03 user         0.01 sys
+           161447936  maximum resident set size
+               10018  page reclaims
+        0.04 real         0.03 user         0.00 sys
+           161431552  maximum resident set size
+               10017  page reclaims

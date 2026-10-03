@@ -1,0 +1,11 @@
+agent-a0952514d8e8836a6 rc=0 sky_crates_checked=22 errors=0 warnings=0 secs=23
+agent-a0bbbe931e968aa5a rc=0 sky_crates_checked=22 errors=0 warnings=0 secs=7
+agent-a1dadc02119fe9b29 rc=101 sky_crates_checked=10 errors=1 warnings=0 secs=3
+agent-a383df0a9d3b66323 rc=0 sky_crates_checked=22 errors=0 warnings=0 secs=9
+agent-a3be8cf38dda7b760 rc=0 sky_crates_checked=22 errors=0 warnings=0 secs=6
+agent-a7e29e8bf687d4135 rc=0 sky_crates_checked=22 errors=0 warnings=0 secs=48
+agent-abf8af993afe3b2cc rc=0 sky_crates_checked=22 errors=0 warnings=0 secs=6
+agent-ad1ea58eab8e832fb rc=101 sky_crates_checked=10 errors=2 warnings=0 secs=1
+agent-add6061b440d749e4 rc=0 sky_crates_checked=22 errors=0 warnings=0 secs=6
+agent-afa55e105ab8ee772 rc=101 sky_crates_checked=12 errors=1 warnings=0 secs=3
+DONE

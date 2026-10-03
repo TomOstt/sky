@@ -1,0 +1,29 @@
+# {"bench": "F_model_overhead_tiny_L36_ctx128", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-01 20:28:53", "env": {}}
+# params bytes 0.012 GB (embedding table 0.000 GB, read 1 row/token)
+L= 36 ctx=  128 | build-only   0.734 ms | sync step   4.356 ms | pipelined   2.369 ms/token (  422.2 tok/s)
+peak_memory_GB 0.081492224
+# {"bench": "F_model_overhead_tiny_L64_ctx128", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-01 20:28:55", "env": {}}
+# params bytes 0.022 GB (embedding table 0.000 GB, read 1 row/token)
+L= 64 ctx=  128 | build-only   1.206 ms | sync step   5.512 ms | pipelined   4.352 ms/token (  229.8 tok/s)
+peak_memory_GB 0.094815512
+# {"bench": "F_model_overhead_real_L8_ctx128", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-01 20:28:56", "env": {}}
+# params bytes 1.568 GB (embedding table 0.350 GB, read 1 row/token)
+L=  8 ctx=  128 | build-only   0.181 ms | sync step   7.995 ms | pipelined   8.122 ms/token (  123.1 tok/s) | streamed weights 1.218 GB ->  150.0 GB/s effective; ideal @182GB/s 6.695 ms
+peak_memory_GB 6.885488168
+# {"bench": "F_model_overhead_real32_L3_ctx128", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-01 20:29:01", "env": {}}
+# params bytes 1.698 GB (embedding table 0.438 GB, read 1 row/token)
+L=  3 ctx=  128 | build-only   0.078 ms | sync step   7.569 ms | pipelined   7.439 ms/token (  134.4 tok/s) | streamed weights 1.260 GB ->  169.4 GB/s effective; ideal @182GB/s 6.926 ms
+peak_memory_GB 10.517795372
+## env MLX_MAX_OPS_PER_BUFFER=100000 MLX_MAX_MB_PER_BUFFER=100000
+# {"bench": "F_model_overhead_tiny_L64_ctx128", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-01 20:29:24", "env": {"MLX_MAX_OPS_PER_BUFFER": "100000", "MLX_MAX_MB_PER_BUFFER": "100000"}}
+# params bytes 0.022 GB (embedding table 0.000 GB, read 1 row/token)
+L= 64 ctx=  128 | build-only   1.214 ms | sync step   8.138 ms | pipelined   4.142 ms/token (  241.4 tok/s)
+peak_memory_GB 0.251431264
+## env MLX_MAX_OPS_PER_BUFFER=100000 MLX_MAX_MB_PER_BUFFER=100000
+# {"bench": "F_model_overhead_real_L8_ctx128", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-01 20:29:25", "env": {"MLX_MAX_OPS_PER_BUFFER": "100000", "MLX_MAX_MB_PER_BUFFER": "100000"}}
+# params bytes 1.568 GB (embedding table 0.350 GB, read 1 row/token)
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/r3_bench_model_overhead.py", line 50, in <module>
+    mx.eval(logits, [c.state for c in cache])
+RuntimeError: [METAL] Command buffer execution failed: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory).
+ALLDONE

@@ -1,0 +1,18 @@
+# Classic RK4 for a damped pendulum, y = [angle, angular velocity], h = 0.001,
+# 200000 steps. The state is a vector and f returns one, as in a textbook.
+def f(y: Vector[2]) -> Vector[2]:
+    return [y[1], -sin(y[0]) - 0.1 * y[1]]
+
+y = [1.0, 0.0]
+h = 0.001
+k1 = f(y)
+k2 = k1
+k3 = k1
+k4 = k1
+for i in range(200000):
+    k1 = f(y)
+    k2 = f(y + (h / 2) * k1)
+    k3 = f(y + (h / 2) * k2)
+    k4 = f(y + h * k3)
+    y = y + (h / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
+print(y[0], y[1])

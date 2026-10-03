@@ -1,0 +1,22 @@
+# Thu Oct  1 20:18:31 IDT 2026 uptime: 20:18  up 18 days,  2:37, 2 users, load averages: 4.84 4.52 3.83
+cmd=/Users/talperez/sky/target/release/sky run --engine=native p9_op32_0.sky
+runs_ms=[11.12, 11.3, 9.84, 8.86, 7.88]
+median_ms=9.84 min_ms=7.88 rc=0 stdout='1.000000001' stderr_tail=''
+load=(4.83984375, 4.5185546875, 3.83056640625)
+cmd=/Users/talperez/sky/target/release/sky run --engine=native p9_op32.sky
+runs_ms=[301.05, 302.72, 298.01, 303.93, 301.12]
+median_ms=301.12 min_ms=298.01 rc=0 stdout='1.0010000000827404' stderr_tail=''
+load=(4.83984375, 4.5185546875, 3.83056640625)
+cmd=/Users/talperez/sky/target/release/sky run --engine=native p9_op8.sky
+runs_ms=[12.79, 13.18, 13.07, 12.88, 13.19]
+median_ms=13.07 min_ms=12.79 rc=0 stdout='1.0010000000827404' stderr_tail=''
+load=(4.83984375, 4.5185546875, 3.83056640625)
+cmd=/Users/talperez/sky/target/release/sky run --engine=native p9_scalar.sky
+runs_ms=[7.3, 6.9, 7.19, 6.81, 6.82]
+median_ms=6.90 min_ms=6.81 rc=0 stdout='1.0010000000827404' stderr_tail=''
+load=(4.83984375, 4.5185546875, 3.83056640625)
+cmd=/Users/talperez/sky/target/release/sky run --engine=sir p9_op32.sky
+runs_ms=[340.86, 347.25, 342.06]
+median_ms=342.06 min_ms=340.86 rc=0 stdout='1.0010000000827404' stderr_tail=''
+load=(4.8525390625, 4.5263671875, 3.83740234375)
+# end Thu Oct  1 20:18:34 IDT 2026

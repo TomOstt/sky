@@ -1,0 +1,4 @@
+def ones_like(h: Vector[N]) -> Vector[N]:
+    return exp(zeros(len(h)))
+
+print(ones_like([1, 2, 3]))

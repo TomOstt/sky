@@ -1,0 +1,25 @@
+[
+ {
+  "name": "Qwen3-0.6B-4bit",
+  "per_tok": 335372288,
+  "kv_per_pos": 114688,
+  "cats": {
+   "embed_tokens": 87515136,
+   "norms": 131072,
+   "mlp_linear": 148635648,
+   "attn_linear": 99090432
+  }
+ },
+ {
+  "name": "Qwen3-8B-4bit",
+  "per_tok": 4257671168,
+  "kv_per_pos": 147456,
+  "cats": {
+   "lm_head": 350060544,
+   "embed_tokens": 350060544,
+   "norms": 616448,
+   "mlp_linear": 3057647616,
+   "attn_linear": 849346560
+  }
+ }
+]

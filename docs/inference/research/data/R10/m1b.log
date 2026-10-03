@@ -1,0 +1,14 @@
+sky --help (process floor): FAILED rc=2 oml sets it for a project; the flag wins
+--threads sets how many threads independent work may use (default:
+SKY_THREADS, else the machine's cores); 1 is sequential, and the
+output is the same for every count. `sky run` uses it on the SIR
+engine; `sky check --explain` says what would run in parallel
+
+sky check floor.sky                      median      4.75 ms  min      4.66  max      4.83  n=9  out: /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scr
+sky check nbody                          median      5.34 ms  min      5.22  max      5.92  n=9  out: /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scr
+sky check --emit=clif nbody              median     12.61 ms  min     12.28  max     14.13  n=9  out: }
+sky run native nbody steps=1             median     23.02 ms  min     22.87  max     23.35  n=9  out: -0.16907516382852447 -0.16907495402506745
+sky run native nbody steps=1 SLP=off     median     23.52 ms  min     22.88  max     24.72  n=9  out: -0.16907516382852447 -0.16907495402506745
+sky run sir nbody steps=1                median     11.05 ms  min     10.82  max     12.36  n=9  out: -0.16907516382852447 -0.16907495402506745
+sky run native fib(2)                    median      6.83 ms  min      6.58  max      7.08  n=9  out: 1
+sky build obj nbody                      median     23.70 ms  min     23.11  max     24.62  n=9  out: 

@@ -1,0 +1,6 @@
+check elem1e7 (front end)                median     16.11 ms  min     15.31  max     18.18  n=7  out: /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scr
+native elem1e7 R=0                       median     75.17 ms  min     73.91  max     78.69  n=7  out: 2421501.0703125 0.001953125 0.0478515625
+native elem1e7 build-only                median     70.59 ms  min     67.77  max     72.88  n=7  out: 0.001953125
+native T1 elem1e7 build-only             median     97.45 ms  min     91.78  max    100.27  n=7  out: 0.001953125
+check chol32 (front end)                 median      6.27 ms  min      5.67  max      6.54  n=7  out: /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scr
+check matmul512 (front end)              median      7.67 ms  min      6.16  max      9.20  n=7  out: /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scr

@@ -1,0 +1,1 @@
+MARKS {"t_start": 1790875384.173252, "t_first_token": 1790875384.570912, "t_end": 1790875385.17797, "prompt_tokens": 1114, "prompt_tps": 2805.1350212828515, "generation_tokens": 141, "generation_tps": 233.96391334402088, "peak_memory_gb": 1.382519424, "finish_reason": "stop", "model": "mlx-community/Qwen3-0.6B-4bit"}

@@ -1,0 +1,26 @@
+LOCK_ACQUIRED 20:30:14
+R6 mtl4  device=Apple M2 Pro  metal4=1
+
+# N dependent tiny dispatches (1 TG x 32 thr). medians of 9 reps after 3 warmups. times in us
+path                                   N        GPU   GPU/disp     CPUenc   CPU/disp     commit
+MTL4 encoder + intra-pass barriers     1        2.9      2.875        2.7      2.667        2.8
+MTL4 encoder, no barriers              1        2.9      2.917        2.7      2.667        2.4
+MTL3 serial encoder                    1        3.0      3.000        4.0      3.958        2.3
+MTL3 concurrent + memoryBarrier        1        2.8      2.833        4.0      4.000        2.2
+MTL4 encoder + intra-pass barriers    10       14.1      1.408        7.5      0.754        5.0
+MTL4 encoder, no barriers             10        3.5      0.350        6.0      0.604        5.3
+MTL3 serial encoder                   10       12.8      1.275        4.3      0.429        2.0
+MTL3 concurrent + memoryBarrier       10       13.1      1.312        5.9      0.588        2.3
+MTL4 encoder + intra-pass barriers   100      120.1      1.201       23.3      0.233        4.2
+MTL4 encoder, no barriers            100       15.4      0.154       11.5      0.115        4.9
+MTL3 serial encoder                  100      114.0      1.140        9.8      0.098        2.9
+MTL3 concurrent + memoryBarrier      100      120.2      1.202       27.4      0.274        3.8
+MTL4 encoder + intra-pass barriers  1000     1183.9      1.184      193.8      0.194        5.3
+MTL4 encoder, no barriers           1000      139.2      0.139       70.4      0.070        4.8
+MTL3 serial encoder                 1000     1223.0      1.223       69.0      0.069        3.3
+MTL3 concurrent + memoryBarrier     1000     1253.7      1.254      212.1      0.212        4.6
+
+MTL4 1-dispatch CB: commit+signalEvent -> CPU spin sees event: median 84.8 us p10 77.3 p90 151.5 min 59.8
+real 1.01
+user 0.46
+sys 0.03

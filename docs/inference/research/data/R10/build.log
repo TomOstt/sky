@@ -1,0 +1,23 @@
+   Compiling sky-syntax v0.0.1 (/Users/talperez/sky/crates/sky-syntax)
+   Compiling sky-units v0.0.1 (/Users/talperez/sky/crates/sky-units)
+   Compiling sky-ode v0.0.1 (/Users/talperez/sky/crates/sky-ode)
+   Compiling sky-ast v0.0.1 (/Users/talperez/sky/crates/sky-ast)
+   Compiling sky-project v0.0.1 (/Users/talperez/sky/crates/sky-project)
+   Compiling sky-types v0.0.1 (/Users/talperez/sky/crates/sky-types)
+   Compiling sky-ir v0.0.1 (/Users/talperez/sky/crates/sky-ir)
+   Compiling sky-interp v0.0.1 (/Users/talperez/sky/crates/sky-interp)
+   Compiling sky-jit v0.0.1 (/Users/talperez/sky/crates/sky-jit)
+   Compiling sky-ad v0.0.1 (/Users/talperez/sky/crates/sky-ad)
+   Compiling sky-egraph v0.0.1 (/Users/talperez/sky/crates/sky-egraph)
+   Compiling sky-lower v0.0.1 (/Users/talperez/sky/crates/sky-lower)
+   Compiling sky-opt v0.0.1 (/Users/talperez/sky/crates/sky-opt)
+   Compiling sky-ir-interp v0.0.1 (/Users/talperez/sky/crates/sky-ir-interp)
+   Compiling sky-derive v0.0.1 (/Users/talperez/sky/crates/sky-derive)
+   Compiling sky-rt v0.0.1 (/Users/talperez/sky/crates/sky-rt)
+   Compiling sky-bench v0.0.1 (/Users/talperez/sky/crates/sky-bench)
+   Compiling sky-cli v0.0.1 (/Users/talperez/sky/crates/sky-cli)
+    Finished `release` profile [optimized] target(s) in 14.92s
+
+real	0m14.977s
+user	1m48.721s
+sys	0m2.771s

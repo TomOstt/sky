@@ -1,0 +1,96 @@
+LOCK_ACQUIRED 20:30:16
+R6 dispatch  macOS 26.6.1  2026-10-01 5:30:16 PM +0000
+device=Apple M2 Pro arch=applegpu_g14s unified=true maxTG=1024 tgMem=32768 recommendedMaxWorkingSet=12713115648 maxBuffer=9534832640
+
+# tiny kernel (1 TG x 32 threads), tracked buffer
+mode                 N     GPU_us(med)  GPU_us/disp  CPUenc_us(med) CPUenc_us/disp  commit->done_us(med)
+serial     1          3.0        3.000             3.5           3.500                 142.6
+serial    10         12.5        1.246             4.7           0.467                 167.7
+serial   100        122.2        1.222            12.0           0.120                 274.1
+serial  1000       1147.6        1.148            80.6           0.081                1292.5
+  -> marginal GPU cost per dispatch (N=100..1000 slope): 1.139 us
+serialBarrier     1          3.0        3.000             3.6           3.583                 135.9
+serialBarrier    10         12.4        1.237             4.2           0.417                 146.7
+serialBarrier   100        111.0        1.110            13.2           0.133                 252.7
+serialBarrier  1000       1168.7        1.169            93.7           0.094                1303.1
+  -> marginal GPU cost per dispatch (N=100..1000 slope): 1.175 us
+concurrent     1          2.7        2.750             4.5           4.542                 135.3
+concurrent    10          3.6        0.358             4.9           0.487                 124.0
+concurrent   100         16.0        0.160            11.7           0.117                 140.6
+concurrent  1000        139.6        0.140            76.5           0.076                 274.6
+  -> marginal GPU cost per dispatch (N=100..1000 slope): 0.137 us
+concurrentBarrier     1          2.8        2.750             3.5           3.542                 134.0
+concurrentBarrier    10         12.7        1.267             5.9           0.588                 148.0
+concurrentBarrier   100        124.4        1.244            24.8           0.248                 264.9
+concurrentBarrier  1000       1248.0        1.248           233.3           0.233                1399.5
+  -> marginal GPU cost per dispatch (N=100..1000 slope): 1.248 us
+concurrentBarrierRes     1          2.7        2.750             4.0           3.959                 130.5
+concurrentBarrierRes    10         12.8        1.275             7.2           0.721                 146.8
+concurrentBarrierRes   100        119.1        1.191            34.8           0.348                 266.0
+concurrentBarrierRes  1000       1233.4        1.233           301.3           0.301                1431.3
+  -> marginal GPU cost per dispatch (N=100..1000 slope): 1.238 us
+encoderPerDispatch     1          3.0        3.000             4.3           4.292                 129.9
+encoderPerDispatch    10         12.6        1.258             6.1           0.608                 143.9
+encoderPerDispatch   100        121.0        1.210            37.4           0.374                 245.9
+encoderPerDispatch  1000       1161.2        1.161           319.8           0.320                1304.8
+  -> marginal GPU cost per dispatch (N=100..1000 slope): 1.156 us
+cbPerDispatch     1          3.0        3.000             3.2           3.166                 131.3
+cbPerDispatch    10        102.4       10.237            25.8           2.583                 266.9
+cbPerDispatch   100       1205.4       12.054           327.2           3.272                1350.7
+cbPerDispatch  1000      13917.5       13.917          5738.4           5.738               13367.4
+  -> marginal GPU cost per dispatch (N=100..1000 slope): 14.125 us
+
+# tiny kernel (1 TG x 32 threads), UNTRACKED buffer
+mode                 N     GPU_us(med)  GPU_us/disp  CPUenc_us(med) CPUenc_us/disp  commit->done_us(med)
+serial     1          3.0        3.000             4.4           4.375                 101.8
+serial    10         12.6        1.263             4.8           0.475                 123.9
+serial   100        113.1        1.131            17.3           0.173                 236.0
+serial  1000       1165.0        1.165            82.2           0.082                1280.2
+  -> marginal GPU cost per dispatch (N=100..1000 slope): 1.169 us
+concurrent     1          2.7        2.708             4.5           4.542                 109.5
+concurrent    10          3.5        0.350             4.2           0.421                 125.2
+concurrent   100         15.7        0.157            10.5           0.105                 143.0
+concurrent  1000        142.4        0.142            78.0           0.078                 256.7
+  -> marginal GPU cost per dispatch (N=100..1000 slope): 0.141 us
+concurrentBarrier     1          2.7        2.667             4.4           4.375                  97.5
+concurrentBarrier    10         13.0        1.296             7.3           0.729                 126.2
+concurrentBarrier   100        119.3        1.193            27.0           0.270                 237.3
+concurrentBarrier  1000       1228.1        1.228           257.3           0.257                1386.1
+  -> marginal GPU cost per dispatch (N=100..1000 slope): 1.232 us
+encoderPerDispatch     1          3.0        3.000             5.8           5.750                 131.5
+encoderPerDispatch    10         12.6        1.263            11.6           1.163                 151.7
+encoderPerDispatch   100        112.7        1.127            38.5           0.385                 258.9
+encoderPerDispatch  1000       1114.5        1.114           318.1           0.318                1271.5
+  -> marginal GPU cost per dispatch (N=100..1000 slope): 1.113 us
+
+# small kernel (64 TG x 256 threads, 64 FMAs/thread), tracked
+mode                 N     GPU_us(med)  GPU_us/disp  CPUenc_us(med) CPUenc_us/disp  commit->done_us(med)
+serial     1          3.7        3.667             7.5           7.541                 126.1
+serial    10         19.9        1.988             6.5           0.650                 145.7
+serial   100        183.2        1.832            15.2           0.152                 325.0
+serial  1000       1881.2        1.881            85.0           0.085                2028.4
+  -> marginal GPU cost per dispatch (N=100..1000 slope): 1.887 us
+concurrent     1          3.9        3.875             8.5           8.458                 176.0
+concurrent    10         10.4        1.038             5.6           0.562                 319.6
+concurrent   100         92.7        0.927            12.3           0.123                 239.1
+concurrent  1000        941.3        0.941            78.2           0.078                1083.0
+  -> marginal GPU cost per dispatch (N=100..1000 slope): 0.943 us
+concurrentBarrier     1          3.5        3.500            10.2          10.250                 135.5
+concurrentBarrier    10         20.2        2.017            10.0           1.000                 158.2
+concurrentBarrier   100        187.2        1.872            30.9           0.309                 319.0
+concurrentBarrier  1000       1918.2        1.918           240.6           0.241                2122.2
+  -> marginal GPU cost per dispatch (N=100..1000 slope): 1.923 us
+
+# Submission latency (wall clock, 40 reps after 5 warmups; GPU kept warm between reps)
+empty CB: commit -> waitUntilCompleted returns median    13.7 us  p10    11.9  p90    18.8  min    11.2
+1 tiny dispatch CB: commit -> waitUntilCompleted returns median   125.5 us  p10   119.0  p90   135.0  min   108.0
+1 tiny dispatch CB: commit -> spin on cb.status == .completed median   123.6 us  p10   119.7  p90   138.8  min   106.7
+1 tiny dispatch CB + encodeSignalEvent: commit -> CPU spin sees value median   106.1 us  p10    98.5  p90   115.3  min    62.9
+1 tiny dispatch CB: commit -> addCompletedHandler fires (semaphore) median   110.1 us  p10   105.7  p90   119.1  min   100.4
+
+# GPU timeline gap between consecutive command buffers (us, median of 40)
+both committed up front:        gap median 0.4 us (min 0.2, max 4.7)
+CPU waits for 1st, then commits: gap median 104.6 us (min 94.8, max 134.6)
+real 1.65
+user 0.23
+sys 0.28

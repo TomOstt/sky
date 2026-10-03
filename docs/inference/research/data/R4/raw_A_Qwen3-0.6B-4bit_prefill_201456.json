@@ -1,0 +1,232 @@
+{
+ "env": {
+  "mlx": "0.32.3",
+  "mlx_lm": "0.32.0",
+  "device": {
+   "device_name": "Apple M2 Pro",
+   "max_recommended_working_set_size": 12713115648,
+   "memory_size": 17179869184,
+   "architecture": "applegpu_g14s",
+   "max_buffer_length": 9534832640,
+   "resource_limit": 499000
+  },
+  "macos": "26.6.1",
+  "time": "2026-10-01 20:14:50"
+ },
+ "model": "Qwen3-0.6B-4bit",
+ "mode": "prefill",
+ "load_s": 0.41370933409780264,
+ "trials": 5,
+ "results": {
+  "prefill_128": [
+   {
+    "ttft_wall": 0.056820458034053445,
+    "decode_wall_tps": null,
+    "itl_median_ms": null,
+    "n": 1,
+    "mlxlm_prompt_tps": 2271.636591706303,
+    "mlxlm_generation_tps": 39668.67670936816,
+    "mlxlm_peak_gb": 0.58572878,
+    "mlx_peak_gb_after": 0.58572878,
+    "active_gb_after": 0.335691784,
+    "cache_gb_after": 0.047611252,
+    "prompt_tokens": 128
+   },
+   {
+    "ttft_wall": 0.05485079111531377,
+    "decode_wall_tps": null,
+    "itl_median_ms": null,
+    "n": 1,
+    "mlxlm_prompt_tps": 2350.361490059814,
+    "mlxlm_generation_tps": 29850.622704716367,
+    "mlxlm_peak_gb": 0.587825956,
+    "mlx_peak_gb_after": 0.587825956,
+    "active_gb_after": 0.335691784,
+    "cache_gb_after": 0.039804254,
+    "prompt_tokens": 128
+   },
+   {
+    "ttft_wall": 0.05447858292609453,
+    "decode_wall_tps": null,
+    "itl_median_ms": null,
+    "n": 1,
+    "mlxlm_prompt_tps": 2367.956757306972,
+    "mlxlm_generation_tps": 37152.41078163385,
+    "mlxlm_peak_gb": 0.58572878,
+    "mlx_peak_gb_after": 0.58572878,
+    "active_gb_after": 0.335691784,
+    "cache_gb_after": 0.045063562,
+    "prompt_tokens": 128
+   },
+   {
+    "ttft_wall": 0.05333041702397168,
+    "decode_wall_tps": null,
+    "itl_median_ms": null,
+    "n": 1,
+    "mlxlm_prompt_tps": 2417.4680577046315,
+    "mlxlm_generation_tps": 55555.85114281649,
+    "mlxlm_peak_gb": 0.587825956,
+    "mlx_peak_gb_after": 0.587825956,
+    "active_gb_after": 0.335691784,
+    "cache_gb_after": 0.047685004,
+    "prompt_tokens": 128
+   },
+   {
+    "ttft_wall": 0.053663749946281314,
+    "decode_wall_tps": null,
+    "itl_median_ms": null,
+    "n": 1,
+    "mlxlm_prompt_tps": 2401.8389039481904,
+    "mlxlm_generation_tps": 62177.41756905438,
+    "mlxlm_peak_gb": 0.587825956,
+    "mlx_peak_gb_after": 0.587825956,
+    "active_gb_after": 0.335691784,
+    "cache_gb_after": 0.047650164,
+    "prompt_tokens": 128
+   }
+  ],
+  "prefill_512": [
+   {
+    "ttft_wall": 0.18299070792272687,
+    "decode_wall_tps": null,
+    "itl_median_ms": null,
+    "n": 1,
+    "mlxlm_prompt_tps": 2804.0889314578835,
+    "mlxlm_generation_tps": 38586.33068602437,
+    "mlxlm_peak_gb": 0.896371004,
+    "mlx_peak_gb_after": 0.896371004,
+    "active_gb_after": 0.335691784,
+    "cache_gb_after": 0.175131574,
+    "prompt_tokens": 512
+   },
+   {
+    "ttft_wall": 0.19648391706869006,
+    "decode_wall_tps": null,
+    "itl_median_ms": null,
+    "n": 1,
+    "mlxlm_prompt_tps": 2612.0355630903227,
+    "mlxlm_generation_tps": 28435.771055541212,
+    "mlxlm_peak_gb": 0.896371004,
+    "mlx_peak_gb_after": 0.896371004,
+    "active_gb_after": 0.335691784,
+    "cache_gb_after": 0.165503892,
+    "prompt_tokens": 512
+   },
+   {
+    "ttft_wall": 0.18864108389243484,
+    "decode_wall_tps": null,
+    "itl_median_ms": null,
+    "n": 1,
+    "mlxlm_prompt_tps": 2723.158606128548,
+    "mlxlm_generation_tps": 38154.76379400712,
+    "mlxlm_peak_gb": 0.896371004,
+    "mlx_peak_gb_after": 0.896371004,
+    "active_gb_after": 0.335691784,
+    "cache_gb_after": 0.15630843,
+    "prompt_tokens": 512
+   },
+   {
+    "ttft_wall": 0.1870764158666134,
+    "decode_wall_tps": null,
+    "itl_median_ms": null,
+    "n": 1,
+    "mlxlm_prompt_tps": 2742.5186159228365,
+    "mlxlm_generation_tps": 38339.02215557103,
+    "mlxlm_peak_gb": 0.896371004,
+    "mlx_peak_gb_after": 0.896371004,
+    "active_gb_after": 0.335691784,
+    "cache_gb_after": 0.159632374,
+    "prompt_tokens": 512
+   },
+   {
+    "ttft_wall": 0.19417200004681945,
+    "decode_wall_tps": null,
+    "itl_median_ms": null,
+    "n": 1,
+    "mlxlm_prompt_tps": 2643.6654029955453,
+    "mlxlm_generation_tps": 28335.778537216145,
+    "mlxlm_peak_gb": 0.896371004,
+    "mlx_peak_gb_after": 0.896371004,
+    "active_gb_after": 0.335691784,
+    "cache_gb_after": 0.176102302,
+    "prompt_tokens": 512
+   }
+  ],
+  "prefill_2048": [
+   {
+    "ttft_wall": 0.7830768339335918,
+    "decode_wall_tps": null,
+    "itl_median_ms": null,
+    "n": 1,
+    "mlxlm_prompt_tps": 2618.182840362236,
+    "mlxlm_generation_tps": 22325.899779598287,
+    "mlxlm_peak_gb": 1.459462292,
+    "mlx_peak_gb_after": 1.459462292,
+    "active_gb_after": 0.335691784,
+    "cache_gb_after": 0.564210686,
+    "prompt_tokens": 2048
+   },
+   {
+    "ttft_wall": 0.7721443749032915,
+    "decode_wall_tps": null,
+    "itl_median_ms": null,
+    "n": 1,
+    "mlxlm_prompt_tps": 2653.9690282096726,
+    "mlxlm_generation_tps": 34433.011817146886,
+    "mlxlm_peak_gb": 1.459462292,
+    "mlx_peak_gb_after": 1.459462292,
+    "active_gb_after": 0.335691784,
+    "cache_gb_after": 0.529329142,
+    "prompt_tokens": 2048
+   },
+   {
+    "ttft_wall": 0.7797086669597775,
+    "decode_wall_tps": null,
+    "itl_median_ms": null,
+    "n": 1,
+    "mlxlm_prompt_tps": 2628.023655701001,
+    "mlxlm_generation_tps": 30341.761008244262,
+    "mlxlm_peak_gb": 1.459462292,
+    "mlx_peak_gb_after": 1.459462292,
+    "active_gb_after": 0.335691784,
+    "cache_gb_after": 0.554656726,
+    "prompt_tokens": 2048
+   },
+   {
+    "ttft_wall": 0.777327167103067,
+    "decode_wall_tps": null,
+    "itl_median_ms": null,
+    "n": 1,
+    "mlxlm_prompt_tps": 2636.5218904556095,
+    "mlxlm_generation_tps": 27460.549828969662,
+    "mlxlm_peak_gb": 1.459462292,
+    "mlx_peak_gb_after": 1.459462292,
+    "active_gb_after": 0.335691784,
+    "cache_gb_after": 0.50789471,
+    "prompt_tokens": 2048
+   },
+   {
+    "ttft_wall": 0.7759547920431942,
+    "decode_wall_tps": null,
+    "itl_median_ms": null,
+    "n": 1,
+    "mlxlm_prompt_tps": 2642.056352097919,
+    "mlxlm_generation_tps": 32608.282308638412,
+    "mlxlm_peak_gb": 1.459462292,
+    "mlx_peak_gb_after": 1.459462292,
+    "active_gb_after": 0.335691784,
+    "cache_gb_after": 0.52795287,
+    "prompt_tokens": 2048
+   }
+  ]
+ },
+ "rusage_end": {
+  "phys_footprint": 1200850096,
+  "resident": 658571264,
+  "wired": 0,
+  "lifetime_max_phys_footprint": 2039497904,
+  "billed_energy_nj": 36319446,
+  "serviced_energy_nj": 0,
+  "interval_max_phys_footprint": 2039497904
+ }
+}

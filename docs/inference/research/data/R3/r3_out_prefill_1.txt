@@ -1,0 +1,16 @@
+# {"bench": "D_prefill", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-01 20:27:41", "env": {}}
+FMA probe mlx.core.float32  2.078 TFLOPS (best  2.089); theory 5.726 ->  36.3%
+FMA probe mlx.core.float16  3.413 TFLOPS (best  3.464); theory 5.726 ->  59.6%
+32B gate/up  M=  512 K=  5120 N= 25600 q4 g64  med    30.49 ms   4.403 TFLOPS ( 76.9% of theory)  tok/s-equiv     16794
+32B gate/up  M=  512 K=  5120 N= 25600 fp16    med    26.98 ms   4.975 TFLOPS ( 86.9% of theory)  tok/s-equiv     18979
+32B gate/up  M= 2048 K=  5120 N= 25600 q4 g64  med   120.95 ms   4.439 TFLOPS ( 77.5% of theory)  tok/s-equiv     16932
+32B gate/up  M= 2048 K=  5120 N= 25600 fp16    med   106.72 ms   5.031 TFLOPS ( 87.9% of theory)  tok/s-equiv     19191
+32B down     M=  512 K= 25600 N=  5120 q4 g64  med    30.64 ms   4.381 TFLOPS ( 76.5% of theory)  tok/s-equiv     16712
+32B down     M=  512 K= 25600 N=  5120 fp16    med    27.74 ms   4.839 TFLOPS ( 84.5% of theory)  tok/s-equiv     18458
+32B down     M= 2048 K= 25600 N=  5120 q4 g64  med   121.09 ms   4.434 TFLOPS ( 77.4% of theory)  tok/s-equiv     16914
+32B down     M= 2048 K= 25600 N=  5120 fp16    med   108.41 ms   4.952 TFLOPS ( 86.5% of theory)  tok/s-equiv     18892
+peak_memory_GB 0.881131584
+
+real	7m11.774s
+user	0m0.511s
+sys	0m0.963s

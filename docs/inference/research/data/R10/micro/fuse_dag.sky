@@ -1,0 +1,8 @@
+X = zeros(4096) + identity(64)[0, 0] * zeros(4096)
+Y = zeros(4096) + identity(64)[0, 0] * zeros(4096)
+T = X * Y
+Z = sqrt(T) + T * 0.5
+s = Z @ Z
+W = (X + Y) * 0.25
+v = W @ X
+print(s, v)

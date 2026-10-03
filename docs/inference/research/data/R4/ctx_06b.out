@@ -1,0 +1,5 @@
+[Qwen3-0.6B-4bit] ctx=   128  TTFT   0.058 s  decode ITL median   3.749 ms (266.73 tok/s)  peak 0.59 GB
+[Qwen3-0.6B-4bit] ctx=  1024  TTFT   0.355 s  decode ITL median   4.292 ms (232.98 tok/s)  peak 1.34 GB
+[Qwen3-0.6B-4bit] ctx=  2048  TTFT   0.766 s  decode ITL median   4.817 ms (207.59 tok/s)  peak 1.46 GB
+[Qwen3-0.6B-4bit] ctx=  4096  TTFT   1.819 s  decode ITL median   6.313 ms (158.39 tok/s)  peak 1.71 GB
+[Qwen3-0.6B-4bit] ctx=  8192  TTFT   4.870 s  decode ITL median   8.635 ms (115.81 tok/s)  peak 1.93 GB

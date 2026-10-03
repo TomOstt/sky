@@ -1,0 +1,91 @@
+== Qwen3-0.6B-Q4_0.gguf  arch=qwen3  gguf_version=3  alignment=None  n_tensors=310 n_kv=35
+   qwen3.block_count = 28
+   qwen3.embedding_length = 1024
+   qwen3.feed_forward_length = 3072
+   qwen3.attention.head_count = 16
+   qwen3.attention.head_count_kv = 8
+   qwen3.attention.key_length = 128
+   qwen3.vocab_size = None
+   qwen3.context_length = 40960
+   general.file_type = 2  quantization_version = 2
+   output.weight present: False
+   token_embd: type=Q6_K shape=[1024, 151936] bytes=127.63 MB
+   bytes by type:
+     Q4_0      193 tensors     242.42 MB
+     Q6_K        1 tensors     127.63 MB
+     Q4_1        3 tensors       5.90 MB
+     F32       113 tensors       0.26 MB
+   blk.0 tensors:
+     blk.0.attn_k.weight              Q4_0   ne=     1048576 bytes=      589824  bpw=4.500
+     blk.0.attn_k_norm.weight         F32    ne=         128 bytes=         512  bpw=32.000
+     blk.0.attn_norm.weight           F32    ne=        1024 bytes=        4096  bpw=32.000
+     blk.0.attn_output.weight         Q4_0   ne=     2097152 bytes=     1179648  bpw=4.500
+     blk.0.attn_q.weight              Q4_0   ne=     2097152 bytes=     1179648  bpw=4.500
+     blk.0.attn_q_norm.weight         F32    ne=         128 bytes=         512  bpw=32.000
+     blk.0.attn_v.weight              Q4_0   ne=     1048576 bytes=      589824  bpw=4.500
+     blk.0.ffn_down.weight            Q4_1   ne=     3145728 bytes=     1966080  bpw=5.000
+     blk.0.ffn_gate.weight            Q4_0   ne=     3145728 bytes=     1769472  bpw=4.500
+     blk.0.ffn_norm.weight            F32    ne=        1024 bytes=        4096  bpw=32.000
+     blk.0.ffn_up.weight              Q4_0   ne=     3145728 bytes=     1769472  bpw=4.500
+   file tensor-data total = 376.20 MB ; weight bytes read per token = 376.21 MB  [total (tied embeddings: token_embd is the output head, read fully) + 1 row]
+== Qwen3-8B-Q4_0.gguf  arch=qwen3  gguf_version=3  alignment=None  n_tensors=399 n_kv=35
+   qwen3.block_count = 36
+   qwen3.embedding_length = 4096
+   qwen3.feed_forward_length = 12288
+   qwen3.attention.head_count = 32
+   qwen3.attention.head_count_kv = 8
+   qwen3.attention.key_length = 128
+   qwen3.vocab_size = None
+   qwen3.context_length = 32768
+   general.file_type = 2  quantization_version = 2
+   output.weight present: True
+   token_embd: type=Q4_0 shape=[4096, 151936] bytes=350.06 MB
+   output: type=Q6_K shape=[4096, 151936] bytes=510.50 MB
+   bytes by type:
+     Q4_0      249 tensors    4143.81 MB
+     Q6_K        1 tensors     510.50 MB
+     Q4_1        4 tensors     125.83 MB
+     F32       145 tensors       1.23 MB
+   blk.0 tensors:
+     blk.0.attn_k.weight              Q4_0   ne=     4194304 bytes=     2359296  bpw=4.500
+     blk.0.attn_k_norm.weight         F32    ne=         128 bytes=         512  bpw=32.000
+     blk.0.attn_norm.weight           F32    ne=        4096 bytes=       16384  bpw=32.000
+     blk.0.attn_output.weight         Q4_0   ne=    16777216 bytes=     9437184  bpw=4.500
+     blk.0.attn_q.weight              Q4_0   ne=    16777216 bytes=     9437184  bpw=4.500
+     blk.0.attn_q_norm.weight         F32    ne=         128 bytes=         512  bpw=32.000
+     blk.0.attn_v.weight              Q4_0   ne=     4194304 bytes=     2359296  bpw=4.500
+     blk.0.ffn_down.weight            Q4_1   ne=    50331648 bytes=    31457280  bpw=5.000
+     blk.0.ffn_gate.weight            Q4_0   ne=    50331648 bytes=    28311552  bpw=4.500
+     blk.0.ffn_norm.weight            F32    ne=        4096 bytes=       16384  bpw=32.000
+     blk.0.ffn_up.weight              Q4_0   ne=    50331648 bytes=    28311552  bpw=4.500
+   file tensor-data total = 4781.38 MB ; weight bytes read per token = 4431.32 MB  [total - token_embd + 1 row of token_embd]
+== Qwen3-8B-Q4_K_M.gguf  arch=qwen3  gguf_version=3  alignment=None  n_tensors=399 n_kv=31
+   qwen3.block_count = 36
+   qwen3.embedding_length = 4096
+   qwen3.feed_forward_length = 12288
+   qwen3.attention.head_count = 32
+   qwen3.attention.head_count_kv = 8
+   qwen3.attention.key_length = 128
+   qwen3.vocab_size = None
+   qwen3.context_length = 40960
+   general.file_type = 15  quantization_version = 2
+   output.weight present: True
+   token_embd: type=Q4_K shape=[4096, 151936] bytes=350.06 MB
+   output: type=Q6_K shape=[4096, 151936] bytes=510.50 MB
+   bytes by type:
+     Q4_K      217 tensors    3704.98 MB
+     Q6_K       37 tensors    1315.61 MB
+     F32       145 tensors       1.23 MB
+   blk.0 tensors:
+     blk.0.attn_k.weight              Q4_K   ne=     4194304 bytes=     2359296  bpw=4.500
+     blk.0.attn_k_norm.weight         F32    ne=         128 bytes=         512  bpw=32.000
+     blk.0.attn_norm.weight           F32    ne=        4096 bytes=       16384  bpw=32.000
+     blk.0.attn_output.weight         Q4_K   ne=    16777216 bytes=     9437184  bpw=4.500
+     blk.0.attn_q.weight              Q4_K   ne=    16777216 bytes=     9437184  bpw=4.500
+     blk.0.attn_q_norm.weight         F32    ne=         128 bytes=         512  bpw=32.000
+     blk.0.attn_v.weight              Q6_K   ne=     4194304 bytes=     3440640  bpw=6.562
+     blk.0.ffn_down.weight            Q6_K   ne=    50331648 bytes=    41287680  bpw=6.562
+     blk.0.ffn_gate.weight            Q4_K   ne=    50331648 bytes=    28311552  bpw=4.500
+     blk.0.ffn_norm.weight            F32    ne=        4096 bytes=       16384  bpw=32.000
+     blk.0.ffn_up.weight              Q4_K   ne=    50331648 bytes=    28311552  bpw=4.500
+   file tensor-data total = 5021.83 MB ; weight bytes read per token = 4671.77 MB  [total - token_embd + 1 row of token_embd]

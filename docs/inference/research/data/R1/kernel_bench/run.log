@@ -1,0 +1,20 @@
+# Thu Oct  1 20:28:45 IDT 2026 20:28  up 18 days,  2:48, 2 users, load averages: 11.69 7.21 5.48
+    Finished `bench` profile [optimized] target(s) in 0.05s
+     Running benches/kernels.rs (/private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/r1/bench-target/release/deps/kernels-6601d69be4736129)
+ns per element (best of 9 batches); host aarch64
+kernel           n |     sky   nochk  scalar |    rust rust+chk       c   c+chk |  sky/best nochk/best   sky/chk
+axpy          1000 |   0.162   0.143   0.310 |   0.121   0.209   0.126   0.232 |     1.34x     1.19x     0.78x
+axpy        100000 |   0.236   0.236   0.297 |   0.233   0.236   0.235   0.232 |     1.01x     1.01x     1.02x
+axpy      10000000 |   0.266   0.265   0.315 |   0.267   0.264   0.267   0.266 |     1.00x     0.99x     1.01x
+hypot         1000 |   0.298   0.298   0.598 |   0.297   0.357   0.296   0.423 |     1.01x     1.01x     0.84x
+hypot       100000 |   0.295   0.295   0.593 |   0.298   0.353   0.296   0.414 |     1.00x     1.00x     0.83x
+hypot     10000000 |   0.305   0.309   0.601 |   0.306   0.393   0.305   0.414 |     1.00x     1.01x     0.78x
+chain6        1000 |   0.356   0.274   0.688 |   0.304   0.522   0.305   1.031 |     1.17x     0.90x     0.68x
+chain6      100000 |   0.344   0.263   0.675 |   0.300   0.520   0.306   1.044 |     1.15x     0.88x     0.66x
+chain6    10000000 |   0.355   0.275   0.681 |   0.319   0.533   0.312   1.037 |     1.14x     0.88x     0.67x
+
+compile time of `axpy`: 0.164 ms (median of 5)
+compile time of `hypot`: 0.185 ms (median of 5)
+compile time of `chain6`: 0.252 ms (median of 5)
+# end Thu Oct  1 20:28:51 IDT 2026 20:28  up 18 days,  2:48, 2 users, load averages: 11.00 7.14 5.46
+run rc=0

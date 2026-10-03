@@ -1,0 +1,18 @@
+# {"bench": "F_model_overhead_real_L8_ctx128", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-02 00:35:39", "env": {}}
+# params bytes 1.568 GB (embedding table 0.350 GB, read 1 row/token)
+L=  8 ctx=  128 | build-only   0.296 ms | sync step   7.758 ms | pipelined   7.112 ms/token (  140.6 tok/s) | streamed weights 1.218 GB ->  171.3 GB/s effective; ideal @182GB/s 6.695 ms
+peak_memory_GB 1.749234452
+# {"bench": "F_model_overhead_tiny_L64_ctx128", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-02 00:35:42", "env": {}}
+# params bytes 0.022 GB (embedding table 0.000 GB, read 1 row/token)
+L= 64 ctx=  128 | build-only   1.281 ms | sync step   7.486 ms | pipelined   4.253 ms/token (  235.1 tok/s)
+peak_memory_GB 0.087377132
+## env MLX_MAX_OPS_PER_BUFFER=100000 MLX_MAX_MB_PER_BUFFER=100000
+# {"bench": "F_model_overhead_real_L8_ctx128", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-02 00:35:43", "env": {"MLX_MAX_OPS_PER_BUFFER": "100000", "MLX_MAX_MB_PER_BUFFER": "100000"}}
+# params bytes 1.568 GB (embedding table 0.350 GB, read 1 row/token)
+L=  8 ctx=  128 | build-only   0.219 ms | sync step   7.736 ms | pipelined   7.121 ms/token (  140.4 tok/s) | streamed weights 1.218 GB ->  171.1 GB/s effective; ideal @182GB/s 6.695 ms
+peak_memory_GB 1.749235268
+# {"bench": "F_model_overhead_tiny_L64_ctx128", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-02 00:35:46", "env": {"MLX_MAX_OPS_PER_BUFFER": "100000", "MLX_MAX_MB_PER_BUFFER": "100000"}}
+# params bytes 0.022 GB (embedding table 0.000 GB, read 1 row/token)
+L= 64 ctx=  128 | build-only   1.392 ms | sync step   7.984 ms | pipelined   4.164 ms/token (  240.2 tok/s)
+peak_memory_GB 0.234826596
+ALLDONE

@@ -1,0 +1,13 @@
+# {"bench": "D_fma_probe_v2", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-01 20:29:32", "env": {}}
+threads=  65536 tg= 256 mlx.core.float32  3.657 TFLOPS (best  4.263) =  63.9% of 5.726  [t=2.35 ms]
+threads=  65536 tg=1024 mlx.core.float32  4.436 TFLOPS (best  4.910) =  77.5% of 5.726  [t=1.94 ms]
+threads=  65536 tg= 256 mlx.core.float16  4.926 TFLOPS (best  4.974) =  86.0% of 5.726  [t=1.74 ms]
+threads=  65536 tg=1024 mlx.core.float16  4.917 TFLOPS (best  4.993) =  85.9% of 5.726  [t=1.75 ms]
+threads= 262144 tg= 256 mlx.core.float32  5.363 TFLOPS (best  5.440) =  93.7% of 5.726  [t=6.41 ms]
+threads= 262144 tg=1024 mlx.core.float32  5.336 TFLOPS (best  5.456) =  93.2% of 5.726  [t=6.44 ms]
+threads= 262144 tg= 256 mlx.core.float16  5.336 TFLOPS (best  5.403) =  93.2% of 5.726  [t=6.44 ms]
+threads= 262144 tg=1024 mlx.core.float16  5.397 TFLOPS (best  5.408) =  94.3% of 5.726  [t=6.37 ms]
+
+real	0m33.383s
+user	0m0.086s
+sys	0m0.360s

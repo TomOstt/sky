@@ -1,0 +1,22 @@
+    Checking sky-cli v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-afa55e105ab8ee772/crates/sky-cli)
+    Checking sky-ode v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-afa55e105ab8ee772/crates/sky-ode)
+crates/sky-ode/tests/events.rs:7:23: error[E0432]: unresolved imports `sky_ode::DenseError`, `sky_ode::Event`, `sky_ode::EventKind`: no `DenseError` in the root, no `Event` in the root, no `EventKind` in the root
+crates/sky-ode/tests/events.rs:49:9: error[E0560]: struct `sky_ode::Options` has no field named `event`: `sky_ode::Options` does not have this field
+crates/sky-ode/tests/events.rs:105:19: error[E0609]: no field `stopped` on type `Solution`: unknown field
+crates/sky-ode/tests/events.rs:125:9: error[E0560]: struct `sky_ode::Options` has no field named `event`: `sky_ode::Options` does not have this field
+crates/sky-ode/tests/events.rs:129:16: error[E0609]: no field `stopped` on type `Solution`: unknown field
+crates/sky-ode/tests/events.rs:143:9: error[E0560]: struct `sky_ode::Options` has no field named `event`: `sky_ode::Options` does not have this field
+crates/sky-ode/tests/events.rs:151:37: error[E0599]: no variant named `EventAtStart` found for enum `SolveError`: variant not found in `SolveError`
+crates/sky-ode/tests/events.rs:167:9: error[E0560]: struct `sky_ode::Options` has no field named `event`: `sky_ode::Options` does not have this field
+crates/sky-ode/tests/events.rs:174:9: error[E0560]: struct `sky_ode::Options` has no field named `event`: `sky_ode::Options` does not have this field
+crates/sky-ode/tests/events.rs:193:9: error[E0560]: struct `sky_ode::Options` has no field named `dense`: `sky_ode::Options` does not have this field
+crates/sky-ode/tests/events.rs:197:15: error[E0609]: no field `dense` on type `Solution`: unknown field
+crates/sky-ode/tests/events.rs:214:14: error[E0609]: no field `event` on type `sky_ode::Options`: unknown field
+crates/sky-ode/tests/events.rs:215:14: error[E0609]: no field `dense` on type `sky_ode::Options`: unknown field
+crates/sky-ode/tests/events.rs:217:19: error[E0609]: no field `dense` on type `Solution`: unknown field
+crates/sky-ode/tests/events.rs:233:14: error[E0609]: no field `event` on type `sky_ode::Options`: unknown field
+crates/sky-ode/tests/events.rs:235:14: error[E0609]: no field `dense` on type `sky_ode::Options`: unknown field
+crates/sky-ode/tests/events.rs:247:9: error[E0560]: struct `sky_ode::Options` has no field named `dense`: `sky_ode::Options` does not have this field
+crates/sky-ode/tests/events.rs:248:9: error[E0560]: struct `sky_ode::Options` has no field named `event`: `sky_ode::Options` does not have this field
+crates/sky-ode/tests/events.rs:252:15: error[E0609]: no field `dense` on type `Solution`: unknown field
+error: could not compile `sky-ode` (test "events") due to 19 previous errors

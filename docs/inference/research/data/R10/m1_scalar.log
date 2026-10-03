@@ -1,0 +1,41 @@
+== floors
+floor sky ast                            median      4.69 ms  min      4.41  max      5.03  n=9  out: 1
+floor sky sir                            median      5.47 ms  min      5.27  max      5.69  n=9  out: 1
+floor sky native                         median      5.67 ms  min      5.58  max      5.90  n=9  out: 1
+floor sky auto                           median      5.73 ms  min      5.55  max      6.46  n=9  out: 1
+== fib 30 / 32
+c fib30                                  median      4.57 ms  min      4.43  max      4.94  n=9  out: 832040
+c fib32                                  median      7.79 ms  min      7.74  max      7.96  n=9  out: 2178309
+rust fib30                               median      6.07 ms  min      5.08  max     11.33  n=9  out: 832040
+rust fib32                               median      8.38 ms  min      8.21  max      8.67  n=9  out: 2178309
+sky native fib30                         median     12.11 ms  min     11.87  max     12.40  n=9  out: 832040
+sky native fib32                         median     20.84 ms  min     20.46  max     21.84  n=9  out: 2178309
+== nbody 1e5 / 4e5
+c nbody1e5                               median      7.52 ms  min      5.42  max     11.56  n=9  out: -0.16907516382852447 -0.16907985939167369
+c nbody4e5                               median     13.99 ms  min     13.70  max     14.59  n=9  out: -0.16907516382852447 -0.16909278202633746
+rust nbody1e5                            median      8.19 ms  min      6.03  max      9.17  n=9  out: -1.6907516382852447e-1 -1.6907985939165887e-1
+rust nbody4e5                            median     17.88 ms  min     17.70  max     18.44  n=9  out: -1.6907516382852447e-1 -1.6909278202632969e-1
+sky native nbody1e5 SLP=auto             median     31.98 ms  min     31.69  max     32.45  n=9  out: -0.16907516382852447 -0.16907985939166975
+sky native nbody4e5 SLP=auto             median     59.25 ms  min     57.81  max     60.43  n=9  out: -0.16907516382852447 -0.16909278202633118
+sky native nbody1e5 SLP=off              median     34.76 ms  min     34.00  max     35.50  n=9  out: -0.16907516382852447 -0.16907985939166975
+sky native nbody4e5 SLP=off              median     70.13 ms  min     68.71  max     71.47  n=9  out: -0.16907516382852447 -0.16909278202633118
+sky native nbody1e5 SLP=always           median     31.92 ms  min     31.61  max     32.63  n=9  out: -0.16907516382852447 -0.16907985939166975
+sky native nbody4e5 SLP=always           median     59.15 ms  min     58.30  max     60.47  n=9  out: -0.16907516382852447 -0.16909278202633118
+== mandelbrot maxit 500 / 2000
+c mandel500                              median     25.34 ms  min     24.91  max     26.22  n=9  out: 7971151
+c mandel2000                             median     93.30 ms  min     92.27  max     94.26  n=9  out: 30595133
+rust mandel500                           median     26.57 ms  min     26.42  max     27.61  n=9  out: 7992339
+rust mandel2000                          median     98.41 ms  min     97.75  max    100.95  n=9  out: 30697792
+sky native mandel500                     median     40.17 ms  min     39.60  max     41.61  n=9  out: 7992339
+sky native mandel2000                    median    126.66 ms  min    125.54  max    137.94  n=9  out: 30697792
+== rk4 2e5 / 8e5
+c rk4 2e5                                median      9.01 ms  min      8.68  max     11.44  n=9  out: -1.7631768244785714e-05 4.1452370554713245e-05
+c rk4 8e5                                median     29.02 ms  min     28.40  max     29.27  n=9  out: 3.8684635347629708e-18 -1.6769760728004021e-18
+rust rk4 2e5                             median     10.26 ms  min     10.08  max     15.40  n=9  out: -1.7631768244785236e-5 4.1452370554713144e-5
+rust rk4 8e5                             median     33.23 ms  min     32.46  max     34.06  n=9  out: 3.868463534763066e-18 -1.6769760728006016e-18
+sky native rk4 2e5                       median     20.83 ms  min     20.17  max     20.97  n=9  out: -1.7631768244785236e-5 4.1452370554713144e-5
+sky native rk4 8e5                       median     58.69 ms  min     58.08  max     60.50  n=9  out: 3.868463534763066e-18 -1.6769760728006016e-18
+
+real	1m15.326s
+user	0m10.664s
+sys	0m1.237s

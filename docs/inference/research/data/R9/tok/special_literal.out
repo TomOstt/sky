@@ -1,0 +1,7 @@
+[transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+'a<|fim_prefix|>b'     HF default=[64, 151659, 65] HF split_special=[64, 151659, 65] | llama parse_special=[64, 151659, 65] no_parse=[64, 27, 91, 69, 318, 13974, 91, 29, 65]  match(default)=True match(split)=False
+'a<tool_call>b'        HF default=[64, 151657, 65] HF split_special=[64, 151657, 65] | llama parse_special=[64, 151657, 65] no_parse=[64, 151657, 65]  match(default)=True match(split)=True
+'a<|vision_pad|>b'     HF default=[64, 151654, 65] HF split_special=[64, 27, 91, 13013, 30290, 91, 29, 65] | llama parse_special=[64, 151654, 65] no_parse=[64, 27, 91, 13013, 30290, 91, 29, 65]  match(default)=True match(split)=True
+'a<|endoftext|>b'      HF default=[64, 151643, 65] HF split_special=[64, 27, 91, 8691, 723, 427, 91, 29, 65] | llama parse_special=[64, 151643, 65] no_parse=[64, 27, 91, 8691, 723, 427, 91, 29, 65]  match(default)=True match(split)=True
+'a<think>b'            HF default=[64, 151667, 65] HF split_special=[64, 151667, 65] | llama parse_special=[64, 151667, 65] no_parse=[64, 151667, 65]  match(default)=True match(split)=True
+'a<|im_start|>b'       HF default=[64, 151644, 65] HF split_special=[64, 27, 91, 318, 4906, 91, 29, 65] | llama parse_special=[64, 151644, 65] no_parse=[64, 27, 91, 318, 4906, 91, 29, 65]  match(default)=True match(split)=True

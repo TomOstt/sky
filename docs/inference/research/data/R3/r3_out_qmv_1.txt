@@ -1,0 +1,18 @@
+# {"bench": "B_qmv", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-01 20:14:14", "env": {}}
+# correctness max|err| = 0.00040405988693237305  max|ref| = 0.37434321641921997
+8B q/o_proj    K=  4096 N=  4096 MB=    9.44 copies= 34 | single:     203.7 us   46.3 GB/s | batched x24:      62.0 us  152.2 GB/s (min     58.6 us)
+8B k/v_proj    K=  4096 N=  1024 MB=    2.36 copies=136 | single:     164.0 us   14.4 GB/s | batched x24:      23.4 us  100.9 GB/s (min     22.0 us)
+8B gate/up     K=  4096 N= 12288 MB=   28.31 copies= 12 | single:     339.3 us   83.4 GB/s | batched x24:     182.4 us  155.2 GB/s (min    167.7 us)
+8B down        K= 12288 N=  4096 MB=   28.31 copies= 12 | single:     317.0 us   89.3 GB/s | batched x24:     167.9 us  168.6 GB/s (min    165.6 us)
+8B lm_head     K=  4096 N=151936 MB=  350.06 copies=  2 | single:    2002.6 us  174.8 GB/s | batched x24:    2004.6 us  174.6 GB/s (min   1952.5 us)
+32B q_proj     K=  5120 N=  8192 MB=   23.59 copies= 14 | single:     295.6 us   79.8 GB/s | batched x24:     145.6 us  162.1 GB/s (min    139.2 us)
+32B k/v_proj   K=  5120 N=  1024 MB=    2.95 copies=109 | single:     170.9 us   17.3 GB/s | batched x24:      25.7 us  114.8 GB/s (min     24.5 us)
+32B o_proj     K=  8192 N=  5120 MB=   23.59 copies= 14 | single:     312.5 us   75.5 GB/s | batched x24:     142.0 us  166.1 GB/s (min    135.5 us)
+32B gate/up    K=  5120 N= 25600 MB=   73.73 copies=  5 | single:     616.9 us  119.5 GB/s | batched x24:     446.0 us  165.3 GB/s (min    426.8 us)
+32B down       K= 25600 N=  5120 MB=   73.73 copies=  5 | single:     598.6 us  123.2 GB/s | batched x24:     416.1 us  177.2 GB/s (min    409.4 us)
+32B lm_head    K=  5120 N=151936 MB=  437.58 copies=  2 | single:    2515.5 us  174.0 GB/s | batched x24:    2480.8 us  176.4 GB/s (min   2442.0 us)
+peak_memory_GB 1.315174416
+
+real	1m31.248s
+user	0m0.387s
+sys	0m0.777s

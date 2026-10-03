@@ -1,0 +1,13 @@
+# {"bench": "F_model_overhead_real32_L3_ctx128", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-02 00:36:27", "env": {}}
+# params bytes 1.698 GB (embedding table 0.438 GB, read 1 row/token)
+L=  3 ctx=  128 | build-only   0.092 ms | sync step   7.988 ms | pipelined   7.153 ms/token (  139.8 tok/s) | streamed weights 1.260 GB ->  176.2 GB/s effective; ideal @182GB/s 6.926 ms
+peak_memory_GB 1.824367064
+# {"bench": "F_model_overhead_real_L8_ctx1024", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-02 00:36:30", "env": {}}
+# params bytes 1.568 GB (embedding table 0.350 GB, read 1 row/token)
+L=  8 ctx= 1024 | build-only   0.187 ms | sync step   8.125 ms | pipelined   7.735 ms/token (  129.3 tok/s) | streamed weights 1.218 GB ->  157.5 GB/s effective; ideal @182GB/s 6.695 ms
+peak_memory_GB 2.477342776
+# {"bench": "F_model_overhead_real_L8_ctx4096", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-02 00:36:34", "env": {}}
+# params bytes 1.568 GB (embedding table 0.350 GB, read 1 row/token)
+L=  8 ctx= 4096 | build-only   0.187 ms | sync step   8.745 ms | pipelined   9.492 ms/token (  105.4 tok/s) | streamed weights 1.218 GB ->  128.4 GB/s effective; ideal @182GB/s 6.695 ms
+peak_memory_GB 3.693965336
+ALLDONE

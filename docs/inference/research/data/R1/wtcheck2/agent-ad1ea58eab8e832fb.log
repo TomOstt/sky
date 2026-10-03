@@ -1,0 +1,14 @@
+    Checking sky-diag v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-diag)
+    Checking sky-hw v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-hw)
+    Checking sky-units v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-units)
+    Checking sky-ode v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-ode)
+    Checking sky-syntax v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-syntax)
+    Checking sky-tune v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-tune)
+    Checking sky-linalg v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-linalg)
+    Checking sky-ast v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-ast)
+    Checking sky-project v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-project)
+    Checking sky-types v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-types)
+crates/sky-ast/tests/../../../fuzz/harness/parse_module.rs:311:23: error[E0004]: non-exhaustive patterns: `&ExprKind::Tuple(_)` not covered: pattern `&ExprKind::Tuple(_)` not covered
+crates/sky-ast/tests/../../../fuzz/harness/parse_module.rs:396:23: error[E0004]: non-exhaustive patterns: `&AssignTarget::Tuple { .. }` not covered: pattern `&AssignTarget::Tuple { .. }` not covered
+error: could not compile `sky-ast` (test "fuzz_parse_module") due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...

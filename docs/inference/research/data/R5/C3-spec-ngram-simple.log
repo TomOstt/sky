@@ -1,0 +1,72 @@
+# Thu Oct  1 20:19:04 IDT 2026 load: load averages: 5.24 4.66 3.91
+# cmd: /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/src/llama.cpp/build/bin/llama-speculative-simple -m /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/models/Qwen3-8B-Q4_0.gguf --spec-type ngram-simple -p "Here is a quick sort implementation in C++. Just code, no comments:\n\n#include" -n 256 --temp 0 --top-k 1 --seed 42 -ngl 99 -c 4096 -e
+0.00.308.209 W load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.00.652.883 I cmn          init: llama threadpool init, n_threads = 6
+
+
+Here is a quick sort implementation in C++. Just code, no comments:
+
+#include <iostream>
+using namespace std;
+
+void swap(int* a, int* b) {
+    int temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
+int partition(int arr[], int low, int high) {
+    int pivot = arr[high];
+    int i = low - 1;
+    for (int j = low; j < high; j++) {
+        if (arr[j] <= pivot) {
+            i++;
+            swap(&arr[i], &arr[j]);
+        }
+    }
+    swap(&arr[i + 1], &arr[high]);
+    return i + 1;
+}
+
+void quickSort(int arr[], int low, int high) {
+    if (low < high) {
+        int pi = partition(arr, low, high);
+        quickSort(arr, low, pi - 1);
+        quickSort(arr, pi + 1, high);
+    }
+}
+
+void printArray(int arr[], int size) {
+    for (int i = 0; i < size; i++)
+        cout << arr[i] << " ";
+    cout << endl;
+}
+
+int main() {
+    int arr[] = {64, 34, 25, 12, 
+
+0.08.477.417 I encoded   16 tokens in    0.002 seconds, speed: 7346.189 t/s
+0.08.477.418 I decoded  257 tokens in    7.715 seconds, speed:   33.313 t/s
+0.08.477.418 I 
+0.08.477.418 I n_draft   = 3
+0.08.477.419 I n_predict = 257
+0.08.477.419 I n_drafted = 0
+0.08.477.419 I n_accept  = 0
+0.08.477.419 I accept    = nan%
+0.08.477.427 I 
+0.08.477.427 I draft:
+
+0.08.477.433 I 
+0.08.477.433 I target:
+
+0.08.477.434 I common_perf_print:    sampling time =      26.73 ms
+0.08.477.435 I common_perf_print:    samplers time =      16.71 ms /   257 tokens
+0.08.477.436 I common_perf_print:        load time =     429.99 ms
+0.08.477.437 I common_perf_print: prompt eval time =     192.04 ms /    18 tokens (   10.67 ms per token,    93.73 tokens per second)
+0.08.477.437 I common_perf_print:        eval time =    7539.76 ms /   256 runs   (   29.45 ms per token,    33.95 tokens per second)
+0.08.477.438 I common_perf_print:       total time =    7769.33 ms /   274 tokens
+0.08.477.438 I common_perf_print: unaccounted time =      10.80 ms /   0.1 %      (total - sampling - prompt eval - eval) / (total)
+0.08.477.438 I common_perf_print:    graphs reused =        256
+
+
+# exit=0 end Thu Oct  1 20:19:13 IDT 2026

@@ -1,0 +1,302 @@
+compiling:   0%|                                          | 0/1 [00:00<?, ?it/s]loading metal from /System/Library/Frameworks/Metal.framework/Metal
+loading CoreGraphics from /System/Library/Frameworks/CoreGraphics.framework/CoreGraphics
+loading llvm from /opt/homebrew/opt/llvm@19/lib/libLLVM.dylib
+loading MTLCompiler from /System/Library/PrivateFrameworks/MTLCompiler.framework/MTLCompiler
+opened device METAL from pid:17869
+scheduled     1 kernels in    16.68 ms | CACHE MISS 2bfc34bc |      26 uops in cache | /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/R2/bench_gemv.py:23
+opened device NPY from pid:17869
+[32m*** METAL      1[0m [33mcopy   27.00 MB,   METAL <- NPY    [0m            arg  2 mem   0.06 GB tm   2730.37us/     2.73ms (      0 GFLOPS   10|10     GB/s)
+scheduled     1 kernels in     1.53 ms | CACHE MISS 60591c41 |      83 uops in cache | /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/R2/bench_gemv.py:38
+[32m*** METAL      2[0m [33mcopy    8.00 KB,   METAL <- NPY    [0m            arg  2 mem   0.03 GB tm     95.92us/     2.83ms (      0 GFLOPS    0|0      GB/s)
+scheduled     1 kernels in    30.27 ms | CACHE MISS 87695fab |     333 uops in cache | /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/R2/bench_gemv.py:41
+more upcast axis : [(3, 6913, 0, 3), (3, 6913, 0, 4)]
+r_128_32_3_128_2_16       opts: (Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=4, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL)))
+#include <metal_stdlib>
+using namespace metal;
+struct args_t { device half* data0_12288; device half* data1_4096; device unsigned char* data2_28311552; };
+kernel void r_128_32_3_128_2_16(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device half* data0_12288 = args.data0_12288; device half* data1_4096 = args.data1_4096; device unsigned char* data2_28311552 = args.data2_28311552;
+  float buf0[3];
+  int gidx0 = gid.x; /* 128 */
+  int lidx0 = lid.x; /* 32 */
+  *(buf0+0) = 0.0f;
+  *(buf0+1) = 0.0f;
+  *(buf0+2) = 0.0f;
+  for (int Lidx0_0_0 = 0; Lidx0_0_0 < 128; Lidx0_0_0++) {
+    int alu3 = ((gidx0*221184)+(lidx0*6912)+(Lidx0_0_0*18));
+    unsigned char val0 = (*(data2_28311552+(alu3+1)));
+    unsigned char val1 = (*(data2_28311552+(alu3+10)));
+    unsigned char val2 = (*(data2_28311552+(alu3+11)));
+    unsigned char val3 = (*(data2_28311552+(alu3+12)));
+    unsigned char val4 = (*(data2_28311552+(alu3+13)));
+    unsigned char val5 = (*(data2_28311552+(alu3+14)));
+    unsigned char val6 = (*(data2_28311552+(alu3+15)));
+    unsigned char val7 = (*(data2_28311552+(alu3+16)));
+    unsigned char val8 = (*(data2_28311552+(alu3+17)));
+    unsigned char val9 = (*(data2_28311552+(alu3+2)));
+    unsigned char val10 = (*(data2_28311552+(alu3+2304)));
+    unsigned char val11 = (*(data2_28311552+(alu3+2305)));
+    unsigned char val12 = (*(data2_28311552+(alu3+2306)));
+    unsigned char val13 = (*(data2_28311552+(alu3+2307)));
+    unsigned char val14 = (*(data2_28311552+(alu3+2308)));
+    unsigned char val15 = (*(data2_28311552+(alu3+2309)));
+    unsigned char val16 = (*(data2_28311552+(alu3+2310)));
+    unsigned char val17 = (*(data2_28311552+(alu3+2311)));
+    unsigned char val18 = (*(data2_28311552+(alu3+2312)));
+    unsigned char val19 = (*(data2_28311552+(alu3+2313)));
+    unsigned char val20 = (*(data2_28311552+(alu3+2314)));
+    unsigned char val21 = (*(data2_28311552+(alu3+2315)));
+    unsigned char val22 = (*(data2_28311552+(alu3+2316)));
+    unsigned char val23 = (*(data2_28311552+(alu3+2317)));
+    unsigned char val24 = (*(data2_28311552+(alu3+2318)));
+    unsigned char val25 = (*(data2_28311552+(alu3+2319)));
+    unsigned char val26 = (*(data2_28311552+(alu3+2320)));
+    unsigned char val27 = (*(data2_28311552+(alu3+2321)));
+    unsigned char val28 = (*(data2_28311552+(alu3+3)));
+    unsigned char val29 = (*(data2_28311552+(alu3+4)));
+    unsigned char val30 = (*(data2_28311552+(alu3+4608)));
+    unsigned char val31 = (*(data2_28311552+(alu3+4609)));
+    unsigned char val32 = (*(data2_28311552+(alu3+4610)));
+    unsigned char val33 = (*(data2_28311552+(alu3+4611)));
+    unsigned char val34 = (*(data2_28311552+(alu3+4612)));
+    unsigned char val35 = (*(data2_28311552+(alu3+4613)));
+    unsigned char val36 = (*(data2_28311552+(alu3+4614)));
+    unsigned char val37 = (*(data2_28311552+(alu3+4615)));
+    unsigned char val38 = (*(data2_28311552+(alu3+4616)));
+    unsigned char val39 = (*(data2_28311552+(alu3+4617)));
+    unsigned char val40 = (*(data2_28311552+(alu3+4618)));
+    unsigned char val41 = (*(data2_28311552+(alu3+4619)));
+    unsigned char val42 = (*(data2_28311552+(alu3+4620)));
+    unsigned char val43 = (*(data2_28311552+(alu3+4621)));
+    unsigned char val44 = (*(data2_28311552+(alu3+4622)));
+    unsigned char val45 = (*(data2_28311552+(alu3+4623)));
+    unsigned char val46 = (*(data2_28311552+(alu3+4624)));
+    unsigned char val47 = (*(data2_28311552+(alu3+4625)));
+    unsigned char val48 = (*(data2_28311552+(alu3+5)));
+    unsigned char val49 = (*(data2_28311552+(alu3+6)));
+    unsigned char val50 = (*(data2_28311552+(alu3+7)));
+    unsigned char val51 = (*(data2_28311552+(alu3+8)));
+    unsigned char val52 = (*(data2_28311552+(alu3+9)));
+    unsigned char val53 = (*(data2_28311552+alu3));
+    float cast0 = ((float)(as_type<half>((unsigned short)((((unsigned short)(val10))+(((unsigned short)(val11))<<((unsigned short)(8u))))))));
+    float cast1 = ((float)(as_type<half>((unsigned short)((((unsigned short)(val30))+(((unsigned short)(val31))<<((unsigned short)(8u))))))));
+    float cast2 = ((float)(as_type<half>((unsigned short)((((unsigned short)(val53))+(((unsigned short)(val0))<<((unsigned short)(8u))))))));
+    for (int Lidx0_0_1 = 0; Lidx0_0_1 < 2; Lidx0_0_1++) {
+      int alu4 = ((Lidx0_0_0<<5)+(Lidx0_0_1<<4));
+      half4 val54 = (*((device half4*)((data1_4096+(alu4+12)))));
+      half4 val55 = (*((device half4*)((data1_4096+(alu4+4)))));
+      half4 val56 = (*((device half4*)((data1_4096+(alu4+8)))));
+      half4 val57 = (*((device half4*)((data1_4096+alu4))));
+      unsigned char alu5 = ((Lidx0_0_1!=0)?((unsigned char)(16u)):((unsigned char)(1u)));
+      *(buf0+0) = ((*(buf0+0))+((float)((val57.x*((half)((((float)((as_type<signed char>((unsigned char)(((val9/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2))))))+((float)((val57.y*((half)((((float)((as_type<signed char>((unsigned char)(((val28/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2))))))+((float)((val57.z*((half)((((float)((as_type<signed char>((unsigned char)(((val29/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2))))))+((float)((val57.w*((half)((((float)((as_type<signed char>((unsigned char)(((val48/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2))))))+((float)((val55.x*((half)((((float)((as_type<signed char>((unsigned char)(((val49/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2))))))+((float)((val55.y*((half)((((float)((as_type<signed char>((unsigned char)(((val50/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2))))))+((float)((val55.z*((half)((((float)((as_type<signed char>((unsigned char)(((val51/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2))))))+((float)((val55.w*((half)((((float)((as_type<signed char>((unsigned char)(((val52/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2))))))+((float)((val56.x*((half)((((float)((as_type<signed char>((unsigned char)(((val1/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2))))))+((float)((val56.y*((half)((((float)((as_type<signed char>((unsigned char)(((val2/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2))))))+((float)((val56.z*((half)((((float)((as_type<signed char>((unsigned char)(((val3/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2))))))+((float)((val56.w*((half)((((float)((as_type<signed char>((unsigned char)(((val4/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2))))))+((float)((val54.x*((half)((((float)((as_type<signed char>((unsigned char)(((val5/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2))))))+((float)((val54.y*((half)((((float)((as_type<signed char>((unsigned char)(((val6/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2))))))+((float)((val54.z*((half)((((float)((as_type<signed char>((unsigned char)(((val7/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2))))))+((float)((val54.w*((half)((((float)((as_type<signed char>((unsigned char)(((val8/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast2)))))));
+      *(buf0+1) = ((*(buf0+1))+((float)((val57.x*((half)((((float)((as_type<signed char>((unsigned char)(((val12/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0))))))+((float)((val57.y*((half)((((float)((as_type<signed char>((unsigned char)(((val13/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0))))))+((float)((val57.z*((half)((((float)((as_type<signed char>((unsigned char)(((val14/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0))))))+((float)((val57.w*((half)((((float)((as_type<signed char>((unsigned char)(((val15/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0))))))+((float)((val55.x*((half)((((float)((as_type<signed char>((unsigned char)(((val16/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0))))))+((float)((val55.y*((half)((((float)((as_type<signed char>((unsigned char)(((val17/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0))))))+((float)((val55.z*((half)((((float)((as_type<signed char>((unsigned char)(((val18/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0))))))+((float)((val55.w*((half)((((float)((as_type<signed char>((unsigned char)(((val19/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0))))))+((float)((val56.x*((half)((((float)((as_type<signed char>((unsigned char)(((val20/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0))))))+((float)((val56.y*((half)((((float)((as_type<signed char>((unsigned char)(((val21/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0))))))+((float)((val56.z*((half)((((float)((as_type<signed char>((unsigned char)(((val22/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0))))))+((float)((val56.w*((half)((((float)((as_type<signed char>((unsigned char)(((val23/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0))))))+((float)((val54.x*((half)((((float)((as_type<signed char>((unsigned char)(((val24/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0))))))+((float)((val54.y*((half)((((float)((as_type<signed char>((unsigned char)(((val25/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0))))))+((float)((val54.z*((half)((((float)((as_type<signed char>((unsigned char)(((val26/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0))))))+((float)((val54.w*((half)((((float)((as_type<signed char>((unsigned char)(((val27/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast0)))))));
+      *(buf0+2) = ((*(buf0+2))+((float)((val57.x*((half)((((float)((as_type<signed char>((unsigned char)(((val32/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1))))))+((float)((val57.y*((half)((((float)((as_type<signed char>((unsigned char)(((val33/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1))))))+((float)((val57.z*((half)((((float)((as_type<signed char>((unsigned char)(((val34/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1))))))+((float)((val57.w*((half)((((float)((as_type<signed char>((unsigned char)(((val35/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1))))))+((float)((val55.x*((half)((((float)((as_type<signed char>((unsigned char)(((val36/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1))))))+((float)((val55.y*((half)((((float)((as_type<signed char>((unsigned char)(((val37/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1))))))+((float)((val55.z*((half)((((float)((as_type<signed char>((unsigned char)(((val38/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1))))))+((float)((val55.w*((half)((((float)((as_type<signed char>((unsigned char)(((val39/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1))))))+((float)((val56.x*((half)((((float)((as_type<signed char>((unsigned char)(((val40/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1))))))+((float)((val56.y*((half)((((float)((as_type<signed char>((unsigned char)(((val41/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1))))))+((float)((val56.z*((half)((((float)((as_type<signed char>((unsigned char)(((val42/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1))))))+((float)((val56.w*((half)((((float)((as_type<signed char>((unsigned char)(((val43/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1))))))+((float)((val54.x*((half)((((float)((as_type<signed char>((unsigned char)(((val44/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1))))))+((float)((val54.y*((half)((((float)((as_type<signed char>((unsigned char)(((val45/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1))))))+((float)((val54.z*((half)((((float)((as_type<signed char>((unsigned char)(((val46/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1))))))+((float)((val54.w*((half)((((float)((as_type<signed char>((unsigned char)(((val47/alu5)&((unsigned char)(15u)))))+((signed char)(-8)))))*cast1)))))));
+    }
+  }
+  int alu11 = ((gidx0*96)+(lidx0*3));
+  *(data0_12288+(alu11+1)) = ((half)((*(buf0+1))));
+  *(data0_12288+(alu11+2)) = ((half)((*(buf0+2))));
+  *(data0_12288+alu11) = ((half)((*(buf0+0))));
+}compiling r[90m_[0m[34m128[0m[90m_[0m[36m32[0m[90m_[0m[33m3[0m[90m_[0m[31m128[0m[90m_[0m[31m2[0m[90m_[0m[33m16[0m                     : 100%|█| 1/1 [00:00<00:00,  6.59it/s]compiling r[90m_[0m[34m128[0m[90m_[0m[36m32[0m[90m_[0m[33m3[0m[90m_[0m[31m128[0m[90m_[0m[31m2[0m[90m_[0m[33m16[0m                     : 100%|█| 1/1 [00:00<00:00,  6.59it/s]
+compiling:   0%|                                          | 0/1 [00:00<?, ?it/s]compiling hcq_submit                              : 100%|█| 1/1 [00:00<00:00, 40.38it/s]compiling hcq_submit                              : 100%|█| 1/1 [00:00<00:00, 40.30it/s]
+compiling:   0%|                                          | 0/1 [00:00<?, ?it/s]
+loading libc from /usr/lib/libc.dylib
+loading libusb from /opt/homebrew/lib/libusb-1.0.dylib
+loading mesa failed: not found on system
+loading rt from /System/Library/Frameworks/System.framework/System
+loading m from /usr/lib/libm.dylib
+opened device CPU from pid:17869
+
+extern void sel_registerName();
+extern void objc_msgSend();
+static inline void mtl_send(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_, unsigned long* out_1) {
+  unsigned long alu0 = ((unsigned long(*)(unsigned char*))(sel_registerName))((unsigned char*)(sel_1));
+  unsigned long alu1 = ((unsigned long(*)(unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))(objc_msgSend))((unsigned long)(obj_), (unsigned long)(alu0), (unsigned long)(a_), (unsigned long)(b_), (unsigned long)(c_));
+  *(out_1+0) = alu1;
+}
+static inline void hcq_fence(unsigned long* slots_8, volatile unsigned long* tl_2, unsigned long tv_, unsigned long* handles_3_5) {
+  unsigned long buf0[1];
+  unsigned long val0 = (*(slots_8+2));
+  const unsigned char alu0[] = "\x73\x69\x67\x6e\x61\x6c\x65\x64\x56\x61\x6c\x75\x65\x00";
+  for (;;) {
+    unsigned long val1 = (*(handles_3_5+1));
+    mtl_send(val1, (alu0+0), 0ul, 0ul, 0ul, buf0);
+    if (!(((*(buf0+0))<val0))) { break; }
+  }
+  unsigned long alu3 = (tv_+1ul);
+  *(tl_2+1) = alu3;
+  *(slots_8+2) = alu3;
+}
+static inline void mtl_send_1(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_, unsigned long* out_1) {
+  unsigned long alu0 = ((unsigned long(*)(unsigned char*))(sel_registerName))((unsigned char*)(sel_1));
+  unsigned long alu1 = ((unsigned long(*)(unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))(objc_msgSend))((unsigned long)(obj_), (unsigned long)(alu0), (unsigned long)(a_), (unsigned long)(b_), (unsigned long)(c_));
+  *(out_1+0) = alu1;
+}
+static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+  unsigned long alu0 = ((unsigned long(*)(unsigned char*))(sel_registerName))((unsigned char*)(sel_1));
+  unsigned long alu1 = ((unsigned long(*)(unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))(objc_msgSend))((unsigned long)(obj_), (unsigned long)(alu0), (unsigned long)(a_), (unsigned long)(b_), (unsigned long)(c_));
+}
+static inline void mtl_send_3(unsigned long obj_, unsigned char* sel_1, unsigned char* a_1, unsigned char* b_1, unsigned long c_) {
+  unsigned long alu0 = ((unsigned long(*)(unsigned char*))(sel_registerName))((unsigned char*)(sel_1));
+  unsigned long alu1 = ((unsigned long(*)(unsigned long, unsigned long, unsigned char*, unsigned char*, unsigned long))(objc_msgSend))((unsigned long)(obj_), (unsigned long)(alu0), (unsigned char*)(a_1), (unsigned char*)(b_1), (unsigned long)(c_));
+}
+static inline void mtl_run(unsigned char* icb_72, unsigned long value_, unsigned long* stamp_4, volatile unsigned long* mtl_cb_3_1, volatile unsigned long* mtl_enc_4_1, unsigned long* handles_5_5) {
+  unsigned long val0 = (*(handles_5_5+0));
+  unsigned long val1 = (*(handles_5_5+1));
+  unsigned long val2 = (*(handles_5_5+2));
+  const unsigned char alu0[] = "\x63\x6f\x6d\x6d\x61\x6e\x64\x42\x75\x66\x66\x65\x72\x00";
+  mtl_send_1(val0, (alu0+0), 0ul, 0ul, 0ul, mtl_cb_3_1);
+  unsigned long val3 = (*(mtl_cb_3_1+0));
+  const unsigned char alu2[] = "\x63\x6f\x6d\x70\x75\x74\x65\x43\x6f\x6d\x6d\x61\x6e\x64\x45\x6e\x63\x6f\x64\x65\x72\x00";
+  mtl_send_1(val3, (alu2+0), 0ul, 0ul, 0ul, mtl_enc_4_1);
+  unsigned long val4 = (*(mtl_enc_4_1+0));
+  const unsigned char alu4[] = "\x77\x61\x69\x74\x46\x6f\x72\x46\x65\x6e\x63\x65\x3a\x00";
+  mtl_send_2(val4, (alu4+0), val2, 0ul, 0ul);
+  unsigned long val5 = (*(mtl_enc_4_1+0));
+  unsigned long val6 = (*(((unsigned long*)(icb_72))+8ul));
+  const unsigned char alu6[] = "\x73\x65\x74\x43\x6f\x6d\x70\x75\x74\x65\x50\x69\x70\x65\x6c\x69\x6e\x65\x53\x74\x61\x74\x65\x3a\x00";
+  mtl_send_2(val5, (alu6+0), val6, 0ul, 0ul);
+  unsigned long val7 = (*(mtl_enc_4_1+0));
+  const unsigned char alu8[] = "\x64\x69\x73\x70\x61\x74\x63\x68\x54\x68\x72\x65\x61\x64\x67\x72\x6f\x75\x70\x73\x3a\x74\x68\x72\x65\x61\x64\x73\x50\x65\x72\x54\x68\x72\x65\x61\x64\x67\x72\x6f\x75\x70\x3a\x00";
+  mtl_send_3(val7, (alu8+0), (icb_72+24), (icb_72+24), 0ul);
+  unsigned long val8 = (*(mtl_enc_4_1+0));
+  unsigned long val9 = (*(((unsigned long*)(icb_72))+6));
+  const unsigned char alu10[] = "\x65\x78\x65\x63\x75\x74\x65\x43\x6f\x6d\x6d\x61\x6e\x64\x73\x49\x6e\x42\x75\x66\x66\x65\x72\x3a\x77\x69\x74\x68\x52\x61\x6e\x67\x65\x3a\x00";
+  mtl_send_2(val8, (alu10+0), val9, 0ul, 1ul);
+  unsigned long val10 = (*(mtl_enc_4_1+0));
+  const unsigned char alu12[] = "\x75\x70\x64\x61\x74\x65\x46\x65\x6e\x63\x65\x3a\x00";
+  mtl_send_2(val10, (alu12+0), val2, 0ul, 0ul);
+  unsigned long val11 = (*(mtl_enc_4_1+0));
+  const unsigned char alu14[] = "\x65\x6e\x64\x45\x6e\x63\x6f\x64\x69\x6e\x67\x00";
+  mtl_send_2(val11, (alu14+0), 0ul, 0ul, 0ul);
+  *(stamp_4+3) = 0ul;
+  unsigned long val12 = (*(mtl_cb_3_1+0));
+  *(stamp_4+1) = val12;
+  unsigned long val13 = (*(mtl_cb_3_1+0));
+  const unsigned char alu18[] = "\x65\x6e\x63\x6f\x64\x65\x53\x69\x67\x6e\x61\x6c\x45\x76\x65\x6e\x74\x3a\x76\x61\x6c\x75\x65\x3a\x00";
+  mtl_send_2(val13, (alu18+0), val1, value_, 0ul);
+  unsigned long val14 = (*(mtl_cb_3_1+0));
+  const unsigned char alu20[] = "\x63\x6f\x6d\x6d\x69\x74\x00";
+  mtl_send_2(val14, (alu20+0), 0ul, 0ul, 0ul);
+}
+void hcq_submit(volatile unsigned long* restrict slots_0_8, unsigned long* restrict inputs_1_3, volatile unsigned char* restrict None_2_72, volatile unsigned long* restrict timeline_3_2, unsigned long* restrict handles_4_5, volatile unsigned long* restrict mtl_cb_5_1, volatile unsigned long* restrict mtl_enc_6_1) {
+  unsigned long val0 = (*(inputs_1_3+0));
+  unsigned long val1 = (*(inputs_1_3+1));
+  unsigned long val2 = (*(inputs_1_3+2));
+  unsigned long val3 = (*(timeline_3_2+1));
+  hcq_fence(slots_0_8, timeline_3_2, val3, handles_4_5);
+  *(slots_0_8+0) = 0ul;
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  *(((unsigned long*)(None_2_72))+0) = val0;
+  *(((unsigned long*)(None_2_72))+1) = val1;
+  *(((unsigned long*)(None_2_72))+2) = val2;
+  mtl_run(None_2_72, (val3+1ul), (slots_0_8+4), mtl_cb_5_1, mtl_enc_6_1, handles_4_5);
+}
+
+[32m*** CPU        3[0m hcq_submit                                     arg  0 mem   0.03 GB tm    252.79us/     4.01ms (   1215 GFLOPS  112|245    GB/s)
+[32m*** METAL      3[0m r[90m_[0m[34m128[0m[90m_[0m[36m32[0m[90m_[0m[33m3[0m[90m_[0m[31m128[0m[90m_[0m[31m2[0m[90m_[0m[33m16[0m                            arg  3 mem   0.03 GB tm    928.17us/     4.01ms (    331 GFLOPS   31|67     GB/s)
+scheduled     1 kernels in     1.57 ms |  cache hit 87695fab |    1602 uops in cache | /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/R2/bench_gemv.py:41
+JIT captured 1 linears with 1 inputs
+
+extern void sel_registerName();
+extern void objc_msgSend();
+static inline void mtl_send(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_, unsigned long* out_1) {
+  unsigned long alu0 = ((unsigned long(*)(unsigned char*))(sel_registerName))((unsigned char*)(sel_1));
+  unsigned long alu1 = ((unsigned long(*)(unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))(objc_msgSend))((unsigned long)(obj_), (unsigned long)(alu0), (unsigned long)(a_), (unsigned long)(b_), (unsigned long)(c_));
+  *(out_1+0) = alu1;
+}
+static inline void hcq_fence(unsigned long* slots_8, volatile unsigned long* tl_2, unsigned long tv_, unsigned long* handles_3_5) {
+  unsigned long buf0[1];
+  unsigned long val0 = (*(slots_8+2));
+  const unsigned char alu0[] = "\x73\x69\x67\x6e\x61\x6c\x65\x64\x56\x61\x6c\x75\x65\x00";
+  for (;;) {
+    unsigned long val1 = (*(handles_3_5+1));
+    mtl_send(val1, (alu0+0), 0ul, 0ul, 0ul, buf0);
+    if (!(((*(buf0+0))<val0))) { break; }
+  }
+  unsigned long alu3 = (tv_+1ul);
+  *(tl_2+1) = alu3;
+  *(slots_8+2) = alu3;
+}
+static inline void mtl_send_1(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_, unsigned long* out_1) {
+  unsigned long alu0 = ((unsigned long(*)(unsigned char*))(sel_registerName))((unsigned char*)(sel_1));
+  unsigned long alu1 = ((unsigned long(*)(unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))(objc_msgSend))((unsigned long)(obj_), (unsigned long)(alu0), (unsigned long)(a_), (unsigned long)(b_), (unsigned long)(c_));
+  *(out_1+0) = alu1;
+}
+static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+  unsigned long alu0 = ((unsigned long(*)(unsigned char*))(sel_registerName))((unsigned char*)(sel_1));
+  unsigned long alu1 = ((unsigned long(*)(unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))(objc_msgSend))((unsigned long)(obj_), (unsigned long)(alu0), (unsigned long)(a_), (unsigned long)(b_), (unsigned long)(c_));
+}
+static inline void mtl_send_3(unsigned long obj_, unsigned char* sel_1, unsigned char* a_1, unsigned char* b_1, unsigned long c_) {
+  unsigned long alu0 = ((unsigned long(*)(unsigned char*))(sel_registerName))((unsigned char*)(sel_1));
+  unsigned long alu1 = ((unsigned long(*)(unsigned long, unsigned long, unsigned char*, unsigned char*, unsigned long))(objc_msgSend))((unsigned long)(obj_), (unsigned long)(alu0), (unsigned char*)(a_1), (unsigned char*)(b_1), (unsigned long)(c_));
+}
+static inline void mtl_run(unsigned char* icb_72, unsigned long value_, unsigned long* stamp_4, volatile unsigned long* mtl_cb_3_1, volatile unsigned long* mtl_enc_4_1, unsigned long* handles_5_5) {
+  unsigned long val0 = (*(handles_5_5+0));
+  unsigned long val1 = (*(handles_5_5+1));
+  unsigned long val2 = (*(handles_5_5+2));
+  const unsigned char alu0[] = "\x63\x6f\x6d\x6d\x61\x6e\x64\x42\x75\x66\x66\x65\x72\x00";
+  mtl_send_1(val0, (alu0+0), 0ul, 0ul, 0ul, mtl_cb_3_1);
+  unsigned long val3 = (*(mtl_cb_3_1+0));
+  const unsigned char alu2[] = "\x63\x6f\x6d\x70\x75\x74\x65\x43\x6f\x6d\x6d\x61\x6e\x64\x45\x6e\x63\x6f\x64\x65\x72\x00";
+  mtl_send_1(val3, (alu2+0), 0ul, 0ul, 0ul, mtl_enc_4_1);
+  unsigned long val4 = (*(mtl_enc_4_1+0));
+  const unsigned char alu4[] = "\x77\x61\x69\x74\x46\x6f\x72\x46\x65\x6e\x63\x65\x3a\x00";
+  mtl_send_2(val4, (alu4+0), val2, 0ul, 0ul);
+  unsigned long val5 = (*(mtl_enc_4_1+0));
+  unsigned long val6 = (*(((unsigned long*)(icb_72))+8ul));
+  const unsigned char alu6[] = "\x73\x65\x74\x43\x6f\x6d\x70\x75\x74\x65\x50\x69\x70\x65\x6c\x69\x6e\x65\x53\x74\x61\x74\x65\x3a\x00";
+  mtl_send_2(val5, (alu6+0), val6, 0ul, 0ul);
+  unsigned long val7 = (*(mtl_enc_4_1+0));
+  const unsigned char alu8[] = "\x64\x69\x73\x70\x61\x74\x63\x68\x54\x68\x72\x65\x61\x64\x67\x72\x6f\x75\x70\x73\x3a\x74\x68\x72\x65\x61\x64\x73\x50\x65\x72\x54\x68\x72\x65\x61\x64\x67\x72\x6f\x75\x70\x3a\x00";
+  mtl_send_3(val7, (alu8+0), (icb_72+24), (icb_72+24), 0ul);
+  unsigned long val8 = (*(mtl_enc_4_1+0));
+  unsigned long val9 = (*(((unsigned long*)(icb_72))+6));
+  const unsigned char alu10[] = "\x65\x78\x65\x63\x75\x74\x65\x43\x6f\x6d\x6d\x61\x6e\x64\x73\x49\x6e\x42\x75\x66\x66\x65\x72\x3a\x77\x69\x74\x68\x52\x61\x6e\x67\x65\x3a\x00";
+  mtl_send_2(val8, (alu10+0), val9, 0ul, 1ul);
+  unsigned long val10 = (*(mtl_enc_4_1+0));
+  const unsigned char alu12[] = "\x75\x70\x64\x61\x74\x65\x46\x65\x6e\x63\x65\x3a\x00";
+  mtl_send_2(val10, (alu12+0), val2, 0ul, 0ul);
+  unsigned long val11 = (*(mtl_enc_4_1+0));
+  const unsigned char alu14[] = "\x65\x6e\x64\x45\x6e\x63\x6f\x64\x69\x6e\x67\x00";
+  mtl_send_2(val11, (alu14+0), 0ul, 0ul, 0ul);
+  *(stamp_4+3) = 0ul;
+  unsigned long val12 = (*(mtl_cb_3_1+0));
+  *(stamp_4+1) = val12;
+  unsigned long val13 = (*(mtl_cb_3_1+0));
+  const unsigned char alu18[] = "\x65\x6e\x63\x6f\x64\x65\x53\x69\x67\x6e\x61\x6c\x45\x76\x65\x6e\x74\x3a\x76\x61\x6c\x75\x65\x3a\x00";
+  mtl_send_2(val13, (alu18+0), val1, value_, 0ul);
+  unsigned long val14 = (*(mtl_cb_3_1+0));
+  const unsigned char alu20[] = "\x63\x6f\x6d\x6d\x69\x74\x00";
+  mtl_send_2(val14, (alu20+0), 0ul, 0ul, 0ul);
+}
+void hcq_submit(volatile unsigned long* restrict slots_0_8, unsigned long* restrict inputs_1_1, volatile unsigned char* restrict None_2_72, volatile unsigned long* restrict timeline_3_2, unsigned long* restrict handles_4_5, volatile unsigned long* restrict mtl_cb_5_1, volatile unsigned long* restrict mtl_enc_6_1) {
+  unsigned long val0 = (*(inputs_1_1+0));
+  unsigned long val1 = (*(timeline_3_2+1));
+  hcq_fence(slots_0_8, timeline_3_2, val1, handles_4_5);
+  *(slots_0_8+0) = 0ul;
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  *(((unsigned long*)(None_2_72))+1) = val0;
+  mtl_run(None_2_72, (val1+1ul), (slots_0_8+4), mtl_cb_5_1, mtl_enc_6_1, handles_4_5);
+}
+compiling hcq_submit                              : 100%|█| 1/1 [00:00<00:00, 62.52it/s]compiling hcq_submit                              : 100%|█| 1/1 [00:00<00:00, 62.42it/s]
+
+[35m*** CPU        4[0m hcq_submit                                     arg  0 mem   0.03 GB tm     52.83us/     4.65ms (   5815 GFLOPS  536|1171   GB/s)
+[35m*** METAL      4[0m r[90m_[0m[34m128[0m[90m_[0m[36m32[0m[90m_[0m[33m3[0m[90m_[0m[31m128[0m[90m_[0m[31m2[0m[90m_[0m[33m16[0m                            arg  0 mem   0.03 GB tm    590.88us/     4.65ms (    520 GFLOPS   48|105    GB/s)
+[35m*** CPU        5[0m hcq_submit                                     arg  0 mem   0.03 GB tm     25.92us/     5.13ms (  11855 GFLOPS 1094|2388   GB/s)
+[35m*** METAL      5[0m r[90m_[0m[34m128[0m[90m_[0m[36m32[0m[90m_[0m[33m3[0m[90m_[0m[31m128[0m[90m_[0m[31m2[0m[90m_[0m[33m16[0m                            arg  0 mem   0.03 GB tm    452.83us/     5.13ms (    678 GFLOPS   63|137    GB/s)
+[35m*** CPU        6[0m hcq_submit                                     arg  0 mem   0.03 GB tm     19.04us/     5.58ms (  16134 GFLOPS 1489|3250   GB/s)
+[35m*** METAL      6[0m r[90m_[0m[34m128[0m[90m_[0m[36m32[0m[90m_[0m[33m3[0m[90m_[0m[31m128[0m[90m_[0m[31m2[0m[90m_[0m[33m16[0m                            arg  0 mem   0.03 GB tm    431.75us/     5.58ms (    712 GFLOPS   66|143    GB/s)
+[35m*** CPU        7[0m hcq_submit                                     arg  0 mem   0.03 GB tm     17.08us/     6.02ms (  17984 GFLOPS 1659|3623   GB/s)
+[35m*** METAL      7[0m r[90m_[0m[34m128[0m[90m_[0m[36m32[0m[90m_[0m[33m3[0m[90m_[0m[31m128[0m[90m_[0m[31m2[0m[90m_[0m[33m16[0m                            arg  0 mem   0.03 GB tm    427.29us/     6.02ms (    719 GFLOPS   66|145    GB/s)
+[35m*** CPU        8[0m hcq_submit                                     arg  0 mem   0.03 GB tm     13.33us/     6.46ms (  23041 GFLOPS 2126|4642   GB/s)
+[35m*** METAL      8[0m r[90m_[0m[34m128[0m[90m_[0m[36m32[0m[90m_[0m[33m3[0m[90m_[0m[31m128[0m[90m_[0m[31m2[0m[90m_[0m[33m16[0m                            arg  0 mem   0.03 GB tm    426.54us/     6.46ms (    720 GFLOPS   66|145    GB/s)
+[35m*** CPU        9[0m hcq_submit                                     arg  0 mem   0.03 GB tm     11.92us/     6.90ms (  25781 GFLOPS 2378|5193   GB/s)
+[35m*** METAL      9[0m r[90m_[0m[34m128[0m[90m_[0m[36m32[0m[90m_[0m[33m3[0m[90m_[0m[31m128[0m[90m_[0m[31m2[0m[90m_[0m[33m16[0m                            arg  0 mem   0.03 GB tm    427.00us/     6.90ms (    720 GFLOPS   66|145    GB/s)
+[35m*** CPU       10[0m hcq_submit                                     arg  0 mem   0.03 GB tm     10.29us/     7.34ms (  29855 GFLOPS 2754|6014   GB/s)
+[35m*** METAL     10[0m r[90m_[0m[34m128[0m[90m_[0m[36m32[0m[90m_[0m[33m3[0m[90m_[0m[31m128[0m[90m_[0m[31m2[0m[90m_[0m[33m16[0m                            arg  0 mem   0.03 GB tm    425.67us/     7.34ms (    722 GFLOPS   67|145    GB/s)
+[35m*** CPU       11[0m hcq_submit                                     arg  0 mem   0.03 GB tm      9.96us/     7.78ms (  30853 GFLOPS 2846|6215   GB/s)
+[35m*** METAL     11[0m r[90m_[0m[34m128[0m[90m_[0m[36m32[0m[90m_[0m[33m3[0m[90m_[0m[31m128[0m[90m_[0m[31m2[0m[90m_[0m[33m16[0m                            arg  0 mem   0.03 GB tm    432.00us/     7.78ms (    711 GFLOPS   66|143    GB/s)
+[35m*** CPU       12[0m hcq_submit                                     arg  0 mem   0.03 GB tm     15.04us/     8.22ms (  20425 GFLOPS 1884|4115   GB/s)
+[35m*** METAL     12[0m r[90m_[0m[34m128[0m[90m_[0m[36m32[0m[90m_[0m[33m3[0m[90m_[0m[31m128[0m[90m_[0m[31m2[0m[90m_[0m[33m16[0m                            arg  0 mem   0.03 GB tm    422.00us/     8.22ms (    728 GFLOPS   67|147    GB/s)
+RESULT mode=q4_0 N=12288 K=4096 warmup_s=0.30 per_call_us_median=737.6 min=703.8 max=788.4 weight_MB=28.31 implied_GBps=38.4

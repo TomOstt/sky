@@ -1,0 +1,25 @@
+<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.
+Knowledge cutoff: 2024-06
+Current date: 2026-10-01
+
+Reasoning: medium
+
+# Valid channels: analysis, commentary, final. Channel must be included for every message.
+Calls to these tools must go to the commentary channel: 'functions'.<|end|><|start|>developer<|message|># Instructions
+
+You can call tools.
+
+# Tools
+
+## functions
+
+namespace functions {
+
+// Get weather <for> a city & date
+type get_weather = (_: {
+// City name, e.g. Zürich
+city: string,
+unit?: "c" | "f",
+}) => any;
+
+} // namespace functions<|end|><|start|>user<|message|>Weather in Zürich?<|end|><|start|>assistant to=functions.get_weather<|channel|>commentary json<|message|>{"city": "Zürich", "unit": "c"}<|call|><|start|>functions.get_weather to=assistant<|channel|>commentary<|message|>"{\"temp\": 21}"<|end|><|start|>assistant

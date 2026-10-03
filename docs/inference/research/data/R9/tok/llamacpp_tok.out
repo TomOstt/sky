@@ -1,0 +1,32 @@
+plain                    llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+leading_space            llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+leading_spaces3          llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+trailing_spaces          llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+multi_space_mid          llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+tabs                     llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+newlines                 llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+space_newline_mix        llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+only_ws                  llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+digits                   llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+contractions             llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+cjk                      llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+emoji_zwj                llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+combining_nfd            llama(parse_special) vs HF default: DIFF   llama(no_parse) vs HF split_special: DIFF   add_special_prefix=[]  detok_roundtrip=OK
+    HF   : [924, 58858, 94880, 586, 79252]
+    llama: [924, 1859, 53839, 308, 2143, 136, 230, 586, 362, 136, 232]
+combining_nfc            llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+hangul_nfd               llama(parse_special) vs HF default: DIFF   llama(no_parse) vs HF split_special: DIFF   add_special_prefix=[]  detok_roundtrip=OK
+    HF   : [23573, 124785, 31079]
+    llama: [146073, 146679, 147245, 146312, 147986, 147979, 146974, 147640]
+special_literal          llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+special_glued            llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+rare_unicode             llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+lone_surrogate_escaped   llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+control_chars            llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+code                     llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+url_path                 llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+long_repeat              llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+long_space_run           llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+math                     llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+rtl                      llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK
+mixed_script_word        llama(parse_special) vs HF default: OK    llama(no_parse) vs HF split_special: OK    add_special_prefix=[]  detok_roundtrip=OK

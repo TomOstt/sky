@@ -1,0 +1,6 @@
+[Qwen3-0.6B-4bit] generate_step                                              ITL median-of-3   3.458 ms  runs [3.346, 3.764, 3.458]
+[Qwen3-0.6B-4bit] BatchGenerator                                             ITL median-of-3   3.523 ms  runs [3.52, 3.527, 3.523]
+[Qwen3-0.6B-4bit] BatchGenerator + logprobs[token].item() (server.py:867)    ITL median-of-3   3.514 ms  runs [3.534, 3.514, 3.514]
+[Qwen3-8B-4bit] generate_step                                              ITL median-of-3  25.592 ms  runs [25.592, 25.571, 25.692]
+[Qwen3-8B-4bit] BatchGenerator                                             ITL median-of-3  25.810 ms  runs [25.751, 25.81, 25.81]
+[Qwen3-8B-4bit] BatchGenerator + logprobs[token].item() (server.py:867)    ITL median-of-3  25.714 ms  runs [25.664, 25.794, 25.714]

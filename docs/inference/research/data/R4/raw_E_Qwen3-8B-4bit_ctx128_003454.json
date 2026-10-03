@@ -1,0 +1,113 @@
+{
+ "model": "Qwen3-8B-4bit",
+ "ctx": 128,
+ "validate_maxdiff": 0.0,
+ "env": {
+  "mlx": "0.32.3",
+  "mlx_lm": "0.32.0",
+  "device": {
+   "device_name": "Apple M2 Pro",
+   "max_recommended_working_set_size": 12713115648,
+   "memory_size": 17179869184,
+   "architecture": "applegpu_g14s",
+   "max_buffer_length": 9534832640,
+   "resource_limit": 499000
+  },
+  "macos": "26.6.1",
+  "time": "2026-10-02 00:34:22"
+ },
+ "variants": {
+  "full (= qwen3.py)": {
+   "pipelined_med_ms": 25.898416060954332,
+   "pipelined_mean_ms": 26.04989285418202,
+   "build_ms": 0.6532915867865086,
+   "encode_ms": 13.611562666483223,
+   "wait_ms": 12.967478949576616,
+   "total_ms": 27.257812558673322,
+   "gpu_upper_ms": 26.58133360091597,
+   "dispatches": 693,
+   "barriers": 457
+  },
+  "no logsumexp (argmax on logits)": {
+   "pipelined_med_ms": 25.723625207319856,
+   "pipelined_mean_ms": 25.740630954267488,
+   "build_ms": 0.912416959181428,
+   "encode_ms": 13.799312524497509,
+   "wait_ms": 13.164417119696736,
+   "total_ms": 27.975582983344793,
+   "gpu_upper_ms": 27.000708039849997,
+   "dispatches": 691,
+   "barriers": 455
+  },
+  "no q/k/input/post RMSNorm": {
+   "pipelined_med_ms": 25.142875034362078,
+   "pipelined_mean_ms": 25.207949732060708,
+   "build_ms": 0.5608544452115893,
+   "encode_ms": 12.901041540317237,
+   "wait_ms": 12.680791900493205,
+   "total_ms": 26.18468808941543,
+   "gpu_upper_ms": 25.62693797517568,
+   "dispatches": 548,
+   "barriers": 348
+  },
+  "no RoPE": {
+   "pipelined_med_ms": 25.606416864320636,
+   "pipelined_mean_ms": 25.751432540663885,
+   "build_ms": 0.9313961490988731,
+   "encode_ms": 13.871478964574635,
+   "wait_ms": 12.984687462449074,
+   "total_ms": 27.8507296461612,
+   "gpu_upper_ms": 26.851166388951242,
+   "dispatches": 621,
+   "barriers": 421
+  },
+  "no attention (rope+cache+sdpa)": {
+   "pipelined_med_ms": 24.69695801846683,
+   "pipelined_mean_ms": 24.73208135260003,
+   "build_ms": 0.4743540193885565,
+   "encode_ms": 12.806750484742224,
+   "wait_ms": 12.42958300281316,
+   "total_ms": 25.812188046984375,
+   "gpu_upper_ms": 25.37312509957701,
+   "dispatches": 513,
+   "barriers": 348
+  },
+  "no residual adds": {
+   "pipelined_med_ms": 25.720207951962948,
+   "pipelined_mean_ms": 25.771386241392484,
+   "build_ms": 0.7400835165753961,
+   "encode_ms": 13.60164547804743,
+   "wait_ms": 12.926145573146641,
+   "total_ms": 27.162936981767416,
+   "gpu_upper_ms": 26.481854496523738,
+   "dispatches": 621,
+   "barriers": 385
+  },
+  "no SwiGLU": {
+   "pipelined_med_ms": 25.549542158842087,
+   "pipelined_mean_ms": 25.663492731779577,
+   "build_ms": 1.2338125379756093,
+   "encode_ms": 13.639187440276146,
+   "wait_ms": 12.910729157738388,
+   "total_ms": 27.79068809468299,
+   "gpu_upper_ms": 26.57183352857828,
+   "dispatches": 657,
+   "barriers": 422
+  },
+  "qmv only (all non-matmul removed)": {
+   "pipelined_med_ms": 23.92529183998704,
+   "pipelined_mean_ms": 24.167371034208273,
+   "build_ms": 0.6472086533904076,
+   "encode_ms": 14.150646049529314,
+   "wait_ms": 11.183062451891601,
+   "total_ms": 25.995583506301045,
+   "gpu_upper_ms": 25.415874901227653,
+   "dispatches": 258,
+   "barriers": 132
+  }
+ },
+ "generate_step_itl_ms": [
+  25.791040970943868,
+  25.837809891527286
+ ]
+}

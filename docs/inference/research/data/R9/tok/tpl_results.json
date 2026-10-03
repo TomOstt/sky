@@ -1,0 +1,266 @@
+{
+ "Qwen3-8B | basic | {'enable_thinking': True}": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<|im_start|>system\nYou are terse.<|im_end|>\n<|im_start|>user\nHi there!<|im_end|>\n<|im_start|>assistant\nHello.<|im_end|>\n<|im_start|>user\n2+2? Answer with “one” word — please.<|im_end|>\n<|im_start|>assistant\n",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "ERROR TemplateError: unknown method: string has no method named startswith (in t:20)",
+  "minijinja(pycompat=False,tojson=py)": "ERROR TemplateError: unknown method: string has no method named startswith (in t:20)"
+ },
+ "Qwen3-8B | basic | {'enable_thinking': False}": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<|im_start|>system\nYou are terse.<|im_end|>\n<|im_start|>user\nHi there!<|im_end|>\n<|im_start|>assistant\nHello.<|im_end|>\n<|im_start|>user\n2+2? Answer with “one” word — please.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "ERROR TemplateError: unknown method: string has no method named startswith (in t:20)",
+  "minijinja(pycompat=False,tojson=py)": "ERROR TemplateError: unknown method: string has no method named startswith (in t:20)"
+ },
+ "Qwen3-8B | tools | {'enable_thinking': True}": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<|im_start|>system\nYou can call tools.\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_weather\", \"description\": \"Get weather <for> a city & date\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"City name, e.g. Zürich\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"c\", \"f\"]}}, \"required\": [\"city\"]}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n<|im_start|>user\nWeather in Zürich?<|im_end|>\n<|im_start|>assistant\n<tool_call>\n{\"name\": \"get_weather\", \"arguments\": {\"city\": \"Zürich\", \"unit\": \"c\"}}\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\n{\"temp\": 21}\n</tool_response><|im_end|>\n<|im_start|>assistant\n",
+  "minijinja(pycompat=True,tojson=builtin)": "DIFF at char 207: jinja2='ls> XML tags:\\n<tools>\\n{\"type\": \"function\", \"function\": {\"name\": \"get_weather\", \"' | minijinja='ls> XML tags:\\n<tools>\\n{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"descr'",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "ERROR TemplateError: unknown method: string has no method named startswith (in t:20)",
+  "minijinja(pycompat=False,tojson=py)": "ERROR TemplateError: unknown method: string has no method named startswith (in t:20)"
+ },
+ "Qwen3-8B | tools | {'enable_thinking': False}": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<|im_start|>system\nYou can call tools.\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_weather\", \"description\": \"Get weather <for> a city & date\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"City name, e.g. Zürich\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"c\", \"f\"]}}, \"required\": [\"city\"]}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n<|im_start|>user\nWeather in Zürich?<|im_end|>\n<|im_start|>assistant\n<tool_call>\n{\"name\": \"get_weather\", \"arguments\": {\"city\": \"Zürich\", \"unit\": \"c\"}}\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\n{\"temp\": 21}\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+  "minijinja(pycompat=True,tojson=builtin)": "DIFF at char 207: jinja2='ls> XML tags:\\n<tools>\\n{\"type\": \"function\", \"function\": {\"name\": \"get_weather\", \"' | minijinja='ls> XML tags:\\n<tools>\\n{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"descr'",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "ERROR TemplateError: unknown method: string has no method named startswith (in t:20)",
+  "minijinja(pycompat=False,tojson=py)": "ERROR TemplateError: unknown method: string has no method named startswith (in t:20)"
+ },
+ "Qwen3-8B | reasoning_history | {'enable_thinking': True}": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<|im_start|>user\nQ1<|im_end|>\n<|im_start|>assistant\nA1<|im_end|>\n<|im_start|>user\nQ2<|im_end|>\n<|im_start|>assistant\n",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "ERROR TemplateError: unknown method: string has no method named startswith (in t:20)",
+  "minijinja(pycompat=False,tojson=py)": "ERROR TemplateError: unknown method: string has no method named startswith (in t:20)"
+ },
+ "Qwen3-8B | reasoning_history | {'enable_thinking': False}": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<|im_start|>user\nQ1<|im_end|>\n<|im_start|>assistant\nA1<|im_end|>\n<|im_start|>user\nQ2<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "ERROR TemplateError: unknown method: string has no method named startswith (in t:20)",
+  "minijinja(pycompat=False,tojson=py)": "ERROR TemplateError: unknown method: string has no method named startswith (in t:20)"
+ },
+ "Qwen2.5-7B-Instruct | basic | ": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<|im_start|>system\nYou are terse.<|im_end|>\n<|im_start|>user\nHi there!<|im_end|>\n<|im_start|>assistant\nHello.<|im_end|>\n<|im_start|>user\n2+2? Answer with “one” word — please.<|im_end|>\n<|im_start|>assistant\n",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "Qwen2.5-7B-Instruct | tools | ": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<|im_start|>system\nYou can call tools.\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_weather\", \"description\": \"Get weather <for> a city & date\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"City name, e.g. Zürich\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"c\", \"f\"]}}, \"required\": [\"city\"]}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n<|im_start|>user\nWeather in Zürich?<|im_end|>\n<|im_start|>assistant\n<tool_call>\n{\"name\": \"get_weather\", \"arguments\": {\"city\": \"Zürich\", \"unit\": \"c\"}}\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\n{\"temp\": 21}\n</tool_response><|im_end|>\n<|im_start|>assistant\n",
+  "minijinja(pycompat=True,tojson=builtin)": "DIFF at char 207: jinja2='ls> XML tags:\\n<tools>\\n{\"type\": \"function\", \"function\": {\"name\": \"get_weather\", \"' | minijinja='ls> XML tags:\\n<tools>\\n{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"descr'",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "DIFF at char 207: jinja2='ls> XML tags:\\n<tools>\\n{\"type\": \"function\", \"function\": {\"name\": \"get_weather\", \"' | minijinja='ls> XML tags:\\n<tools>\\n{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"descr'",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "Qwen2.5-7B-Instruct | reasoning_history | ": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nQ1<|im_end|>\n<|im_start|>assistant\n<think>\nsecret chain\n</think>\n\nA1<|im_end|>\n<|im_start|>user\nQ2<|im_end|>\n<|im_start|>assistant\n",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "Llama-3.1-8B-Instruct | basic | ": {
+  "template_src": "chat_template.jinja",
+  "jinja2": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nCutting Knowledge Date: December 2023\nToday Date: 26 Jul 2024\n\nYou are terse.<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nHi there!<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\nHello.<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n2+2? Answer with “one” word — please.<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "Llama-3.1-8B-Instruct | tools | ": {
+  "template_src": "chat_template.jinja",
+  "jinja2": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nEnvironment: ipython\nCutting Knowledge Date: December 2023\nToday Date: 26 Jul 2024\n\nYou can call tools.<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}.Do not use variables.\n\n{\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"get_weather\",\n        \"description\": \"Get weather <for> a city & date\",\n        \"parameters\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"city\": {\n                    \"type\": \"string\",\n                    \"description\": \"City name, e.g. Zürich\"\n                },\n                \"unit\": {\n                    \"type\": \"string\",\n                    \"enum\": [\n                        \"c\",\n                        \"f\"\n                    ]\n                }\n            },\n            \"required\": [\n                \"city\"\n            ]\n        }\n    }\n}\n\nWeather in Zürich?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n{\"name\": \"get_weather\", \"parameters\": {\"city\": \"Zürich\", \"unit\": \"c\"}}<|eot_id|><|start_header_id|>ipython<|end_header_id|>\n\n\"{\\\"temp\\\": 21}\"<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+  "minijinja(pycompat=True,tojson=builtin)": "DIFF at char 594: jinja2='  \"description\": \"Get weather <for> a city & date\",\\n        \"parameters\": {\\n    ' | minijinja='  \"description\": \"Get weather \\\\u003cfor\\\\u003e a city \\\\u0026 date\",\\n        \"para'",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "DIFF at char 594: jinja2='  \"description\": \"Get weather <for> a city & date\",\\n        \"parameters\": {\\n    ' | minijinja='  \"description\": \"Get weather \\\\u003cfor\\\\u003e a city \\\\u0026 date\",\\n        \"para'",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "Llama-3.1-8B-Instruct | reasoning_history | ": {
+  "template_src": "chat_template.jinja",
+  "jinja2": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nCutting Knowledge Date: December 2023\nToday Date: 26 Jul 2024\n\n<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nQ1<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n<think>\nsecret chain\n</think>\n\nA1<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nQ2<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "gemma-3-4b-it | basic | ": {
+  "template_src": "chat_template.jinja",
+  "jinja2": "<bos><start_of_turn>user\nYou are terse.\n\nHi there!<end_of_turn>\n<start_of_turn>model\nHello.<end_of_turn>\n<start_of_turn>user\n2+2? Answer with “one” word — please.<end_of_turn>\n<start_of_turn>model\n",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "gemma-3-4b-it | tools | ": {
+  "template_src": "chat_template.jinja",
+  "jinja2_err": "TemplateError: Conversation roles must alternate user/assistant/user/assistant/...",
+  "minijinja(pycompat=True,tojson=builtin)": "ERROR TemplateError: Conversation roles must alternate user/assistant/user/assistant/...",
+  "minijinja(pycompat=True,tojson=py)": "ERROR TemplateError: Conversation roles must alternate user/assistant/user/assistant/...",
+  "minijinja(pycompat=False,tojson=builtin)": "ERROR TemplateError: Conversation roles must alternate user/assistant/user/assistant/...",
+  "minijinja(pycompat=False,tojson=py)": "ERROR TemplateError: Conversation roles must alternate user/assistant/user/assistant/..."
+ },
+ "gemma-3-4b-it | reasoning_history | ": {
+  "template_src": "chat_template.jinja",
+  "jinja2": "<bos><start_of_turn>user\nQ1<end_of_turn>\n<start_of_turn>model\n<think>\nsecret chain\n</think>\n\nA1<end_of_turn>\n<start_of_turn>user\nQ2<end_of_turn>\n<start_of_turn>model\n",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "Mistral-7B-Instruct-v0.3 | basic | ": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<s>[INST] Hi there![/INST] Hello.</s>[INST] You are terse.\n\n2+2? Answer with “one” word — please.[/INST]",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "Mistral-7B-Instruct-v0.3 | tools | ": {
+  "template_src": "tokenizer_config.json",
+  "jinja2_err": "TemplateError: Tool call IDs should be alphanumeric strings with length 9!",
+  "minijinja(pycompat=True,tojson=builtin)": "ERROR TemplateError: Tool call IDs should be alphanumeric strings with length 9!",
+  "minijinja(pycompat=True,tojson=py)": "ERROR TemplateError: Tool call IDs should be alphanumeric strings with length 9!",
+  "minijinja(pycompat=False,tojson=builtin)": "ERROR TemplateError: Tool call IDs should be alphanumeric strings with length 9!",
+  "minijinja(pycompat=False,tojson=py)": "ERROR TemplateError: Tool call IDs should be alphanumeric strings with length 9!"
+ },
+ "Mistral-7B-Instruct-v0.3 | reasoning_history | ": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<s>[INST] Q1[/INST] <think>\nsecret chain\n</think>\n\nA1</s>[INST] Q2[/INST]",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "Mistral-Small-3.2-24B | basic | ": {
+  "template_src": "chat_template.jinja",
+  "jinja2": "<s>[SYSTEM_PROMPT]You are terse.[/SYSTEM_PROMPT][INST]Hi there![/INST]Hello.</s>[INST]2+2? Answer with “one” word — please.[/INST]",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "Mistral-Small-3.2-24B | tools | ": {
+  "template_src": "chat_template.jinja",
+  "jinja2_err": "TemplateError: Tool call IDs should be alphanumeric strings with length >= 9!",
+  "minijinja(pycompat=True,tojson=builtin)": "ERROR TemplateError: Tool call IDs should be alphanumeric strings with length >= 9!",
+  "minijinja(pycompat=True,tojson=py)": "ERROR TemplateError: Tool call IDs should be alphanumeric strings with length >= 9!",
+  "minijinja(pycompat=False,tojson=builtin)": "ERROR TemplateError: Tool call IDs should be alphanumeric strings with length >= 9!",
+  "minijinja(pycompat=False,tojson=py)": "ERROR TemplateError: Tool call IDs should be alphanumeric strings with length >= 9!"
+ },
+ "Mistral-Small-3.2-24B | reasoning_history | ": {
+  "template_src": "chat_template.jinja",
+  "jinja2": "<s>[SYSTEM_PROMPT]You are Mistral-Small-3.2-24B-Instruct-2506, a Large Language Model (LLM) created by Mistral AI, a French startup headquartered in Paris.\nYou power an AI assistant called Le Chat.\nYour knowledge base was last updated on 2023-10-01.\nThe current date is 2026-10-01-2026-10-01-2026-10-01.\n\nWhen you're not sure about some information or when the user's request requires up-to-date or specific data, you must use the available tools to fetch the information. Do not hesitate to use tools whenever they can provide a more accurate or complete response. If no relevant tools are available, then clearly state that you don't have the information and avoid making up anything.\nIf the user's question is not clear, ambiguous, or does not provide enough context for you to accurately answer the question, you do not try to answer it right away and you rather ask the user to clarify their request (e.g. \"What are some good restaurants around me?\" => \"Where are you?\" or \"When is the next flight to Tokyo\" => \"Where do you travel from?\").\nYou are always very attentive to dates, in particular you try to resolve dates (e.g. \"yesterday\" is 2026-10-01-2026-10-01-2026-10-01) and when asked about information at specific dates, you discard information that is at another date.\nYou follow these instructions in all languages, and always respond to the user in the language they use or request.\nNext sections describe the capabilities that you have.\n\n# WEB BROWSING INSTRUCTIONS\n\nYou cannot perform any web search or access internet to open URLs, links etc. If it seems like the user is expecting you to do so, you clarify the situation and ask the user to copy paste the text directly in the chat.\n\n# MULTI-MODAL INSTRUCTIONS\n\nYou have the ability to read images, but you cannot generate images. You also cannot transcribe audio files or videos.\nYou cannot read nor transcribe audio files or videos.\n\n# TOOL CALLING INSTRUCTIONS\n\nYou may have access to tools that you can use to fetch information or perform actions. You must use these tools in the following situations:\n\n1. When the request requires up-to-date information.\n2. When the request requires specific data that you do not have in your knowledge base.\n3. When the request involves actions that you cannot perform without tools.\n\nAlways prioritize using tools to provide the most accurate and helpful response. If tools are not available, inform the user that you cannot perform the requested action at the moment.[/SYSTEM_PROMPT][INST]Q1[/INST]<think>\nsecret chain\n</think>\n\nA1</s>[INST]Q2[/INST]",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "phi-4 | basic | ": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<|im_start|>system<|im_sep|>You are terse.<|im_end|><|im_start|>user<|im_sep|>Hi there!<|im_end|><|im_start|>assistant<|im_sep|>Hello.<|im_end|><|im_start|>user<|im_sep|>2+2? Answer with “one” word — please.<|im_end|><|im_start|>assistant<|im_sep|>",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "phi-4 | tools | ": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<|im_start|>system<|im_sep|>You can call tools.<|im_end|><|im_start|>user<|im_sep|>Weather in Zürich?<|im_end|><|im_start|>assistant<|im_sep|><|im_end|><|im_start|>assistant<|im_sep|>",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "phi-4 | reasoning_history | ": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<|im_start|>user<|im_sep|>Q1<|im_end|><|im_start|>assistant<|im_sep|><think>\nsecret chain\n</think>\n\nA1<|im_end|><|im_start|>user<|im_sep|>Q2<|im_end|><|im_start|>assistant<|im_sep|>",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "DeepSeek-R1-Distill-Qwen-7B | basic | ": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<｜begin▁of▁sentence｜>You are terse.<｜User｜>Hi there!<｜Assistant｜>Hello.<｜end▁of▁sentence｜><｜User｜>2+2? Answer with “one” word — please.<｜Assistant｜><think>\n",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "DeepSeek-R1-Distill-Qwen-7B | tools | ": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<｜begin▁of▁sentence｜>You can call tools.<｜User｜>Weather in Zürich?<｜Assistant｜><｜end▁of▁sentence｜><｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>{\"temp\": 21}<｜tool▁output▁end｜><｜tool▁outputs▁end｜>",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "DeepSeek-R1-Distill-Qwen-7B | reasoning_history | ": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<｜begin▁of▁sentence｜><｜User｜>Q1<｜Assistant｜>\n\nA1<｜end▁of▁sentence｜><｜User｜>Q2<｜Assistant｜><think>\n",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "ERROR TemplateError: unknown method: string has no method named split (in t:1)",
+  "minijinja(pycompat=False,tojson=py)": "ERROR TemplateError: unknown method: string has no method named split (in t:1)"
+ },
+ "DeepSeek-R1-Distill-Llama-8B | basic | ": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<｜begin▁of▁sentence｜>You are terse.<｜User｜>Hi there!<｜Assistant｜>Hello.<｜end▁of▁sentence｜><｜User｜>2+2? Answer with “one” word — please.<｜Assistant｜><think>\n",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "DeepSeek-R1-Distill-Llama-8B | tools | ": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<｜begin▁of▁sentence｜>You can call tools.<｜User｜>Weather in Zürich?<｜Assistant｜><｜end▁of▁sentence｜><｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>{\"temp\": 21}<｜tool▁output▁end｜><｜tool▁outputs▁end｜>",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "DeepSeek-R1-Distill-Llama-8B | reasoning_history | ": {
+  "template_src": "tokenizer_config.json",
+  "jinja2": "<｜begin▁of▁sentence｜><｜User｜>Q1<｜Assistant｜>\n\nA1<｜end▁of▁sentence｜><｜User｜>Q2<｜Assistant｜><think>\n",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "ERROR TemplateError: unknown method: string has no method named split (in t:1)",
+  "minijinja(pycompat=False,tojson=py)": "ERROR TemplateError: unknown method: string has no method named split (in t:1)"
+ },
+ "gpt-oss-20b | basic | ": {
+  "template_src": "chat_template.jinja",
+  "jinja2": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-10-01\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|><|start|>developer<|message|># Instructions\n\nYou are terse.\n\n<|end|><|start|>user<|message|>Hi there!<|end|><|start|>assistant<|channel|>final<|message|>Hello.<|end|><|start|>user<|message|>2+2? Answer with “one” word — please.<|end|><|start|>assistant",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "gpt-oss-20b | tools | ": {
+  "template_src": "chat_template.jinja",
+  "jinja2": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-10-01\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.\nCalls to these tools must go to the commentary channel: 'functions'.<|end|><|start|>developer<|message|># Instructions\n\nYou can call tools.\n\n# Tools\n\n## functions\n\nnamespace functions {\n\n// Get weather <for> a city & date\ntype get_weather = (_: {\n// City name, e.g. Zürich\ncity: string,\nunit?: \"c\" | \"f\",\n}) => any;\n\n} // namespace functions<|end|><|start|>user<|message|>Weather in Zürich?<|end|><|start|>assistant to=functions.get_weather<|channel|>commentary json<|message|>{\"city\": \"Zürich\", \"unit\": \"c\"}<|call|><|start|>functions.get_weather to=assistant<|channel|>commentary<|message|>\"{\\\"temp\\\": 21}\"<|end|><|start|>assistant",
+  "minijinja(pycompat=True,tojson=builtin)": "DIFF at char 732: jinja2='entary json<|message|>{\"city\": \"Zürich\", \"unit\": \"c\"}<|call|><|start|>functions.' | minijinja='entary json<|message|>{\"city\":\"Zürich\",\"unit\":\"c\"}<|call|><|start|>functions.get'",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "DIFF at char 732: jinja2='entary json<|message|>{\"city\": \"Zürich\", \"unit\": \"c\"}<|call|><|start|>functions.' | minijinja='entary json<|message|>{\"city\":\"Zürich\",\"unit\":\"c\"}<|call|><|start|>functions.get'",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ },
+ "gpt-oss-20b | reasoning_history | ": {
+  "template_src": "chat_template.jinja",
+  "jinja2": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-10-01\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|><|start|>user<|message|>Q1<|end|><|start|>assistant<|channel|>final<|message|><think>\nsecret chain\n</think>\n\nA1<|end|><|start|>user<|message|>Q2<|end|><|start|>assistant",
+  "minijinja(pycompat=True,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=True,tojson=py)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=builtin)": "IDENTICAL",
+  "minijinja(pycompat=False,tojson=py)": "IDENTICAL"
+ }
+}

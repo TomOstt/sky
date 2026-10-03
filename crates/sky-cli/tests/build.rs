@@ -548,6 +548,26 @@ fn the_default_output_is_named_after_the_file() {
     assert_eq!(run.code, Some(0));
 }
 
+/// Runs `cmd`, retrying while the kernel says the executable is busy.
+///
+/// On Linux, `exec` fails with ETXTBSY (errno 26) while any process holds the
+/// file open for writing. A test that writes an executable from this process
+/// (`fs::copy`) races with the other test threads: a child they fork in that
+/// window inherits the write descriptor until its own `exec` closes it. The
+/// window is short, so a brief retry is enough.
+fn output_when_not_busy(cmd: &mut Command) -> Output {
+    const ETXTBSY: i32 = 26;
+    for _ in 0..100 {
+        match cmd.output() {
+            Err(e) if e.raw_os_error() == Some(ETXTBSY) => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            result => return result.expect("run the executable"),
+        }
+    }
+    cmd.output().expect("run the executable")
+}
+
 /// The executable is the same file wherever it runs from: the runtime finds
 /// its program in the executable, not next to it.
 #[test]
@@ -564,11 +584,9 @@ fn the_executable_is_standalone() {
     let elsewhere = Dir::new("standalone-elsewhere");
     fs::copy(dir.0.join("prog"), elsewhere.0.join("prog")).unwrap();
     fs::remove_dir_all(&dir.0).unwrap();
-    let run: Outcome = Command::new(elsewhere.0.join("prog"))
-        .current_dir(&elsewhere.0)
-        .output()
-        .unwrap()
-        .into();
+    let run: Outcome =
+        output_when_not_busy(Command::new(elsewhere.0.join("prog")).current_dir(&elsewhere.0))
+            .into();
     assert_eq!(run.stdout, "1\n");
     assert_eq!(run.code, Some(1));
     // The diagnostic quotes the source the program was built from.

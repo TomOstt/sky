@@ -1,0 +1,21 @@
+== Qwen3-0.6B-4bit  (tie_word_embeddings=True)
+  dtypes: {('biases', 'BF16'): 197, ('scales', 'BF16'): 197, ('weight', 'U32'): 197, ('weight', 'BF16'): 113}
+  attn_linear         99.09 MB
+  embed_tokens        87.52 MB
+  mlp_linear         148.64 MB
+  norms                0.13 MB
+  file total         335.37 MB
+  per-token weight bytes (linears + tied embed as lm_head + norms): 335.37 MB = 0.3123 GiB
+  KV cache bytes read per context position per token: 114688 B (114.7 KB)
+  quantized (non-embed) params: 0.4404 B; bits/weight incl. scales+biases: 4.500
+== Qwen3-8B-4bit  (tie_word_embeddings=False)
+  dtypes: {('biases', 'BF16'): 254, ('scales', 'BF16'): 254, ('weight', 'U32'): 254, ('weight', 'BF16'): 145}
+  attn_linear        849.35 MB
+  embed_tokens       350.06 MB
+  lm_head            350.06 MB
+  mlp_linear        3057.65 MB
+  norms                0.62 MB
+  file total        4607.73 MB
+  per-token weight bytes (linears + lm_head + norms): 4257.67 MB = 3.9653 GiB
+  KV cache bytes read per context position per token: 147456 B (147.5 KB)
+  quantized (non-embed) params: 7.5681 B; bits/weight incl. scales+biases: 4.500

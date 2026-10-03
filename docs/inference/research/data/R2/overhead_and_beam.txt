@@ -1,0 +1,6 @@
+RESULT jit1_us=155.2 jit64_us=426.7 marginal_per_kernel_us=4.31 eager1_us=452.6
+RESULT cold64 trial=0 build_ms=1.59 realize_ms=504.7 per_kernel_ms=7.89
+RESULT cold64 trial=1 build_ms=1.71 realize_ms=238.3 per_kernel_ms=3.72
+RESULT cold64 trial=2 build_ms=1.71 realize_ms=486.2 per_kernel_ms=7.60
+BEAMCACHED RESULT mode=fp16 N=12288 K=4096 warmup_s=0.20 per_call_us_median=709.1 min=682.7 max=886.9 weight_MB=100.66 implied_GBps=142.0
+BEAMCACHED RESULT mode=q4_0 N=12288 K=4096 warmup_s=0.30 per_call_us_median=536.3 min=501.8 max=720.6 weight_MB=28.31 implied_GBps=52.8

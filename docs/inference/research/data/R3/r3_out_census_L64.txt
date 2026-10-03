@@ -1,0 +1,21 @@
+# {"bench": "F_model_overhead_census_L64_ctx128", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-01 20:19:48", "env": {}}
+# params bytes 0.022 GB (embedding table 0.000 GB, read 1 row/token)
+total primitive nodes: 1872
+  QuantizedMatmul              449
+  RMSNorm                      257
+  Reshape                      256
+  Transpose                    256
+  RoPE                         128
+  SliceUpdate                  128
+  Slice                        128
+  Add                          128
+  ScaledDotProductAttention    64
+  CompiledSigmoidBroadcastBroadcastMultiplyBroadcastBroadcastMultiply 64
+  Squeeze                      5
+  Gather                       3
+  ExpandDims                   1
+  Quantize                     1
+  LogSumExp                    1
+  Broadcast                    1
+  Subtract                     1
+  ArgReduce                    1

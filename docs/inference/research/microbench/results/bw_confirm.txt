@@ -1,0 +1,44 @@
+LOCK_ACQUIRED 00:46:27
+R6 bw  macOS 26.6.1  2026-10-01 9:46:28 PM +0000
+device=Apple M2 Pro arch=applegpu_g14s unified=true maxTG=1024 tgMem=32768 recommendedMaxWorkingSet=12713115648 maxBuffer=9534832640
+
+# CONFIRM: interleaved rounds, 1 GiB private read, median of 7 runs per config per round
+round 0 float_u4 tg=512 grid=16384: 195.9 GB/s
+round 0 float4_u4 tg=256 grid=1048576: 184.2 GB/s
+round 0 float4_u1 tg=128 grid=16384: 184.0 GB/s
+round 0 float_u1 tg=512 grid=32768: 194.5 GB/s
+round 0 float4_u8 tg=128 grid=1048576: 186.2 GB/s
+round 0 float2_u4 tg=256 grid=1048576: 190.4 GB/s
+round 1 float_u4 tg=512 grid=16384: 195.7 GB/s
+round 1 float4_u4 tg=256 grid=1048576: 180.2 GB/s
+round 1 float4_u1 tg=128 grid=16384: 182.6 GB/s
+round 1 float_u1 tg=512 grid=32768: 194.5 GB/s
+round 1 float4_u8 tg=128 grid=1048576: 185.0 GB/s
+round 1 float2_u4 tg=256 grid=1048576: 190.9 GB/s
+round 2 float_u4 tg=512 grid=16384: 196.7 GB/s
+round 2 float4_u4 tg=256 grid=1048576: 184.3 GB/s
+round 2 float4_u1 tg=128 grid=16384: 184.3 GB/s
+round 2 float_u1 tg=512 grid=32768: 194.9 GB/s
+round 2 float4_u8 tg=128 grid=1048576: 185.9 GB/s
+round 2 float2_u4 tg=256 grid=1048576: 189.7 GB/s
+round 3 float_u4 tg=512 grid=16384: 196.3 GB/s
+round 3 float4_u4 tg=256 grid=1048576: 184.0 GB/s
+round 3 float4_u1 tg=128 grid=16384: 183.5 GB/s
+round 3 float_u1 tg=512 grid=32768: 195.3 GB/s
+round 3 float4_u8 tg=128 grid=1048576: 186.3 GB/s
+round 3 float2_u4 tg=256 grid=1048576: 190.0 GB/s
+round 4 float_u4 tg=512 grid=16384: 196.3 GB/s
+round 4 float4_u4 tg=256 grid=1048576: 183.1 GB/s
+round 4 float4_u1 tg=128 grid=16384: 180.5 GB/s
+round 4 float_u1 tg=512 grid=32768: 193.7 GB/s
+round 4 float4_u8 tg=128 grid=1048576: 186.1 GB/s
+round 4 float2_u4 tg=256 grid=1048576: 190.6 GB/s
+CONFIRM float2_u4 tg=256 grid=1048576: median of rounds 190.4 GB/s (min 189.7 max 190.9)
+CONFIRM float4_u1 tg=128 grid=16384: median of rounds 183.5 GB/s (min 180.5 max 184.3)
+CONFIRM float4_u4 tg=256 grid=1048576: median of rounds 184.0 GB/s (min 180.2 max 184.3)
+CONFIRM float4_u8 tg=128 grid=1048576: median of rounds 186.1 GB/s (min 185.0 max 186.3)
+CONFIRM float_u1 tg=512 grid=32768: median of rounds 194.5 GB/s (min 193.7 max 195.3)
+CONFIRM float_u4 tg=512 grid=16384: median of rounds 196.3 GB/s (min 195.7 max 196.7)
+real 2.63
+user 0.02
+sys 0.11

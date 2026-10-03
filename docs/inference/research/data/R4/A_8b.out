@@ -1,0 +1,31 @@
+[Qwen3-8B-4bit] decode prompt=128 gen=256
+  decode_wall_tps        median=37.4417  all=[37.7413, 37.8592, 37.4417, 36.1291, 36.3919]
+  itl_median_ms          median=26.4219  all=[26.3552, 26.3531, 26.4219, 27.0492, 27.0771]
+  mlxlm_generation_tps   median=37.5884  all=[37.8891, 38.0075, 37.5884, 36.2707, 36.5344]
+  ttft_wall              median=0.6433  all=[0.6464, 0.6423, 0.6418, 0.6557, 0.6433]
+  mlxlm_prompt_tps       median=199.2677  all=[198.3048, 199.4543, 199.732, 195.3775, 199.2677]
+  mlxlm_peak_gb          median=4.9226  all=[4.9226, 4.9226, 4.9226, 4.9226, 4.9226]
+  os lifetime_max_phys_footprint GB: 5.251207344
+raw -> /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/R4/raw_A_Qwen3-8B-4bit_decode_201753.json
+[Qwen3-8B-4bit] prefill L=128
+  ttft_wall          median=0.6392  all=[0.6435, 0.6584, 0.6392, 0.6392, 0.6377]
+  mlxlm_prompt_tps   median=200.4063  all=[199.1731, 194.5582, 200.48, 200.4063, 200.9165]
+  mlxlm_peak_gb      median=4.9226  all=[4.9226, 4.9226, 4.9226, 4.9226, 4.9226]
+  wall prefill tok/s (L/ttft_wall) median=200.2
+[Qwen3-8B-4bit] prefill L=512
+  ttft_wall          median=2.3324  all=[2.332, 2.3324, 2.353, 2.3319, 2.3348]
+  mlxlm_prompt_tps   median=219.5885  all=[219.604, 219.5885, 217.6442, 219.6825, 219.3458]
+  mlxlm_peak_gb      median=5.2166  all=[5.2166, 5.2166, 5.2166, 5.2166, 5.2166]
+  wall prefill tok/s (L/ttft_wall) median=219.5
+[Qwen3-8B-4bit] prefill L=1024
+  ttft_wall          median=4.7298  all=[4.6874, 4.7298, 4.789, 4.7318, 4.6463]
+  mlxlm_prompt_tps   median=216.5407  all=[218.5021, 216.5407, 213.8529, 216.4476, 220.4162]
+  mlxlm_peak_gb      median=5.4213  all=[5.4213, 5.4213, 5.4213, 5.4213, 5.4213]
+  wall prefill tok/s (L/ttft_wall) median=216.5
+[Qwen3-8B-4bit] prefill L=2048
+  ttft_wall          median=9.4094  all=[9.4094, 9.3874, 9.4857, 9.4523, 9.394]
+  mlxlm_prompt_tps   median=217.6805  all=[217.6805, 218.1855, 215.9234, 216.6858, 218.0295]
+  mlxlm_peak_gb      median=5.6101  all=[5.6101, 5.6101, 5.6101, 5.6101, 5.6101]
+  wall prefill tok/s (L/ttft_wall) median=217.7
+  os lifetime_max_phys_footprint GB: 6.288937136
+raw -> /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/R4/raw_A_Qwen3-8B-4bit_prefill_202247.json

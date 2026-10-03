@@ -1,0 +1,5 @@
+n=16 entries=256  equal_to_seq_fma=256  equal_to_seq_unfused=100  max_rel_diff_vs_fma=0
+n=64 entries=4096  equal_to_seq_fma=4096  equal_to_seq_unfused=1178  max_rel_diff_vs_fma=0
+n=256 entries=65536  equal_to_seq_fma=65536  equal_to_seq_unfused=12141  max_rel_diff_vs_fma=0
+n=256 entries=65536  equal_to_seq_fma=65536  equal_to_seq_unfused=12141  max_rel_diff_vs_fma=0
+n=512 entries=262144  equal_to_seq_fma=262144  equal_to_seq_unfused=39981  max_rel_diff_vs_fma=0

@@ -1,0 +1,6 @@
+# A scalar loop that reads a large vector element by element.
+x = zeros(1000000) + identity(1000)[0, 0] * zeros(1000000)
+s = 0.0
+for i in range(1000000):
+    s = s + x[i] + 1.0
+print(s)

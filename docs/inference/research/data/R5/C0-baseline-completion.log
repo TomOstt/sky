@@ -1,0 +1,68 @@
+# Thu Oct  1 20:18:34 IDT 2026 load: load averages: 4.85 4.53 3.84
+# cmd: /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/src/llama.cpp/build/bin/llama-completion -m /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/models/Qwen3-8B-Q4_0.gguf -p "Here is a quick sort implementation in C++. Just code, no comments:\n\n#include" -n 256 --temp 0 --top-k 1 --seed 42 -ngl 99 -c 4096 -e -no-cnv
+0.00.117.553 I llama_completion: llama backend init
+0.00.117.560 I llama_completion: load the model and apply lora adapter, if any
+0.00.357.950 W load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.03.671.539 I cmn          init: llama threadpool init, n_threads = 6
+0.03.893.887 I 
+0.03.893.918 I system_info: n_threads = 6 (n_threads_batch = 6) / 10 | MTL : EMBED_LIBRARY = 1 | CPU : NEON = 1 | ARM_FMA = 1 | FP16_VA = 1 | MATMUL_INT8 = 1 | DOTPROD = 1 | ACCELERATE = 1 | REPACK = 1 | 
+0.03.893.918 I 
+0.03.894.908 I sampler seed: 42
+0.03.894.918 I sampler params: 
+	repeat_last_n = 64, repeat_penalty = 1.000, frequency_penalty = 0.000, presence_penalty = 0.000
+	dry_multiplier = 0.000, dry_base = 1.750, dry_allowed_length = 2, dry_penalty_last_n = 64
+	top_k = 1, top_p = 0.950, min_p = 0.050, xtc_probability = 0.000, xtc_threshold = 0.100, typical_p = 1.000, top_n_sigma = -1.000, temp = 0.000
+	mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000, adaptive_target = -1.000, adaptive_decay = 0.900
+0.03.895.094 I sampler chain: logits -> ?penalties -> ?dry -> ?top-n-sigma -> top-k -> ?typical -> top-p -> min-p -> ?xtc -> temp-ext -> dist 
+0.03.895.096 I generate: n_ctx = 4096, n_batch = 2048, n_predict = 256, n_keep = 0
+0.03.895.096 I 
+Here is a quick sort implementation in C++. Just code, no comments:
+
+#include <iostream>
+using namespace std;
+
+void swap(int* a, int* b) {
+    int temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
+int partition(int arr[], int low, int high) {
+    int pivot = arr[high];
+    int i = low - 1;
+    for (int j = low; j < high; j++) {
+        if (arr[j] <= pivot) {
+            i++;
+            swap(&arr[i], &arr[j]);
+        }
+    }
+    swap(&arr[i + 1], &arr[high]);
+    return i + 1;
+}
+
+void quickSort(int arr[], int low, int high) {
+    if (low < high) {
+        int pi = partition(arr, low, high);
+        quickSort(arr, low, pi - 1);
+        quickSort(arr, pi + 1, high);
+    }
+}
+
+void printArray(int arr[], int size) {
+    for (int i = 0; i < size; i++)
+        cout << arr[i] << " ";
+    cout << endl;
+}
+
+int main() {
+    int arr[] = {64, 34, 25, 12,
+
+0.11.491.659 I common_perf_print:    sampling time =      27.34 ms
+0.11.491.660 I common_perf_print:    samplers time =      17.18 ms /   272 tokens
+0.11.491.660 I common_perf_print:        load time =    3559.86 ms
+0.11.491.661 I common_perf_print: prompt eval time =     191.05 ms /    16 tokens (   11.94 ms per token,    83.75 tokens per second)
+0.11.491.662 I common_perf_print:        eval time =    7374.62 ms /   255 runs   (   28.92 ms per token,    34.58 tokens per second)
+0.11.491.663 I common_perf_print:       total time =    7597.78 ms /   271 tokens
+0.11.491.663 I common_perf_print: unaccounted time =       4.78 ms /   0.1 %      (total - sampling - prompt eval - eval) / (total)
+0.11.491.667 I common_perf_print:    graphs reused =        253
+# exit=0 end Thu Oct  1 20:18:47 IDT 2026

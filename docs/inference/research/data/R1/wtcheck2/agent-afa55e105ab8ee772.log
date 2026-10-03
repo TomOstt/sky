@@ -1,0 +1,15 @@
+    Checking sky-diag v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-afa55e105ab8ee772/crates/sky-diag)
+    Checking sky-hw v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-afa55e105ab8ee772/crates/sky-hw)
+    Checking sky-units v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-afa55e105ab8ee772/crates/sky-units)
+    Checking sky-ode v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-afa55e105ab8ee772/crates/sky-ode)
+    Checking sky-syntax v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-afa55e105ab8ee772/crates/sky-syntax)
+    Checking sky-tune v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-afa55e105ab8ee772/crates/sky-tune)
+    Checking sky-linalg v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-afa55e105ab8ee772/crates/sky-linalg)
+    Checking sky-ast v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-afa55e105ab8ee772/crates/sky-ast)
+    Checking sky-project v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-afa55e105ab8ee772/crates/sky-project)
+    Checking sky-types v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-afa55e105ab8ee772/crates/sky-types)
+    Checking sky-ir v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-afa55e105ab8ee772/crates/sky-ir)
+    Checking sky-interp v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-afa55e105ab8ee772/crates/sky-interp)
+crates/sky-types/tests/expr_types.rs:198:27: error[E0004]: non-exhaustive patterns: `&SolveOption::Until { .. }` not covered: pattern `&SolveOption::Until { .. }` not covered
+error: could not compile `sky-types` (test "expr_types") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

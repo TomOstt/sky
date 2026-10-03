@@ -1,0 +1,98 @@
+{
+ "env": {
+  "mlx": "0.32.3",
+  "mlx_lm": "0.32.0",
+  "device": {
+   "device_name": "Apple M2 Pro",
+   "max_recommended_working_set_size": 12713115648,
+   "memory_size": 17179869184,
+   "architecture": "applegpu_g14s",
+   "max_buffer_length": 9534832640,
+   "resource_limit": 499000
+  },
+  "macos": "26.6.1",
+  "time": "2026-10-01 20:17:13"
+ },
+ "model": "Qwen3-8B-4bit",
+ "mode": "decode",
+ "load_s": 2.2227051670197397,
+ "trials": 5,
+ "results": {
+  "decode_p128_g256": [
+   {
+    "ttft_wall": 0.6464156250003725,
+    "decode_wall_tps": 37.74127823236351,
+    "itl_median_ms": 26.355166919529438,
+    "n": 256,
+    "mlxlm_prompt_tps": 198.30475245636416,
+    "mlxlm_generation_tps": 37.889132070111856,
+    "mlxlm_peak_gb": 4.922551004,
+    "mlx_peak_gb_after": 4.922551004,
+    "active_gb_after": 4.608043016,
+    "cache_gb_after": 0.137530678,
+    "prompt_tokens": 128
+   },
+   {
+    "ttft_wall": 0.6423357909079641,
+    "decode_wall_tps": 37.85923589447327,
+    "itl_median_ms": 26.353124994784594,
+    "n": 256,
+    "mlxlm_prompt_tps": 199.45431859648616,
+    "mlxlm_generation_tps": 38.00752197180616,
+    "mlxlm_peak_gb": 4.922551004,
+    "mlx_peak_gb_after": 4.922551004,
+    "active_gb_after": 4.608043016,
+    "cache_gb_after": 0.137530678,
+    "prompt_tokens": 128
+   },
+   {
+    "ttft_wall": 0.6418445419985801,
+    "decode_wall_tps": 37.44172145372528,
+    "itl_median_ms": 26.421874994412065,
+    "n": 256,
+    "mlxlm_prompt_tps": 199.73203916488532,
+    "mlxlm_generation_tps": 37.58841191866599,
+    "mlxlm_peak_gb": 4.922551004,
+    "mlx_peak_gb_after": 4.922551004,
+    "active_gb_after": 4.608043016,
+    "cache_gb_after": 0.137530678,
+    "prompt_tokens": 128
+   },
+   {
+    "ttft_wall": 0.6556847081519663,
+    "decode_wall_tps": 36.12913509245301,
+    "itl_median_ms": 27.049208991229534,
+    "n": 256,
+    "mlxlm_prompt_tps": 195.3775031961218,
+    "mlxlm_generation_tps": 36.270669162740944,
+    "mlxlm_peak_gb": 4.922551004,
+    "mlx_peak_gb_after": 4.922551004,
+    "active_gb_after": 4.608043016,
+    "cache_gb_after": 0.137530678,
+    "prompt_tokens": 128
+   },
+   {
+    "ttft_wall": 0.6432925839908421,
+    "decode_wall_tps": 36.39187736870535,
+    "itl_median_ms": 27.077083010226488,
+    "n": 256,
+    "mlxlm_prompt_tps": 199.2677042732764,
+    "mlxlm_generation_tps": 36.53439465740996,
+    "mlxlm_peak_gb": 4.922551004,
+    "mlx_peak_gb_after": 4.922551004,
+    "active_gb_after": 4.608043016,
+    "cache_gb_after": 0.133336374,
+    "prompt_tokens": 128
+   }
+  ]
+ },
+ "rusage_end": {
+  "phys_footprint": 5040853168,
+  "resident": 253280256,
+  "wired": 0,
+  "lifetime_max_phys_footprint": 5251207344,
+  "billed_energy_nj": 1591547,
+  "serviced_energy_nj": 0,
+  "interval_max_phys_footprint": 5251207344
+ }
+}

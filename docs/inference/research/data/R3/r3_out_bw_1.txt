@@ -1,0 +1,23 @@
+# {"bench": "A_bandwidth", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-01 20:12:37", "env": {}}
+all-reduce sum fp16 16 MiB                   bytes=  0.017GB  med=    0.357 ms  min=    0.334 ms  BW_med=   47.0 GB/s  BW_best=   50.3 GB/s
+all-reduce sum fp16 64 MiB                   bytes=  0.067GB  med=    0.710 ms  min=    0.689 ms  BW_med=   94.5 GB/s  BW_best=   97.5 GB/s
+all-reduce sum fp16 256 MiB                  bytes=  0.268GB  med=    1.835 ms  min=    1.785 ms  BW_med=  146.3 GB/s  BW_best=  150.4 GB/s
+all-reduce max fp16 256 MiB                  bytes=  0.268GB  med=    1.780 ms  min=    1.732 ms  BW_med=  150.8 GB/s  BW_best=  155.0 GB/s
+row-reduce sum fp16 256 MiB (rows of 4096)   bytes=  0.268GB  med=    1.825 ms  min=    1.778 ms  BW_med=  147.1 GB/s  BW_best=  151.0 GB/s
+all-reduce sum fp16 1024 MiB                 bytes=  1.074GB  med=    6.013 ms  min=    5.950 ms  BW_med=  178.6 GB/s  BW_best=  180.5 GB/s
+all-reduce max fp16 1024 MiB                 bytes=  1.074GB  med=    6.074 ms  min=    5.986 ms  BW_med=  176.8 GB/s  BW_best=  179.4 GB/s
+row-reduce sum fp16 1024 MiB (rows of 4096)  bytes=  1.074GB  med=    6.632 ms  min=    6.578 ms  BW_med=  161.9 GB/s  BW_best=  163.2 GB/s
+all-reduce sum fp16 2048 MiB                 bytes=  2.147GB  med=   11.765 ms  min=   11.676 ms  BW_med=  182.5 GB/s  BW_best=  183.9 GB/s
+all-reduce max fp16 2048 MiB                 bytes=  2.147GB  med=   11.746 ms  min=   11.660 ms  BW_med=  182.8 GB/s  BW_best=  184.2 GB/s
+row-reduce sum fp16 2048 MiB (rows of 4096)  bytes=  2.147GB  med=   13.151 ms  min=   12.889 ms  BW_med=  163.3 GB/s  BW_best=  166.6 GB/s
+elementwise x*2 fp16 64 MiB (R+W)            bytes=  0.134GB  med=    0.877 ms  min=    0.861 ms  BW_med=  153.0 GB/s  BW_best=  155.9 GB/s
+reversed copy fp16 64 MiB (R+W)              bytes=  0.134GB  med=    0.845 ms  min=    0.833 ms  BW_med=  158.8 GB/s  BW_best=  161.2 GB/s
+elementwise x*2 fp16 256 MiB (R+W)           bytes=  0.537GB  med=    3.127 ms  min=    3.015 ms  BW_med=  171.7 GB/s  BW_best=  178.1 GB/s
+reversed copy fp16 256 MiB (R+W)             bytes=  0.537GB  med=    3.098 ms  min=    3.067 ms  BW_med=  173.3 GB/s  BW_best=  175.0 GB/s
+elementwise x*2 fp16 1024 MiB (R+W)          bytes=  2.147GB  med=   11.818 ms  min=   11.722 ms  BW_med=  181.7 GB/s  BW_best=  183.2 GB/s
+reversed copy fp16 1024 MiB (R+W)            bytes=  2.147GB  med=   11.829 ms  min=   11.740 ms  BW_med=  181.5 GB/s  BW_best=  182.9 GB/s
+peak_memory_GB 5.36870912
+
+real	4m27.893s
+user	0m0.328s
+sys	0m0.933s

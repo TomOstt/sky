@@ -1,0 +1,46 @@
+== Qwen3-0.6B-4bit  layers=28  ctx=128  offset_after=127
+graph primitive nodes: 829
+  QuantizedMatmul                                                197  (7.04/layer)
+  RMSNorm                                                        113  (4.04/layer)
+  Reshape                                                        112  (4.00/layer)
+  Transpose                                                      112  (4.00/layer)
+  RoPE                                                            56  (2.00/layer)
+  SliceUpdate                                                     56  (2.00/layer)
+  Slice                                                           56  (2.00/layer)
+  Add                                                             56  (2.00/layer)
+  ScaledDotProductAttention                                       28  (1.00/layer)
+  CompiledSigmoidBroadcastBroadcastMultiplyBroadcastBroadcastMultiply    28  (1.00/layer)
+  Squeeze                                                          6  (0.21/layer)
+  Gather                                                           3  (0.11/layer)
+  ExpandDims                                                       1  (0.04/layer)
+  Quantize                                                         1  (0.04/layer)
+  LogSumExp                                                        1  (0.04/layer)
+  Broadcast                                                        1  (0.04/layer)
+  Subtract                                                         1  (0.04/layer)
+  ArgReduce                                                        1  (0.04/layer)
+exact Metal calls for one full decode step (forward+logsumexp+argmax): {'dispatchThreadgroups': 225, 'dispatchThreads': 316, 'barriers': 362, 'barriers_res': 0, 'encoders': 11}
+exact Metal calls for forward only (logits):                        {'dispatchThreadgroups': 225, 'dispatchThreads': 313, 'barriers': 359, 'barriers_res': 0, 'encoders': 11}
+total dispatches/token = 541  (19.32 per layer); barriers/token = 362; compute encoders (~command buffers) = 11
+== Qwen3-8B-4bit  layers=36  ctx=128  offset_after=127
+graph primitive nodes: 1061
+  QuantizedMatmul                                                253  (7.03/layer)
+  RMSNorm                                                        145  (4.03/layer)
+  Reshape                                                        144  (4.00/layer)
+  Transpose                                                      144  (4.00/layer)
+  RoPE                                                            72  (2.00/layer)
+  SliceUpdate                                                     72  (2.00/layer)
+  Slice                                                           72  (2.00/layer)
+  Add                                                             72  (2.00/layer)
+  ScaledDotProductAttention                                       36  (1.00/layer)
+  CompiledSigmoidBroadcastBroadcastMultiplyBroadcastBroadcastMultiply    36  (1.00/layer)
+  Squeeze                                                          6  (0.17/layer)
+  Gather                                                           3  (0.08/layer)
+  ExpandDims                                                       1  (0.03/layer)
+  Quantize                                                         1  (0.03/layer)
+  LogSumExp                                                        1  (0.03/layer)
+  Broadcast                                                        1  (0.03/layer)
+  Subtract                                                         1  (0.03/layer)
+  ArgReduce                                                        1  (0.03/layer)
+exact Metal calls for one full decode step (forward+logsumexp+argmax): {'dispatchThreadgroups': 289, 'dispatchThreads': 404, 'barriers': 457, 'barriers_res': 0, 'encoders': 23}
+exact Metal calls for forward only (logits):                        {'dispatchThreadgroups': 289, 'dispatchThreads': 401, 'barriers': 455, 'barriers_res': 0, 'encoders': 22}
+total dispatches/token = 693  (19.25 per layer); barriers/token = 457; compute encoders (~command buffers) = 23

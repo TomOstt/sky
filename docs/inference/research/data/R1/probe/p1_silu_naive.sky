@@ -1,0 +1,5 @@
+def silu(h: Vector[N]) -> Vector[N]:
+    return h / (1 + exp(-h))
+
+x = [1, 2, 3, 4]
+print(silu(x))

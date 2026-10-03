@@ -1,0 +1,8 @@
+R6 gemm  macOS 26.6.1  2026-10-01 9:47:14 PM +0000
+device=Apple M2 Pro arch=applegpu_g14s unified=true maxTG=1024 tgMem=32768 recommendedMaxWorkingSet=12713115648 maxBuffer=9534832640
+CHECK mpp_f16 tile 32x32 sg=1: max rel err 2.1191036e-05, entries off by >1e-3: 0 of 16777216; C[0]=567.3942
+CHECK mpp_q4 tile 32x32 sg=1: max rel err 0.0, entries off by >1e-3: 0 of 16777216; C[0]=4336.0
+CHECK mpp_f16 tile 64x64 sg=4: max rel err 2.1191036e-05, entries off by >1e-3: 0 of 16777216; C[0]=567.3942
+CHECK mpp_q4 tile 64x64 sg=4: max rel err 0.0, entries off by >1e-3: 0 of 16777216; C[0]=4336.0
+CHECK mpp_f16 tile 64x32 sg=4: max rel err 2.1191036e-05, entries off by >1e-3: 0 of 16777216; C[0]=567.3942
+CHECK mpp_q4 tile 64x32 sg=4: max rel err 0.0, entries off by >1e-3: 0 of 16777216; C[0]=4336.0

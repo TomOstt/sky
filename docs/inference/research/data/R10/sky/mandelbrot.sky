@@ -1,0 +1,22 @@
+# Mandelbrot escape counts on a 300 x 300 grid over [-2, 1] x [-1.5, 1.5],
+# at most 500 iterations per point. Prints the total number of iterations
+# (a scalar-heavy loop with a data-dependent exit).
+W = 300
+total = 0
+for py in range(300):
+    ci = -1.5 + py * (3.0 / W)
+    for px in range(300):
+        cr = -2.0 + px * (3.0 / W)
+        zr = 0.0
+        zi = 0.0
+        i = 0
+        while i < 500:
+            zr2 = zr * zr
+            zi2 = zi * zi
+            if zr2 + zi2 > 4.0:
+                break
+            zi = 2.0 * zr * zi + ci
+            zr = zr2 - zi2 + cr
+            i = i + 1
+        total = total + i
+print(total)

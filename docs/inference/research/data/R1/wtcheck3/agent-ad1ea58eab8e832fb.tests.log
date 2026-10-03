@@ -1,0 +1,29 @@
+    Checking sky-egraph v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-egraph)
+    Checking sky-types v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-types)
+    Checking sky-units v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-units)
+    Checking sky-linalg v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-linalg)
+    Checking sky-syntax v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-syntax)
+crates/sky-types/tests/expr_types.rs:40:15: error[E0004]: non-exhaustive patterns: `&ExprKind::Tuple(_)` not covered: pattern `&ExprKind::Tuple(_)` not covered
+crates/sky-types/tests/expr_types.rs:110:15: error[E0004]: non-exhaustive patterns: `&AssignTarget::Tuple { .. }` not covered: pattern `&AssignTarget::Tuple { .. }` not covered
+error: could not compile `sky-types` (test "expr_types") due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+    Checking sky-interp v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-interp)
+    Checking sky-ad v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-ad)
+    Checking sky-opt v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-opt)
+    Checking sky-lower v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-lower)
+    Checking sky-ir-interp v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-ir-interp)
+    Checking sky-cli v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-cli)
+    Checking sky-bench v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-bench)
+    Checking sky-derive v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-derive)
+    Checking sky-rt v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-rt)
+    Checking sky-project v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-project)
+    Checking sky-jit v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-jit)
+    Checking sky-ir v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-ir)
+    Checking sky-ode v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-ode)
+    Checking sky-ast v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-ast)
+crates/sky-ast/tests/../../../fuzz/harness/parse_module.rs:311:23: error[E0004]: non-exhaustive patterns: `&ExprKind::Tuple(_)` not covered: pattern `&ExprKind::Tuple(_)` not covered
+crates/sky-ast/tests/../../../fuzz/harness/parse_module.rs:396:23: error[E0004]: non-exhaustive patterns: `&AssignTarget::Tuple { .. }` not covered: pattern `&AssignTarget::Tuple { .. }` not covered
+error: could not compile `sky-ast` (test "fuzz_parse_module") due to 2 previous errors
+    Checking sky-tune v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-tune)
+    Checking sky-diag v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-diag)
+    Checking sky-hw v0.0.1 (/Users/talperez/sky/.claude/worktrees/agent-ad1ea58eab8e832fb/crates/sky-hw)

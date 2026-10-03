@@ -1,0 +1,72 @@
+# {"bench": "C_small_M", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-01 20:23:48", "env": {}}
+32B q_proj    K=  5120 N=  8192 M=  1 | single     283.9 us (x 1.00) | batched     150.7 us (x 1.00)  156.5 GB/s-weights
+32B q_proj    K=  5120 N=  8192 M=  2 | single     330.5 us (x 1.16) | batched     201.8 us (x 1.34)  116.9 GB/s-weights
+32B q_proj    K=  5120 N=  8192 M=  3 | single     405.0 us (x 1.43) | batched     281.6 us (x 1.87)   83.8 GB/s-weights
+32B q_proj    K=  5120 N=  8192 M=  4 | single     512.6 us (x 1.81) | batched     371.3 us (x 2.46)   63.5 GB/s-weights
+32B q_proj    K=  5120 N=  8192 M=  5 | single     590.2 us (x 2.08) | batched     457.9 us (x 3.04)   51.5 GB/s-weights
+32B q_proj    K=  5120 N=  8192 M=  6 | single    1015.2 us (x 3.58) | batched     667.1 us (x 4.43)   35.4 GB/s-weights
+32B q_proj    K=  5120 N=  8192 M=  8 | single     845.6 us (x 2.98) | batched     670.4 us (x 4.45)   35.2 GB/s-weights
+32B q_proj    K=  5120 N=  8192 M= 12 | single     871.7 us (x 3.07) | batched     694.3 us (x 4.61)   34.0 GB/s-weights
+32B q_proj    K=  5120 N=  8192 M= 16 | single     878.1 us (x 3.09) | batched     683.8 us (x 4.54)   34.5 GB/s-weights
+32B q_proj    K=  5120 N=  8192 M= 24 | single     869.8 us (x 3.06) | batched     686.2 us (x 4.55)   34.4 GB/s-weights
+32B q_proj    K=  5120 N=  8192 M= 32 | single     841.8 us (x 2.97) | batched     643.5 us (x 4.27)   36.7 GB/s-weights
+32B k/v_proj  K=  5120 N=  1024 M=  1 | single     180.7 us (x 1.00) | batched      29.5 us (x 1.00)  100.1 GB/s-weights
+32B k/v_proj  K=  5120 N=  1024 M=  2 | single     179.8 us (x 0.99) | batched      34.9 us (x 1.19)   84.4 GB/s-weights
+32B k/v_proj  K=  5120 N=  1024 M=  3 | single     186.2 us (x 1.03) | batched      46.7 us (x 1.59)   63.1 GB/s-weights
+32B k/v_proj  K=  5120 N=  1024 M=  4 | single     196.4 us (x 1.09) | batched      55.1 us (x 1.87)   53.5 GB/s-weights
+32B k/v_proj  K=  5120 N=  1024 M=  5 | single     204.6 us (x 1.13) | batched      66.5 us (x 2.26)   44.4 GB/s-weights
+32B k/v_proj  K=  5120 N=  1024 M=  6 | single     255.3 us (x 1.41) | batched     112.3 us (x 3.81)   26.3 GB/s-weights
+32B k/v_proj  K=  5120 N=  1024 M=  8 | single     251.3 us (x 1.39) | batched     113.4 us (x 3.85)   26.0 GB/s-weights
+32B k/v_proj  K=  5120 N=  1024 M= 12 | single     251.7 us (x 1.39) | batched     114.8 us (x 3.90)   25.7 GB/s-weights
+32B k/v_proj  K=  5120 N=  1024 M= 16 | single     257.1 us (x 1.42) | batched     115.8 us (x 3.93)   25.5 GB/s-weights
+32B k/v_proj  K=  5120 N=  1024 M= 24 | single     258.9 us (x 1.43) | batched     120.2 us (x 4.08)   24.5 GB/s-weights
+32B k/v_proj  K=  5120 N=  1024 M= 32 | single     247.4 us (x 1.37) | batched     111.3 us (x 3.78)   26.5 GB/s-weights
+32B o_proj    K=  8192 N=  5120 M=  1 | single     297.0 us (x 1.00) | batched     199.9 us (x 1.00)  118.0 GB/s-weights
+32B o_proj    K=  8192 N=  5120 M=  2 | single     326.0 us (x 1.10) | batched     194.9 us (x 0.97)  121.0 GB/s-weights
+32B o_proj    K=  8192 N=  5120 M=  3 | single     410.5 us (x 1.38) | batched     275.0 us (x 1.38)   85.8 GB/s-weights
+32B o_proj    K=  8192 N=  5120 M=  4 | single     503.4 us (x 1.70) | batched     355.9 us (x 1.78)   66.3 GB/s-weights
+32B o_proj    K=  8192 N=  5120 M=  5 | single     601.2 us (x 2.02) | batched     437.6 us (x 2.19)   53.9 GB/s-weights
+32B o_proj    K=  8192 N=  5120 M=  6 | single     860.5 us (x 2.90) | batched     686.1 us (x 3.43)   34.4 GB/s-weights
+32B o_proj    K=  8192 N=  5120 M=  8 | single     869.2 us (x 2.93) | batched     682.6 us (x 3.41)   34.6 GB/s-weights
+32B o_proj    K=  8192 N=  5120 M= 12 | single     998.1 us (x 3.36) | batched     686.8 us (x 3.44)   34.4 GB/s-weights
+32B o_proj    K=  8192 N=  5120 M= 16 | single     912.4 us (x 3.07) | batched     717.9 us (x 3.59)   32.9 GB/s-weights
+32B o_proj    K=  8192 N=  5120 M= 24 | single    1029.9 us (x 3.47) | batched     686.5 us (x 3.43)   34.4 GB/s-weights
+32B o_proj    K=  8192 N=  5120 M= 32 | single     858.3 us (x 2.89) | batched     670.9 us (x 3.36)   35.2 GB/s-weights
+32B gate/up   K=  5120 N= 25600 M=  1 | single     559.0 us (x 1.00) | batched     434.6 us (x 1.00)  169.6 GB/s-weights
+32B gate/up   K=  5120 N= 25600 M=  2 | single     710.5 us (x 1.27) | batched     583.0 us (x 1.34)  126.5 GB/s-weights
+32B gate/up   K=  5120 N= 25600 M=  3 | single     965.5 us (x 1.73) | batched     849.0 us (x 1.95)   86.8 GB/s-weights
+32B gate/up   K=  5120 N= 25600 M=  4 | single    1256.4 us (x 2.25) | batched    1114.3 us (x 2.56)   66.2 GB/s-weights
+32B gate/up   K=  5120 N= 25600 M=  5 | single    1537.0 us (x 2.75) | batched    1395.7 us (x 3.21)   52.8 GB/s-weights
+32B gate/up   K=  5120 N= 25600 M=  6 | single    2276.9 us (x 4.07) | batched    2056.9 us (x 4.73)   35.8 GB/s-weights
+32B gate/up   K=  5120 N= 25600 M=  8 | single    2267.4 us (x 4.06) | batched    2053.6 us (x 4.72)   35.9 GB/s-weights
+32B gate/up   K=  5120 N= 25600 M= 12 | single    2287.1 us (x 4.09) | batched    2080.6 us (x 4.79)   35.4 GB/s-weights
+32B gate/up   K=  5120 N= 25600 M= 16 | single    2285.7 us (x 4.09) | batched    2064.8 us (x 4.75)   35.7 GB/s-weights
+32B gate/up   K=  5120 N= 25600 M= 24 | single    2290.6 us (x 4.10) | batched    2072.6 us (x 4.77)   35.6 GB/s-weights
+32B gate/up   K=  5120 N= 25600 M= 32 | single    2126.9 us (x 3.80) | batched    1918.5 us (x 4.41)   38.4 GB/s-weights
+32B down      K= 25600 N=  5120 M=  1 | single     637.5 us (x 1.00) | batched     480.3 us (x 1.00)  153.5 GB/s-weights
+32B down      K= 25600 N=  5120 M=  2 | single     682.6 us (x 1.07) | batched     532.5 us (x 1.11)  138.5 GB/s-weights
+32B down      K= 25600 N=  5120 M=  3 | single     939.2 us (x 1.47) | batched     785.0 us (x 1.63)   93.9 GB/s-weights
+32B down      K= 25600 N=  5120 M=  4 | single    1228.7 us (x 1.93) | batched    1087.6 us (x 2.26)   67.8 GB/s-weights
+32B down      K= 25600 N=  5120 M=  5 | single    1497.4 us (x 2.35) | batched    1344.1 us (x 2.80)   54.9 GB/s-weights
+32B down      K= 25600 N=  5120 M=  6 | single    2395.3 us (x 3.76) | batched    2108.7 us (x 4.39)   35.0 GB/s-weights
+32B down      K= 25600 N=  5120 M=  8 | single    2328.2 us (x 3.65) | batched    2125.6 us (x 4.43)   34.7 GB/s-weights
+32B down      K= 25600 N=  5120 M= 12 | single    2362.3 us (x 3.71) | batched    2131.7 us (x 4.44)   34.6 GB/s-weights
+32B down      K= 25600 N=  5120 M= 16 | single    2366.0 us (x 3.71) | batched    2121.7 us (x 4.42)   34.7 GB/s-weights
+32B down      K= 25600 N=  5120 M= 24 | single    2383.5 us (x 3.74) | batched    2176.0 us (x 4.53)   33.9 GB/s-weights
+32B down      K= 25600 N=  5120 M= 32 | single    2410.8 us (x 3.78) | batched    1984.8 us (x 4.13)   37.1 GB/s-weights
+32B lm_head   K=  5120 N=151936 M=  1 | single    2545.8 us (x 1.00) | batched    2646.6 us (x 1.00)  165.3 GB/s-weights
+32B lm_head   K=  5120 N=151936 M=  2 | single    3386.1 us (x 1.33) | batched    3543.1 us (x 1.34)  123.5 GB/s-weights
+32B lm_head   K=  5120 N=151936 M=  3 | single    4982.2 us (x 1.96) | batched    5014.7 us (x 1.89)   87.3 GB/s-weights
+32B lm_head   K=  5120 N=151936 M=  4 | single    6528.5 us (x 2.56) | batched    6603.1 us (x 2.49)   66.3 GB/s-weights
+32B lm_head   K=  5120 N=151936 M=  5 | single    8165.1 us (x 3.21) | batched    8156.6 us (x 3.08)   53.6 GB/s-weights
+32B lm_head   K=  5120 N=151936 M=  6 | single   12427.2 us (x 4.88) | batched   12071.6 us (x 4.56)   36.2 GB/s-weights
+32B lm_head   K=  5120 N=151936 M=  8 | single   12343.7 us (x 4.85) | batched   12048.4 us (x 4.55)   36.3 GB/s-weights
+32B lm_head   K=  5120 N=151936 M= 12 | single   12558.2 us (x 4.93) | batched   12324.9 us (x 4.66)   35.5 GB/s-weights
+32B lm_head   K=  5120 N=151936 M= 16 | single   12680.4 us (x 4.98) | batched   12477.0 us (x 4.71)   35.1 GB/s-weights
+32B lm_head   K=  5120 N=151936 M= 24 | single   12493.3 us (x 4.91) | batched   12253.2 us (x 4.63)   35.7 GB/s-weights
+32B lm_head   K=  5120 N=151936 M= 32 | single   11591.9 us (x 4.55) | batched   11274.7 us (x 4.26)   38.8 GB/s-weights
+peak_memory_GB 1.683079184
+
+real	9m4.010s
+user	0m1.100s
+sys	0m1.731s

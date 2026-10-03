@@ -1,0 +1,22 @@
+[validate] max|model() - fwd()| = 0.0
+[Qwen3-0.6B-4bit ctx=128] mlx-lm generate_step ITL: median 3.554 ms  mean 3.546 ms (281.4 tok/s)
+  full (= qwen3.py)                    pipelined ITL med    3.513 ms | sync: build  0.540 encode  1.403 wait   3.010 total   4.992 ms | dispatches  541 barriers  362
+  no logsumexp (argmax on logits)      pipelined ITL med    3.408 ms | sync: build  0.491 encode  1.313 wait   2.760 total   4.697 ms | dispatches  539 barriers  360
+  no q/k/input/post RMSNorm            pipelined ITL med    3.303 ms | sync: build  0.579 encode  1.414 wait   2.694 total   4.711 ms | dispatches  428 barriers  278
+  no RoPE                              pipelined ITL med    3.413 ms | sync: build  1.019 encode  2.702 wait   1.994 total   5.829 ms | dispatches  485 barriers  342
+  no attention (rope+cache+sdpa)       pipelined ITL med    2.909 ms | sync: build  0.284 encode  1.027 wait   2.314 total   3.607 ms | dispatches  401 barriers  283
+  no residual adds                     pipelined ITL med    3.550 ms | sync: build  0.470 encode  1.226 wait   2.582 total   4.254 ms | dispatches  485 barriers  305
+  no SwiGLU                            pipelined ITL med    3.472 ms | sync: build  0.590 encode  1.588 wait   2.741 total   4.926 ms | dispatches  513 barriers  333
+  qmv only (all non-matmul removed)    pipelined ITL med    2.406 ms | sync: build  0.229 encode  0.811 wait   2.075 total   3.142 ms | dispatches  202 barriers  113
+raw -> /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/R4/raw_E_Qwen3-0.6B-4bit_ctx128_003417.json
+[validate] max|model() - fwd()| = 0.0
+[Qwen3-8B-4bit ctx=128] mlx-lm generate_step ITL: median 25.791 ms  mean 25.838 ms (38.8 tok/s)
+  full (= qwen3.py)                    pipelined ITL med   25.898 ms | sync: build  0.653 encode 13.612 wait  12.967 total  27.258 ms | dispatches  693 barriers  457
+  no logsumexp (argmax on logits)      pipelined ITL med   25.724 ms | sync: build  0.912 encode 13.799 wait  13.164 total  27.976 ms | dispatches  691 barriers  455
+  no q/k/input/post RMSNorm            pipelined ITL med   25.143 ms | sync: build  0.561 encode 12.901 wait  12.681 total  26.185 ms | dispatches  548 barriers  348
+  no RoPE                              pipelined ITL med   25.606 ms | sync: build  0.931 encode 13.871 wait  12.985 total  27.851 ms | dispatches  621 barriers  421
+  no attention (rope+cache+sdpa)       pipelined ITL med   24.697 ms | sync: build  0.474 encode 12.807 wait  12.430 total  25.812 ms | dispatches  513 barriers  348
+  no residual adds                     pipelined ITL med   25.720 ms | sync: build  0.740 encode 13.602 wait  12.926 total  27.163 ms | dispatches  621 barriers  385
+  no SwiGLU                            pipelined ITL med   25.550 ms | sync: build  1.234 encode 13.639 wait  12.911 total  27.791 ms | dispatches  657 barriers  422
+  qmv only (all non-matmul removed)    pipelined ITL med   23.925 ms | sync: build  0.647 encode 14.151 wait  11.183 total  25.996 ms | dispatches  258 barriers  132
+raw -> /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/R4/raw_E_Qwen3-8B-4bit_ctx128_003454.json

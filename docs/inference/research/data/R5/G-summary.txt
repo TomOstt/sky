@@ -1,0 +1,7 @@
+time of ONE llama_decode call with n tokens (ms) = n / (t/s); x1 = relative to n=1  [llama-bench -p n -n 0 -fa on -r 10]
+Qwen3-8B-Q4_0
+   n=1:   27.5 ms (x1.00)  n=2:   42.0 ms (x1.52)  n=3:   45.8 ms (x1.66)  n=4:   57.4 ms (x2.08)  n=5:   67.0 ms (x2.43)  n=6:   81.5 ms (x2.96)  n=7:  106.8 ms (x3.88)  n=8:  103.4 ms (x3.76)  n=16:  118.0 ms (x4.29)
+Qwen3-8B-Q4_K_M
+   n=1:   31.6 ms (x1.00)  n=2:   53.1 ms (x1.68)  n=3:   76.8 ms (x2.43)  n=4:   78.5 ms (x2.48)  n=5:   94.6 ms (x2.99)  n=6:  113.4 ms (x3.59)  n=7:  134.9 ms (x4.27)  n=8:  140.4 ms (x4.44)  n=16:  136.3 ms (x4.31)
+Qwen3-0.6B-Q4_0
+   n=1:    4.3 ms (x1.00)  n=2:    5.2 ms (x1.22)  n=3:    5.6 ms (x1.31)  n=4:    6.6 ms (x1.53)  n=5:    7.3 ms (x1.70)  n=6:    8.6 ms (x2.01)  n=7:   10.4 ms (x2.42)  n=8:   10.7 ms (x2.49)  n=16:   14.4 ms (x3.36)

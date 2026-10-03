@@ -1,0 +1,63 @@
+   Compiling cranelift-srcgen v0.121.2
+   Compiling libm v0.2.16
+   Compiling foldhash v0.1.5
+   Compiling crossbeam-utils v0.8.23
+   Compiling cranelift-isle v0.121.2
+   Compiling crossbeam-epoch v0.9.21
+   Compiling cranelift-codegen-shared v0.121.2
+   Compiling equivalent v1.0.2
+   Compiling cranelift-bitset v0.121.2
+   Compiling target-lexicon v0.13.5
+   Compiling cranelift-assembler-x64-meta v0.121.2
+   Compiling hashbrown v0.15.5
+   Compiling crossbeam-deque v0.8.8
+   Compiling allocator-api2 v0.2.21
+   Compiling cranelift-entity v0.121.2
+   Compiling bumpalo v3.20.3
+   Compiling arbitrary v1.4.2
+   Compiling cranelift-codegen-meta v0.121.2
+   Compiling indexmap v2.7.1
+   Compiling cranelift-assembler-x64 v0.121.2
+   Compiling rustc-hash v2.1.3
+   Compiling smallvec v1.16.2
+   Compiling rayon-core v1.13.0
+   Compiling log v0.4.34
+   Compiling regalloc2 v0.12.2
+   Compiling gimli v0.31.1
+   Compiling cranelift-control v0.121.2
+   Compiling cranelift-bforest v0.121.2
+   Compiling anyhow v1.0.104
+   Compiling libc v0.2.189
+   Compiling unicode-ident v1.0.26
+   Compiling sky-diag v0.0.1 (/Users/talperez/sky/crates/sky-diag)
+   Compiling wasmtime-math v34.0.2
+   Compiling cfg-if v1.0.5
+   Compiling either v1.18.0
+   Compiling sky-hw v0.0.1 (/Users/talperez/sky/crates/sky-hw)
+   Compiling sky-syntax v0.0.1 (/Users/talperez/sky/crates/sky-syntax)
+   Compiling crc32fast v1.5.2
+   Compiling sky-tune v0.0.1 (/Users/talperez/sky/crates/sky-tune)
+   Compiling cranelift-codegen v0.121.2
+   Compiling rayon v1.12.0
+   Compiling sky-ast v0.0.1 (/Users/talperez/sky/crates/sky-ast)
+   Compiling object v0.36.7
+   Compiling sky-units v0.0.1 (/Users/talperez/sky/crates/sky-units)
+   Compiling mach2 v0.4.3
+   Compiling memchr v2.8.3
+   Compiling bitflags v1.3.2
+   Compiling region v3.0.2
+   Compiling wasmtime-jit-icache-coherence v34.0.2
+   Compiling sky-ode v0.0.1 (/Users/talperez/sky/crates/sky-ode)
+   Compiling sky-linalg v0.0.1 (/Users/talperez/sky/crates/sky-linalg)
+   Compiling sky-types v0.0.1 (/Users/talperez/sky/crates/sky-types)
+   Compiling sky-ir v0.0.1 (/Users/talperez/sky/crates/sky-ir)
+   Compiling sky-interp v0.0.1 (/Users/talperez/sky/crates/sky-interp)
+   Compiling cranelift-module v0.121.2
+   Compiling cranelift-native v0.121.2
+   Compiling cranelift-frontend v0.121.2
+   Compiling cranelift-jit v0.121.2
+   Compiling cranelift-object v0.121.2
+   Compiling sky-jit v0.0.1 (/Users/talperez/sky/crates/sky-jit)
+    Finished `bench` profile [optimized] target(s) in 30.01s
+  Executable benches/kernels.rs (/private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/r1/bench-target/release/deps/kernels-6601d69be4736129)
+build rc=0

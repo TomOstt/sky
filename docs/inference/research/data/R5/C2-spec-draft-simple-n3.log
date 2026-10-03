@@ -1,0 +1,74 @@
+# Thu Oct  1 20:18:56 IDT 2026 load: load averages: 5.21 4.64 3.89
+# cmd: /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/src/llama.cpp/build/bin/llama-speculative-simple -m /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/models/Qwen3-8B-Q4_0.gguf -md /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/models/Qwen3-0.6B-Q4_0.gguf -ngld 99 --spec-type draft-simple --spec-draft-n-max 3 -p "Here is a quick sort implementation in C++. Just code, no comments:\n\n#include" -n 256 --temp 0 --top-k 1 --seed 42 -ngl 99 -c 4096 -e
+0.00.455.615 W load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.00.795.907 I cmn          init: llama threadpool init, n_threads = 6
+0.00.854.860 I common_speculative_init_result: loading draft model '/private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/models/Qwen3-0.6B-Q4_0.gguf'
+0.00.944.156 W load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+
+
+Here is a quick sort implementation in C++. Just code, no comments:
+
+#include <iostream>
+using namespace std;
+
+void swap(int* a, int* b) {
+    int temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
+int partition(int arr[], int low, int high) {
+    int pivot = arr[high];
+    int i = low - 1;
+    for (int j = low; j < high; j++) {
+        if (arr[j] <= pivot) {
+            i++;
+            swap(&arr[i], &arr[j]);
+        }
+    }
+    swap(&arr[i + 1], &arr[high]);
+    return i + 1;
+}
+
+void quickSort(int arr[], int low, int high) {
+    if (low < high) {
+        int pi = partition(arr, low, high);
+        quickSort(arr, low, pi - 1);
+        quickSort(arr, pi + 1, high);
+    }
+}
+
+void printArray(int arr[], int size) {
+    for (int i = 0; i < size; i++)
+        cout << arr[i] << " ";
+    cout << endl;
+}
+
+int main() {
+    int arr[] = {64, 34, 25, 12, 2
+
+0.07.774.313 I encoded   16 tokens in    0.006 seconds, speed: 2863.278 t/s
+0.07.774.313 I decoded  258 tokens in    6.653 seconds, speed:   38.779 t/s
+0.07.774.313 I 
+0.07.774.314 I n_draft   = 3
+0.07.774.314 I n_predict = 258
+0.07.774.314 I n_drafted = 228
+0.07.774.314 I n_accept  = 182
+0.07.774.315 I accept    = 79.825%
+0.07.774.315 I 
+0.07.774.315 I draft:
+
+0.07.774.347 I 
+0.07.774.347 I target:
+
+0.07.774.348 I common_perf_print:    sampling time =      49.86 ms
+0.07.774.348 I common_perf_print:    samplers time =      23.95 ms /   258 tokens
+0.07.774.349 I common_perf_print:        load time =     428.33 ms
+0.07.774.350 I common_perf_print: prompt eval time =    5348.91 ms /   321 tokens (   16.66 ms per token,    60.01 tokens per second)
+0.07.774.351 I common_perf_print:        eval time =       0.00 ms /     1 runs   (    0.00 ms per token,      inf tokens per second)
+0.07.774.351 I common_perf_print:       total time =    6919.51 ms /   322 tokens
+0.07.774.352 I common_perf_print: unaccounted time =    1520.74 ms /  22.0 %      (total - sampling - prompt eval - eval) / (total)
+0.07.774.352 I common_perf_print:    graphs reused =         75
+
+
+# exit=0 end Thu Oct  1 20:19:04 IDT 2026

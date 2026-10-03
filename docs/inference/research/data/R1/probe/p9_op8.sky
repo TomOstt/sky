@@ -1,0 +1,5 @@
+v = exp(zeros(8))
+w = exp(zeros(8)) * 1e-9
+for i in range(1000000):
+    v = v + w
+print(v[0])

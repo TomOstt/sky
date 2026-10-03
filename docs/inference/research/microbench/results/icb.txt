@@ -1,0 +1,21 @@
+LOCK_ACQUIRED 20:30:17
+R6 icb  macOS 26.6.1  2026-10-01 5:30:18 PM +0000
+device=Apple M2 Pro arch=applegpu_g14s unified=true maxTG=1024 tgMem=32768 recommendedMaxWorkingSet=12713115648 maxBuffer=9534832640
+one-time CPU encode of 1000 ICB commands: 162.6 us (0.163 us/cmd)
+
+# N dependent tiny dispatches: GPU us (median of 9) | CPU encode us (median)
+N      direct-serial        direct-conc+barrier    ICB(setBarrier) replay  ICB(no barrier) replay
+10         17.4 |     4.5       18.2 |     6.7        20.2 |     4.4           8.9 |     4.4
+       per-dispatch GPU us: direct-serial 1.737  direct-conc+barrier 1.825  ICB+barrier 2.025  ICB-nobarrier 0.888
+100       141.6 |    12.7      162.5 |    29.5       142.5 |     4.0          25.3 |     3.9
+       per-dispatch GPU us: direct-serial 1.416  direct-conc+barrier 1.625  ICB+barrier 1.425  ICB-nobarrier 0.253
+1000     1399.0 |    72.0     1559.4 |   204.2      1383.0 |     3.8         193.8 |     3.6
+       per-dispatch GPU us: direct-serial 1.399  direct-conc+barrier 1.559  ICB+barrier 1.383  ICB-nobarrier 0.194
+
+# GPU-side ICB encoding (kernel writes compute_commands), then replay in the same command buffer
+GPU-encoded n=10 (ICB range 0..<1000, rest reset): GPU 161.6 us total (encode kernel + replay), CPU 4.4 us; check buf[0]=120 (expect 120)
+GPU-encoded n=100 (ICB range 0..<1000, rest reset): GPU 323.5 us total (encode kernel + replay), CPU 4.2 us; check buf[0]=1200 (expect 1200)
+GPU-encoded n=1000 (ICB range 0..<1000, rest reset): GPU 1912.9 us total (encode kernel + replay), CPU 4.2 us; check buf[0]=12000 (expect 12000)
+real 1.14
+user 0.02
+sys 0.03

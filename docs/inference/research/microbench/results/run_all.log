@@ -1,0 +1,8 @@
+[20:26:49] waiting for lock: mtl4
+[20:30:15] done mtl4 rc=0 (total 206s)
+[20:30:15] waiting for lock: dispatch
+[20:30:17] done dispatch rc=0 (total 2s)
+[20:30:17] waiting for lock: icb
+[20:30:18] done icb rc=0 (total 1s)
+[20:30:18] waiting for lock: bw
+[20:30:42] done bw rc=0 (total 24s)

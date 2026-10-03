@@ -1,0 +1,38 @@
+{
+ "model": "Qwen3-8B-4bit",
+ "ctx": 128,
+ "census": {
+  "ExpandDims": 1,
+  "Gather": 3,
+  "Squeeze": 6,
+  "Quantize": 1,
+  "RMSNorm": 145,
+  "QuantizedMatmul": 253,
+  "Reshape": 144,
+  "Transpose": 144,
+  "RoPE": 72,
+  "SliceUpdate": 72,
+  "Slice": 72,
+  "ScaledDotProductAttention": 36,
+  "Add": 72,
+  "CompiledSigmoidBroadcastBroadcastMultiplyBroadcastBroadcastMultiply": 36,
+  "LogSumExp": 1,
+  "Broadcast": 1,
+  "Subtract": 1,
+  "ArgReduce": 1
+ },
+ "exact": {
+  "dispatchThreadgroups": 289,
+  "dispatchThreads": 404,
+  "barriers": 457,
+  "barriers_res": 0,
+  "encoders": 23
+ },
+ "exact_fwd": {
+  "dispatchThreadgroups": 289,
+  "dispatchThreads": 401,
+  "barriers": 455,
+  "barriers_res": 0,
+  "encoders": 22
+ }
+}

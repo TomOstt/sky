@@ -1,0 +1,19 @@
+# {"bench": "G2_qmv_multi_chunked", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-02 00:35:29", "env": {}}
+# check chunk3 M=8 max|err| 0.001033782958984375
+32B gate/up  M= 1 | mlx       418.8 us (x1.00 of mlx M=1) | chunk3    427.4 us (x1.02 of mlx M=1) | chunk2    424.6 us (x1.01 of mlx M=1)
+32B gate/up  M= 3 | mlx       852.2 us (x2.03 of mlx M=1) | chunk3    573.9 us (x1.37 of mlx M=1) | chunk2    867.5 us (x2.07 of mlx M=1)
+32B gate/up  M= 4 | mlx      1116.3 us (x2.67 of mlx M=1) | chunk3    962.0 us (x2.30 of mlx M=1) | chunk2    890.5 us (x2.13 of mlx M=1)
+32B gate/up  M= 5 | mlx      1381.3 us (x3.30 of mlx M=1) | chunk3   1001.0 us (x2.39 of mlx M=1) | chunk2   1270.7 us (x3.03 of mlx M=1)
+32B gate/up  M= 6 | mlx      2052.7 us (x4.90 of mlx M=1) | chunk3   1121.6 us (x2.68 of mlx M=1) | chunk2   1290.3 us (x3.08 of mlx M=1)
+32B gate/up  M= 8 | mlx      2047.0 us (x4.89 of mlx M=1) | chunk3   1559.0 us (x3.72 of mlx M=1) | chunk2   1701.9 us (x4.06 of mlx M=1)
+32B down     M= 1 | mlx       409.8 us (x1.00 of mlx M=1) | chunk3    419.8 us (x1.02 of mlx M=1) | chunk2    426.8 us (x1.04 of mlx M=1)
+32B down     M= 3 | mlx       788.3 us (x1.92 of mlx M=1) | chunk3    532.7 us (x1.30 of mlx M=1) | chunk2    836.7 us (x2.04 of mlx M=1)
+32B down     M= 4 | mlx      1044.2 us (x2.55 of mlx M=1) | chunk3    941.6 us (x2.30 of mlx M=1) | chunk2    887.6 us (x2.17 of mlx M=1)
+32B down     M= 5 | mlx      1311.9 us (x3.20 of mlx M=1) | chunk3    973.7 us (x2.38 of mlx M=1) | chunk2   1267.8 us (x3.09 of mlx M=1)
+32B down     M= 6 | mlx      2070.2 us (x5.05 of mlx M=1) | chunk3   1030.8 us (x2.52 of mlx M=1) | chunk2   1250.3 us (x3.05 of mlx M=1)
+32B down     M= 8 | mlx      2055.1 us (x5.01 of mlx M=1) | chunk3   1464.1 us (x3.57 of mlx M=1) | chunk2   1649.3 us (x4.02 of mlx M=1)
+peak_memory_GB 0.92446726
+
+real	0m8.525s
+user	0m0.243s
+sys	0m0.238s

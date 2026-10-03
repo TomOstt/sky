@@ -1,0 +1,32 @@
+# {"bench": "G_qmv_multi", "mlx": "0.32.3", "python": "3.12.12", "device": "Apple M2 Pro", "arch": "applegpu_g14s", "macos": "26.6.1", "time": "2026-10-01 20:29:33", "env": {}}
+# check M=1: max|ours-ref| 1.140e-03  max|mlx-ref| 2.116e-03  max|ref| 2.415
+# check M=2: max|ours-ref| 8.123e-04  max|mlx-ref| 2.149e-03  max|ref| 2.484
+# check M=3: max|ours-ref| 1.153e-03  max|mlx-ref| 2.519e-03  max|ref| 2.361
+# check M=4: max|ours-ref| 1.081e-03  max|mlx-ref| 2.408e-03  max|ref| 2.913
+# check M=8: max|ours-ref| 1.185e-03  max|mlx-ref| 2.992e-03  max|ref| 2.927
+32B q_proj   M= 1 | mlx      153.9 us (x1.00,  153.3 GB/s-w) | multi    165.9 us (x1.00,  142.2 GB/s-w)
+32B q_proj   M= 2 | mlx      199.8 us (x1.30,  118.1 GB/s-w) | multi    161.9 us (x0.98,  145.7 GB/s-w)
+32B q_proj   M= 3 | mlx      285.2 us (x1.85,   82.7 GB/s-w) | multi    202.4 us (x1.22,  116.6 GB/s-w)
+32B q_proj   M= 4 | mlx      373.6 us (x2.43,   63.2 GB/s-w) | multi    331.0 us (x2.00,   71.3 GB/s-w)
+32B q_proj   M= 5 | mlx      456.5 us (x2.97,   51.7 GB/s-w) | multi    405.1 us (x2.44,   58.2 GB/s-w)
+32B q_proj   M= 6 | mlx      697.0 us (x4.53,   33.9 GB/s-w) | multi   1798.7 us (x10.84,   13.1 GB/s-w)
+32B q_proj   M= 8 | mlx      675.5 us (x4.39,   34.9 GB/s-w) | multi   2403.5 us (x14.49,    9.8 GB/s-w)
+32B gate/up  M= 1 | mlx      460.0 us (x1.00,  160.3 GB/s-w) | multi    441.4 us (x1.00,  167.0 GB/s-w)
+32B gate/up  M= 2 | mlx      589.7 us (x1.28,  125.0 GB/s-w) | multi    497.6 us (x1.13,  148.2 GB/s-w)
+32B gate/up  M= 3 | mlx      883.1 us (x1.92,   83.5 GB/s-w) | multi    597.7 us (x1.35,  123.3 GB/s-w)
+32B gate/up  M= 4 | mlx     1160.1 us (x2.52,   63.6 GB/s-w) | multi   1030.4 us (x2.33,   71.6 GB/s-w)
+32B gate/up  M= 5 | mlx     1427.6 us (x3.10,   51.6 GB/s-w) | multi   1283.7 us (x2.91,   57.4 GB/s-w)
+32B gate/up  M= 6 | mlx     2116.1 us (x4.60,   34.8 GB/s-w) | multi   5603.5 us (x12.70,   13.2 GB/s-w)
+32B gate/up  M= 8 | mlx     2071.3 us (x4.50,   35.6 GB/s-w) | multi   7290.0 us (x16.52,   10.1 GB/s-w)
+32B down     M= 1 | mlx      419.5 us (x1.00,  175.8 GB/s-w) | multi    425.5 us (x1.00,  173.3 GB/s-w)
+32B down     M= 2 | mlx      532.6 us (x1.27,  138.4 GB/s-w) | multi    451.1 us (x1.06,  163.4 GB/s-w)
+32B down     M= 3 | mlx      795.1 us (x1.90,   92.7 GB/s-w) | multi    568.4 us (x1.34,  129.7 GB/s-w)
+32B down     M= 4 | mlx     1064.9 us (x2.54,   69.2 GB/s-w) | multi    964.1 us (x2.27,   76.5 GB/s-w)
+32B down     M= 5 | mlx     1317.6 us (x3.14,   56.0 GB/s-w) | multi   1190.5 us (x2.80,   61.9 GB/s-w)
+32B down     M= 6 | mlx     2086.2 us (x4.97,   35.3 GB/s-w) | multi   5359.3 us (x12.59,   13.8 GB/s-w)
+32B down     M= 8 | mlx     2082.7 us (x4.96,   35.4 GB/s-w) | multi   7151.3 us (x16.81,   10.3 GB/s-w)
+peak_memory_GB 0.92454918
+
+real	0m13.867s
+user	0m0.197s
+sys	0m0.245s

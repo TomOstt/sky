@@ -1,0 +1,26 @@
+[Qwen3-0.6B-4bit] decode prompt=128 gen=256
+  decode_wall_tps        median=267.4197  all=[266.0455, 261.404, 267.4197, 271.4497, 270.4539]
+  itl_median_ms          median=3.7620  all=[3.8246, 3.8385, 3.762, 3.7194, 3.7435]
+  mlxlm_generation_tps   median=268.4652  all=[267.0835, 262.4255, 268.4652, 272.5093, 271.5088]
+  ttft_wall              median=0.0552  all=[0.0553, 0.0554, 0.054, 0.0552, 0.0544]
+  mlxlm_prompt_tps       median=2340.7569  all=[2333.7755, 2328.5411, 2390.6578, 2340.7569, 2368.194]
+  mlxlm_peak_gb          median=0.5878  all=[0.5878, 0.5878, 0.5878, 0.5878, 0.5878]
+  os lifetime_max_phys_footprint GB: 0.89237212
+raw -> /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/R4/raw_A_Qwen3-0.6B-4bit_decode_201449.json
+[Qwen3-0.6B-4bit] prefill L=128
+  ttft_wall          median=0.0545  all=[0.0568, 0.0549, 0.0545, 0.0533, 0.0537]
+  mlxlm_prompt_tps   median=2367.9568  all=[2271.6366, 2350.3615, 2367.9568, 2417.4681, 2401.8389]
+  mlxlm_peak_gb      median=0.5878  all=[0.5857, 0.5878, 0.5857, 0.5878, 0.5878]
+  wall prefill tok/s (L/ttft_wall) median=2349.5
+[Qwen3-0.6B-4bit] prefill L=512
+  ttft_wall          median=0.1886  all=[0.183, 0.1965, 0.1886, 0.1871, 0.1942]
+  mlxlm_prompt_tps   median=2723.1586  all=[2804.0889, 2612.0356, 2723.1586, 2742.5186, 2643.6654]
+  mlxlm_peak_gb      median=0.8964  all=[0.8964, 0.8964, 0.8964, 0.8964, 0.8964]
+  wall prefill tok/s (L/ttft_wall) median=2714.1
+[Qwen3-0.6B-4bit] prefill L=2048
+  ttft_wall          median=0.7773  all=[0.7831, 0.7721, 0.7797, 0.7773, 0.776]
+  mlxlm_prompt_tps   median=2636.5219  all=[2618.1828, 2653.969, 2628.0237, 2636.5219, 2642.0564]
+  mlxlm_peak_gb      median=1.4595  all=[1.4595, 1.4595, 1.4595, 1.4595, 1.4595]
+  wall prefill tok/s (L/ttft_wall) median=2634.7
+  os lifetime_max_phys_footprint GB: 2.039497904
+raw -> /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/R4/raw_A_Qwen3-0.6B-4bit_prefill_201456.json

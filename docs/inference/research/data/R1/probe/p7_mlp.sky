@@ -1,0 +1,11 @@
+def mlp(W: Matrix[64, 64], x: Vector[64]) -> Vector[64]:
+    h = W @ x
+    one = exp(zeros(64))
+    y = h * (one / (one + exp(-h)))
+    s = sqrt((y @ y) / 64 + 1e-6)
+    return y / s
+
+W = 0.01 * identity(64)
+x = exp(zeros(64))
+r = mlp(W, x)
+print(r[0], r[63])

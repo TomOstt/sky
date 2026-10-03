@@ -1,0 +1,19 @@
+ns per element (best of 9 batches); host aarch64
+kernel           n |     sky   nochk  scalar |    rust rust+chk       c   c+chk |  sky/best nochk/best   sky/chk
+axpy          1000 |   0.161   0.143   0.309 |   0.188   0.191   0.198   0.225 |     0.86x     0.76x     0.84x
+axpy        100000 |   0.234   0.181   0.295 |   0.233   0.234   0.233   0.234 |     1.00x     0.78x     1.00x
+axpy      10000000 |   0.263   0.261   0.312 |   0.262   0.262   0.264   0.265 |     1.01x     1.00x     1.01x
+hypot         1000 |   0.298   0.295   0.591 |   0.294   0.355   0.294   0.410 |     1.01x     1.01x     0.84x
+hypot       100000 |   0.295   0.294   0.588 |   0.294   0.350   0.294   0.405 |     1.00x     1.00x     0.84x
+hypot     10000000 |   0.301   0.303   0.602 |   0.302   0.384   0.304   0.413 |     1.00x     1.00x     0.79x
+chain6        1000 |   0.354   0.271   0.681 |   0.301   0.521   0.301   1.016 |     1.17x     0.90x     0.68x
+chain6      100000 |   0.339   0.260   0.677 |   0.298   0.514   0.299   1.022 |     1.14x     0.87x     0.66x
+chain6    10000000 |   0.357   0.271   0.675 |   0.309   0.521   0.309   1.022 |     1.16x     0.88x     0.68x
+
+compile time of `axpy`: 0.161 ms (median of 5)
+compile time of `hypot`: 0.173 ms (median of 5)
+compile time of `chain6`: 0.262 ms (median of 5)
+
+real	0m57.952s
+user	0m4.751s
+sys	0m0.426s

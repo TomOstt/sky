@@ -1,0 +1,45 @@
+HTTP/2 302 
+content-type: text/plain; charset=utf-8
+content-length: 1070
+location: https://us.aws.cdn.hf.co/xet-bridge-us/680f7b70e445a4be6af508b2/ff0c9a8ccae071b85a109727032e49ad99a5e9e6144ab25e87d6b2117ba81100?xip=-MwO0Vcj-fU&user_id=public&X-Xet-Cas-Uid=public&response-content-disposition=inline%3B+filename*%3DUTF-8%27%27Qwen_Qwen3-8B-Q4_0.gguf%3B+filename%3D%22Qwen_Qwen3-8B-Q4_0.gguf%22%3B&Expires=1790878092&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly91cy5hd3MuY2RuLmhmLmNvL3hldC1icmlkZ2UtdXMvNjgwZjdiNzBlNDQ1YTRiZTZhZjUwOGIyL2ZmMGM5YThjY2FlMDcxYjg1YTEwOTcyNzAzMmU0OWFkOTlhNWU5ZTYxNDRhYjI1ZTg3ZDZiMjExN2JhODExMDBcXD94aXA9LU13TzBWY2otZlUmdXNlcl9pZD1wdWJsaWMmWC1YZXQtQ2FzLVVpZD1wdWJsaWMmcmVzcG9uc2UtY29udGVudC1kaXNwb3NpdGlvbj1pbmxpbmUlM0IrZmlsZW5hbWUlMkElM0RVVEYtOCUyNyUyN1F3ZW5fUXdlbjMtOEItUTRfMC5nZ3VmJTNCK2ZpbGVuYW1lJTNEJTIyUXdlbl9Rd2VuMy04Qi1RNF8wLmdndWYlMjIlM0IiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkVwb2NoVGltZSI6MTc5MDg3ODA5Mn19fV19&Signature=MEYCIQCJvzItdECMBTcJvmx27b3bzhE5wo-0OcdbmrJJZnMCKgIhAK9SVgZ2NiWYyLt0m7%7EfGPJ8epgQbOYakcxeFe%7EofnPw&Key-Pair-Id=01KXEF4KZ1B6FV465MAWR4M21F&Hash-Algorithm=SHA256
+date: Thu, 01 Oct 2026 17:08:12 GMT
+x-powered-by: huggingface-moon
+x-request-id: Root=1-6abe937c-3b95c69c2087c9127e253559
+ratelimit: "resolvers";r=2863;t=196
+ratelimit-policy: "fixed window";"resolvers";q=3000;w=300
+cross-origin-opener-policy: same-origin
+referrer-policy: strict-origin-when-cross-origin
+access-control-max-age: 86400
+access-control-allow-origin: https://huggingface.co
+vary: Origin, Accept
+access-control-expose-headers: X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+x-repo-commit: 0b69f75b7472688e6808490aa2b85efdb81b5ce7
+accept-ranges: bytes
+x-hf-warning: unauthenticated; Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+x-linked-size: 4787332640
+x-linked-etag: "c9bd6e5597ad3a70ef5b9a0acb995f739e545c5f16cbdf52b1c78835172b893c"
+cache-control: no-store
+x-xet-hash: ff0c9a8ccae071b85a109727032e49ad99a5e9e6144ab25e87d6b2117ba81100
+link: <https://huggingface.co/api/models/bartowski/Qwen_Qwen3-8B-GGUF/xet-read-token/0b69f75b7472688e6808490aa2b85efdb81b5ce7>; rel="xet-auth", <https://cas-server.xethub.hf.co/v1/reconstructions/ff0c9a8ccae071b85a109727032e49ad99a5e9e6144ab25e87d6b2117ba81100>; rel="xet-reconstruction-info"
+x-cache: Miss from cloudfront
+via: 1.1 08b84d9caad176ce3a7aebe86f3fd786.cloudfront.net (CloudFront)
+x-amz-cf-pop: TLV55-P2
+alt-svc: h3=":443"; ma=86400
+x-amz-cf-id: qZV6oBlqbxNb0P9MVXCJdCDzzlL9-o4B9EdyS6KINcA28OqeB5D0yg==
+strict-transport-security: max-age=31536000
+
+HTTP/2 206 
+content-type: application/octet-stream
+accept-ranges: bytes
+content-disposition: inline; filename*=UTF-8''Qwen_Qwen3-8B-Q4_0.gguf; filename="Qwen_Qwen3-8B-Q4_0.gguf";
+etag: "ff0c9a8ccae071b85a109727032e49ad99a5e9e6144ab25e87d6b2117ba81100"
+access-control-allow-headers: Content-Range, Content-Type, Content-Disposition, ETag
+access-control-expose-headers: *
+content-length: 16777216
+content-range: bytes 0-16777215/4787332640
+vary: origin, access-control-request-method, access-control-request-headers
+access-control-allow-origin: *
+x-request-id: 01M3W707PEWJZMGABVWJ0GAF34
+x-hf-cdn-pop: aws-eu-west-3
+date: Thu, 01 Oct 2026 17:08:12 GMT
+

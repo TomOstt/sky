@@ -1,0 +1,6 @@
+c idx 2.5e5                              median      3.61 ms  min      3.10  max      4.81  n=7  out: 250000
+c idx 1e6                                median      5.57 ms  min      5.08  max      6.15  n=7  out: 1000000
+sky native idx 2.5e5                     median     53.83 ms  min     50.97  max     77.66  n=7  out: 250000
+sky native idx 1e6                       median    165.10 ms  min    161.39  max    169.62  n=7  out: 1000000
+sky sir idx 2.5e5                        median    106.60 ms  min    105.23  max    108.61  n=7  out: 250000
+sky sir idx 1e6                          median    397.02 ms  min    387.51  max    399.40  n=7  out: 1000000

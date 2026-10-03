@@ -1,0 +1,4 @@
+SKY=/Users/talperez/sky/target/release/sky
+for e in native sir; do for f in /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/r10/sky/elementwise-1e7.sky /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/r10/var/elem1e7-r6.sky; do
+  echo "== $e $(basename $f)"; /usr/bin/time -l $SKY run --engine=$e --threads=1 $f 2>&1 | egrep "real|page reclaims|page faults|maximum resident" ; done; done
+echo "== c r2 / r6"; /usr/bin/time -l /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/r10/bin/c_elementwise 1000 10000 2 2>&1 | egrep "real|page reclaims|maximum resident"; /usr/bin/time -l /private/tmp/claude-501/-Users-talperez/9a6d07d9-2631-4597-beed-20bd8b102afe/scratchpad/research/r10/bin/c_elementwise 1000 10000 6 2>&1 | egrep "real|page reclaims|maximum resident"

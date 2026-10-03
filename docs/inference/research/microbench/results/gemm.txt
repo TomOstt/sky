@@ -1,0 +1,21 @@
+LOCK_ACQUIRED 00:46:19
+R6 gemm  macOS 26.6.1  2026-10-01 9:46:20 PM +0000
+device=Apple M2 Pro arch=applegpu_g14s unified=true maxTG=1024 tgMem=32768 recommendedMaxWorkingSet=12713115648 maxBuffer=9534832640
+simdgroup_matrix peak peak_hf: 14.708 ms -> 4.67 TFLOPS
+simdgroup_matrix peak peak_hh: 12.629 ms -> 5.44 TFLOPS
+MPP matmul2d mpp_f16 tile 64x32 simdgroups=4 (4096x4096x4096): 30.82 ms -> 4.46 TFLOPS
+MPP matmul2d mpp_q4 tile 64x32 simdgroups=4 (4096x4096x4096): 35.45 ms -> 3.88 TFLOPS
+MPP matmul2d mpp_f16 tile 64x64 simdgroups=4 (4096x4096x4096): 25.52 ms -> 5.38 TFLOPS
+MPP matmul2d mpp_q4 tile 64x64 simdgroups=4 (4096x4096x4096): 28.14 ms -> 4.88 TFLOPS
+MPP matmul2d mpp_f16 tile 128x64 simdgroups=4 (4096x4096x4096): 27.26 ms -> 5.04 TFLOPS
+MPP matmul2d mpp_q4 tile 128x64 simdgroups=4 (4096x4096x4096): 28.96 ms -> 4.75 TFLOPS
+MPP matmul2d mpp_f16 tile 128x128 simdgroups=4 (4096x4096x4096): 33.40 ms -> 4.11 TFLOPS
+MPP matmul2d mpp_q4 tile 128x128 simdgroups=4 (4096x4096x4096): 35.97 ms -> 3.82 TFLOPS
+MPP matmul2d mpp_f16 tile 32x32 simdgroups=1 (4096x4096x4096): 25.35 ms -> 5.42 TFLOPS
+MPP matmul2d mpp_q4 tile 32x32 simdgroups=1 (4096x4096x4096): 28.06 ms -> 4.90 TFLOPS
+MPP matmul2d mpp_f16 tile 64x32 simdgroups=2 (4096x4096x4096): 25.38 ms -> 5.42 TFLOPS
+MPP matmul2d mpp_q4 tile 64x32 simdgroups=2 (4096x4096x4096): 28.10 ms -> 4.89 TFLOPS
+MPSMatrixMultiplication f16 (4096x4096x4096): 31.17 ms -> 4.41 TFLOPS
+real 7.82
+user 0.03
+sys 0.05

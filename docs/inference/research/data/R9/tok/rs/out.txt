@@ -1,0 +1,45 @@
+<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+
+Environment: ipython
+Cutting Knowledge Date: December 2023
+Today Date: 26 Jul 2024
+
+You can call tools.<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Given the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.
+
+Respond in the format {"name": function name, "parameters": dictionary of argument name and its value}.Do not use variables.
+
+{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get weather <for> a city & date",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string",
+                    "description": "City name, e.g. Zürich"
+                },
+                "unit": {
+                    "type": "string",
+                    "enum": [
+                        "c",
+                        "f"
+                    ]
+                }
+            },
+            "required": [
+                "city"
+            ]
+        }
+    }
+}
+
+Weather in Zürich?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+{"name": "get_weather", "parameters": {"city": "Zürich", "unit": "c"}}<|eot_id|><|start_header_id|>ipython<|end_header_id|>
+
+"{\"temp\": 21}"<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+

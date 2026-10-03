@@ -1,0 +1,3 @@
+RESULT mode=fp16 N=12288 K=4096 warmup_s=0.56 per_call_us_median=751.3 min=744.0 max=824.7 weight_MB=100.66 implied_GBps=134.0
+RESULT mode=q4_0 N=12288 K=4096 warmup_s=0.35 per_call_us_median=544.4 min=464.4 max=909.4 weight_MB=28.31 implied_GBps=52.0
+RESULT mode=fp16 N=1024 K=1024 warmup_s=0.20 per_call_us_median=183.3 min=181.5 max=234.3 weight_MB=2.10 implied_GBps=11.4

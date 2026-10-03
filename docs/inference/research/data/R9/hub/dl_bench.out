@@ -1,0 +1,22 @@
+file=Qwen3-0.6B-Q4_1.gguf size=409091776 lfs_sha256=ddaf05402c668540464a91efc607d732f41f108401533fe69de874bfc9653688
+a_single_stream_s=17.23 MBps=23.7 sha_ok=yes
+b_8x_range_s=9.02 MBps=45.4 sha_ok=yes
+c_hf_xet_s=13.83 MBps=29.6 sha_ok=yes
+cache
+cache/models--unsloth--Qwen3-0.6B-GGUF
+cache/models--unsloth--Qwen3-0.6B-GGUF/snapshots
+cache/models--unsloth--Qwen3-0.6B-GGUF/snapshots/50968a4468ef4233ed78cd7c3de230dd1d61a56b
+cache/models--unsloth--Qwen3-0.6B-GGUF/blobs
+cache/models--unsloth--Qwen3-0.6B-GGUF/blobs/ddaf05402c668540464a91efc607d732f41f108401533fe69de874bfc9653688
+cache/models--unsloth--Qwen3-0.6B-GGUF/refs
+cache/models--unsloth--Qwen3-0.6B-GGUF/refs/main
+cache/CACHEDIR.TAG
+cache/blobs
+cache/blobs/ad
+cache/blobs/ad/ad287dc7dd085f01c79010f513a801437aaca8e55ebf95bcff7bb367625e6411.lock
+cache/blobs/ad/ad287dc7dd085f01c79010f513a801437aaca8e55ebf95bcff7bb367625e6411
+cache/blobs/ad/ad287dc7dd085f01c79010f513a801437aaca8e55ebf95bcff7bb367625e6411.refs
+cache/blobs/.huggingface-shared-blobs
+cache/.locks
+cache/.locks/models--unsloth--Qwen3-0.6B-GGUF
+cache/.locks/models--unsloth--Qwen3-0.6B-GGUF/ddaf05402c668540464a91efc607d732f41f108401533fe69de874bfc9653688.lock

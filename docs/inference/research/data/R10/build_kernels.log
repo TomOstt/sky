@@ -1,0 +1,19 @@
+   Compiling foldhash v0.1.5
+   Compiling hashbrown v0.15.5
+   Compiling indexmap v2.7.1
+   Compiling regalloc2 v0.12.2
+   Compiling gimli v0.31.1
+   Compiling object v0.36.7
+   Compiling cranelift-codegen v0.121.2
+   Compiling cranelift-module v0.121.2
+   Compiling cranelift-native v0.121.2
+   Compiling cranelift-frontend v0.121.2
+   Compiling cranelift-object v0.121.2
+   Compiling cranelift-jit v0.121.2
+   Compiling sky-jit v0.0.1 (/Users/talperez/sky/crates/sky-jit)
+    Finished `bench` profile [optimized] target(s) in 24.64s
+  Executable benches/kernels.rs (target/release/deps/kernels-6601d69be4736129)
+
+real	3m35.117s
+user	1m32.826s
+sys	0m3.093s

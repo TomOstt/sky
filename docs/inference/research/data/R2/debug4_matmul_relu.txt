@@ -1,0 +1,677 @@
+loading metal from /System/Library/Frameworks/Metal.framework/Metal
+loading CoreGraphics from /System/Library/Frameworks/CoreGraphics.framework/CoreGraphics
+loading llvm from /opt/homebrew/opt/llvm@19/lib/libLLVM.dylib
+loading MTLCompiler from /System/Library/PrivateFrameworks/MTLCompiler.framework/MTLCompiler
+opened device METAL from pid:39211
+loading libc from /usr/lib/libc.dylib
+opened device PYTHON from pid:39211
+scheduled     7 kernels in    61.56 ms | CACHE MISS 53252200 |     773 uops in cache
+compiling:   0%|                                          | 0/4 [00:00<?, ?it/s]compiling E[90m_[0m[33m2[0m                                     :  25%|▎| 1/4 [00:00<00:00,  6.22it/s]compiling E[90m_[0m[33m2[0m                                     :  50%|▌| 2/4 [00:00<00:00, 12.39it/s]compiling E[90m_[0m[34m1024[0m[90m_[0m[36m32[0m[90m_[0m[33m2[0m                             :  75%|▊| 3/4 [00:00<00:00, 14.96it/s]loading metal from /System/Library/Frameworks/Metal.framework/Metal
+loading CoreGraphics from /System/Library/Frameworks/CoreGraphics.framework/CoreGraphics
+loading llvm from /opt/homebrew/opt/llvm@19/lib/libLLVM.dylib
+loading MTLCompiler from /System/Library/PrivateFrameworks/MTLCompiler.framework/MTLCompiler
+TC(0): [((1,), 256)] [((2,), 256)] [((0,), 256)]
+r_8_2_4_32_2_4_4_32       opts: (Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.LOCAL)))
+#include <metal_stdlib>
+using namespace metal;
+float2 __WMMA_8_8_8_float_float(float2 a, float2 b, float2 c){
+  simdgroup_float8x8 mat_a, mat_b; simdgroup_float8x8 mat_c;
+  mat_a.thread_elements()[0] = a[0]; mat_b.thread_elements()[0] = b[0]; mat_c.thread_elements()[0] = c[0];
+  mat_a.thread_elements()[1] = a[1]; mat_b.thread_elements()[1] = b[1]; mat_c.thread_elements()[1] = c[1];
+  simdgroup_multiply_accumulate(mat_c, mat_a, mat_b, mat_c);
+  return float2(mat_c.thread_elements()[0], mat_c.thread_elements()[1]);
+}
+struct args_t { device float* data0_65536; device float* data1_65536; device float* data2_65536; };
+kernel void r_8_2_4_32_2_4_4_32(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_65536 = args.data0_65536; device float* data1_65536 = args.data1_65536; device float* data2_65536 = args.data2_65536;
+  float buf0[32];
+  int gidx0 = gid.x; /* 2 */
+  int gidx1 = gid.y; /* 8 */
+  int lidx0 = lid.x; /* 32 */
+  int lidx1 = lid.y; /* 4 */
+  int alu0 = (((lidx0>>3)&1)<<2);
+  int alu1 = ((lidx0&1)<<1);
+  int alu2 = ((gidx0<<7)+(lidx1<<5)+alu0+alu1);
+  int alu3 = (((lidx0>>1)&3)<<8);
+  int alu4 = ((lidx0>>4)<<10);
+  int alu5 = (alu3+(gidx1<<13)+alu4);
+  *(buf0+0) = 0.0f;
+  *(buf0+1) = 0.0f;
+  *(buf0+10) = 0.0f;
+  *(buf0+11) = 0.0f;
+  *(buf0+12) = 0.0f;
+  *(buf0+13) = 0.0f;
+  *(buf0+14) = 0.0f;
+  *(buf0+15) = 0.0f;
+  *(buf0+16) = 0.0f;
+  *(buf0+17) = 0.0f;
+  *(buf0+18) = 0.0f;
+  *(buf0+19) = 0.0f;
+  *(buf0+2) = 0.0f;
+  *(buf0+20) = 0.0f;
+  *(buf0+21) = 0.0f;
+  *(buf0+22) = 0.0f;
+  *(buf0+23) = 0.0f;
+  *(buf0+24) = 0.0f;
+  *(buf0+25) = 0.0f;
+  *(buf0+26) = 0.0f;
+  *(buf0+27) = 0.0f;
+  *(buf0+28) = 0.0f;
+  *(buf0+29) = 0.0f;
+  *(buf0+3) = 0.0f;
+  *(buf0+30) = 0.0f;
+  *(buf0+31) = 0.0f;
+  *(buf0+4) = 0.0f;
+  *(buf0+5) = 0.0f;
+  *(buf0+6) = 0.0f;
+  *(buf0+7) = 0.0f;
+  *(buf0+8) = 0.0f;
+  *(buf0+9) = 0.0f;
+  for (int Lidx0 = 0; Lidx0 < 32; Lidx0++) {
+    int alu38 = (alu5+alu0+(Lidx0<<3)+alu1);
+    float2 val0 = (*((device float2*)((data1_65536+(alu38+2048)))));
+    float2 val1 = (*((device float2*)((data1_65536+(alu38+4096)))));
+    float2 val2 = (*((device float2*)((data1_65536+(alu38+6144)))));
+    float2 val3 = (*((device float2*)((data1_65536+alu38))));
+    int alu39 = (alu2+alu4+alu3+(Lidx0<<11));
+    float2 val4 = (*((device float2*)((data2_65536+(alu39+16)))));
+    float2 val5 = (*((device float2*)((data2_65536+(alu39+24)))));
+    float2 val6 = (*((device float2*)((data2_65536+(alu39+8)))));
+    float2 val7 = (*((device float2*)((data2_65536+alu39))));
+    float2 wmma0 = __WMMA_8_8_8_float_float(val0, val4, float2((*(buf0+17)),(*(buf0+21))));
+    float2 wmma1 = __WMMA_8_8_8_float_float(val0, val5, float2((*(buf0+25)),(*(buf0+29))));
+    float2 wmma2 = __WMMA_8_8_8_float_float(val0, val6, float2((*(buf0+9)),(*(buf0+13))));
+    float2 wmma3 = __WMMA_8_8_8_float_float(val0, val7, float2((*(buf0+1)),(*(buf0+5))));
+    float2 wmma4 = __WMMA_8_8_8_float_float(val1, val4, float2((*(buf0+18)),(*(buf0+22))));
+    float2 wmma5 = __WMMA_8_8_8_float_float(val1, val5, float2((*(buf0+26)),(*(buf0+30))));
+    float2 wmma6 = __WMMA_8_8_8_float_float(val1, val6, float2((*(buf0+10)),(*(buf0+14))));
+    float2 wmma7 = __WMMA_8_8_8_float_float(val1, val7, float2((*(buf0+2)),(*(buf0+6))));
+    float2 wmma8 = __WMMA_8_8_8_float_float(val2, val4, float2((*(buf0+19)),(*(buf0+23))));
+    float2 wmma9 = __WMMA_8_8_8_float_float(val2, val5, float2((*(buf0+27)),(*(buf0+31))));
+    float2 wmma10 = __WMMA_8_8_8_float_float(val2, val6, float2((*(buf0+11)),(*(buf0+15))));
+    float2 wmma11 = __WMMA_8_8_8_float_float(val2, val7, float2((*(buf0+3)),(*(buf0+7))));
+    float2 wmma12 = __WMMA_8_8_8_float_float(val3, val4, float2((*(buf0+16)),(*(buf0+20))));
+    float2 wmma13 = __WMMA_8_8_8_float_float(val3, val5, float2((*(buf0+24)),(*(buf0+28))));
+    float2 wmma14 = __WMMA_8_8_8_float_float(val3, val6, float2((*(buf0+8)),(*(buf0+12))));
+    float2 wmma15 = __WMMA_8_8_8_float_float(val3, val7, float2((*(buf0+0)),(*(buf0+4))));
+    *(buf0+0) = wmma15.x;
+    *(buf0+1) = wmma3.x;
+    *(buf0+10) = wmma6.x;
+    *(buf0+11) = wmma10.x;
+    *(buf0+12) = wmma14.y;
+    *(buf0+13) = wmma2.y;
+    *(buf0+14) = wmma6.y;
+    *(buf0+15) = wmma10.y;
+    *(buf0+16) = wmma12.x;
+    *(buf0+17) = wmma0.x;
+    *(buf0+18) = wmma4.x;
+    *(buf0+19) = wmma8.x;
+    *(buf0+2) = wmma7.x;
+    *(buf0+20) = wmma12.y;
+    *(buf0+21) = wmma0.y;
+    *(buf0+22) = wmma4.y;
+    *(buf0+23) = wmma8.y;
+    *(buf0+24) = wmma13.x;
+    *(buf0+25) = wmma1.x;
+    *(buf0+26) = wmma5.x;
+    *(buf0+27) = wmma9.x;
+    *(buf0+28) = wmma13.y;
+    *(buf0+29) = wmma1.y;
+    *(buf0+3) = wmma11.x;
+    *(buf0+30) = wmma5.y;
+    *(buf0+31) = wmma9.y;
+    *(buf0+4) = wmma15.y;
+    *(buf0+5) = wmma3.y;
+    *(buf0+6) = wmma7.y;
+    *(buf0+7) = wmma11.y;
+    *(buf0+8) = wmma14.x;
+    *(buf0+9) = wmma2.x;
+  }
+  float val8 = (*(buf0+0));
+  float val9 = (*(buf0+1));
+  float val10 = (*(buf0+10));
+  float val11 = (*(buf0+11));
+  float val12 = (*(buf0+12));
+  float val13 = (*(buf0+13));
+  float val14 = (*(buf0+14));
+  float val15 = (*(buf0+15));
+  float val16 = (*(buf0+16));
+  float val17 = (*(buf0+17));
+  float val18 = (*(buf0+18));
+  float val19 = (*(buf0+19));
+  float val20 = (*(buf0+2));
+  float val21 = (*(buf0+20));
+  float val22 = (*(buf0+21));
+  float val23 = (*(buf0+22));
+  float val24 = (*(buf0+23));
+  float val25 = (*(buf0+24));
+  float val26 = (*(buf0+25));
+  float val27 = (*(buf0+26));
+  float val28 = (*(buf0+27));
+  float val29 = (*(buf0+28));
+  float val30 = (*(buf0+29));
+  float val31 = (*(buf0+3));
+  float val32 = (*(buf0+30));
+  float val33 = (*(buf0+31));
+  float val34 = (*(buf0+4));
+  float val35 = (*(buf0+5));
+  float val36 = (*(buf0+6));
+  float val37 = (*(buf0+7));
+  float val38 = (*(buf0+8));
+  float val39 = (*(buf0+9));
+  float alu73 = ((0.0f<val8)?val8:0.0f);
+  float alu74 = ((0.0f<val34)?val34:0.0f);
+  float alu75 = ((0.0f<val9)?val9:0.0f);
+  float alu76 = ((0.0f<val35)?val35:0.0f);
+  float alu77 = ((0.0f<val10)?val10:0.0f);
+  float alu78 = ((0.0f<val14)?val14:0.0f);
+  float alu79 = ((0.0f<val11)?val11:0.0f);
+  float alu80 = ((0.0f<val15)?val15:0.0f);
+  float alu81 = ((0.0f<val16)?val16:0.0f);
+  float alu82 = ((0.0f<val21)?val21:0.0f);
+  float alu83 = ((0.0f<val17)?val17:0.0f);
+  float alu84 = ((0.0f<val22)?val22:0.0f);
+  float alu85 = ((0.0f<val18)?val18:0.0f);
+  float alu86 = ((0.0f<val23)?val23:0.0f);
+  float alu87 = ((0.0f<val19)?val19:0.0f);
+  float alu88 = ((0.0f<val24)?val24:0.0f);
+  float alu89 = ((0.0f<val20)?val20:0.0f);
+  float alu90 = ((0.0f<val36)?val36:0.0f);
+  float alu91 = ((0.0f<val25)?val25:0.0f);
+  float alu92 = ((0.0f<val29)?val29:0.0f);
+  float alu93 = ((0.0f<val26)?val26:0.0f);
+  float alu94 = ((0.0f<val30)?val30:0.0f);
+  float alu95 = ((0.0f<val27)?val27:0.0f);
+  float alu96 = ((0.0f<val32)?val32:0.0f);
+  float alu97 = ((0.0f<val28)?val28:0.0f);
+  float alu98 = ((0.0f<val33)?val33:0.0f);
+  float alu99 = ((0.0f<val31)?val31:0.0f);
+  float alu100 = ((0.0f<val37)?val37:0.0f);
+  float alu101 = ((0.0f<val12)?val12:0.0f);
+  float alu102 = ((0.0f<val38)?val38:0.0f);
+  float alu103 = ((0.0f<val13)?val13:0.0f);
+  float alu104 = ((0.0f<val39)?val39:0.0f);
+  int alu105 = (alu2+alu5);
+  *((device float2*)((data0_65536+(alu105+16)))) = float2(alu81,alu82);
+  *((device float2*)((data0_65536+(alu105+2048)))) = float2(alu75,alu76);
+  *((device float2*)((data0_65536+(alu105+2056)))) = float2(alu104,alu103);
+  *((device float2*)((data0_65536+(alu105+2064)))) = float2(alu83,alu84);
+  *((device float2*)((data0_65536+(alu105+2072)))) = float2(alu93,alu94);
+  *((device float2*)((data0_65536+(alu105+24)))) = float2(alu91,alu92);
+  *((device float2*)((data0_65536+(alu105+4096)))) = float2(alu89,alu90);
+  *((device float2*)((data0_65536+(alu105+4104)))) = float2(alu77,alu78);
+  *((device float2*)((data0_65536+(alu105+4112)))) = float2(alu85,alu86);
+  *((device float2*)((data0_65536+(alu105+4120)))) = float2(alu95,alu96);
+  *((device float2*)((data0_65536+(alu105+6144)))) = float2(alu99,alu100);
+  *((device float2*)((data0_65536+(alu105+6152)))) = float2(alu79,alu80);
+  *((device float2*)((data0_65536+(alu105+6160)))) = float2(alu87,alu88);
+  *((device float2*)((data0_65536+(alu105+6168)))) = float2(alu97,alu98);
+  *((device float2*)((data0_65536+(alu105+8)))) = float2(alu102,alu101);
+  *((device float2*)((data0_65536+alu105))) = float2(alu73,alu74);
+}compiling r[90m_[0m[34m8[0m[90m_[0m[34m2[0m[90m_[0m[36m4[0m[90m_[0m[96m32[0m[90m_[0m[33m2[0m[90m_[0m[33m4[0m[90m_[0m[33m4[0m[90m_[0m[31m32[0m                     : 100%|█| 4/4 [00:00<00:00, 11.71it/s]compiling r[90m_[0m[34m8[0m[90m_[0m[34m2[0m[90m_[0m[36m4[0m[90m_[0m[96m32[0m[90m_[0m[33m2[0m[90m_[0m[33m4[0m[90m_[0m[33m4[0m[90m_[0m[31m32[0m                     : 100%|█| 4/4 [00:00<00:00, 11.71it/s]
+compiling:   0%|                                          | 0/1 [00:00<?, ?it/s]loading libusb from /opt/homebrew/lib/libusb-1.0.dylib
+loading mesa failed: not found on system
+loading rt from /System/Library/Frameworks/System.framework/System
+loading m from /usr/lib/libm.dylib
+opened device CPU from pid:39211
+
+extern void sel_registerName();
+extern void objc_msgSend();
+static inline void mtl_send(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_, unsigned long* out_1) {
+  unsigned long alu0 = ((unsigned long(*)(unsigned char*))(sel_registerName))((unsigned char*)(sel_1));
+  unsigned long alu1 = ((unsigned long(*)(unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))(objc_msgSend))((unsigned long)(obj_), (unsigned long)(alu0), (unsigned long)(a_), (unsigned long)(b_), (unsigned long)(c_));
+  *(out_1+0) = alu1;
+}
+static inline void hcq_fence(unsigned long* slots_24, volatile unsigned long* tl_2, unsigned long tv_, unsigned long* handles_3_5) {
+  unsigned long buf0[1];
+  unsigned long val0 = (*(slots_24+2));
+  const unsigned char alu0[] = "\x73\x69\x67\x6e\x61\x6c\x65\x64\x56\x61\x6c\x75\x65\x00";
+  for (;;) {
+    unsigned long val1 = (*(handles_3_5+1));
+    mtl_send(val1, (alu0+0), 0ul, 0ul, 0ul, buf0);
+    if (!(((*(buf0+0))<val0))) { break; }
+  }
+  unsigned long alu3 = (tv_+1ul);
+  *(tl_2+1) = alu3;
+  *(slots_24+2) = alu3;
+}
+static inline void mtl_send_1(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_, unsigned long* out_1) {
+  unsigned long alu0 = ((unsigned long(*)(unsigned char*))(sel_registerName))((unsigned char*)(sel_1));
+  unsigned long alu1 = ((unsigned long(*)(unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))(objc_msgSend))((unsigned long)(obj_), (unsigned long)(alu0), (unsigned long)(a_), (unsigned long)(b_), (unsigned long)(c_));
+  *(out_1+0) = alu1;
+}
+static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+  unsigned long alu0 = ((unsigned long(*)(unsigned char*))(sel_registerName))((unsigned char*)(sel_1));
+  unsigned long alu1 = ((unsigned long(*)(unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))(objc_msgSend))((unsigned long)(obj_), (unsigned long)(alu0), (unsigned long)(a_), (unsigned long)(b_), (unsigned long)(c_));
+}
+static inline void mtl_send_3(unsigned long obj_, unsigned char* sel_1, unsigned char* a_1, unsigned char* b_1, unsigned long c_) {
+  unsigned long alu0 = ((unsigned long(*)(unsigned char*))(sel_registerName))((unsigned char*)(sel_1));
+  unsigned long alu1 = ((unsigned long(*)(unsigned long, unsigned long, unsigned char*, unsigned char*, unsigned long))(objc_msgSend))((unsigned long)(obj_), (unsigned long)(alu0), (unsigned char*)(a_1), (unsigned char*)(b_1), (unsigned long)(c_));
+}
+static inline void mtl_run(unsigned char* icb_1152, unsigned long first_, unsigned long* stamp_4, volatile unsigned long* mtl_cb_4_1, volatile unsigned long* mtl_enc_5_1, unsigned long* handles_6_5) {
+  unsigned long val0 = (*(handles_6_5+0));
+  unsigned long val1 = (*(handles_6_5+2));
+  const unsigned char alu0[] = "\x63\x6f\x6d\x6d\x61\x6e\x64\x42\x75\x66\x66\x65\x72\x00";
+  mtl_send_1(val0, (alu0+0), 0ul, 0ul, 0ul, mtl_cb_4_1);
+  unsigned long val2 = (*(mtl_cb_4_1+0));
+  const unsigned char alu2[] = "\x63\x6f\x6d\x70\x75\x74\x65\x43\x6f\x6d\x6d\x61\x6e\x64\x45\x6e\x63\x6f\x64\x65\x72\x00";
+  mtl_send_1(val2, (alu2+0), 0ul, 0ul, 0ul, mtl_enc_5_1);
+  unsigned long val3 = (*(mtl_enc_5_1+0));
+  const unsigned char alu4[] = "\x77\x61\x69\x74\x46\x6f\x72\x46\x65\x6e\x63\x65\x3a\x00";
+  mtl_send_2(val3, (alu4+0), val1, 0ul, 0ul);
+  unsigned long val4 = (*(mtl_enc_5_1+0));
+  const unsigned char alu6[] = "\x73\x65\x74\x43\x6f\x6d\x70\x75\x74\x65\x50\x69\x70\x65\x6c\x69\x6e\x65\x53\x74\x61\x74\x65\x3a\x00";
+  for (unsigned long Lidx3 = 0; Lidx3 < 4ul; Lidx3++) {
+    unsigned long val5 = (*(((unsigned long*)(icb_1152))+(Lidx3+140ul)));
+    mtl_send_2(val4, (alu6+0), val5, 0ul, 0ul);
+    unsigned long val6 = (*(mtl_enc_5_1+0));
+    const unsigned char alu8[] = "\x64\x69\x73\x70\x61\x74\x63\x68\x54\x68\x72\x65\x61\x64\x67\x72\x6f\x75\x70\x73\x3a\x74\x68\x72\x65\x61\x64\x73\x50\x65\x72\x54\x68\x72\x65\x61\x64\x67\x72\x6f\x75\x70\x3a\x00";
+    mtl_send_3(val6, (alu8+0), (icb_1152+1048), (icb_1152+1048), 0ul);
+  }
+  unsigned long val7 = (*(mtl_enc_5_1+0));
+  unsigned long val8 = (*(((unsigned long*)(icb_1152))+134));
+  const unsigned char alu11[] = "\x65\x78\x65\x63\x75\x74\x65\x43\x6f\x6d\x6d\x61\x6e\x64\x73\x49\x6e\x42\x75\x66\x66\x65\x72\x3a\x77\x69\x74\x68\x52\x61\x6e\x67\x65\x3a\x00";
+  mtl_send_2(val7, (alu11+0), val8, first_, 1ul);
+  unsigned long val9 = (*(mtl_enc_5_1+0));
+  const unsigned char alu13[] = "\x75\x70\x64\x61\x74\x65\x46\x65\x6e\x63\x65\x3a\x00";
+  mtl_send_2(val9, (alu13+0), val1, 0ul, 0ul);
+  unsigned long val10 = (*(mtl_enc_5_1+0));
+  const unsigned char alu15[] = "\x65\x6e\x64\x45\x6e\x63\x6f\x64\x69\x6e\x67\x00";
+  mtl_send_2(val10, (alu15+0), 0ul, 0ul, 0ul);
+  *(stamp_4+3) = 0ul;
+  unsigned long val11 = (*(mtl_cb_4_1+0));
+  *(stamp_4+1) = val11;
+  unsigned long val12 = (*(mtl_cb_4_1+0));
+  const unsigned char alu19[] = "\x63\x6f\x6d\x6d\x69\x74\x00";
+  mtl_send_2(val12, (alu19+0), 0ul, 0ul, 0ul);
+}
+static inline void mtl_run_1(unsigned char* icb_1152, unsigned long value_, unsigned long* stamp_4, volatile unsigned long* mtl_cb_3_1, volatile unsigned long* mtl_enc_4_1, unsigned long* handles_5_5) {
+  unsigned long val0 = (*(handles_5_5+0));
+  unsigned long val1 = (*(handles_5_5+2));
+  const unsigned char alu0[] = "\x63\x6f\x6d\x6d\x61\x6e\x64\x42\x75\x66\x66\x65\x72\x00";
+  mtl_send_1(val0, (alu0+0), 0ul, 0ul, 0ul, mtl_cb_3_1);
+  unsigned long val2 = (*(mtl_cb_3_1+0));
+  const unsigned char alu2[] = "\x63\x6f\x6d\x70\x75\x74\x65\x43\x6f\x6d\x6d\x61\x6e\x64\x45\x6e\x63\x6f\x64\x65\x72\x00";
+  mtl_send_1(val2, (alu2+0), 0ul, 0ul, 0ul, mtl_enc_4_1);
+  unsigned long val3 = (*(mtl_enc_4_1+0));
+  const unsigned char alu4[] = "\x77\x61\x69\x74\x46\x6f\x72\x46\x65\x6e\x63\x65\x3a\x00";
+  mtl_send_2(val3, (alu4+0), val1, 0ul, 0ul);
+  unsigned long val4 = (*(mtl_enc_4_1+0));
+  const unsigned char alu6[] = "\x73\x65\x74\x43\x6f\x6d\x70\x75\x74\x65\x50\x69\x70\x65\x6c\x69\x6e\x65\x53\x74\x61\x74\x65\x3a\x00";
+  for (unsigned long Lidx0 = 0; Lidx0 < 4ul; Lidx0++) {
+    unsigned long val5 = (*(((unsigned long*)(icb_1152))+(Lidx0+140ul)));
+    mtl_send_2(val4, (alu6+0), val5, 0ul, 0ul);
+    unsigned long val6 = (*(mtl_enc_4_1+0));
+    const unsigned char alu8[] = "\x64\x69\x73\x70\x61\x74\x63\x68\x54\x68\x72\x65\x61\x64\x67\x72\x6f\x75\x70\x73\x3a\x74\x68\x72\x65\x61\x64\x73\x50\x65\x72\x54\x68\x72\x65\x61\x64\x67\x72\x6f\x75\x70\x3a\x00";
+    mtl_send_3(val6, (alu8+0), (icb_1152+1048), (icb_1152+1048), 0ul);
+  }
+  unsigned long val7 = (*(handles_5_5+1));
+  unsigned long val8 = (*(mtl_enc_4_1+0));
+  unsigned long val9 = (*(((unsigned long*)(icb_1152))+134));
+  const unsigned char alu11[] = "\x65\x78\x65\x63\x75\x74\x65\x43\x6f\x6d\x6d\x61\x6e\x64\x73\x49\x6e\x42\x75\x66\x66\x65\x72\x3a\x77\x69\x74\x68\x52\x61\x6e\x67\x65\x3a\x00";
+  mtl_send_2(val8, (alu11+0), val9, 4ul, 1ul);
+  unsigned long val10 = (*(mtl_enc_4_1+0));
+  const unsigned char alu13[] = "\x75\x70\x64\x61\x74\x65\x46\x65\x6e\x63\x65\x3a\x00";
+  mtl_send_2(val10, (alu13+0), val1, 0ul, 0ul);
+  unsigned long val11 = (*(mtl_enc_4_1+0));
+  const unsigned char alu15[] = "\x65\x6e\x64\x45\x6e\x63\x6f\x64\x69\x6e\x67\x00";
+  mtl_send_2(val11, (alu15+0), 0ul, 0ul, 0ul);
+  *(stamp_4+3) = 0ul;
+  unsigned long val12 = (*(mtl_cb_3_1+0));
+  *(stamp_4+1) = val12;
+  unsigned long val13 = (*(mtl_cb_3_1+0));
+  const unsigned char alu19[] = "\x65\x6e\x63\x6f\x64\x65\x53\x69\x67\x6e\x61\x6c\x45\x76\x65\x6e\x74\x3a\x76\x61\x6c\x75\x65\x3a\x00";
+  mtl_send_2(val13, (alu19+0), val7, value_, 0ul);
+  unsigned long val14 = (*(mtl_cb_3_1+0));
+  const unsigned char alu21[] = "\x63\x6f\x6d\x6d\x69\x74\x00";
+  mtl_send_2(val14, (alu21+0), 0ul, 0ul, 0ul);
+}
+void hcq_submit(volatile unsigned long* restrict slots_0_24, unsigned long* restrict inputs_1_6, volatile unsigned char* restrict None_2_1152, volatile unsigned long* restrict timeline_3_2, unsigned long* restrict handles_4_5, volatile unsigned long* restrict mtl_cb_5_1, volatile unsigned long* restrict mtl_enc_6_1) {
+  unsigned long val0 = (*(inputs_1_6+0));
+  unsigned long val1 = (*(inputs_1_6+1));
+  unsigned long val2 = (*(inputs_1_6+2));
+  unsigned long val3 = (*(inputs_1_6+3));
+  unsigned long val4 = (*(inputs_1_6+4));
+  unsigned long val5 = (*(inputs_1_6+5));
+  unsigned long val6 = (*(timeline_3_2+1));
+  hcq_fence(slots_0_24, timeline_3_2, val6, handles_4_5);
+  *(slots_0_24+0) = 0ul;
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  *(((unsigned long*)(None_2_1152))+0) = val0;
+  *(((unsigned long*)(None_2_1152))+1) = val1;
+  *(((unsigned long*)(None_2_1152))+128) = val5;
+  *(((unsigned long*)(None_2_1152))+129) = val2;
+  *(((unsigned long*)(None_2_1152))+130) = val4;
+  *(((unsigned long*)(None_2_1152))+32) = val2;
+  *(((unsigned long*)(None_2_1152))+33) = val0;
+  *(((unsigned long*)(None_2_1152))+34) = val3;
+  *(((unsigned long*)(None_2_1152))+64) = val0;
+  *(((unsigned long*)(None_2_1152))+96) = val4;
+  *(((unsigned long*)(None_2_1152))+97) = val0;
+  *(((unsigned long*)(None_2_1152))+98) = val3;
+  unsigned long alu15 = (val6+1ul);
+  for (unsigned long Lidx4 = 0; Lidx4 < 4ul; Lidx4++) {
+    mtl_run(None_2_1152, Lidx4, (slots_0_24+(4ul+(Lidx4<<2ul))), mtl_cb_5_1, mtl_enc_6_1, handles_4_5);
+  }
+  mtl_run_1(None_2_1152, alu15, (slots_0_24+20), mtl_cb_5_1, mtl_enc_6_1, handles_4_5);
+}
+<stdin>:15:20: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   15 |     mtl_send(val1, (alu0+0), 0ul, 0ul, 0ul, buf0);
+      |                    ^~~~~~~~
+<stdin>:4:64: note: passing argument to parameter 'sel_1' here
+    4 | static inline void mtl_send(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_, unsigned long* out_1) {
+      |                                                                ^
+<stdin>:39:20: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   39 |   mtl_send_1(val0, (alu0+0), 0ul, 0ul, 0ul, mtl_cb_4_1);
+      |                    ^~~~~~~~
+<stdin>:22:66: note: passing argument to parameter 'sel_1' here
+   22 | static inline void mtl_send_1(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_, unsigned long* out_1) {
+      |                                                                  ^
+<stdin>:39:45: warning: passing 'volatile unsigned long *' to parameter of type 'unsigned long *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   39 |   mtl_send_1(val0, (alu0+0), 0ul, 0ul, 0ul, mtl_cb_4_1);
+      |                                             ^~~~~~~~~~
+<stdin>:22:142: note: passing argument to parameter 'out_1' here
+   22 | static inline void mtl_send_1(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_, unsigned long* out_1) {
+      |                                                                                                                                              ^
+<stdin>:42:20: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   42 |   mtl_send_1(val2, (alu2+0), 0ul, 0ul, 0ul, mtl_enc_5_1);
+      |                    ^~~~~~~~
+<stdin>:22:66: note: passing argument to parameter 'sel_1' here
+   22 | static inline void mtl_send_1(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_, unsigned long* out_1) {
+      |                                                                  ^
+<stdin>:42:45: warning: passing 'volatile unsigned long *' to parameter of type 'unsigned long *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   42 |   mtl_send_1(val2, (alu2+0), 0ul, 0ul, 0ul, mtl_enc_5_1);
+      |                                             ^~~~~~~~~~~
+<stdin>:22:142: note: passing argument to parameter 'out_1' here
+   22 | static inline void mtl_send_1(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_, unsigned long* out_1) {
+      |                                                                                                                                              ^
+<stdin>:45:20: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   45 |   mtl_send_2(val3, (alu4+0), val1, 0ul, 0ul);
+      |                    ^~~~~~~~
+<stdin>:27:66: note: passing argument to parameter 'sel_1' here
+   27 | static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+      |                                                                  ^
+<stdin>:50:22: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   50 |     mtl_send_2(val4, (alu6+0), val5, 0ul, 0ul);
+      |                      ^~~~~~~~
+<stdin>:27:66: note: passing argument to parameter 'sel_1' here
+   27 | static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+      |                                                                  ^
+<stdin>:53:22: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   53 |     mtl_send_3(val6, (alu8+0), (icb_1152+1048), (icb_1152+1048), 0ul);
+      |                      ^~~~~~~~
+<stdin>:31:66: note: passing argument to parameter 'sel_1' here
+   31 | static inline void mtl_send_3(unsigned long obj_, unsigned char* sel_1, unsigned char* a_1, unsigned char* b_1, unsigned long c_) {
+      |                                                                  ^
+<stdin>:58:20: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   58 |   mtl_send_2(val7, (alu11+0), val8, first_, 1ul);
+      |                    ^~~~~~~~~
+<stdin>:27:66: note: passing argument to parameter 'sel_1' here
+   27 | static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+      |                                                                  ^
+<stdin>:61:20: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   61 |   mtl_send_2(val9, (alu13+0), val1, 0ul, 0ul);
+      |                    ^~~~~~~~~
+<stdin>:27:66: note: passing argument to parameter 'sel_1' here
+   27 | static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+      |                                                                  ^
+<stdin>:64:21: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   64 |   mtl_send_2(val10, (alu15+0), 0ul, 0ul, 0ul);
+      |                     ^~~~~~~~~
+<stdin>:27:66: note: passing argument to parameter 'sel_1' here
+   27 | static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+      |                                                                  ^
+<stdin>:70:21: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   70 |   mtl_send_2(val12, (alu19+0), 0ul, 0ul, 0ul);
+      |                     ^~~~~~~~~
+<stdin>:27:66: note: passing argument to parameter 'sel_1' here
+   27 | static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+      |                                                                  ^
+<stdin>:76:20: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   76 |   mtl_send_1(val0, (alu0+0), 0ul, 0ul, 0ul, mtl_cb_3_1);
+      |                    ^~~~~~~~
+<stdin>:22:66: note: passing argument to parameter 'sel_1' here
+   22 | static inline void mtl_send_1(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_, unsigned long* out_1) {
+      |                                                                  ^
+<stdin>:76:45: warning: passing 'volatile unsigned long *' to parameter of type 'unsigned long *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   76 |   mtl_send_1(val0, (alu0+0), 0ul, 0ul, 0ul, mtl_cb_3_1);
+      |                                             ^~~~~~~~~~
+<stdin>:22:142: note: passing argument to parameter 'out_1' here
+   22 | static inline void mtl_send_1(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_, unsigned long* out_1) {
+      |                                                                                                                                              ^
+<stdin>:79:20: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   79 |   mtl_send_1(val2, (alu2+0), 0ul, 0ul, 0ul, mtl_enc_4_1);
+      |                    ^~~~~~~~
+<stdin>:22:66: note: passing argument to parameter 'sel_1' here
+   22 | static inline void mtl_send_1(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_, unsigned long* out_1) {
+      |                                                                  ^
+<stdin>:79:45: warning: passing 'volatile unsigned long *' to parameter of type 'unsigned long *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   79 |   mtl_send_1(val2, (alu2+0), 0ul, 0ul, 0ul, mtl_enc_4_1);
+      |                                             ^~~~~~~~~~~
+<stdin>:22:142: note: passing argument to parameter 'out_1' here
+   22 | static inline void mtl_send_1(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_, unsigned long* out_1) {
+      |                                                                                                                                              ^
+<stdin>:82:20: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   82 |   mtl_send_2(val3, (alu4+0), val1, 0ul, 0ul);
+      |                    ^~~~~~~~
+<stdin>:27:66: note: passing argument to parameter 'sel_1' here
+   27 | static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+      |                                                                  ^
+<stdin>:87:22: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   87 |     mtl_send_2(val4, (alu6+0), val5, 0ul, 0ul);
+      |                      ^~~~~~~~
+<stdin>:27:66: note: passing argument to parameter 'sel_1' here
+   27 | static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+      |                                                                  ^
+<stdin>:90:22: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   90 |     mtl_send_3(val6, (alu8+0), (icb_1152+1048), (icb_1152+1048), 0ul);
+      |                      ^~~~~~~~
+<stdin>:31:66: note: passing argument to parameter 'sel_1' here
+   31 | static inline void mtl_send_3(unsigned long obj_, unsigned char* sel_1, unsigned char* a_1, unsigned char* b_1, unsigned long c_) {
+      |                                                                  ^
+<stdin>:96:20: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   96 |   mtl_send_2(val8, (alu11+0), val9, 4ul, 1ul);
+      |                    ^~~~~~~~~
+<stdin>:27:66: note: passing argument to parameter 'sel_1' here
+   27 | static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+      |                                                                  ^
+<stdin>:99:21: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+   99 |   mtl_send_2(val10, (alu13+0), val1, 0ul, 0ul);
+      |                     ^~~~~~~~~
+<stdin>:27:66: note: passing argument to parameter 'sel_1' here
+   27 | static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+      |                                                                  ^
+<stdin>:102:21: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+  102 |   mtl_send_2(val11, (alu15+0), 0ul, 0ul, 0ul);
+      |                     ^~~~~~~~~
+<stdin>:27:66: note: passing argument to parameter 'sel_1' here
+   27 | static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+      |                                                                  ^
+<stdin>:108:21: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+  108 |   mtl_send_2(val13, (alu19+0), val7, value_, 0ul);
+      |                     ^~~~~~~~~
+<stdin>:27:66: note: passing argument to parameter 'sel_1' here
+   27 | static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+      |                                                                  ^
+<stdin>:111:21: warning: passing 'const unsigned char *' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+  111 |   mtl_send_2(val14, (alu21+0), 0ul, 0ul, 0ul);
+      |                     ^~~~~~~~~
+<stdin>:27:66: note: passing argument to parameter 'sel_1' here
+   27 | static inline void mtl_send_2(unsigned long obj_, unsigned char* sel_1, unsigned long a_, unsigned long b_, unsigned long c_) {
+      |                                                                  ^
+<stdin>:121:13: warning: passing 'volatile unsigned long *restrict' to parameter of type 'unsigned long *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+  121 |   hcq_fence(slots_0_24, timeline_3_2, val6, handles_4_5);
+      |             ^~~~~~~~~~
+<stdin>:9:45: note: passing argument to parameter 'slots_24' here
+    9 | static inline void hcq_fence(unsigned long* slots_24, volatile unsigned long* tl_2, unsigned long tv_, unsigned long* handles_3_5) {
+      |                                             ^
+<stdin>:138:13: warning: passing 'volatile unsigned char *restrict' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+  138 |     mtl_run(None_2_1152, Lidx4, (slots_0_24+(4ul+(Lidx4<<2ul))), mtl_cb_5_1, mtl_enc_6_1, handles_4_5);
+      |             ^~~~~~~~~~~
+<stdin>:35:43: note: passing argument to parameter 'icb_1152' here
+   35 | static inline void mtl_run(unsigned char* icb_1152, unsigned long first_, unsigned long* stamp_4, volatile unsigned long* mtl_cb_4_1, volatile unsigned long* mtl_enc_5_1, unsigned long* handles_6_5) {
+      |                                           ^
+<stdin>:138:33: warning: passing 'volatile unsigned long *' to parameter of type 'unsigned long *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+  138 |     mtl_run(None_2_1152, Lidx4, (slots_0_24+(4ul+(Lidx4<<2ul))), mtl_cb_5_1, mtl_enc_6_1, handles_4_5);
+      |                                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+<stdin>:35:90: note: passing argument to parameter 'stamp_4' here
+   35 | static inline void mtl_run(unsigned char* icb_1152, unsigned long first_, unsigned long* stamp_4, volatile unsigned long* mtl_cb_4_1, volatile unsigned long* mtl_enc_5_1, unsigned long* handles_6_5) {
+      |                                                                                          ^
+<stdin>:140:13: warning: passing 'volatile unsigned char *restrict' to parameter of type 'unsigned char *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+  140 |   mtl_run_1(None_2_1152, alu15, (slots_0_24+20), mtl_cb_5_1, mtl_enc_6_1, handles_4_5);
+      |             ^~~~~~~~~~~
+<stdin>:72:45: note: passing argument to parameter 'icb_1152' here
+   72 | static inline void mtl_run_1(unsigned char* icb_1152, unsigned long value_, unsigned long* stamp_4, volatile unsigned long* mtl_cb_3_1, volatile unsigned long* mtl_enc_4_1, unsigned long* handles_5_5) {
+      |                                             ^
+<stdin>:140:33: warning: passing 'volatile unsigned long *' to parameter of type 'unsigned long *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+  140 |   mtl_run_1(None_2_1152, alu15, (slots_0_24+20), mtl_cb_5_1, mtl_enc_6_1, handles_4_5);
+      |                                 ^~~~~~~~~~~~~~~
+<stdin>:72:92: note: passing argument to parameter 'stamp_4' here
+   72 | static inline void mtl_run_1(unsigned char* icb_1152, unsigned long value_, unsigned long* stamp_4, volatile unsigned long* mtl_cb_3_1, volatile unsigned long* mtl_enc_4_1, unsigned long* handles_5_5) {
+      |                                                                                            ^
+29 warnings generated.
+compiling hcq_submit                              : 100%|█| 1/1 [00:00<00:00,  9.38it/s]compiling hcq_submit                              : 100%|█| 1/1 [00:00<00:00,  9.37it/s]
+loading metal from /System/Library/Frameworks/Metal.framework/Metal
+loading CoreGraphics from /System/Library/Frameworks/CoreGraphics.framework/CoreGraphics
+loading llvm from /opt/homebrew/opt/llvm@19/lib/libLLVM.dylib
+loading MTLCompiler from /System/Library/PrivateFrameworks/MTLCompiler.framework/MTLCompiler
+upcasting masked axis : 0
+E_2                       opts: (Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),)
+#include <metal_stdlib>
+using namespace metal;
+struct args_t { device uint* data0_2; device uint* data1_2; };
+kernel void E_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device uint* data0_2 = args.data0_2; device uint* data1_2 = args.data1_2;
+  uint2 val0 = (*((device uint2*)((data1_2+0))));
+  uint alu0 = (val0.x+65536u);
+  *((device uint2*)((data0_2+0))) = uint2(alu0,(val0.y+((uint)((alu0<val0.x)))));
+}
+loading metal from /System/Library/Frameworks/Metal.framework/Metal
+loading CoreGraphics from /System/Library/Frameworks/CoreGraphics.framework/CoreGraphics
+loading llvm from /opt/homebrew/opt/llvm@19/lib/libLLVM.dylib
+loading MTLCompiler from /System/Library/PrivateFrameworks/MTLCompiler.framework/MTLCompiler
+upcasting masked axis : 0
+E_2                       opts: (Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),)
+#include <metal_stdlib>
+using namespace metal;
+struct args_t { device uint* data0_2; };
+kernel void E_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device uint* data0_2 = args.data0_2;
+  uint2 val0 = (*((device uint2*)((data0_2+0))));
+  uint alu0 = (val0.x+65536u);
+  *((device uint2*)((data0_2+0))) = uint2(alu0,(val0.y+((uint)((alu0<val0.x)))));
+}
+loading metal from /System/Library/Frameworks/Metal.framework/Metal
+loading CoreGraphics from /System/Library/Frameworks/CoreGraphics.framework/CoreGraphics
+loading llvm from /opt/homebrew/opt/llvm@19/lib/libLLVM.dylib
+loading MTLCompiler from /System/Library/PrivateFrameworks/MTLCompiler.framework/MTLCompiler
+upcasting masked axis : 0
+E_1024_32_2               opts: (Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL)))
+#include <metal_stdlib>
+using namespace metal;
+struct args_t { device float* data0_65536; device uint* data1_2; device uint* data2_2; };
+kernel void E_1024_32_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_65536 = args.data0_65536; device uint* data1_2 = args.data1_2; device uint* data2_2 = args.data2_2;
+  uint2 val0 = (*((device uint2*)((data1_2+0))));
+  uint2 val1 = (*((device uint2*)((data2_2+0))));
+  int gidx0 = gid.x; /* 1024 */
+  int lidx0 = lid.x; /* 32 */
+  int alu0 = ((gidx0<<5)+lidx0);
+  uint cast0 = ((uint)((alu0+1)));
+  uint alu1 = ((val0.y-((uint)((val0.x<65536u))))+val1.y);
+  uint alu2 = (val0.x+4294901760u+val1.x+alu1);
+  uint alu3 = (alu2^((alu1<<13u)+(alu1>>19u)));
+  uint alu4 = (alu2+alu3);
+  uint alu5 = (alu4^((alu3<<15u)+(alu3>>17u)));
+  uint alu6 = (alu4+alu5);
+  uint alu7 = (alu6^((alu5<<26u)+(alu5>>6u)));
+  uint alu8 = (alu6+alu7);
+  uint alu9 = (val1.x^val1.y^466688986u);
+  uint alu10 = ((alu8^((alu7<<6u)+(alu7>>26u)))+alu9+1u);
+  uint alu11 = (alu8+val1.y+alu10);
+  uint alu12 = (alu11^((alu10<<17u)+(alu10>>15u)));
+  uint alu13 = (alu11+alu12);
+  uint alu14 = (alu13^((alu12<<29u)+(alu12>>3u)));
+  uint alu15 = (alu13+alu14);
+  uint alu16 = (alu15^((alu14<<16u)+(alu14>>16u)));
+  uint alu17 = (alu15+alu16);
+  uint alu18 = ((alu17^((alu16<<24u)+(alu16>>8u)))+val1.x+1u+1u);
+  uint alu19 = (alu17+alu9+alu18);
+  uint alu20 = (alu19^((alu18<<13u)+(alu18>>19u)));
+  uint alu21 = (alu19+alu20);
+  uint alu22 = (alu21^((alu20<<15u)+(alu20>>17u)));
+  uint alu23 = (alu21+alu22);
+  uint alu24 = (alu23^((alu22<<26u)+(alu22>>6u)));
+  uint alu25 = (alu23+alu24);
+  uint alu26 = ((alu25^((alu24<<6u)+(alu24>>26u)))+val1.y+2u+1u);
+  uint alu27 = (alu25+val1.x+alu26);
+  uint alu28 = (alu27^((alu26<<17u)+(alu26>>15u)));
+  uint alu29 = (alu27+alu28);
+  uint alu30 = (alu29^((alu28<<29u)+(alu28>>3u)));
+  uint alu31 = (alu29+alu30);
+  uint alu32 = (alu31^((alu30<<16u)+(alu30>>16u)));
+  uint alu33 = (alu31+alu32);
+  uint alu34 = ((alu33^((alu32<<24u)+(alu32>>8u)))+alu9+3u+1u);
+  uint alu35 = (alu33+val1.y+alu34);
+  uint alu36 = (alu35^((alu34<<13u)+(alu34>>19u)));
+  uint alu37 = (alu35+alu36);
+  uint alu38 = (alu37^((alu36<<15u)+(alu36>>17u)));
+  uint alu39 = (alu37+alu38);
+  uint alu40 = (alu39^((alu38<<26u)+(alu38>>6u)));
+  uint alu41 = (alu39+alu40);
+  uint alu42 = (alu41+alu9);
+  uint alu43 = ((alu41^((alu40<<6u)+(alu40>>26u)))+val1.x+4u+1u);
+  uint alu44 = (cast0+32767u+alu43);
+  uint alu45 = (cast0+4294967295u+alu42+alu44);
+  uint alu46 = (alu45^((alu44<<13u)+(alu44>>19u)));
+  uint alu47 = (alu45+alu46);
+  uint alu48 = (alu47^((alu46<<15u)+(alu46>>17u)));
+  uint alu49 = (alu47+alu48);
+  uint alu50 = (alu49^((alu48<<26u)+(alu48>>6u)));
+  uint alu51 = (alu49+alu50);
+  uint alu52 = (alu42^alu43^466688986u);
+  uint alu53 = ((alu51^((alu50<<6u)+(alu50>>26u)))+alu52+1u);
+  uint alu54 = (alu51+alu43+alu53);
+  uint alu55 = (alu54^((alu53<<17u)+(alu53>>15u)));
+  uint alu56 = (alu54+alu55);
+  uint alu57 = (alu56^((alu55<<29u)+(alu55>>3u)));
+  uint alu58 = (alu56+alu57);
+  uint alu59 = (alu58^((alu57<<16u)+(alu57>>16u)));
+  uint alu60 = (alu58+alu59);
+  uint alu61 = ((alu60^((alu59<<24u)+(alu59>>8u)))+alu42+1u+1u);
+  uint alu62 = (alu60+alu52+alu61);
+  uint alu63 = (alu62^((alu61<<13u)+(alu61>>19u)));
+  uint alu64 = (alu62+alu63);
+  uint alu65 = (alu64^((alu63<<15u)+(alu63>>17u)));
+  uint alu66 = (alu64+alu65);
+  uint alu67 = (alu66^((alu65<<26u)+(alu65>>6u)));
+  uint alu68 = (alu66+alu67);
+  uint alu69 = ((alu68^((alu67<<6u)+(alu67>>26u)))+alu43+2u+1u);
+  uint alu70 = (alu68+alu42+alu69);
+  uint alu71 = (alu70^((alu69<<17u)+(alu69>>15u)));
+  uint alu72 = (alu70+alu71);
+  uint alu73 = (alu72^((alu71<<29u)+(alu71>>3u)));
+  uint alu74 = (alu72+alu73);
+  uint alu75 = (alu74^((alu73<<16u)+(alu73>>16u)));
+  uint alu76 = (alu74+alu75);
+  uint alu77 = ((alu76^((alu75<<24u)+(alu75>>8u)))+alu52+3u+1u);
+  uint alu78 = (alu76+alu43+alu77);
+  uint alu79 = (alu78^((alu77<<13u)+(alu77>>19u)));
+  uint alu80 = (alu78+alu79);
+  uint alu81 = (alu80^((alu79<<15u)+(alu79>>17u)));
+  uint alu82 = (alu80+alu81);
+  uint alu83 = (alu82^((alu81<<26u)+(alu81>>6u)));
+  uint alu84 = (alu82+alu83);
+  *(data0_65536+(alu0+32768)) = (as_type<float>((uint)(((((alu84^((alu83<<6u)+(alu83>>26u)))+alu42+4u+1u)>>9u)|1065353216u)))+-1.0f);
+  *(data0_65536+alu0) = (as_type<float>((uint)((((alu84+alu52)>>9u)|1065353216u)))+-1.0f);
+}
+
+
+[32m*** METAL      1[0m [33mcopy        8 B,   METAL <- PYTHON [0m            arg  2 mem   0.00 GB tm   1179.67us/     1.18ms (      0 GFLOPS    0|0      GB/s)
+*** METAL      2 [33mcopy        8 B,   METAL <- PYTHON [0m            arg  2 mem   0.00 GB tm   1820.71us/     3.00ms (      0 GFLOPS    0|0      GB/s)
+[32m*** CPU        7[0m hcq_submit                                     arg  0 mem   0.00 GB tm    656.12us/     3.83ms (     77 GFLOPS    2|8      GB/s)
+[32m*** METAL      7[0m E[90m_[0m[33m2[0m                                            arg  2 mem   0.00 GB tm     24.75us/     3.83ms (      0 GFLOPS    0|0      GB/s)
+[32m*** METAL      7[0m E[90m_[0m[34m1024[0m[90m_[0m[36m32[0m[90m_[0m[33m2[0m                                    arg  3 mem   0.00 GB tm     30.21us/     3.83ms (    280 GFLOPS    9|9      GB/s)
+[32m*** METAL      7[0m E[90m_[0m[33m2[0m                                            arg  1 mem   0.00 GB tm     23.75us/     3.83ms (      0 GFLOPS    0|0      GB/s)
+*** METAL      7 E[90m_[0m[34m1024[0m[90m_[0m[36m32[0m[90m_[0m[33m2[0m                                    arg  3 mem   0.00 GB tm     29.33us/     3.83ms (    288 GFLOPS    9|9      GB/s)
+[32m*** METAL      7[0m r[90m_[0m[34m8[0m[90m_[0m[34m2[0m[90m_[0m[36m4[0m[90m_[0m[96m32[0m[90m_[0m[33m2[0m[90m_[0m[33m4[0m[90m_[0m[33m4[0m[90m_[0m[31m32[0m                            arg  3 mem   0.00 GB tm     70.12us/     3.83ms (    480 GFLOPS   11|64     GB/s)

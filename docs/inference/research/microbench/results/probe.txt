@@ -1,0 +1,162 @@
+R6 probe  macOS 26.6.1  2026-10-01 5:14:09 PM +0000
+device=Apple M2 Pro arch=applegpu_g14s unified=true maxTG=1024 tgMem=32768 recommendedMaxWorkingSet=12713115648 maxBuffer=9534832640
+
+=== GPU families (supportsFamily, raw values) ===
+  apple1 (1001): true
+  apple2 (1002): true
+  apple3 (1003): true
+  apple4 (1004): true
+  apple5 (1005): true
+  apple6 (1006): true
+  apple7 (1007): true
+  apple8 (1008): true
+  apple9 (1009): false
+  apple10 (1010): false
+  apple11 (1011): false
+  apple12 (1012): false
+  mac1 (2001): true
+  mac2 (2002): true
+  common1 (3001): true
+  common2 (3002): true
+  common3 (3003): true
+  macCatalyst1 (4001): false
+  macCatalyst2 (4002): false
+  metal3 (5001): true
+  metal4 (5002): true
+  metal5? (5003): false
+
+=== Device limits ===
+  name=Apple M2 Pro arch=applegpu_g14s registryID=4294968283
+  maxThreadsPerThreadgroup=MTLSize(width: 1024, height: 1024, depth: 1024)
+  maxThreadgroupMemoryLength=32768
+  maxBufferLength=9534832640 (8.8800048828125 GiB)
+  recommendedMaxWorkingSetSize=12713115648 (11.840011596679688 GiB)
+  physical memory=17179869184 ratio=0.7400007247924805
+  hasUnifiedMemory=true location=0 lowPower=false headless=false
+  currentAllocatedSize=65536
+  argumentBuffersSupport=1 maxArgumentBufferSamplerCount=1024
+  supportsFunctionPointers=true supportsDynamicLibraries=true supportsRaytracing=true
+  supportsBFloat16? (no direct API)  supportsShaderBarycentricCoordinates=true
+  sparseTileSizeInBytes=16384  peerGroupID=0 maxTransferRate=0
+  shouldMaximizeConcurrentCompilation=false maximumConcurrentCompilationTaskCount=10
+  supportsCounterSampling(atStageBoundary)=true
+  supportsCounterSampling(atDrawBoundary)=false
+  supportsCounterSampling(atDispatchBoundary)=false
+  supportsCounterSampling(atTileDispatchBoundary)=false
+  supportsCounterSampling(atBlitBoundary)=false
+  counterSet timestamp: ["GPUTimestamp"]
+  sampleTimestamps cpu=1391290467409916 gpu=1391290467409916
+
+=== Objective-C runtime: Metal 4 protocols/classes present ===
+  protocols (51): MTL4Archive, MTL4ArchiveGGDSPI, MTL4ArchiveSPI, MTL4ArgumentTable, MTL4ArgumentTableGGDSPI, MTL4ArgumentTableSPI, MTL4BinaryFunction, MTL4BinaryFunctionGGDSPI, MTL4BinaryFunctionSPI, MTL4CommandAllocator, MTL4CommandAllocatorGGDSPI, MTL4CommandAllocatorSPI, MTL4CommandBuffer, MTL4CommandBufferGGDSPI, MTL4CommandBufferSPI, MTL4CommandEncoder, MTL4CommandEncoderGGDSPI, MTL4CommandEncoderSPI, MTL4CommandQueue, MTL4CommandQueueGGDSPI, MTL4CommandQueueSPI, MTL4CommitFeedback, MTL4CommitFeedbackGGDPrivate, MTL4Compiler, MTL4CompilerGGDSPI, MTL4CompilerSPI, MTL4CompilerTask, MTL4CompilerTaskGGDSPI, MTL4CompilerTaskSPI, MTL4ComputeCommandEncoder, MTL4ComputeCommandEncoderGGDSPI, MTL4ComputeCommandEncoderSPI, MTL4CounterHeap, MTL4CounterHeapGGDSPI, MTL4GPUDebugCommandQueueGTSwizzable, MTL4MachineLearningCommandEncoder, MTL4MachineLearningCommandEncoderGGDSPI, MTL4MachineLearningPipelineState, MTL4MachineLearningPipelineStateGGDSPI, MTL4MachineLearningPipelineStateSPI, MTL4PipelineDataSetSerializer, MTL4PipelineDataSetSerializerGGDSPI, MTL4PipelineDataSetSerializerSPI, MTL4RenderCommandEncoder, MTL4RenderCommandEncoderGGDSPI, MTL4RenderCommandEncoderSPI, MTLResidencySet, MTLResidencySetSPI, MTLTensor, MTLTensorBinding, MTLTensorSPI
+  classes (108): AGXG14XFamilyTensor, IOGPUMetalTensor, MTL4AccelerationStructureBoundingBoxGeometryDescriptor, MTL4AccelerationStructureCurveGeometryDescriptor, MTL4AccelerationStructureDescriptor, MTL4AccelerationStructureGeometryDescriptor, MTL4AccelerationStructureMotionBoundingBoxGeometryDescriptor, MTL4AccelerationStructureMotionCurveGeometryDescriptor, MTL4AccelerationStructureMotionTriangleGeometryDescriptor, MTL4AccelerationStructureTriangleGeometryDescriptor, MTL4ArchiveReply, MTL4ArgumentTableDescriptor, MTL4BinaryFunctionDescriptor, MTL4BinaryFunctionReflection, MTL4CommandAllocatorDescriptor, MTL4CommandBufferOptions, MTL4CommandQueueDescriptor, MTL4CommitOptions, MTL4CompilerDescriptor, MTL4CompilerTaskOptions, MTL4ComputePipelineDescriptor, MTL4CounterHeapDescriptor, MTL4DebugArchive, MTL4DebugArgumentTable, MTL4DebugBinaryFunction, MTL4DebugCommandAllocator, MTL4DebugCommandBuffer, MTL4DebugCommandEncoder, MTL4DebugCommandQueue, MTL4DebugCompiler, MTL4DebugComputeCommandEncoder, MTL4DebugCounterHeap, MTL4DebugMachineLearningCommandEncoder, MTL4DebugMachineLearningPipelineState, MTL4DebugRenderCommandEncoder, MTL4FunctionDescriptor, MTL4GPUDebugArchive, MTL4GPUDebugBinaryFunction, MTL4GPUDebugCommandBuffer, MTL4GPUDebugCommandQueue, MTL4GPUDebugCompiler, MTL4GPUDebugComputeCommandEncoder, MTL4GPUDebugRenderCommandEncoder, MTL4IndirectInstanceAccelerationStructureDescriptor, MTL4InstanceAccelerationStructureDescriptor, MTL4LibraryDescriptor, MTL4LibraryFunctionDescriptor, MTL4MachineLearningPipelineDescriptor, MTL4MachineLearningPipelineReflection, MTL4MeshRenderPipelineDescriptor, MTL4PipelineDataSetSerializerDescriptor, MTL4PipelineDescriptor, MTL4PipelineOptions, MTL4PipelineStageDynamicLinkingDescriptor, MTL4PrimitiveAccelerationStructureDescriptor, MTL4RenderPassDescriptor, MTL4RenderPipelineBinaryFunctionsDescriptor, MTL4RenderPipelineColorAttachmentDescriptor, MTL4RenderPipelineColorAttachmentDescriptorArray, MTL4RenderPipelineDescriptor, MTL4RenderPipelineDynamicLinkingDescriptor, MTL4SpecializedFunctionDescriptor, MTL4StaticLinkingDescriptor, MTL4StitchedFunctionDescriptor, MTL4TileRenderPipelineDescriptor, MTL4ToolsArchive, MTL4ToolsArgumentTable, MTL4ToolsBinaryFunction, MTL4ToolsCommandAllocator, MTL4ToolsCommandBuffer, MTL4ToolsCommandEncoder, MTL4ToolsCommandQueue, MTL4ToolsCompiler, MTL4ToolsCompilerTask, MTL4ToolsComputeCommandEncoder, MTL4ToolsCounterHeap, MTL4ToolsMachineLearningCommandEncoder, MTL4ToolsMachineLearningPipelineState, MTL4ToolsPipelineDataSetSerializer, MTL4ToolsRenderCommandEncoder, MTLDebugTensor, MTLGPUDebugTensor, MTLTensorBindingInternal, MTLTensorDescriptor, MTLTensorExtents, MTLTensorReferenceType, MTLToolsTensor, _MTL4Archive, _MTL4ArgumentTable, _MTL4BinaryFunction, _MTL4CommandAllocator, _MTL4CommandBuffer, _MTL4CommandBufferRetainData, _MTL4CommandEncoder, _MTL4CommandQueue, _MTL4CommitFeedback, _MTL4CommitFeedbackDispatch, _MTL4Compiler, _MTL4CompilerTask, _MTL4ComputeCommandEncoder, _MTL4CounterHeap, _MTL4DispatchBlockCompilerTask, _MTL4DispatchGroupCompilerTask, _MTL4MachineLearningCommandEncoder, _MTL4MachineLearningPipelineState, _MTL4PipelineDataSetSerializer, _MTL4RenderCommandEncoder, _MTLTensor
+  device class = AGXG14SDevice
+  device responds to newMTL4CommandQueue: true
+  device responds to newMTL4CommandQueueWithDescriptor:error:: true
+  device responds to newCommandAllocator: true
+  device responds to newCommandAllocatorWithDescriptor:error:: true
+  device responds to newCommandBuffer: true
+  device responds to newArgumentTableWithDescriptor:error:: true
+  device responds to newCompilerWithDescriptor:error:: true
+  device responds to newTensorWithDescriptor:error:: true
+  device responds to tensorSizeAndAlignWithDescriptor:: true
+  device responds to newCounterHeapWithDescriptor:error:: true
+  device responds to newResidencySetWithDescriptor:error:: true
+  device responds to newLogStateWithDescriptor:error:: true
+  device responds to newArchiveWithURL:error:: true
+  device responds to newPipelineDataSetSerializerWithDescriptor:: true
+  device responds to supportsPlacementSparse: true
+  device responds to newTensorWithDescriptor:attachments:error:: false
+  newMTL4CommandQueue -> AGXG14XFamilyCommandQueue_mtlnext
+    queue responds to commit:count:: true
+    queue responds to commit:count:options:: true
+    queue responds to signalEvent:value:: true
+    queue responds to waitForEvent:value:: true
+    queue responds to addResidencySet:: true
+  newCommandBuffer (MTL4) -> AGXG14XFamilyCommandBuffer_mtlnext
+  newCommandAllocator -> AGXG14XFamilyCommandAllocator_mtlnext
+
+=== Runtime MSL compilation ===
+[COMPILE OK ] plain kernel MSL 3.2 (lang 0x30002)
+[PIPELINE OK] k: maxTotalThreadsPerThreadgroup=1024 threadExecutionWidth=32 staticThreadgroupMemoryLength=0
+[COMPILE OK ] plain kernel MSL 4.0 (lang 0x40000)
+[PIPELINE OK] k: maxTotalThreadsPerThreadgroup=1024 threadExecutionWidth=32 staticThreadgroupMemoryLength=0
+[COMPILE ERR] plain kernel MSL 4.1 (needs OS 27) (lang 0x40001):
+      Error Domain=MTLLibraryErrorDomain Code=3 "error: invalid value 'metal4.1' in '-std=metal4.1'
+      note: use 'ios-metal1.0' for 'Metal 1.0 (iOS)' standard
+      note: use 'ios-metal1.1' for 'Metal 1.1 (iOS)' standard
+      note: use 'ios-metal1.2' for 'Metal 1.2 (iOS)' standard
+      note: use 'ios-metal2.0' for 'Metal 2.0 (iOS)' standard
+      note: use 'ios-metal2.1' for 'Metal 2.1 (iOS)' standard
+      note: use 'ios-metal2.2' for 'Metal 2.2 (iOS)' standard
+      note: use 'ios-metal2.3' for 'Metal 2.3 (iOS)' standard
+      note: use 'ios-metal2.4' for 'Metal 2.4 (iOS)' standard
+      note: use 'macos-metal1.0' or 'osx-metal1.0' for 'Metal 1.0 (macOS)' standard
+      note: use 'macos-metal1.1' or 'osx-metal1.1' for 'Metal 1.1 (macOS)' standard
+      note: use 'macos-metal1.2' or 'osx-metal1.2' for 'Metal 1.2 (macOS)' standard
+[COMPILE ERR] <metal_tensor> under MSL 3.2 (expect error) (lang 0x30002):
+      Error Domain=MTLLibraryErrorDomain Code=3 "program_source:5:33: error: use of undeclared identifier 'dextents'
+        auto t = tensor<device float, dextents<int32_t,2>, tensor_inline>(o, dextents<int32_t,2>(16, 16));
+                                      ^
+      program_source:5:72: error: use of undeclared identifier 'dextents'
+        auto t = tensor<device float, dextents<int32_t,2>, tensor_inline>(o, dextents<int32_t,2>(16, 16));
+                                                                             ^
+      " UserInfo={NSLocalizedDescription=program_source:5:33: error: use of undeclared identifier 'dextents'
+        auto t = tensor<device float, dextents<int32_t,2>, tensor_inline>(o, dextents<int32_t,2>(16, 16));
+                                      ^
+      program_source:5:72: error: use of undeclared identifier 'dextents'
+        auto t = tensor<device float, dextents<int32_t,2>, tensor_inline>(o, dextents<int32_t,2>(16, 16));
+                                                                             ^
+[COMPILE OK ] <metal_tensor> tensor_inline MSL 4.0 (lang 0x40000)
+[PIPELINE OK] t: maxTotalThreadsPerThreadgroup=1024 threadExecutionWidth=32 staticThreadgroupMemoryLength=0
+[COMPILE OK ] device-scope fence + relaxed atomics MSL 3.2 (lang 0x30002)
+[PIPELINE OK] mo: maxTotalThreadsPerThreadgroup=1024 threadExecutionWidth=32 staticThreadgroupMemoryLength=0
+[COMPILE ERR] acquire/release atomics MSL 4.0 (spec says 4.1) (lang 0x40000):
+      Error Domain=MTLLibraryErrorDomain Code=3 "program_source:5:35: error: use of undeclared identifier 'memory_order_release'; did you mean 'memory_order_relaxed'?
+        atomic_store_explicit(flag, 1u, memory_order_release);
+                                        ^~~~~~~~~~~~~~~~~~~~
+                                        memory_order_relaxed
+      /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/32023/Libraries/lib/clang/32023.886/include/metal/metal_types:192:3: note: 'memory_order_relaxed' declared here
+        memory_order_relaxed = __METAL_MEMORY_ORDER_RELAXED__,
+        ^
+      program_source:6:39: error: use of undeclared identifier 'memory_order_acquire'; did you mean 'memory_order_relaxed'?
+        uint v = atomic_load_explicit(flag, memory_order_acquire);
+                                            ^~~~~~~~~~~~~~~~~~~~
+                                            memory_order_relaxed
+      /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/32023/Libraries/lib/clang/32023.886/include/metal/metal_types:192:3: note: 'memory_order_relaxed' declared here
+[COMPILE OK ] MPP matmul2d half x half -> float MSL 4.0 (lang 0x40000)
+[PIPELINE OK] mpp_gemm: maxTotalThreadsPerThreadgroup=1024 threadExecutionWidth=32 staticThreadgroupMemoryLength=0
+  RUN  M=128 N=64 K=256: max |err| vs CPU = 0.0  (C[0]=-1.0)
+  RUN  M=256 N=256 K=512: max |err| vs CPU = 0.0  (C[0]=-4.0)
+[COMPILE OK ] MPP matmul2d bfloat x bfloat -> float MSL 4.0 (OS 26.1+) (lang 0x40000)
+[PIPELINE OK] mpp_bf16: maxTotalThreadsPerThreadgroup=768 threadExecutionWidth=32 staticThreadgroupMemoryLength=0
+  RUN  M=128 N=64 K=256: max |err| vs CPU = 0.0  (C[0]=-1.0)
+[COMPILE OK ] MPP matmul2d half x int4b_format -> float MSL 4.0 (OS/SDK 26.4+) (lang 0x40000)
+[PIPELINE OK] mpp_q4: maxTotalThreadsPerThreadgroup=1024 threadExecutionWidth=32 staticThreadgroupMemoryLength=0
+  RUN int4 M=128 N=256 K=256: max|err| (low nibble first) = 0.0; (high nibble first) = 22.0
+[COMPILE ERR] MPP matmul2d half x fp8_e4m3 MSL 4.0 (spec: 4.1) (lang 0x40000):
+      Error Domain=MTLLibraryErrorDomain Code=3 "program_source:6:58: error: unknown type name 'metal_fp8_e4m3_format'
+      kernel void mpp_fp8(device half *A [[buffer(0)]], device metal_fp8_e4m3_format *B [[buffer(1)]], device float *C [[buffer(2)]],
+                                                               ^
+      program_source:9:27: error: unknown type name 'metal_fp8_e4m3_format'
+        auto tB = tensor<device metal_fp8_e4m3_format, dextents<int32_t,2>, tensor_inline>(B, dextents<int32_t,2>(32, 64));
+                                ^
+      program_source:9:69: error: expected '(' for function-style cast or type construction
+        auto tB = tensor<device metal_fp8_e4m3_format, dextents<int32_t,2>, tensor_inline>(B, dextents<int32_t,2>(32, 64));
+                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+      program_source:9:71: error: declaration of variable 'tensor_inline' with deduced type 'auto' requires an initializer
+        auto tB = tensor<device metal_fp8_e4m3_format, dextents<int32_t,2>, tensor_inline>(B, dextents<int32_t,2>(32, 64));
+                                                                            ^
+[COMPILE ERR] MPP matmul2d half x fp8_e4m3 MSL 4.1 (lang 0x40001):
+      Error Domain=MTLLibraryErrorDomain Code=3 "error: invalid value 'metal4.1' in '-std=metal4.1'
+      note: use 'ios-metal1.0' for 'Metal 1.0 (iOS)' standard
+      note: use 'ios-metal1.1' for 'Metal 1.1 (iOS)' standard
+      note: use 'ios-metal1.2' for 'Metal 1.2 (iOS)' standard
+      note: use 'ios-metal2.0' for 'Metal 2.0 (iOS)' standard
+      note: use 'ios-metal2.1' for 'Metal 2.1 (iOS)' standard
+      note: use 'ios-metal2.2' for 'Metal 2.2 (iOS)' standard
+      note: use 'ios-metal2.3' for 'Metal 2.3 (iOS)' standard
+      note: use 'ios-metal2.4' for 'Metal 2.4 (iOS)' standard
+      note: use 'macos-metal1.0' or 'osx-metal1.0' for 'Metal 1.0 (macOS)' standard
+      note: use 'macos-metal1.1' or 'osx-metal1.1' for 'Metal 1.1 (macOS)' standard
+      note: use 'macos-metal1.2' or 'osx-metal1.2' for 'Metal 1.2 (macOS)' standard

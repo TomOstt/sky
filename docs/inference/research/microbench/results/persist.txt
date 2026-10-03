@@ -1,0 +1,51 @@
+LOCK_ACQUIRED 00:50:28
+R6 persist  macOS 26.6.1  2026-10-01 9:50:28 PM +0000
+device=Apple M2 Pro arch=applegpu_g14s unified=true maxTG=1024 tgMem=32768 recommendedMaxWorkingSet=12713115648 maxBuffer=9534832640
+
+# variant: relaxed atomic_load, plain ctr; data buffer coherent(device)=true
+ntg=  16 x  256 thr, 1000 barriers: GPU 12312.3 us total, 12.312 us/barrier | timeouts=16 visibility_violations=0
+ntg=  32 x  256 thr, 1000 barriers: GPU 12312.0 us total, 12.312 us/barrier | timeouts=32 visibility_violations=0
+ntg=  64 x  256 thr, 1000 barriers: GPU 12316.1 us total, 12.316 us/barrier | timeouts=64 visibility_violations=0
+ntg=  16 x 1024 thr, 1000 barriers: GPU 12312.0 us total, 12.312 us/barrier | timeouts=16 visibility_violations=0
+ntg=  48 x 1024 thr,  200 barriers: GPU 12311.7 us total, 61.558 us/barrier | timeouts=48 visibility_violations=0
+ntg=  64 x 1024 thr,    1 barriers: GPU 12313.2 us total, 12313.250 us/barrier | timeouts=59 visibility_violations=0
+ntg= 256 x 1024 thr,    1 barriers: GPU 36922.5 us total, 36922.500 us/barrier | timeouts=255 visibility_violations=0
+
+# variant: relaxed atomic_load + fence in loop; data buffer coherent(device)=true
+ntg=  16 x  256 thr, 1000 barriers: GPU 1259.8 us total, 1.260 us/barrier | timeouts=0 visibility_violations=0
+ntg=  32 x  256 thr, 1000 barriers: GPU 1259.0 us total, 1.259 us/barrier | timeouts=0 visibility_violations=0
+ntg=  64 x  256 thr, 1000 barriers: GPU 1278.5 us total, 1.279 us/barrier | timeouts=0 visibility_violations=0
+ntg=  16 x 1024 thr, 1000 barriers: GPU 1256.7 us total, 1.257 us/barrier | timeouts=0 visibility_violations=0
+ntg=  48 x 1024 thr,  200 barriers: GPU 287.0 us total, 1.435 us/barrier | timeouts=0 visibility_violations=0
+ntg=  64 x 1024 thr,    1 barriers: GPU 30389.9 us total, 30389.875 us/barrier | timeouts=48 visibility_violations=0
+ntg= 256 x 1024 thr,    1 barriers: GPU 151193.6 us total, 151193.625 us/barrier | timeouts=237 visibility_violations=0
+
+# variant: relaxed atomic_load, coherent(device) ctr; data buffer coherent(device)=true
+ntg=  16 x  256 thr, 1000 barriers: GPU 12312.1 us total, 12.312 us/barrier | timeouts=16 visibility_violations=0
+ntg=  32 x  256 thr, 1000 barriers: GPU 12311.7 us total, 12.312 us/barrier | timeouts=32 visibility_violations=0
+ntg=  64 x  256 thr, 1000 barriers: GPU 12316.1 us total, 12.316 us/barrier | timeouts=64 visibility_violations=0
+ntg=  16 x 1024 thr, 1000 barriers: GPU 12311.4 us total, 12.311 us/barrier | timeouts=16 visibility_violations=0
+ntg=  48 x 1024 thr,  200 barriers: GPU 12312.3 us total, 61.562 us/barrier | timeouts=48 visibility_violations=0
+ntg=  64 x 1024 thr,    1 barriers: GPU 12310.2 us total, 12310.250 us/barrier | timeouts=59 visibility_violations=0
+ntg= 256 x 1024 thr,    1 barriers: GPU 36925.8 us total, 36925.750 us/barrier | timeouts=255 visibility_violations=0
+
+# variant: atomic_fetch_add(ctr,0) RMW spin; data buffer coherent(device)=true
+ntg=  16 x  256 thr, 1000 barriers: GPU 1106.5 us total, 1.106 us/barrier | timeouts=0 visibility_violations=0
+ntg=  32 x  256 thr, 1000 barriers: GPU 1109.9 us total, 1.110 us/barrier | timeouts=0 visibility_violations=0
+ntg=  64 x  256 thr, 1000 barriers: GPU 1125.0 us total, 1.125 us/barrier | timeouts=0 visibility_violations=0
+ntg=  16 x 1024 thr, 1000 barriers: GPU 1115.5 us total, 1.116 us/barrier | timeouts=0 visibility_violations=0
+ntg=  48 x 1024 thr,  200 barriers: GPU 256.2 us total, 1.281 us/barrier | timeouts=0 visibility_violations=0
+ntg=  64 x 1024 thr,    1 barriers: GPU 15899.7 us total, 15899.750 us/barrier | timeouts=48 visibility_violations=0
+ntg= 256 x 1024 thr,    1 barriers: GPU 78634.1 us total, 78634.083 us/barrier | timeouts=237 visibility_violations=0
+
+# variant: atomic_fetch_add(ctr,0) RMW spin, NON-coherent data; data buffer coherent(device)=false
+ntg=  16 x  256 thr, 1000 barriers: GPU 1109.3 us total, 1.109 us/barrier | timeouts=0 visibility_violations=0
+ntg=  32 x  256 thr, 1000 barriers: GPU 1115.1 us total, 1.115 us/barrier | timeouts=0 visibility_violations=0
+ntg=  64 x  256 thr, 1000 barriers: GPU 1149.4 us total, 1.149 us/barrier | timeouts=0 visibility_violations=0
+ntg=  16 x 1024 thr, 1000 barriers: GPU 1110.6 us total, 1.111 us/barrier | timeouts=0 visibility_violations=0
+ntg=  48 x 1024 thr,  200 barriers: GPU 270.5 us total, 1.353 us/barrier | timeouts=0 visibility_violations=0
+ntg=  64 x 1024 thr,    1 barriers: GPU 15899.2 us total, 15899.167 us/barrier | timeouts=48 visibility_violations=0
+ntg= 256 x 1024 thr,    1 barriers: GPU 78642.9 us total, 78642.875 us/barrier | timeouts=237 visibility_violations=0
+real 2.82
+user 0.02
+sys 0.02

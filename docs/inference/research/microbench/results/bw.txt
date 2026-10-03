@@ -1,0 +1,449 @@
+LOCK_ACQUIRED 20:30:18
+R6 bw  macOS 26.6.1  2026-10-01 5:30:19 PM +0000
+device=Apple M2 Pro arch=applegpu_g14s unified=true maxTG=1024 tgMem=32768 recommendedMaxWorkingSet=12713115648 maxBuffer=9534832640
+
+# READ 1 GiB: variant tg grid -> median GB/s (min..max) [storage]
+read float_u1 tg=64 grid=16384 -> 176.6 GB/s (173.8..177.4) [private]
+read float_u1 tg=64 grid=32768 -> 193.1 GB/s (190.5..193.8) [private]
+read float_u1 tg=64 grid=65536 -> 189.4 GB/s (187.5..192.6) [private]
+read float_u1 tg=64 grid=131072 -> 171.2 GB/s (167.6..173.5) [private]
+read float_u1 tg=64 grid=262144 -> 180.0 GB/s (166.8..181.4) [private]
+read float_u1 tg=64 grid=1048576 -> 187.3 GB/s (185.9..187.9) [private]
+read float_u1 tg=128 grid=16384 -> 172.6 GB/s (171.0..174.5) [private]
+read float_u1 tg=128 grid=32768 -> 191.9 GB/s (189.7..194.8) [private]
+read float_u1 tg=128 grid=65536 -> 183.7 GB/s (172.7..186.5) [private]
+read float_u1 tg=128 grid=131072 -> 163.6 GB/s (160.2..186.6) [private]
+read float_u1 tg=128 grid=262144 -> 186.5 GB/s (184.1..187.8) [private]
+read float_u1 tg=128 grid=1048576 -> 182.6 GB/s (180.5..184.5) [private]
+read float_u1 tg=256 grid=16384 -> 172.2 GB/s (170.5..174.3) [private]
+read float_u1 tg=256 grid=32768 -> 188.2 GB/s (163.3..191.3) [private]
+read float_u1 tg=256 grid=65536 -> 182.8 GB/s (181.1..185.2) [private]
+read float_u1 tg=256 grid=131072 -> 159.6 GB/s (153.4..183.7) [private]
+read float_u1 tg=256 grid=262144 -> 183.0 GB/s (180.1..184.2) [private]
+read float_u1 tg=256 grid=1048576 -> 181.7 GB/s (179.8..182.8) [private]
+read float_u1 tg=512 grid=16384 -> 173.7 GB/s (167.6..174.5) [private]
+read float_u1 tg=512 grid=32768 -> 193.8 GB/s (190.5..195.5) [private]
+read float_u1 tg=512 grid=65536 -> 187.1 GB/s (183.5..187.9) [private]
+read float_u1 tg=512 grid=131072 -> 188.3 GB/s (184.9..190.1) [private]
+read float_u1 tg=512 grid=262144 -> 182.9 GB/s (170.5..185.3) [private]
+read float_u1 tg=512 grid=1048576 -> 180.3 GB/s (176.8..182.1) [private]
+read float_u1 tg=1024 grid=16384 -> 173.9 GB/s (171.7..175.0) [private]
+read float_u1 tg=1024 grid=32768 -> 189.8 GB/s (185.5..191.3) [private]
+read float_u1 tg=1024 grid=65536 -> 184.4 GB/s (172.7..185.5) [private]
+read float_u1 tg=1024 grid=131072 -> 163.1 GB/s (161.5..186.5) [private]
+read float_u1 tg=1024 grid=262144 -> 185.0 GB/s (180.3..185.7) [private]
+read float_u1 tg=1024 grid=1048576 -> 181.0 GB/s (178.9..182.3) [private]
+read float_u4 tg=64 grid=16384 -> 192.8 GB/s (189.5..193.8) [private]
+read float_u4 tg=64 grid=32768 -> 182.7 GB/s (146.7..184.1) [private]
+read float_u4 tg=64 grid=65536 -> 163.6 GB/s (160.7..171.5) [private]
+read float_u4 tg=64 grid=131072 -> 187.6 GB/s (185.2..188.5) [private]
+read float_u4 tg=64 grid=262144 -> 188.4 GB/s (186.5..190.6) [private]
+read float_u4 tg=64 grid=1048576 -> 188.6 GB/s (187.7..190.5) [private]
+read float_u4 tg=128 grid=16384 -> 190.6 GB/s (188.8..193.5) [private]
+read float_u4 tg=128 grid=32768 -> 181.9 GB/s (180.5..183.0) [private]
+read float_u4 tg=128 grid=65536 -> 168.3 GB/s (165.9..173.1) [private]
+read float_u4 tg=128 grid=131072 -> 187.7 GB/s (180.0..189.5) [private]
+read float_u4 tg=128 grid=262144 -> 187.9 GB/s (176.2..190.2) [private]
+read float_u4 tg=128 grid=1048576 -> 189.1 GB/s (186.6..190.3) [private]
+read float_u4 tg=256 grid=16384 -> 190.7 GB/s (188.8..192.1) [private]
+read float_u4 tg=256 grid=32768 -> 181.9 GB/s (178.4..184.4) [private]
+read float_u4 tg=256 grid=65536 -> 170.4 GB/s (165.6..172.0) [private]
+read float_u4 tg=256 grid=131072 -> 188.5 GB/s (151.9..192.2) [private]
+read float_u4 tg=256 grid=262144 -> 191.2 GB/s (186.9..193.5) [private]
+read float_u4 tg=256 grid=1048576 -> 192.9 GB/s (189.0..193.3) [private]
+read float_u4 tg=512 grid=16384 -> 195.1 GB/s (191.5..196.2) [private]
+read float_u4 tg=512 grid=32768 -> 180.6 GB/s (166.0..184.1) [private]
+read float_u4 tg=512 grid=65536 -> 169.5 GB/s (168.2..181.2) [private]
+read float_u4 tg=512 grid=131072 -> 188.4 GB/s (187.0..190.1) [private]
+read float_u4 tg=512 grid=262144 -> 189.4 GB/s (187.1..190.2) [private]
+read float_u4 tg=512 grid=1048576 -> 186.6 GB/s (183.4..187.3) [private]
+read float_u4 tg=1024 grid=16384 -> 190.0 GB/s (189.5..196.9) [private]
+read float_u4 tg=1024 grid=32768 -> 183.4 GB/s (179.6..184.2) [private]
+read float_u4 tg=1024 grid=65536 -> 169.9 GB/s (167.7..172.7) [private]
+read float_u4 tg=1024 grid=131072 -> 188.5 GB/s (185.4..189.6) [private]
+read float_u4 tg=1024 grid=262144 -> 184.6 GB/s (161.9..187.0) [private]
+read float_u4 tg=1024 grid=1048576 -> 181.3 GB/s (179.3..183.2) [private]
+read float2_u4 tg=64 grid=16384 -> 178.8 GB/s (175.2..180.5) [private]
+read float2_u4 tg=64 grid=32768 -> 184.5 GB/s (182.1..185.2) [private]
+read float2_u4 tg=64 grid=65536 -> 182.6 GB/s (181.8..185.1) [private]
+read float2_u4 tg=64 grid=131072 -> 184.9 GB/s (171.6..186.6) [private]
+read float2_u4 tg=64 grid=262144 -> 183.0 GB/s (181.5..184.6) [private]
+read float2_u4 tg=64 grid=1048576 -> 183.3 GB/s (178.8..185.9) [private]
+read float2_u4 tg=128 grid=16384 -> 180.2 GB/s (177.2..182.2) [private]
+read float2_u4 tg=128 grid=32768 -> 181.2 GB/s (172.0..185.1) [private]
+read float2_u4 tg=128 grid=65536 -> 184.8 GB/s (174.9..186.2) [private]
+read float2_u4 tg=128 grid=131072 -> 185.9 GB/s (183.9..187.1) [private]
+read float2_u4 tg=128 grid=262144 -> 184.9 GB/s (172.9..186.4) [private]
+read float2_u4 tg=128 grid=1048576 -> 186.6 GB/s (182.9..188.4) [private]
+read float2_u4 tg=256 grid=16384 -> 178.7 GB/s (175.0..182.1) [private]
+read float2_u4 tg=256 grid=32768 -> 182.4 GB/s (180.3..184.5) [private]
+read float2_u4 tg=256 grid=65536 -> 184.0 GB/s (181.0..185.1) [private]
+read float2_u4 tg=256 grid=131072 -> 185.4 GB/s (182.4..187.3) [private]
+read float2_u4 tg=256 grid=262144 -> 184.6 GB/s (163.1..187.5) [private]
+read float2_u4 tg=256 grid=1048576 -> 189.0 GB/s (185.9..189.4) [private]
+read float2_u4 tg=512 grid=16384 -> 182.2 GB/s (180.2..183.7) [private]
+read float2_u4 tg=512 grid=32768 -> 183.5 GB/s (180.9..184.3) [private]
+read float2_u4 tg=512 grid=65536 -> 183.2 GB/s (178.1..184.9) [private]
+read float2_u4 tg=512 grid=131072 -> 175.0 GB/s (172.7..181.3) [private]
+read float2_u4 tg=512 grid=262144 -> 183.6 GB/s (176.8..185.6) [private]
+read float2_u4 tg=512 grid=1048576 -> 182.2 GB/s (180.1..182.7) [private]
+read float2_u4 tg=1024 grid=16384 -> 176.1 GB/s (175.0..177.1) [private]
+read float2_u4 tg=1024 grid=32768 -> 179.5 GB/s (161.0..181.1) [private]
+read float2_u4 tg=1024 grid=65536 -> 180.4 GB/s (179.3..182.3) [private]
+read float2_u4 tg=1024 grid=131072 -> 178.1 GB/s (173.5..180.5) [private]
+read float2_u4 tg=1024 grid=262144 -> 177.7 GB/s (173.8..179.8) [private]
+read float2_u4 tg=1024 grid=1048576 -> 177.8 GB/s (176.2..179.7) [private]
+read float4_u1 tg=64 grid=16384 -> 179.4 GB/s (176.8..181.1) [private]
+read float4_u1 tg=64 grid=32768 -> 174.4 GB/s (173.1..176.6) [private]
+read float4_u1 tg=64 grid=65536 -> 174.4 GB/s (170.5..176.5) [private]
+read float4_u1 tg=64 grid=131072 -> 177.8 GB/s (172.1..178.7) [private]
+read float4_u1 tg=64 grid=262144 -> 177.6 GB/s (162.2..180.2) [private]
+read float4_u1 tg=64 grid=1048576 -> 180.7 GB/s (177.9..181.5) [private]
+read float4_u1 tg=128 grid=16384 -> 181.3 GB/s (177.6..182.3) [private]
+read float4_u1 tg=128 grid=32768 -> 176.2 GB/s (174.9..178.2) [private]
+read float4_u1 tg=128 grid=65536 -> 175.2 GB/s (170.2..176.0) [private]
+read float4_u1 tg=128 grid=131072 -> 175.8 GB/s (162.6..178.4) [private]
+read float4_u1 tg=128 grid=262144 -> 178.5 GB/s (176.9..180.1) [private]
+read float4_u1 tg=128 grid=1048576 -> 180.5 GB/s (179.3..182.2) [private]
+read float4_u1 tg=256 grid=16384 -> 180.8 GB/s (176.2..181.9) [private]
+read float4_u1 tg=256 grid=32768 -> 174.9 GB/s (165.1..178.5) [private]
+read float4_u1 tg=256 grid=65536 -> 177.4 GB/s (174.7..178.6) [private]
+read float4_u1 tg=256 grid=131072 -> 175.4 GB/s (174.6..179.4) [private]
+read float4_u1 tg=256 grid=262144 -> 177.5 GB/s (175.3..180.4) [private]
+read float4_u1 tg=256 grid=1048576 -> 180.8 GB/s (177.8..182.5) [private]
+read float4_u1 tg=512 grid=16384 -> 176.3 GB/s (174.4..182.1) [private]
+read float4_u1 tg=512 grid=32768 -> 173.4 GB/s (170.2..174.2) [private]
+read float4_u1 tg=512 grid=65536 -> 174.4 GB/s (173.6..176.1) [private]
+read float4_u1 tg=512 grid=131072 -> 172.3 GB/s (170.7..175.7) [private]
+read float4_u1 tg=512 grid=262144 -> 173.6 GB/s (148.4..174.8) [private]
+read float4_u1 tg=512 grid=1048576 -> 176.5 GB/s (173.0..177.4) [private]
+read float4_u1 tg=1024 grid=16384 -> 180.8 GB/s (179.8..183.4) [private]
+read float4_u1 tg=1024 grid=32768 -> 170.4 GB/s (150.7..172.6) [private]
+read float4_u1 tg=1024 grid=65536 -> 171.3 GB/s (160.7..174.4) [private]
+read float4_u1 tg=1024 grid=131072 -> 168.3 GB/s (148.4..172.2) [private]
+read float4_u1 tg=1024 grid=262144 -> 171.6 GB/s (169.5..173.6) [private]
+read float4_u1 tg=1024 grid=1048576 -> 171.6 GB/s (168.1..174.4) [private]
+read float4_u2 tg=64 grid=16384 -> 180.2 GB/s (170.7..181.3) [private]
+read float4_u2 tg=64 grid=32768 -> 178.9 GB/s (177.2..180.2) [private]
+read float4_u2 tg=64 grid=65536 -> 178.7 GB/s (174.0..180.2) [private]
+read float4_u2 tg=64 grid=131072 -> 176.9 GB/s (167.6..179.8) [private]
+read float4_u2 tg=64 grid=262144 -> 178.5 GB/s (173.8..181.3) [private]
+read float4_u2 tg=64 grid=1048576 -> 175.8 GB/s (174.4..182.9) [private]
+read float4_u2 tg=128 grid=16384 -> 176.9 GB/s (175.3..178.6) [private]
+read float4_u2 tg=128 grid=32768 -> 176.1 GB/s (173.4..177.2) [private]
+read float4_u2 tg=128 grid=65536 -> 174.8 GB/s (172.4..176.8) [private]
+read float4_u2 tg=128 grid=131072 -> 176.9 GB/s (164.8..179.5) [private]
+read float4_u2 tg=128 grid=262144 -> 177.5 GB/s (173.7..179.3) [private]
+read float4_u2 tg=128 grid=1048576 -> 179.4 GB/s (174.2..180.0) [private]
+read float4_u2 tg=256 grid=16384 -> 180.9 GB/s (177.0..183.7) [private]
+read float4_u2 tg=256 grid=32768 -> 178.5 GB/s (175.9..179.7) [private]
+read float4_u2 tg=256 grid=65536 -> 174.5 GB/s (157.2..179.3) [private]
+read float4_u2 tg=256 grid=131072 -> 176.3 GB/s (174.1..177.9) [private]
+read float4_u2 tg=256 grid=262144 -> 176.4 GB/s (175.7..177.1) [private]
+read float4_u2 tg=256 grid=1048576 -> 179.9 GB/s (177.3..180.1) [private]
+read float4_u2 tg=512 grid=16384 -> 176.3 GB/s (167.8..180.0) [private]
+read float4_u2 tg=512 grid=32768 -> 175.1 GB/s (172.7..175.7) [private]
+read float4_u2 tg=512 grid=65536 -> 174.0 GB/s (170.5..174.5) [private]
+read float4_u2 tg=512 grid=131072 -> 171.7 GB/s (168.1..174.7) [private]
+read float4_u2 tg=512 grid=262144 -> 171.8 GB/s (170.0..173.7) [private]
+read float4_u2 tg=512 grid=1048576 -> 173.6 GB/s (172.3..175.6) [private]
+read float4_u2 tg=1024 grid=16384 -> 179.5 GB/s (177.6..181.0) [private]
+read float4_u2 tg=1024 grid=32768 -> 175.2 GB/s (171.3..177.1) [private]
+read float4_u2 tg=1024 grid=65536 -> 175.1 GB/s (172.5..176.0) [private]
+read float4_u2 tg=1024 grid=131072 -> 172.4 GB/s (152.6..174.6) [private]
+read float4_u2 tg=1024 grid=262144 -> 171.0 GB/s (167.8..172.5) [private]
+read float4_u2 tg=1024 grid=1048576 -> 171.9 GB/s (169.7..175.1) [private]
+read float4_u4 tg=64 grid=16384 -> 178.4 GB/s (174.5..180.7) [private]
+read float4_u4 tg=64 grid=32768 -> 174.5 GB/s (169.1..178.9) [private]
+read float4_u4 tg=64 grid=65536 -> 177.7 GB/s (149.2..179.2) [private]
+read float4_u4 tg=64 grid=131072 -> 177.1 GB/s (176.5..178.3) [private]
+read float4_u4 tg=64 grid=262144 -> 179.1 GB/s (177.8..180.4) [private]
+read float4_u4 tg=64 grid=1048576 -> 181.1 GB/s (166.6..182.3) [private]
+read float4_u4 tg=128 grid=16384 -> 178.9 GB/s (175.9..180.2) [private]
+read float4_u4 tg=128 grid=32768 -> 177.8 GB/s (173.8..179.4) [private]
+read float4_u4 tg=128 grid=65536 -> 177.6 GB/s (173.9..178.5) [private]
+read float4_u4 tg=128 grid=131072 -> 177.4 GB/s (173.7..178.9) [private]
+read float4_u4 tg=128 grid=262144 -> 178.2 GB/s (173.6..179.1) [private]
+read float4_u4 tg=128 grid=1048576 -> 176.0 GB/s (174.1..177.1) [private]
+read float4_u4 tg=256 grid=16384 -> 179.0 GB/s (177.6..180.0) [private]
+read float4_u4 tg=256 grid=32768 -> 175.3 GB/s (170.9..176.1) [private]
+read float4_u4 tg=256 grid=65536 -> 176.8 GB/s (169.3..178.5) [private]
+read float4_u4 tg=256 grid=131072 -> 177.3 GB/s (175.5..178.3) [private]
+read float4_u4 tg=256 grid=262144 -> 177.0 GB/s (175.6..178.3) [private]
+read float4_u4 tg=256 grid=1048576 -> 180.2 GB/s (175.7..181.5) [private]
+read float4_u4 tg=512 grid=16384 -> 176.4 GB/s (173.2..177.5) [private]
+read float4_u4 tg=512 grid=32768 -> 172.0 GB/s (160.8..175.8) [private]
+read float4_u4 tg=512 grid=65536 -> 174.8 GB/s (171.4..176.2) [private]
+read float4_u4 tg=512 grid=131072 -> 173.5 GB/s (171.8..175.0) [private]
+read float4_u4 tg=512 grid=262144 -> 174.2 GB/s (171.4..175.3) [private]
+read float4_u4 tg=512 grid=1048576 -> 173.4 GB/s (151.6..175.2) [private]
+read float4_u4 tg=1024 grid=16384 -> 174.0 GB/s (173.1..175.7) [private]
+read float4_u4 tg=1024 grid=32768 -> 175.4 GB/s (172.4..176.3) [private]
+read float4_u4 tg=1024 grid=65536 -> 174.0 GB/s (166.4..174.8) [private]
+read float4_u4 tg=1024 grid=131072 -> 174.2 GB/s (170.7..175.1) [private]
+read float4_u4 tg=1024 grid=262144 -> 171.2 GB/s (169.1..172.6) [private]
+read float4_u4 tg=1024 grid=1048576 -> 171.8 GB/s (169.4..173.2) [private]
+read float4_u8 tg=64 grid=16384 -> 178.2 GB/s (176.0..179.6) [private]
+read float4_u8 tg=64 grid=32768 -> 179.1 GB/s (177.9..179.8) [private]
+read float4_u8 tg=64 grid=65536 -> 178.5 GB/s (159.3..179.9) [private]
+read float4_u8 tg=64 grid=131072 -> 179.1 GB/s (173.8..180.5) [private]
+read float4_u8 tg=64 grid=262144 -> 178.8 GB/s (176.1..181.8) [private]
+read float4_u8 tg=64 grid=1048576 -> 179.0 GB/s (178.2..182.9) [private]
+read float4_u8 tg=128 grid=16384 -> 178.6 GB/s (175.2..180.0) [private]
+read float4_u8 tg=128 grid=32768 -> 178.2 GB/s (163.3..180.1) [private]
+read float4_u8 tg=128 grid=65536 -> 178.8 GB/s (176.5..180.7) [private]
+read float4_u8 tg=128 grid=131072 -> 177.2 GB/s (174.9..179.6) [private]
+read float4_u8 tg=128 grid=262144 -> 178.1 GB/s (170.3..181.1) [private]
+read float4_u8 tg=128 grid=1048576 -> 180.1 GB/s (179.2..182.2) [private]
+read float4_u8 tg=256 grid=16384 -> 176.2 GB/s (173.2..177.7) [private]
+read float4_u8 tg=256 grid=32768 -> 175.7 GB/s (172.2..177.5) [private]
+read float4_u8 tg=256 grid=65536 -> 177.0 GB/s (173.3..178.6) [private]
+read float4_u8 tg=256 grid=131072 -> 178.0 GB/s (176.7..179.9) [private]
+read float4_u8 tg=256 grid=262144 -> 174.1 GB/s (170.9..178.1) [private]
+read float4_u8 tg=256 grid=1048576 -> 179.2 GB/s (176.8..180.8) [private]
+read float4_u8 tg=512 grid=16384 -> 176.0 GB/s (173.5..176.6) [private]
+read float4_u8 tg=512 grid=32768 -> 173.1 GB/s (168.3..175.8) [private]
+read float4_u8 tg=512 grid=65536 -> 175.1 GB/s (172.4..176.0) [private]
+read float4_u8 tg=512 grid=131072 -> 173.3 GB/s (172.3..176.5) [private]
+read float4_u8 tg=512 grid=262144 -> 172.7 GB/s (171.5..173.6) [private]
+read float4_u8 tg=512 grid=1048576 -> 172.4 GB/s (168.5..173.5) [private]
+read float4_u8 tg=1024 grid=16384 -> 172.5 GB/s (165.3..174.3) [private]
+read float4_u8 tg=1024 grid=32768 -> 173.2 GB/s (171.0..175.6) [private]
+read float4_u8 tg=1024 grid=65536 -> 173.5 GB/s (170.6..174.3) [private]
+read float4_u8 tg=1024 grid=131072 -> 172.5 GB/s (170.2..173.9) [private]
+read float4_u8 tg=1024 grid=262144 -> 169.1 GB/s (152.7..172.3) [private]
+read float4_u8 tg=1024 grid=1048576 -> 170.2 GB/s (167.7..171.4) [private]
+read float4_u1 tg=64 grid=16384 -> 177.9 GB/s (174.3..179.5) [shared]
+read float4_u1 tg=64 grid=32768 -> 172.4 GB/s (171.0..174.6) [shared]
+read float4_u1 tg=64 grid=65536 -> 173.6 GB/s (171.6..175.1) [shared]
+read float4_u1 tg=64 grid=131072 -> 175.5 GB/s (172.2..178.3) [shared]
+read float4_u1 tg=64 grid=262144 -> 177.6 GB/s (174.6..178.8) [shared]
+read float4_u1 tg=64 grid=1048576 -> 179.9 GB/s (176.4..180.8) [shared]
+read float4_u1 tg=128 grid=16384 -> 180.0 GB/s (170.0..182.0) [shared]
+read float4_u1 tg=128 grid=32768 -> 176.0 GB/s (172.4..177.3) [shared]
+read float4_u1 tg=128 grid=65536 -> 174.7 GB/s (170.9..175.7) [shared]
+read float4_u1 tg=128 grid=131072 -> 177.6 GB/s (173.7..178.4) [shared]
+read float4_u1 tg=128 grid=262144 -> 178.3 GB/s (174.5..179.3) [shared]
+read float4_u1 tg=128 grid=1048576 -> 178.7 GB/s (174.6..181.7) [shared]
+read float4_u1 tg=256 grid=16384 -> 180.8 GB/s (177.5..181.2) [shared]
+read float4_u1 tg=256 grid=32768 -> 174.8 GB/s (173.9..176.2) [shared]
+read float4_u1 tg=256 grid=65536 -> 177.2 GB/s (176.4..178.4) [shared]
+read float4_u1 tg=256 grid=131072 -> 172.6 GB/s (163.3..178.8) [shared]
+read float4_u1 tg=256 grid=262144 -> 178.1 GB/s (174.4..178.8) [shared]
+read float4_u1 tg=256 grid=1048576 -> 180.3 GB/s (177.1..181.6) [shared]
+read float4_u1 tg=512 grid=16384 -> 181.1 GB/s (170.1..183.7) [shared]
+read float4_u1 tg=512 grid=32768 -> 173.2 GB/s (170.4..174.3) [shared]
+read float4_u1 tg=512 grid=65536 -> 173.1 GB/s (171.0..175.1) [shared]
+read float4_u1 tg=512 grid=131072 -> 172.8 GB/s (171.8..174.6) [shared]
+read float4_u1 tg=512 grid=262144 -> 174.2 GB/s (172.5..175.4) [shared]
+read float4_u1 tg=512 grid=1048576 -> 175.2 GB/s (174.1..175.9) [shared]
+read float4_u1 tg=1024 grid=16384 -> 175.7 GB/s (172.2..181.9) [shared]
+read float4_u1 tg=1024 grid=32768 -> 170.6 GB/s (168.3..171.2) [shared]
+read float4_u1 tg=1024 grid=65536 -> 171.4 GB/s (167.5..173.5) [shared]
+read float4_u1 tg=1024 grid=131072 -> 171.1 GB/s (164.1..173.8) [shared]
+read float4_u1 tg=1024 grid=262144 -> 170.0 GB/s (165.3..170.4) [shared]
+read float4_u1 tg=1024 grid=1048576 -> 169.9 GB/s (147.8..173.0) [shared]
+read float4_u2 tg=64 grid=16384 -> 181.3 GB/s (177.3..182.2) [shared]
+read float4_u2 tg=64 grid=32768 -> 178.7 GB/s (176.4..179.7) [shared]
+read float4_u2 tg=64 grid=65536 -> 178.7 GB/s (175.6..180.2) [shared]
+read float4_u2 tg=64 grid=131072 -> 177.6 GB/s (176.2..179.2) [shared]
+read float4_u2 tg=64 grid=262144 -> 177.3 GB/s (173.3..179.3) [shared]
+read float4_u2 tg=64 grid=1048576 -> 180.7 GB/s (177.4..181.3) [shared]
+read float4_u2 tg=128 grid=16384 -> 180.3 GB/s (177.4..182.2) [shared]
+read float4_u2 tg=128 grid=32768 -> 171.3 GB/s (168.4..178.5) [shared]
+read float4_u2 tg=128 grid=65536 -> 174.2 GB/s (170.3..175.3) [shared]
+read float4_u2 tg=128 grid=131072 -> 171.0 GB/s (168.9..174.6) [shared]
+read float4_u2 tg=128 grid=262144 -> 173.9 GB/s (171.8..175.5) [shared]
+read float4_u2 tg=128 grid=1048576 -> 175.2 GB/s (172.1..176.2) [shared]
+read float4_u2 tg=256 grid=16384 -> 181.0 GB/s (178.0..182.6) [shared]
+read float4_u2 tg=256 grid=32768 -> 178.1 GB/s (176.3..180.4) [shared]
+read float4_u2 tg=256 grid=65536 -> 177.7 GB/s (175.6..179.6) [shared]
+read float4_u2 tg=256 grid=131072 -> 178.8 GB/s (175.0..179.6) [shared]
+read float4_u2 tg=256 grid=262144 -> 178.7 GB/s (172.4..180.4) [shared]
+read float4_u2 tg=256 grid=1048576 -> 180.9 GB/s (149.6..182.1) [shared]
+read float4_u2 tg=512 grid=16384 -> 181.6 GB/s (179.6..183.1) [shared]
+read float4_u2 tg=512 grid=32768 -> 176.9 GB/s (174.2..177.7) [shared]
+read float4_u2 tg=512 grid=65536 -> 174.8 GB/s (173.3..176.3) [shared]
+read float4_u2 tg=512 grid=131072 -> 174.1 GB/s (171.2..175.3) [shared]
+read float4_u2 tg=512 grid=262144 -> 174.2 GB/s (171.9..175.7) [shared]
+read float4_u2 tg=512 grid=1048576 -> 175.4 GB/s (173.5..176.8) [shared]
+read float4_u2 tg=1024 grid=16384 -> 180.8 GB/s (178.1..181.8) [shared]
+read float4_u2 tg=1024 grid=32768 -> 173.1 GB/s (172.2..174.9) [shared]
+read float4_u2 tg=1024 grid=65536 -> 173.5 GB/s (171.4..174.3) [shared]
+read float4_u2 tg=1024 grid=131072 -> 168.7 GB/s (165.4..172.7) [shared]
+read float4_u2 tg=1024 grid=262144 -> 170.9 GB/s (169.4..172.7) [shared]
+read float4_u2 tg=1024 grid=1048576 -> 171.2 GB/s (168.8..172.7) [shared]
+read float4_u4 tg=64 grid=16384 -> 179.6 GB/s (174.0..182.5) [shared]
+read float4_u4 tg=64 grid=32768 -> 179.8 GB/s (175.9..181.4) [shared]
+read float4_u4 tg=64 grid=65536 -> 180.0 GB/s (176.7..180.4) [shared]
+read float4_u4 tg=64 grid=131072 -> 181.6 GB/s (177.3..181.7) [shared]
+read float4_u4 tg=64 grid=262144 -> 179.9 GB/s (158.8..182.4) [shared]
+read float4_u4 tg=64 grid=1048576 -> 181.4 GB/s (180.1..182.9) [shared]
+read float4_u4 tg=128 grid=16384 -> 180.1 GB/s (177.6..180.6) [shared]
+read float4_u4 tg=128 grid=32768 -> 178.9 GB/s (175.4..180.0) [shared]
+read float4_u4 tg=128 grid=65536 -> 179.4 GB/s (177.5..180.1) [shared]
+read float4_u4 tg=128 grid=131072 -> 179.9 GB/s (177.0..180.5) [shared]
+read float4_u4 tg=128 grid=262144 -> 179.6 GB/s (177.2..181.4) [shared]
+read float4_u4 tg=128 grid=1048576 -> 180.5 GB/s (174.7..181.9) [shared]
+read float4_u4 tg=256 grid=16384 -> 179.7 GB/s (176.7..181.8) [shared]
+read float4_u4 tg=256 grid=32768 -> 179.5 GB/s (177.1..180.3) [shared]
+read float4_u4 tg=256 grid=65536 -> 177.4 GB/s (172.5..179.4) [shared]
+read float4_u4 tg=256 grid=131072 -> 179.0 GB/s (176.7..179.5) [shared]
+read float4_u4 tg=256 grid=262144 -> 178.7 GB/s (177.7..180.2) [shared]
+read float4_u4 tg=256 grid=1048576 -> 181.8 GB/s (178.5..181.9) [shared]
+read float4_u4 tg=512 grid=16384 -> 177.9 GB/s (174.9..178.7) [shared]
+read float4_u4 tg=512 grid=32768 -> 178.3 GB/s (174.2..179.3) [shared]
+read float4_u4 tg=512 grid=65536 -> 175.1 GB/s (172.7..177.6) [shared]
+read float4_u4 tg=512 grid=131072 -> 172.4 GB/s (167.3..173.4) [shared]
+read float4_u4 tg=512 grid=262144 -> 172.3 GB/s (156.7..173.4) [shared]
+read float4_u4 tg=512 grid=1048576 -> 172.9 GB/s (170.2..176.0) [shared]
+read float4_u4 tg=1024 grid=16384 -> 177.6 GB/s (173.4..179.0) [shared]
+read float4_u4 tg=1024 grid=32768 -> 174.4 GB/s (173.0..175.9) [shared]
+read float4_u4 tg=1024 grid=65536 -> 171.3 GB/s (169.5..173.3) [shared]
+read float4_u4 tg=1024 grid=131072 -> 167.6 GB/s (162.0..171.3) [shared]
+read float4_u4 tg=1024 grid=262144 -> 169.3 GB/s (165.5..170.8) [shared]
+read float4_u4 tg=1024 grid=1048576 -> 171.3 GB/s (168.4..174.2) [shared]
+read float4_u8 tg=64 grid=16384 -> 179.0 GB/s (176.0..180.6) [shared]
+read float4_u8 tg=64 grid=32768 -> 177.5 GB/s (174.7..178.6) [shared]
+read float4_u8 tg=64 grid=65536 -> 178.0 GB/s (176.0..179.0) [shared]
+read float4_u8 tg=64 grid=131072 -> 178.0 GB/s (176.3..179.1) [shared]
+read float4_u8 tg=64 grid=262144 -> 179.1 GB/s (176.2..179.9) [shared]
+read float4_u8 tg=64 grid=1048576 -> 180.7 GB/s (178.2..181.9) [shared]
+read float4_u8 tg=128 grid=16384 -> 176.7 GB/s (174.6..177.8) [shared]
+read float4_u8 tg=128 grid=32768 -> 177.6 GB/s (175.7..178.3) [shared]
+read float4_u8 tg=128 grid=65536 -> 178.5 GB/s (175.1..179.5) [shared]
+read float4_u8 tg=128 grid=131072 -> 177.1 GB/s (171.8..178.8) [shared]
+read float4_u8 tg=128 grid=262144 -> 177.4 GB/s (173.7..178.8) [shared]
+read float4_u8 tg=128 grid=1048576 -> 181.2 GB/s (178.7..181.9) [shared]
+read float4_u8 tg=256 grid=16384 -> 178.0 GB/s (175.8..179.7) [shared]
+read float4_u8 tg=256 grid=32768 -> 179.2 GB/s (176.6..179.3) [shared]
+read float4_u8 tg=256 grid=65536 -> 176.9 GB/s (175.8..179.2) [shared]
+read float4_u8 tg=256 grid=131072 -> 179.7 GB/s (176.0..181.1) [shared]
+read float4_u8 tg=256 grid=262144 -> 179.9 GB/s (175.9..180.8) [shared]
+read float4_u8 tg=256 grid=1048576 -> 180.0 GB/s (177.9..182.3) [shared]
+read float4_u8 tg=512 grid=16384 -> 177.1 GB/s (174.2..178.7) [shared]
+read float4_u8 tg=512 grid=32768 -> 176.7 GB/s (175.8..178.6) [shared]
+read float4_u8 tg=512 grid=65536 -> 176.9 GB/s (174.4..177.9) [shared]
+read float4_u8 tg=512 grid=131072 -> 174.4 GB/s (172.3..175.5) [shared]
+read float4_u8 tg=512 grid=262144 -> 175.8 GB/s (172.4..177.6) [shared]
+read float4_u8 tg=512 grid=1048576 -> 176.4 GB/s (173.4..177.1) [shared]
+read float4_u8 tg=1024 grid=16384 -> 177.1 GB/s (175.2..177.9) [shared]
+read float4_u8 tg=1024 grid=32768 -> 175.5 GB/s (173.6..176.6) [shared]
+read float4_u8 tg=1024 grid=65536 -> 174.4 GB/s (164.4..175.8) [shared]
+read float4_u8 tg=1024 grid=131072 -> 171.3 GB/s (153.1..173.6) [shared]
+read float4_u8 tg=1024 grid=262144 -> 175.1 GB/s (171.7..175.8) [shared]
+read float4_u8 tg=1024 grid=1048576 -> 171.5 GB/s (169.6..173.2) [shared]
+BEST READ: 195.1 GB/s  read float_u4 tg=512 grid=16384 [private]
+
+# COPY 512 MiB -> 512 MiB (GB/s counts read+write bytes) and WRITE 1 GiB
+copy float_u4 tg=256 grid=65536 -> 182.0 GB/s (179.2..184.2)
+write float_u4 tg=256 grid=65536 -> 123.6 GB/s (119.2..131.9)
+copy float_u4 tg=256 grid=262144 -> 183.0 GB/s (181.4..184.1)
+write float_u4 tg=256 grid=262144 -> 178.4 GB/s (162.5..182.5)
+copy float_u4 tg=256 grid=1048576 -> 182.3 GB/s (181.2..183.9)
+write float_u4 tg=256 grid=1048576 -> 183.1 GB/s (173.0..185.0)
+copy float_u4 tg=1024 grid=65536 -> 176.7 GB/s (174.7..181.7)
+write float_u4 tg=1024 grid=65536 -> 123.0 GB/s (114.3..128.9)
+copy float_u4 tg=1024 grid=262144 -> 169.0 GB/s (163.2..179.7)
+write float_u4 tg=1024 grid=262144 -> 172.0 GB/s (168.1..184.1)
+copy float_u4 tg=1024 grid=1048576 -> 177.4 GB/s (174.9..179.1)
+write float_u4 tg=1024 grid=1048576 -> 180.3 GB/s (176.9..182.8)
+copy float4_u1 tg=256 grid=65536 -> 177.5 GB/s (171.1..177.8)
+write float4_u1 tg=256 grid=65536 -> 171.2 GB/s (154.6..178.9)
+copy float4_u1 tg=256 grid=262144 -> 177.8 GB/s (176.5..179.8)
+write float4_u1 tg=256 grid=262144 -> 178.7 GB/s (175.8..183.5)
+copy float4_u1 tg=256 grid=1048576 -> 181.9 GB/s (179.7..182.9)
+write float4_u1 tg=256 grid=1048576 -> 179.9 GB/s (170.5..183.7)
+copy float4_u1 tg=1024 grid=65536 -> 170.7 GB/s (169.5..172.9)
+write float4_u1 tg=1024 grid=65536 -> 182.7 GB/s (176.5..183.5)
+copy float4_u1 tg=1024 grid=262144 -> 174.0 GB/s (171.8..175.7)
+write float4_u1 tg=1024 grid=262144 -> 181.2 GB/s (176.9..184.1)
+copy float4_u1 tg=1024 grid=1048576 -> 173.5 GB/s (172.3..175.6)
+write float4_u1 tg=1024 grid=1048576 -> 168.2 GB/s (165.2..172.0)
+copy float4_u2 tg=256 grid=65536 -> 178.8 GB/s (177.2..179.9)
+write float4_u2 tg=256 grid=65536 -> 183.8 GB/s (180.7..185.6)
+copy float4_u2 tg=256 grid=262144 -> 180.4 GB/s (177.8..181.4)
+write float4_u2 tg=256 grid=262144 -> 185.0 GB/s (176.8..186.7)
+copy float4_u2 tg=256 grid=1048576 -> 181.4 GB/s (179.3..183.4)
+write float4_u2 tg=256 grid=1048576 -> 176.6 GB/s (170.5..179.4)
+copy float4_u2 tg=1024 grid=65536 -> 173.0 GB/s (169.6..176.0)
+write float4_u2 tg=1024 grid=65536 -> 182.0 GB/s (180.2..183.6)
+copy float4_u2 tg=1024 grid=262144 -> 173.9 GB/s (172.6..175.4)
+write float4_u2 tg=1024 grid=262144 -> 182.2 GB/s (177.7..183.5)
+copy float4_u2 tg=1024 grid=1048576 -> 176.9 GB/s (175.5..177.6)
+write float4_u2 tg=1024 grid=1048576 -> 181.9 GB/s (178.7..185.0)
+copy float4_u4 tg=256 grid=65536 -> 179.4 GB/s (178.1..181.6)
+write float4_u4 tg=256 grid=65536 -> 186.2 GB/s (180.4..188.2)
+copy float4_u4 tg=256 grid=262144 -> 181.1 GB/s (178.1..181.8)
+write float4_u4 tg=256 grid=262144 -> 184.6 GB/s (183.0..186.3)
+copy float4_u4 tg=256 grid=1048576 -> 179.4 GB/s (176.0..183.1)
+write float4_u4 tg=256 grid=1048576 -> 182.7 GB/s (177.8..184.9)
+copy float4_u4 tg=1024 grid=65536 -> 175.8 GB/s (172.9..176.8)
+write float4_u4 tg=1024 grid=65536 -> 183.4 GB/s (180.5..185.7)
+copy float4_u4 tg=1024 grid=262144 -> 173.6 GB/s (172.9..175.1)
+write float4_u4 tg=1024 grid=262144 -> 179.7 GB/s (172.0..183.8)
+copy float4_u4 tg=1024 grid=1048576 -> 175.1 GB/s (155.1..176.0)
+write float4_u4 tg=1024 grid=1048576 -> 183.0 GB/s (169.2..183.6)
+copy float4_u8 tg=256 grid=65536 -> 177.4 GB/s (149.5..181.0)
+write float4_u8 tg=256 grid=65536 -> 183.9 GB/s (176.8..187.6)
+copy float4_u8 tg=256 grid=262144 -> 180.8 GB/s (178.9..181.3)
+write float4_u8 tg=256 grid=262144 -> 183.7 GB/s (177.7..187.9)
+copy float4_u8 tg=256 grid=1048576 -> 181.6 GB/s (179.1..184.1)
+write float4_u8 tg=256 grid=1048576 -> 187.3 GB/s (180.8..189.0)
+copy float4_u8 tg=1024 grid=65536 -> 175.4 GB/s (174.3..177.2)
+write float4_u8 tg=1024 grid=65536 -> 176.1 GB/s (163.4..185.8)
+copy float4_u8 tg=1024 grid=262144 -> 174.8 GB/s (171.5..175.4)
+write float4_u8 tg=1024 grid=262144 -> 180.9 GB/s (175.9..183.6)
+copy float4_u8 tg=1024 grid=1048576 -> 171.4 GB/s (170.4..175.6)
+write float4_u8 tg=1024 grid=1048576 -> 169.1 GB/s (163.3..177.3)
+blit copy 512 MiB -> 187.0 GB/s (180.9..187.9)
+BEST COPY: 183.0 GB/s  copy float_u4 tg=256 grid=262144
+BEST WRITE: 187.3 GB/s  write float4_u8 tg=256 grid=1048576
+
+# READ vs size (float4_u4, tg=256, grid=min(n/4, 262144)), 15 runs each
+size 1 MiB reps=64 -> 313.0 GB/s (292.1..372.6)  per-dispatch 3.3 us
+size 4 MiB reps=16 -> 486.6 GB/s (475.2..525.3)  per-dispatch 8.6 us
+size 8 MiB reps=8 -> 404.6 GB/s (385.5..429.0)  per-dispatch 20.7 us
+size 16 MiB reps=4 -> 207.3 GB/s (204.9..208.3)  per-dispatch 80.9 us
+size 24 MiB reps=2 -> 192.0 GB/s (189.7..194.7)  per-dispatch 131.0 us
+size 32 MiB reps=2 -> 190.2 GB/s (185.3..193.3)  per-dispatch 176.4 us
+size 48 MiB reps=1 -> 189.2 GB/s (188.0..192.6)  per-dispatch 266.0 us
+size 64 MiB reps=1 -> 190.5 GB/s (188.2..191.5)  per-dispatch 352.3 us
+size 128 MiB reps=1 -> 186.6 GB/s (185.3..188.3)  per-dispatch 719.1 us
+size 256 MiB reps=1 -> 183.1 GB/s (178.5..185.6)  per-dispatch 1465.9 us
+size 1024 MiB reps=1 -> 181.8 GB/s (178.8..182.8)  per-dispatch 5907.5 us
+
+# GEMV q4 (MLX-like affine 4-bit, group 64, fp16 scale+bias): rows x cols -> effective GB/s over weight+scale+bias bytes
+gemv Qwen3-32B up/gate-like 25600x5120 R=1 VPT=16 SG/TG=2: 410.8 us -> 179.8 GB/s (179.4..180.4)
+gemv Qwen3-32B up/gate-like 25600x5120 R=2 VPT=16 SG/TG=2: 408.0 us -> 181.0 GB/s (178.4..187.6)
+gemv Qwen3-32B up/gate-like 25600x5120 R=4 VPT=16 SG/TG=2: 403.2 us -> 183.1 GB/s (180.7..185.3)
+gemv Qwen3-32B up/gate-like 25600x5120 R=8 VPT=16 SG/TG=2: 421.3 us -> 175.3 GB/s (171.9..180.2)
+gemv Qwen3-32B up/gate-like 25600x5120 R=4 VPT=32 SG/TG=2: 428.4 us -> 172.4 GB/s (163.6..181.0)
+gemv Qwen3-32B up/gate-like 25600x5120 R=4 VPT=16 SG/TG=4: 411.6 us -> 179.4 GB/s (85.1..182.2)
+gemv Qwen3-32B up/gate-like 25600x5120 R=4 VPT=16 SG/TG=8: 396.4 us -> 186.3 GB/s (183.7..187.7)
+gemv Qwen3-32B up/gate-like 25600x5120 R=8 VPT=32 SG/TG=2: 459.5 us -> 160.7 GB/s (158.8..164.4)
+gemv Qwen3-32B up/gate-like 25600x5120 R=2 VPT=32 SG/TG=4: 409.2 us -> 180.4 GB/s (178.1..182.7)
+gemv Qwen3-32B up/gate-like 25600x5120 R=1 VPT=32 SG/TG=8: 451.8 us -> 163.4 GB/s (160.7..164.4)
+gemv Qwen3-32B down-like 5120x25600 R=1 VPT=16 SG/TG=2: 415.8 us -> 177.5 GB/s (176.1..179.1)
+gemv Qwen3-32B down-like 5120x25600 R=2 VPT=16 SG/TG=2: 402.7 us -> 183.2 GB/s (178.3..186.0)
+gemv Qwen3-32B down-like 5120x25600 R=4 VPT=16 SG/TG=2: 401.5 us -> 183.8 GB/s (181.4..185.3)
+gemv Qwen3-32B down-like 5120x25600 R=8 VPT=16 SG/TG=2: 432.7 us -> 170.6 GB/s (166.7..171.9)
+gemv Qwen3-32B down-like 5120x25600 R=4 VPT=32 SG/TG=2: 414.6 us -> 178.0 GB/s (171.3..180.4)
+gemv Qwen3-32B down-like 5120x25600 R=4 VPT=16 SG/TG=4: 408.9 us -> 180.5 GB/s (179.2..183.4)
+gemv Qwen3-32B down-like 5120x25600 R=4 VPT=16 SG/TG=8: 403.0 us -> 183.1 GB/s (180.3..183.8)
+gemv Qwen3-32B down-like 5120x25600 R=8 VPT=32 SG/TG=2: 493.1 us -> 149.7 GB/s (146.7..160.6)
+gemv Qwen3-32B down-like 5120x25600 R=2 VPT=32 SG/TG=4: 410.8 us -> 179.7 GB/s (176.3..180.6)
+gemv Qwen3-32B down-like 5120x25600 R=1 VPT=32 SG/TG=8: 460.6 us -> 160.2 GB/s (158.9..161.2)
+gemv large 0.36 GB 131072x5120 R=1 VPT=16 SG/TG=2: 2073.6 us -> 182.3 GB/s (182.1..182.4)
+gemv large 0.36 GB 131072x5120 R=2 VPT=16 SG/TG=2: 1995.3 us -> 189.5 GB/s (186.4..190.5)
+gemv large 0.36 GB 131072x5120 R=4 VPT=16 SG/TG=2: 1975.2 us -> 191.4 GB/s (190.3..192.0)
+gemv large 0.36 GB 131072x5120 R=8 VPT=16 SG/TG=2: 2024.0 us -> 186.8 GB/s (184.7..188.0)
+gemv large 0.36 GB 131072x5120 R=4 VPT=32 SG/TG=2: 2033.8 us -> 185.9 GB/s (184.6..186.8)
+gemv large 0.36 GB 131072x5120 R=4 VPT=16 SG/TG=4: 2010.1 us -> 188.1 GB/s (187.1..191.4)
+gemv large 0.36 GB 131072x5120 R=4 VPT=16 SG/TG=8: 2008.3 us -> 188.2 GB/s (186.2..190.4)
+gemv large 0.36 GB 131072x5120 R=8 VPT=32 SG/TG=2: 2181.2 us -> 173.3 GB/s (172.2..173.7)
+gemv large 0.36 GB 131072x5120 R=2 VPT=32 SG/TG=4: 2053.3 us -> 184.1 GB/s (180.5..186.3)
+gemv large 0.36 GB 131072x5120 R=1 VPT=32 SG/TG=8: 2276.5 us -> 166.1 GB/s (163.5..166.5)
+real 24.06
+user 0.11
+sys 0.35
